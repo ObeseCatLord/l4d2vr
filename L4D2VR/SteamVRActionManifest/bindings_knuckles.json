@@ -56,7 +56,7 @@
             {
                "inputs": {
                   "click": {
-                     "output": "/actions/main/in/Flashlight"
+                     "output": "/actions/main/in/Jump"
                   },
                   "position": {
                      "output": "/actions/main/in/Turn"
@@ -71,7 +71,7 @@
             {
                "inputs": {
                   "click": {
-                     "output": "/actions/main/in/Reload"
+                     "output": "/actions/main/in/OffHandGrip"
                   }
                },
                "mode": "button",
@@ -129,7 +129,7 @@
             {
                "inputs": {
                   "click": {
-                     "output": "/actions/main/in/Jump"
+                     "output": "/actions/main/in/MagazineRelease"
                   }
                },
                "mode": "button",
@@ -179,7 +179,7 @@
             {
                "inputs": {
                   "click": {
-                     "output": "/actions/main/in/Scoreboard"
+                     "output": "/actions/main/in/Flashlight"
                   }
                },
                "mode": "button",
@@ -197,7 +197,7 @@
             {
                "inputs": {
                   "click": {
-                     "output": "/actions/main/in/Crouch"
+                     "output": "/actions/main/in/WeaponGrip"
                   }
                },
                "mode": "button",
@@ -216,6 +216,15 @@
                },
                "mode": "button",
                "path": "/user/hand/left/input/trigger"
+            },
+            {
+               "inputs": {
+                  "click": {
+                     "output": "/actions/main/in/Scoreboard"
+                  }
+               },
+               "mode": "button",
+               "path": "/user/hand/left/input/trackpad"
             }
          ]
       }

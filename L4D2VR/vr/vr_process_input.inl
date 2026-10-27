@@ -578,6 +578,38 @@ void VR::ProcessInput()
 
     vr::InputDigitalActionData_t primaryAttackActionData{};
     bool primaryAttackDown = false;
+    // Toggle grips: one firm squeeze takes an item and keeps it, the next lets
+    // it go. Everything below sees the virtual "held" grip. The right grip stays
+    // a plain hold while it works the magazine of a left-held pistol.
+    {
+        const bool toggleApplies = m_GripToggleEnabled && !leftHeldPistol &&
+            (m_GripReleaseDropEnabled || m_BodyGripInventoryEnabled);
+        l4d2vr_grip_toggle::Input toggleInput{};
+        toggleInput.enabled = toggleApplies;
+        toggleInput.active = rightGripValid;
+        toggleInput.rawDown = rightGripDown;
+        toggleInput.ready = localPlayer && !isObserverOrIdle && !m_SuppressPlayerInput &&
+            m_FirstPersonControlReady.load(std::memory_order_acquire) &&
+            !m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
+            !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
+        toggleInput.nowMs = GetTickCount64();
+        toggleInput.takeSerial = m_BodyGripSelectionSerial.load(std::memory_order_acquire) +
+            m_GripToggleAdoptSerial.load(std::memory_order_acquire);
+        toggleInput.pickupSerial = m_GripTogglePickupSerial.load(std::memory_order_acquire);
+        toggleInput.heldItemTag = localPlayer
+            ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(localPlayer->GetActiveWeapon())) : 0u;
+        toggleInput.inOwnHolster = m_HolsterHandInOwnZone.load(std::memory_order_acquire);
+        const bool wasHeld = m_GripToggle.Held();
+        const bool virtualDown = m_GripToggle.Update(toggleInput);
+        if (toggleApplies && rightGripValid)
+        {
+            rightGripJustPressed = virtualDown && !wasHeld;
+            rightGripDown = virtualDown;
+            weaponGripInputState = 1u | (virtualDown ? 2u : 0u);
+            if (virtualDown != wasHeld && m_VrHandsDebugLog)
+                Game::logMsg("[VR][GripToggle] %s", virtualDown ? "held" : "released");
+        }
+    }
     bool primaryAttackJustPressed = false;
     getActionState(&m_ActionPrimaryAttack, primaryAttackActionData, primaryAttackDown, primaryAttackJustPressed);
     m_PrimaryAttackDown = false;

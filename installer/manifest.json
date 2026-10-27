@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "name": "L4D2VR",
+  "repo": "ObeseCatLord/l4d2vr",
+  "_comment": "Alternative release source for 'l4d2vr-installer --source manifest'. Top-level fields are the stable channel; entries under 'channels' (e.g. 'beta') override them. Regenerate with: l4d2vr-installer make-manifest --zip l4d2vr.zip --version X --tag TAG --url URL --output installer/manifest.json",
+  "version": "0.0.0",
+  "tag": "latest",
+  "url": "https://github.com/ObeseCatLord/l4d2vr/releases/latest/download/l4d2vr.zip",
+  "sha256": null,
+  "size": null,
+  "notes": "Placeholder until the first fork release is published; fill in version/sha256/size with make-manifest.",
+  "server": {
+    "linux": {
+      "url": "https://github.com/ObeseCatLord/l4d2vr/releases/latest/download/l4d2vr-server-linux.zip",
+      "sha256": null
+    }
+  },
+  "channels": {},
+  "preserve": [],
+  "installer": {
+    "version": "1.0.0",
+    "assets": {
+      "windows": {"url": "https://github.com/ObeseCatLord/l4d2vr/releases/latest/download/l4d2vr-installer-windows.exe"},
+      "linux": {"url": "https://github.com/ObeseCatLord/l4d2vr/releases/latest/download/l4d2vr-installer-linux"}
+    }
+  }
+}

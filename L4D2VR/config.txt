@@ -385,6 +385,12 @@ LoadingFramePumpEnabled=true
 LoadingFramePumpStallMs=40
 // Show the HUD overlay (end-of-chapter stats, scoreboard) automatically at intermissions.
 IntermissionHudEnabled=true
+// Picture-in-picture scope lens: the scope image shifts with your eye (parallax) and darkens toward the
+// edge as your eye leaves the eyebox, like a real optic.
+ScopePictureInPictureLens=true
+ScopeParallaxStrength=1.0
+ScopeEyeboxDeg=8
+ScopeVignetteExponent=0.25
 PhysicalShoveEnabled=true
 // Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
 ConsumableGesturesEnabled=true

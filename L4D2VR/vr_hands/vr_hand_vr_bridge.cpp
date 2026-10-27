@@ -5324,6 +5324,10 @@ bool VR::UpdateMagazineInteraction(
         bool& value;
         ~BodyAmmoPublication() { destination.store(value, std::memory_order_release); }
     } bodyAmmoPublication{ m_BodyAmmoAvailable, bodyAmmoAvailable };
+    // Glow the gun's magazine while it is empty and nothing is reloading it.
+    m_MagazineEmptyGlowActive.store(m_MagazineEmptyGlowEnabled && activeClip == 0 &&
+        MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId) &&
+        !IsMagazineInteractionManualActive(), std::memory_order_release);
     const bool supportLeft = MagazineReloadSupportIsLeft();
     const Vector supportPosition = supportLeft ? m_LeftControllerPosAbs : m_RightControllerPosAbs;
     const QAngle supportAngles = supportLeft ? m_LeftControllerAngAbs : m_RightControllerAngAbs;

@@ -1239,6 +1239,7 @@ public:
 	bool m_MagazineReleaseButtonRequired = true;
 	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
 	bool m_MagazineEmptyGlowEnabled = true;
+	std::atomic<bool> m_MagazineEmptyGlowActive{ false };
 	bool m_MagazineReleaseJustPressed = false;
 	std::atomic<uint32_t> m_WeaponGripInputState{ 0 };
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };

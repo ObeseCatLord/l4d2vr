@@ -27,6 +27,8 @@ The holsters follow your head's yaw past a dead band, and snap turns move them i
 
 On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
 
+Pavlov-style holding (`HolsterReleaseDrop`, on by default): an item you draw from a holster stays in your hand while you keep holding the grip. Letting go drops it with your hand's motion, so you can toss a gun to a teammate. Letting go inside the item's own holster puts it away instead. Items you already held before drawing aren't affected. Dropping needs a server with the plugin or a modded host; elsewhere letting go does nothing.
+
 ## Reloading
 
 - **Release:** the Magazine Release button (right A by default) drops detachable magazines. The AK-47's magazine is grabbed and pulled out by hand instead (`MagazineReleaseButtonRequired`).
@@ -52,7 +54,11 @@ Pull the trigger to arm (pin haptic), release to throw with your hand's motion (
 
 ## Pills and adrenaline
 
-Bring pills to your mouth, or stab adrenaline into your chest or your other forearm (`ConsumableGesturesEnabled`). The trigger still works.
+Bring pills to your mouth, or stab adrenaline into your chest or your other forearm (`ConsumableGesturesEnabled`). The trigger still works. To give pills or adrenaline to a teammate, hold them against the teammate's chest for a moment (`ConsumableGiveEnabled`). On plugin servers the give is aimed from your eye through your hand; elsewhere the mod aims a normal secondary-attack give at the teammate.
+
+## Two-handed weapons
+
+Like Half-Life 2 VR, grabbing the front of a long gun points it from your rear hand to your front hand (`VrHandsTwoHandedAimStrength=1`), with roll from the rear hand. An adaptive stabilizer (`VrHandsTwoHandedStabilizerEnabled`, a One Euro filter) smooths the aim strongly while you hold still and loosens as you swing, so the front hand stays on the foregrip without the gun trailing behind. Tune it with `VrHandsTwoHandedStabilizerMinCutoffHz` (lower = steadier when still) and `VrHandsTwoHandedStabilizerBeta` (higher = less lag while moving).
 
 ## Aiming
 
@@ -84,7 +90,7 @@ Both grips draw from holsters and hold magazines, bolts and foregrips; right A r
 
 ## Self-test (developers)
 
-`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `holsterdrop`, `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
 
 ## Headset test checklist
 

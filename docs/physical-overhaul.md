@@ -68,6 +68,16 @@ Bring pills to your mouth, or stab adrenaline into your chest or your other fore
 - Other VR players' bodies follow their head and hands, including physical crouching (`WorldModelVRPoseEnabled`).
 - Audio keeps playing when the window isn't focused (`BackgroundAudio`).
 
+## Dedicated server plugin
+
+Build `l4d2vr_server.so` (Linux, 32-bit) with `L4D2VR/server/build_release_linux.sh`, or `l4d2vr_server.dll` on Windows. It replaces `l4d2vr_pose_server`; never load both, or poses are relayed twice.
+
+1. Stop the server. Move any old `l4d2vr_pose_server` files out of `left4dead2/addons`.
+2. Copy `l4d2vr_server.so` (or `.dll`) and `l4d2vr_server.vdf` into `left4dead2/addons/`. Optionally copy `l4d2vr_server_config.example.txt` there as `l4d2vr_server_config.txt`.
+3. Start the server. After the map loads, the log shows `L4D2VR server: map: ... features=0x3FF`. A `target X rejected` line names a feature that a game update broke; only that feature turns off.
+
+Before trusting a new game build, run `l4d2vr_server_symcheck <path to server_srv.so>` (built by `run_server_tests.sh`).
+
 ## Controls (physical layout)
 
 Both grips draw from holsters and hold magazines, bolts and foregrips; right A releases the magazine; the right stick click jumps; left trigger shoves, or fires the left pistol in akimbo. Oculus Touch, Index (Knuckles) and Vive Cosmos defaults follow this layout.

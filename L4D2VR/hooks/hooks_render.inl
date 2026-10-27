@@ -1223,6 +1223,7 @@ int __fastcall Hooks::dFirstPersonBodyRenderableDrawModel(
         ecx,
         flags,
         &bypassResult);
+    HooksHolsterSubmitNativeStageItems(m_VR, flags);
     s_nativeStageSubmissionActive = false;
 
     if (!submitted)

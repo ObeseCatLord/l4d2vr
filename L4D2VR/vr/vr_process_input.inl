@@ -1450,7 +1450,86 @@ void VR::ProcessInput()
             }
         }
 
-        if (m_BodyGripInventoryEnabled)
+        if (m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled)
+        {
+            const bool gripActive = (weaponGripInputState & 1u) != 0u;
+            const bool gripDown = gripActive && (weaponGripInputState & 2u) != 0u;
+            const bool ready = localPlayer && !isObserverOrIdle &&
+                !m_SuppressPlayerInput && m_FirstPersonControlReady.load(std::memory_order_acquire) &&
+                !m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
+                !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
+
+            std::uint32_t occupiedMask = 0u;
+            int activeSlot = -1;
+            if (localPlayer)
+            {
+                C_BaseCombatWeapon* const active = localPlayer->GetActiveWeapon();
+                for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
+                {
+                    void* const weapon = localPlayer->Weapon_GetSlot(slot);
+                    if (!weapon)
+                        continue;
+                    occupiedMask |= 1u << slot;
+                    if (weapon == active)
+                        activeSlot = slot;
+                }
+            }
+
+            l4d2vr_holster::BodyFrame frame{};
+            const bool frameValid = GetHolsterBodyFrame(frame);
+            l4d2vr_holster::GrabInput grabInput{};
+            grabInput.ready = ready && frameValid;
+            grabInput.gripDown = gripDown;
+            grabInput.activeSlot = activeSlot;
+            grabInput.occupiedMask = occupiedMask;
+            if (frameValid)
+            {
+                // The active item is in the hand, not in its holster: only the
+                // other occupied slots can be drawn from the body.
+                const std::uint32_t drawableMask =
+                    activeSlot >= 0 ? (occupiedMask & ~(1u << activeSlot)) : occupiedMask;
+                grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
+                    m_RightControllerPosAbs, drawableMask);
+                grabInput.ownZoneUnderHand = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
+                    m_RightControllerPosAbs, 0x1Fu);
+            }
+
+            const l4d2vr_holster::GrabOutput grab = m_HolsterGrab.Update(grabInput);
+            m_HolsterHighlightSlot.store(grabInput.handZone != l4d2vr_holster::Zone::None
+                ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1, std::memory_order_release);
+            if (grab.hoverEntered != l4d2vr_holster::Zone::None && m_HolsterHoverHapticAmplitude > 0.0f)
+                TriggerPhysicalHandHapticPulse(false, 0.012f, 160.0f, m_HolsterHoverHapticAmplitude, 1);
+
+            static const char* kSlotCommands[] = { "slot1", "slot2", "slot3", "slot4", "slot5" };
+            if (grab.selectSlot >= 0 && grab.selectSlot < l4d2vr_holster::kZoneCount)
+            {
+                if (m_HolsterGrabHapticAmplitude > 0.0f)
+                    TriggerPhysicalHandHapticPulse(false, 0.03f, 120.0f, m_HolsterGrabHapticAmplitude, 2);
+                if (m_HolsterInstantDraw)
+                {
+                    m_HolsterInstantDrawSlot.store(grab.selectSlot, std::memory_order_release);
+                    m_HolsterInstantDrawUntilMs.store(GetTickCount64() + 1500u, std::memory_order_release);
+                }
+                m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
+                m_Game->ClientCmd_Unrestricted(kSlotCommands[grab.selectSlot]);
+                Game::logMsg("[VR][Holster] grip draw slot=%d", grab.selectSlot + 1);
+            }
+            if (grab.holsterTo >= 0 && grab.holsterTo < l4d2vr_holster::kZoneCount)
+            {
+                if (m_HolsterGrabHapticAmplitude > 0.0f)
+                    TriggerPhysicalHandHapticPulse(false, 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f, 2);
+                if (m_HolsterInstantDraw)
+                {
+                    m_HolsterInstantDrawSlot.store(grab.holsterTo, std::memory_order_release);
+                    m_HolsterInstantDrawUntilMs.store(GetTickCount64() + 1500u, std::memory_order_release);
+                }
+                m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
+                m_Game->ClientCmd_Unrestricted(kSlotCommands[grab.holsterTo]);
+                Game::logMsg("[VR][Holster] holstered slot=%d -> slot=%d", activeSlot + 1, grab.holsterTo + 1);
+            }
+            UpdateHolsterRenderSnapshot(ready ? localPlayer : nullptr, activeSlot);
+        }
+        else if (m_BodyGripInventoryEnabled)
         {
             static l4d2vr_physical::ContactLatch bodyGrip;
             const bool gripActive = (weaponGripInputState & 1u) != 0u;

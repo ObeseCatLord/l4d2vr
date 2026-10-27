@@ -3204,6 +3204,28 @@ void VR::ParseConfigFile()
     m_GripReleaseDropEnabled = getBool("GripReleaseDropEnabled", false);
     m_BodyGripInventoryEnabled = getBool("BodyGripInventoryEnabled", false);
     m_BodyGripInventoryUseModelPelvis = getBool("BodyGripInventoryUseModelPelvis", true);
+    m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
+    m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
+    m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
+    m_HolsterYawDeadbandDeg = std::clamp(getFloat("HolsterYawDeadbandDeg", 20.0f), 0.0f, 90.0f);
+    m_HolsterYawSmoothingSeconds = std::clamp(getFloat("HolsterYawSmoothingSeconds", 0.25f), 0.0f, 3.0f);
+    m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
+    m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.15f), 0.0f, 1.0f);
+    m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.35f), 0.0f, 1.0f);
+    {
+        static const char* kZoneKeys[l4d2vr_holster::kZoneCount] = {
+            "HolsterPrimaryOffsetMeters", "HolsterSecondaryOffsetMeters", "HolsterThrowableOffsetMeters",
+            "HolsterMedicalOffsetMeters", "HolsterConsumableOffsetMeters" };
+        static const char* kRadiusKeys[l4d2vr_holster::kZoneCount] = {
+            "HolsterPrimaryRadiusMeters", "HolsterSecondaryRadiusMeters", "HolsterThrowableRadiusMeters",
+            "HolsterMedicalRadiusMeters", "HolsterConsumableRadiusMeters" };
+        const l4d2vr_holster::Layout defaults{};
+        for (int zone = 0; zone < l4d2vr_holster::kZoneCount; ++zone)
+        {
+            m_HolsterLayout.center[zone] = getVector3(kZoneKeys[zone], defaults.center[zone]);
+            m_HolsterLayout.radius[zone] = std::clamp(getFloat(kRadiusKeys[zone], defaults.radius[zone]), 0.04f, 0.5f);
+        }
+    }
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);
     m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", false);
     m_DualPistolsNativeReloadFallbackEnabled = getBool("DualPistolsNativeReloadFallbackEnabled", true);

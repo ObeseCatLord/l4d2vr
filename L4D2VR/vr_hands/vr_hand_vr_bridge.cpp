@@ -4151,9 +4151,25 @@ void VR::UpdateBodyInventoryPose()
     }
     // Tracking already rotated the head's forward vector into game space.
     const float turnDelta = MagazineInteractionWrapDegrees(m_RotationOffset - m_BodyInventoryRotationOffset);
-    m_BodyInventoryYaw = l4d2vr_interaction::BodyYaw(m_HmdForward,
-        m_BodyInventoryPoseValid ? m_BodyInventoryYaw : m_RotationOffset,
-        m_BodyInventoryPoseValid ? turnDelta : 0.0f, m_BodyInventoryPoseValid);
+    const auto updateNow = std::chrono::steady_clock::now();
+    const float updateDt = m_BodyInventoryLastUpdate.time_since_epoch().count() == 0 ? 0.0f :
+        std::chrono::duration<float>(updateNow - m_BodyInventoryLastUpdate).count();
+    m_BodyInventoryLastUpdate = updateNow;
+    if (m_HolsterPavlovLayoutEnabled)
+    {
+        // Pavlov-style: the body follows the head yaw smoothly past a dead band,
+        // and stick/snap turns move it immediately.
+        m_BodyInventoryYaw = l4d2vr_holster::SmoothBodyYaw(m_BodyInventoryYaw, m_BodyInventoryPoseValid,
+            l4d2vr_holster::HeadYawDegrees(m_HmdForward, m_BodyInventoryYaw),
+            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt,
+            m_HolsterYawDeadbandDeg, m_HolsterYawSmoothingSeconds);
+    }
+    else
+    {
+        m_BodyInventoryYaw = l4d2vr_interaction::BodyYaw(m_HmdForward,
+            m_BodyInventoryPoseValid ? m_BodyInventoryYaw : m_RotationOffset,
+            m_BodyInventoryPoseValid ? turnDelta : 0.0f, m_BodyInventoryPoseValid);
+    }
     m_BodyInventoryRotationOffset = m_RotationOffset;
     const float radians = m_BodyInventoryYaw * 3.14159265358979323846f / 180.0f;
     m_BodyInventoryForward = Vector(std::cos(radians), std::sin(radians), 0.0f);
@@ -4200,6 +4216,25 @@ bool VR::GetBodyInventoryPose(Vector& origin, Vector& forward, Vector& right) co
     right = m_BodyInventoryRight;
     ResolveBodyInventoryModelPose(head, origin, forward, right);
     return true;
+}
+
+bool VR::GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const
+{
+    frame = {};
+    Vector head{};
+    float yaw = 0.0f;
+    {
+        std::lock_guard<std::mutex> lock(m_BodyInventoryPoseMutex);
+        if (!m_BodyInventoryPoseValid)
+            return false;
+        head = m_BodyInventoryHeadPosAbs;
+        yaw = m_BodyInventoryYaw;
+    }
+    Vector renderHead{};
+    if (VR::t_UseRenderFrameSnapshot && MagazineInteractionTryGetRenderSnapshotHmdPosAbs(this, renderHead))
+        head = renderHead;
+    frame = l4d2vr_holster::MakeFrame(head, yaw, m_LeftHanded, m_VRScale, m_HolsterHeightScale);
+    return frame.valid;
 }
 
 bool VR::GetBodyAmmoPreviewWorld(const MagazineInteractionBoxSnapshot& box, VrHandMatrix4& outWorld) const

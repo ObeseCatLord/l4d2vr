@@ -327,6 +327,106 @@ namespace
         }
     }
 
+    // Visible holsters: carried (inactive) weapons are drawn through Source's own
+    // model path inside the local player's native eye draw stage. SetupBones sees
+    // this scope and moves the item's bones rigidly to its holster pose.
+    struct HooksHolsterDrawScope
+    {
+        void* renderable = nullptr;
+        l4d2vr_holster::ItemPose pose{};
+    };
+    thread_local HooksHolsterDrawScope g_HolsterDrawScope{};
+
+    IMaterial* HooksHolsterHighlightMaterial()
+    {
+        static IMaterial* s_material = nullptr;
+        static bool s_attempted = false;
+        if (!s_attempted && Hooks::m_Game && Hooks::m_Game->m_MaterialSystem)
+        {
+            s_attempted = true;
+            __try
+            {
+                s_material = Hooks::m_Game->m_MaterialSystem->FindMaterial(
+                    "l4d2vr/holster_highlight", "Model textures", false, nullptr);
+                if (s_material && s_material->IsErrorMaterial())
+                    s_material = nullptr;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                s_material = nullptr;
+            }
+            Game::logMsg("[VR][Holster] highlight material %s", s_material ? "loaded" : "unavailable");
+        }
+        return s_material;
+    }
+
+    bool HooksHolsterDrawItemSafe(
+        const VR::HolsterRenderItem& item,
+        const l4d2vr_holster::ItemPose& pose,
+        int flags,
+        IMaterial* highlight)
+    {
+        if (!item.renderable || !Hooks::m_Game || !Hooks::m_Game->m_ModelRender)
+            return false;
+        __try
+        {
+            void** const vtable = *reinterpret_cast<void***>(item.renderable);
+            if (!vtable || !vtable[8])
+                return false;
+            using GetModelFn = const void* (__thiscall*)(void*);
+            const void* const model = reinterpret_cast<GetModelFn>(vtable[8])(item.renderable);
+            if (!model)
+                return false;
+
+            QAngle angles{};
+            QAngle::VectorAngles(pose.axisX, angles);
+            g_HolsterDrawScope.renderable = item.renderable;
+            g_HolsterDrawScope.pose = pose;
+            Hooks::m_Game->m_ModelRender->DrawModel(flags, item.renderable, 0xFFFF,
+                item.entityIndex > 0 ? item.entityIndex : 0, model, pose.origin, angles, 0, 0, 0);
+            if (highlight && item.highlighted)
+            {
+                Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(highlight);
+                Hooks::m_Game->m_ModelRender->DrawModel(flags, item.renderable, 0xFFFF,
+                    item.entityIndex > 0 ? item.entityIndex : 0, model, pose.origin, angles, 0, 0, 0);
+                Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr);
+            }
+            g_HolsterDrawScope.renderable = nullptr;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            g_HolsterDrawScope.renderable = nullptr;
+            if (Hooks::m_Game && Hooks::m_Game->m_ModelRender)
+            {
+                __try { Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr); }
+                __except (EXCEPTION_EXECUTE_HANDLER) {}
+            }
+            return false;
+        }
+    }
+
+    void HooksHolsterSubmitNativeStageItems(VR* vr, int flags)
+    {
+        if (!vr || !vr->m_BodyGripInventoryEnabled || !vr->m_HolsterPavlovLayoutEnabled ||
+            !vr->m_HolsterItemsVisible)
+            return;
+        VR::HolsterRenderSnapshot snapshot{};
+        if (!vr->GetHolsterRenderSnapshot(snapshot))
+            return;
+        IMaterial* const highlight = HooksHolsterHighlightMaterial();
+        const int highlightSlot = vr->m_HolsterHighlightSlot.load(std::memory_order_acquire);
+        for (int i = 0; i < snapshot.count; ++i)
+        {
+            VR::HolsterRenderItem item = snapshot.items[i];
+            item.highlighted = item.slot == highlightSlot;
+            l4d2vr_holster::ItemPose pose{};
+            if (!vr->BuildHolsterItemWorld(item, pose))
+                continue;
+            HooksHolsterDrawItemSafe(item, pose, flags, highlight);
+        }
+    }
+
     bool HooksFirstPersonBodyEnsureRenderableHooks(C_BasePlayer* player)
     {
         if (!player)

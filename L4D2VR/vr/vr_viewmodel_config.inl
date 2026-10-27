@@ -3207,6 +3207,8 @@ void VR::ParseConfigFile()
     m_PhysicalReloadOnUnsupportedServers = getBool("PhysicalReloadOnUnsupportedServers", true);
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
+    m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
+    m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 40.0f), 15.0f, 1000.0f);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
     m_ConsumableGesturesEnabled = getBool("ConsumableGesturesEnabled", true);
     m_CrosshairEnabled = getBool("CrosshairEnabled", true);

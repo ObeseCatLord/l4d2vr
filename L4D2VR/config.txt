@@ -380,6 +380,9 @@ SightAutoAlignEnabled=true
 // from the blade tip (the chainsaw only needs the trigger). Thrusting a melee weapon forward or
 // bashing with a gun shoves along the motion.
 MeleeInertiaEnabled=true
+// Keep the headset fed with frames during loading screens and chapter transitions.
+LoadingFramePumpEnabled=true
+LoadingFramePumpStallMs=40
 PhysicalShoveEnabled=true
 // Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
 ConsumableGesturesEnabled=true

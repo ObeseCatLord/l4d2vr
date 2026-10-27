@@ -1618,6 +1618,16 @@ void VR::Update()
     if (!m_IsInitialized || !g_Game)
         return;
 
+    // Hold the compositor frame while the game drives it; the loading pump only
+    // takes over when this has not run for a while.
+    std::unique_lock<std::mutex> compositorFrameLock(m_CompositorFrameMutex);
+    m_LastMainFrameMs.store(GetTickCount64(), std::memory_order_release);
+    if (m_LoadingFramePumpEnabled && !m_LoadingFramePumpStarted.exchange(true, std::memory_order_acq_rel))
+    {
+        std::thread pump(&VR::LoadingFramePumpThreadMain, this);
+        pump.detach();
+    }
+
     if (!m_Game || m_Game != g_Game)
         m_Game = g_Game;
 
@@ -3581,6 +3591,7 @@ void VR::SubmitVRTextures()
         hasLocalPlayer = (m_Game->GetClientEntity(playerIndex) != nullptr);
     }
     const bool sceneReadyForStaleResubmit = inGame && hasLocalPlayer;
+    m_LastSubmitWasGameplay.store(sceneReadyForStaleResubmit, std::memory_order_release);
     const bool queued = (m_Game && (m_Game->GetMatQueueMode() != 0));
     bool renderedNewFrame = m_RenderedNewFrame.load(std::memory_order_acquire);
     if (inGame && !hasLocalPlayer)

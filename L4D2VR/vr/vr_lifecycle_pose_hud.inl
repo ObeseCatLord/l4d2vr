@@ -51,6 +51,49 @@ bool VR::ReadPoseWaiterSnapshot(vr::TrackedDevicePose_t* outPoses, uint32_t* out
     return false;
 }
 
+void VR::LoadingFramePumpThreadMain()
+{
+    // While the game thread is blocked (map loads, chapter transitions), Present
+    // stops and nothing calls WaitGetPoses, so OpenXR runtimes (XRizer/Monado)
+    // stop receiving frames and the headset freezes. Keep pacing frames; the
+    // menu/loading overlay already holds the last backbuffer image.
+    uint32_t pumpedSinceLog = 0;
+    while (true)
+    {
+        Sleep(5);
+        if (!m_LoadingFramePumpEnabled || !m_IsVREnabled || !m_Compositor ||
+            m_PoseWaiterEnabled.load(std::memory_order_acquire))
+            continue;
+        const uint64_t now = GetTickCount64();
+        const uint64_t last = m_LastMainFrameMs.load(std::memory_order_acquire);
+        // During gameplay only a real freeze (not a slow frame) hands frames to the pump.
+        const float stallMs = m_LastSubmitWasGameplay.load(std::memory_order_acquire)
+            ? std::max(300.0f, m_LoadingFramePumpStallMs)
+            : std::max(15.0f, m_LoadingFramePumpStallMs);
+        if (last == 0 || static_cast<float>(now - last) < stallMs)
+        {
+            if (pumpedSinceLog > 0)
+            {
+                Game::logMsg("[VR][LoadingPump] resumed by game after %u pumped frames", pumpedSinceLog);
+                pumpedSinceLog = 0;
+            }
+            continue;
+        }
+        std::unique_lock<std::mutex> lock(m_CompositorFrameMutex, std::try_to_lock);
+        if (!lock.owns_lock())
+            continue;
+        if (static_cast<float>(GetTickCount64() - m_LastMainFrameMs.load(std::memory_order_acquire)) < stallMs)
+            continue;
+        std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
+        if (m_Compositor->WaitGetPoses(poses.data(), vr::k_unMaxTrackedDeviceCount, nullptr, 0) == vr::VRCompositorError_None)
+        {
+            if (pumpedSinceLog++ == 0)
+                Game::logMsg("[VR][LoadingPump] game thread stalled; pacing compositor frames");
+            m_LoadingFramePumpFrames.fetch_add(1u, std::memory_order_relaxed);
+        }
+    }
+}
+
 void VR::PoseWaiterThreadMain()
 {
     // Detached thread. Runs only when mat_queue_mode!=0 (m_PoseWaiterEnabled).

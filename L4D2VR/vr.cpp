@@ -534,7 +534,7 @@ void VR::UpdateHudLiftGestureState(bool inGame)
     const bool showHudHeld = PressedDigitalAction(m_ToggleHUD, false);
     m_HudShowActionHeld.store(showHudHeld ? 1u : 0u, std::memory_order_release);
 
-    if (m_HudAlwaysVisible)
+    if (m_HudAlwaysVisible || IsIntermissionHudActive())
     {
         stopLiftHudCapture(false);
         m_HudToggleState = true;
@@ -611,7 +611,7 @@ void VR::UpdateHudLiftGestureState(bool inGame)
 
 bool VR::IsGameplayHudRequested() const
 {
-    return m_HudAlwaysVisible ||
+    return m_HudAlwaysVisible || IsIntermissionHudActive() ||
         m_HudShowActionHeld.load(std::memory_order_acquire) != 0 ||
         m_HudLiftGestureActive.load(std::memory_order_acquire) != 0;
 }
@@ -709,6 +709,31 @@ namespace
         {
             if (m_VR)
                 m_VR->HandleDamageFeedbackGameEvent(event);
+        }
+
+        int GetEventDebugID(void) override
+        {
+            return kGameEventDebugIdInit;
+        }
+
+    private:
+        VR* m_VR = nullptr;
+    };
+
+    class VRIntermissionEventListener final : public IGameEventListener2
+    {
+    public:
+        explicit VRIntermissionEventListener(VR* vr) : m_VR(vr) {}
+
+        void FireGameEvent(IGameEvent* event) override
+        {
+            if (!m_VR || !event)
+                return;
+            // The end-of-chapter stats and scoreboard stay up for a while; show the
+            // HUD overlay for them without needing the HUD gesture.
+            m_VR->m_IntermissionHudUntilMs.store(GetTickCount64() + 20000u, std::memory_order_release);
+            const char* name = event->GetName();
+            Game::logMsg("[VR][Intermission] %s: showing HUD overlay", name ? name : "event");
         }
 
         int GetEventDebugID(void) override
@@ -5333,6 +5358,32 @@ void VR::UpdateDamageFeedback()
             }
         }
     }
+}
+
+void VR::EnsureIntermissionEventListener()
+{
+    if (m_IntermissionEventListenerRegistered || !m_Game)
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (m_LastIntermissionRegisterAttempt.time_since_epoch().count() != 0 &&
+        std::chrono::duration<float>(now - m_LastIntermissionRegisterAttempt).count() < 2.0f)
+        return;
+    m_LastIntermissionRegisterAttempt = now;
+    if (!m_IntermissionEventManager)
+        m_IntermissionEventManager = m_Game->m_GameEventManager;
+    if (!m_IntermissionEventManager)
+        return;
+    if (!m_IntermissionEventListener)
+        m_IntermissionEventListener = new VRIntermissionEventListener(this);
+    static constexpr const char* kEvents[] = { "round_end", "map_transition", "finale_win", "mission_lost" };
+    bool registeredAll = true;
+    for (const char* eventName : kEvents)
+    {
+        const bool already = m_IntermissionEventManager->FindListener(m_IntermissionEventListener, eventName);
+        registeredAll = (already || m_IntermissionEventManager->AddListener(m_IntermissionEventListener, eventName, false)) &&
+            registeredAll;
+    }
+    m_IntermissionEventListenerRegistered = registeredAll;
 }
 
 void VR::EnsureKillSoundEventListener()
@@ -11240,6 +11291,7 @@ void VR::UpdateKillSoundFeedback()
     const auto now = std::chrono::steady_clock::now();
     FlushPendingHitSound(now);
     EnsureKillSoundEventListener();
+    EnsureIntermissionEventListener();
     m_PendingKillSoundHits.erase(
         std::remove_if(
             m_PendingKillSoundHits.begin(),

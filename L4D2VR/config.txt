@@ -383,6 +383,8 @@ MeleeInertiaEnabled=true
 // Keep the headset fed with frames during loading screens and chapter transitions.
 LoadingFramePumpEnabled=true
 LoadingFramePumpStallMs=40
+// Show the HUD overlay (end-of-chapter stats, scoreboard) automatically at intermissions.
+IntermissionHudEnabled=true
 PhysicalShoveEnabled=true
 // Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
 ConsumableGesturesEnabled=true

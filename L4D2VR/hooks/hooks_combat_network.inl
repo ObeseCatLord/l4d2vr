@@ -2098,6 +2098,8 @@ float __fastcall Hooks::dProcessUsercmds(void* ecx, void* edx, edict_t* player,
 	m_ServerPacketSawVRUsercmd = false;
 
 	Hooks::s_ServerUnderstandsVR = true;
+	if (m_VR)
+		m_VR->m_ServerFeatureMask.fetch_or(l4d2vr_features::kListenHostMask, std::memory_order_acq_rel);
 
 	// Function pointer for CBaseEntity::entindex
 	typedef int(__thiscall* tEntindex)(void* thisptr);
@@ -2549,6 +2551,8 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
 	m_ServerCommandControllerAimReason = 0;
 
 	Hooks::s_ServerUnderstandsVR = true;
+	if (m_VR)
+		m_VR->m_ServerFeatureMask.fetch_or(l4d2vr_features::kListenHostMask, std::memory_order_acq_rel);
 	hkReadUsercmd.fOriginal(buf, move, from);
 	if (move && move->tick_count < 0)
 		m_ServerPacketSawVRUsercmd = true;

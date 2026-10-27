@@ -744,6 +744,7 @@ namespace
     constexpr int kFcvarServerCanExecute = (1 << 28);
     constexpr char kL4D2VRServerAckCommandName[] = "l4d2vr_server_ack";
     constexpr char kL4D2VRInteractionAckCommandName[] = "l4d2vr_interaction_ack";
+    constexpr char kL4D2VRFeatureAckCommandName[] = "l4d2vr_feature_ack";
     constexpr char kL4D2VRPoseAckCommandName[] = "l4d2vr_pose_ack";
     constexpr char kL4D2VRPoseReceiveCommandName[] = "l4d2vr_pose_receive";
     constexpr char kVRConfigCommandName[] = "vrconfig";
@@ -822,6 +823,19 @@ namespace
             static_cast<unsigned>(version), std::memory_order_acq_rel);
         if (previous != version)
             Game::logMsg("[VR][InteractionAck] server supports physical interaction protocol %lu", version);
+    }
+
+    void __cdecl OnL4D2VRFeatureAckCommand(const SourceCCommand& command)
+    {
+        unsigned long version = 0;
+        std::uint32_t mask = 0u;
+        if (!g_Game || !g_Game->m_VR || !Hooks::s_ServerUnderstandsVR || command.ArgC() != 3 ||
+            !l4d2vr_features::ParseMask(command.Arg(1), mask) ||
+            !ParseUnsignedCommandArgument(command, 2, 255u, version) || version < l4d2vr_features::kVersion)
+            return;
+        const std::uint32_t previous = g_Game->m_VR->m_ServerFeatureMask.exchange(mask, std::memory_order_acq_rel);
+        if (previous != mask)
+            Game::logMsg("[VR][FeatureAck] server features 0x%03X (protocol %lu)", mask, version);
     }
 
     void __cdecl OnL4D2VRShellCapability(const SourceCCommand& command)
@@ -959,6 +973,9 @@ namespace
     SourceRegisteredConCommand g_L4D2VRInteractionAckCommand(
         kL4D2VRInteractionAckCommandName, &OnL4D2VRInteractionAckCommand,
         "Accepts the physical-interaction capability of a matching server build.", kFcvarServerCanExecute);
+    SourceRegisteredConCommand g_L4D2VRFeatureAckCommand(
+        kL4D2VRFeatureAckCommandName, &OnL4D2VRFeatureAckCommand,
+        "Accepts the L4D2VR server feature mask.", kFcvarServerCanExecute);
     SourceRegisteredConCommand g_L4D2VRShellCapabilityCommand(
         "l4d2vr_shell_capability", &OnL4D2VRShellCapability,
         "Negotiate authoritative physical shell insertion.", kFcvarServerCanExecute);
@@ -1010,6 +1027,8 @@ namespace
                 cvar->RegisterConCommand(&g_L4D2VRServerAckCommand);
             if (!cvar->FindCommandBase(kL4D2VRInteractionAckCommandName))
                 cvar->RegisterConCommand(&g_L4D2VRInteractionAckCommand);
+            if (!cvar->FindCommandBase(kL4D2VRFeatureAckCommandName))
+                cvar->RegisterConCommand(&g_L4D2VRFeatureAckCommand);
             if (!cvar->FindCommandBase("l4d2vr_shell_capability"))
                 cvar->RegisterConCommand(&g_L4D2VRShellCapabilityCommand);
             if (!cvar->FindCommandBase("l4d2vr_shell_result"))
@@ -1265,6 +1284,7 @@ void Game::ResetAllPlayerVRInfo()
     ResetRemoteMagazineServerClients();
     if (m_VR) m_VR->DisconnectRemoteMagazineProtocol();
     if (m_VR) m_VR->m_ServerPhysicalInteractionVersion.store(0u, std::memory_order_release);
+    if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         m_PlayersVRInfo.fill(Player{});
@@ -1291,6 +1311,7 @@ void Game::ResetVRPoseServerSession()
     ResetRemoteMagazineServerClients();
     if (m_VR) m_VR->DisconnectRemoteMagazineProtocol();
     if (m_VR) m_VR->m_ServerPhysicalInteractionVersion.store(0u, std::memory_order_release);
+    if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         for (Player& player : m_PlayersVRInfo)
@@ -1809,6 +1830,12 @@ void Game::ObserveBuiltinVRPoseRelayClient(
     if (poseAckSent && Hooks::hkPhysicalGunReload.isEnabled && Hooks::hkPhysicalShotgunReload.isEnabled &&
         m_Offsets && m_Offsets->ManualInventoryWeaponDrop.valid && m_Offsets->PistolRemoveDualWeapons.valid)
         VRPoseRelaySendClientCommand(m_ServerPluginHelpers, entity, "l4d2vr_interaction_ack 1\n");
+        {
+            char featureAck[64]{};
+            std::snprintf(featureAck, sizeof(featureAck), "l4d2vr_feature_ack %X %u\n",
+                l4d2vr_features::kListenHostMask, l4d2vr_features::kVersion);
+            VRPoseRelaySendClientCommand(m_ServerPluginHelpers, entity, featureAck);
+        }
     if (poseAckSent) OfferRemoteShellProtocol(entity);
     if (poseAckSent) OfferRemoteMagazineProtocol(entity);
     if (poseAckSent) OfferPistolAmmoProtocol(entity);

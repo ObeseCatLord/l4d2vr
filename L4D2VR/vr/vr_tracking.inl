@@ -2260,6 +2260,7 @@ void VR::UpdateTracking()
     // solve an eye-based aim hit point so rendered aim line and real hit point stay consistent.
     UpdateNonVRAimSolution(localPlayer);
     UpdateAimingLaser(localPlayer);
+    UpdateCrosshairSpread(localPlayer);
 
     // controller angles
     QAngle::VectorAngles(m_LeftControllerForward, m_LeftControllerUp, m_LeftControllerAngAbs);

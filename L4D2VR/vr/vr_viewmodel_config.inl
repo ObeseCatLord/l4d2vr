@@ -3206,6 +3206,21 @@ void VR::ParseConfigFile()
     m_BodyGripInventoryUseModelPelvis = getBool("BodyGripInventoryUseModelPelvis", true);
     m_PhysicalReloadOnUnsupportedServers = getBool("PhysicalReloadOnUnsupportedServers", true);
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
+    m_CrosshairEnabled = getBool("CrosshairEnabled", true);
+    {
+        const std::string style = getString("CrosshairStyle", "x");
+        m_CrosshairStyle = (style == "plus" || style == "+") ? 0 : 1;
+    }
+    m_CrosshairArmPixels = std::clamp(getFloat("CrosshairArmPixels", 7.0f), 1.0f, 64.0f);
+    m_CrosshairThicknessPixels = std::clamp(getFloat("CrosshairThicknessPixels", 2.0f), 0.5f, 16.0f);
+    m_CrosshairMinGapPixels = std::clamp(getFloat("CrosshairMinGapPixels", 2.0f), 0.0f, 64.0f);
+    {
+        const Vector rgb = getVector3("CrosshairColorRGB", Vector(255.0f, 255.0f, 255.0f));
+        m_CrosshairColorR = std::clamp(static_cast<int>(rgb.x), 0, 255);
+        m_CrosshairColorG = std::clamp(static_cast<int>(rgb.y), 0, 255);
+        m_CrosshairColorB = std::clamp(static_cast<int>(rgb.z), 0, 255);
+        m_CrosshairColorA = std::clamp(getInt("CrosshairAlpha", 210), 0, 255);
+    }
     m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);

@@ -543,6 +543,9 @@ namespace
         VR_ParseWeaponScriptFloat(text, "PelletScatterYaw", data.pelletScatterYaw);
         VR_ParseWeaponScriptFloat(text, "Range", data.range);
         VR_ParseWeaponScriptFloat(text, "MaxPlayerSpeed", data.maxPlayerSpeed);
+        VR_ParseWeaponScriptFloat(text, "SpreadPerShot", data.spreadPerShot);
+        VR_ParseWeaponScriptFloat(text, "MaxSpread", data.maxSpread);
+        VR_ParseWeaponScriptFloat(text, "SpreadDecay", data.spreadDecay);
         VR_ParseWeaponScriptInt(text, "Bullets", data.bullets);
 
         if (!hasSpread)
@@ -1913,7 +1916,7 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
     const bool deferDebugAimOverlayForCleanMirror =
         !queued && m_DesktopMirrorHidePluginOverlays && m_DesktopMirrorEnabled && !m_ScopeRenderingPass;
     const bool d3dAimLineNeedsVisibleSegment =
-        m_D3DAimLineOverlayEnabled || m_AdjustingViewmodel;
+        m_D3DAimLineOverlayEnabled || m_CrosshairEnabled || m_AdjustingViewmodel;
 
 
     C_WeaponCSBase* activeWeapon = nullptr;
@@ -2644,6 +2647,47 @@ bool VR::ApplyVrHandsRealBulletSpreadServerViewAngles(
     return true;
 }
 
+void VR::RecordCrosshairShot(C_WeaponCSBase* weapon, float nativeSpreadDeg)
+{
+    if (!m_CrosshairEnabled || !weapon)
+        return;
+    const EffectiveAttackRangeWeaponData* data = GetEffectiveAttackRangeWeaponData(weapon);
+    if (!data)
+        return;
+    float accum = m_CrosshairAccumSpreadDeg;
+    if (std::isfinite(nativeSpreadDeg) && nativeSpreadDeg > 0.0f && nativeSpreadDeg < 45.0f)
+        accum = std::max(accum, nativeSpreadDeg);
+    accum += std::max(0.0f, data->spreadPerShot);
+    if (data->maxSpread > 0.0f)
+        accum = std::min(accum, data->maxSpread);
+    m_CrosshairAccumSpreadDeg = std::clamp(accum, 0.0f, 45.0f);
+}
+
+void VR::UpdateCrosshairSpread(C_BasePlayer* localPlayer)
+{
+    const auto now = std::chrono::steady_clock::now();
+    const float dt = m_CrosshairLastUpdate.time_since_epoch().count() == 0 ? 0.0f :
+        std::clamp(std::chrono::duration<float>(now - m_CrosshairLastUpdate).count(), 0.0f, 0.25f);
+    m_CrosshairLastUpdate = now;
+    if (!m_CrosshairEnabled || !localPlayer)
+    {
+        m_RenderCrosshairSpreadDeg.store(-1.0f, std::memory_order_relaxed);
+        return;
+    }
+    C_WeaponCSBase* const weapon = static_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon());
+    const EffectiveAttackRangeWeaponData* data = weapon ? GetEffectiveAttackRangeWeaponData(weapon) : nullptr;
+    if (!data)
+    {
+        m_CrosshairAccumSpreadDeg = 0.0f;
+        m_RenderCrosshairSpreadDeg.store(-1.0f, std::memory_order_relaxed);
+        return;
+    }
+    const float stance = GetEffectiveAttackRangeSpreadDegrees(localPlayer, weapon, *data);
+    const float decay = data->spreadDecay > 0.0f ? data->spreadDecay : 4.0f;
+    m_CrosshairAccumSpreadDeg = std::max(0.0f, m_CrosshairAccumSpreadDeg - decay * dt);
+    m_RenderCrosshairSpreadDeg.store(std::max(stance, m_CrosshairAccumSpreadDeg), std::memory_order_relaxed);
+}
+
 bool VR::NotifyVrHandsRealBulletSpreadClientShot(
     C_BasePlayer* localPlayer,
     C_WeaponCSBase* weapon,
@@ -2652,6 +2696,7 @@ bool VR::NotifyVrHandsRealBulletSpreadClientShot(
     float fireSpreadArgument)
 {
     (void)origin;
+    RecordCrosshairShot(weapon, fireSpreadArgument);
 
     if (!m_IsVREnabled || !m_VrHandsRealBulletSpreadEnabled || !localPlayer ||
         !IsVrHandsRealBulletSpreadWeapon(weapon) || m_MouseModeEnabled || ScopeChangesAim() ||
@@ -3501,6 +3546,7 @@ bool VR::ShouldShowAimLine(C_WeaponCSBase* weapon) const
     case C_WeaponCSBase::VOMITJAR:
         return m_AimLineEnabled
             || m_D3DAimLineOverlayEnabled
+            || m_CrosshairEnabled
             || m_BlockFireOnFriendlyAimEnabled
             || m_EffectiveAttackRangeIndicatorEnabled
             || m_EffectiveAttackRangeAutoFireEnabled;
@@ -3891,7 +3937,8 @@ void VR::UpdateD3DAimLineOverlayForView(C_BasePlayer* localPlayer, const CViewSe
     const bool queued = (queueMode != 0);
 
     const bool calibrationGuide = m_RenderWeaponCalibrationActive.load(std::memory_order_relaxed);
-    if ((!m_D3DAimLineOverlayEnabled && !calibrationGuide) || !m_IsVREnabled || (!queued && !localPlayer))
+    const bool lineWanted = m_D3DAimLineOverlayEnabled || calibrationGuide;
+    if ((!lineWanted && !m_CrosshairEnabled) || !m_IsVREnabled || (!queued && !localPlayer))
     {
         clearEye();
         return;
@@ -3975,7 +4022,25 @@ void VR::UpdateD3DAimLineOverlayForView(C_BasePlayer* localPlayer, const CViewSe
     state.outlineColor = VR_PackD3DColor(
         m_D3DAimLineOverlayOutlineColorR, m_D3DAimLineOverlayOutlineColorG, m_D3DAimLineOverlayOutlineColorB, m_D3DAimLineOverlayOutlineColorA);
 
-    if (((state.color >> 24) & 0xFFu) == 0u || state.widthPixels <= 0.0f)
+    state.lineVisible = lineWanted && ((state.color >> 24) & 0xFFu) != 0u && state.widthPixels > 0.0f;
+
+    // Spread crosshair at the projected aim point; the per-eye projection keeps
+    // it at the target's depth in stereo. The gap is the spread cone's angular
+    // radius in this eye's pixels.
+    const float spreadDeg = m_RenderCrosshairSpreadDeg.load(std::memory_order_relaxed);
+    if (m_CrosshairEnabled && spreadDeg >= 0.0f && view.fov > 1.0f && view.width > 0)
+    {
+        const float focal = (static_cast<float>(view.width) * 0.5f) / std::tan(DEG2RAD(view.fov) * 0.5f);
+        state.crosshairValid = true;
+        state.crosshairStyle = m_CrosshairStyle;
+        state.crosshairGapPixels = std::max(m_CrosshairMinGapPixels, std::tan(DEG2RAD(spreadDeg)) * focal);
+        state.crosshairArmPixels = m_CrosshairArmPixels;
+        state.crosshairThicknessPixels = m_CrosshairThicknessPixels;
+        state.crosshairColor = VR_PackD3DColor(m_CrosshairColorR, m_CrosshairColorG, m_CrosshairColorB, m_CrosshairColorA);
+        state.crosshairOutlineColor = VR_PackD3DColor(0, 0, 0, std::min(255, m_CrosshairColorA));
+    }
+
+    if (!state.lineVisible && !state.crosshairValid)
     {
         clearEye();
         return;

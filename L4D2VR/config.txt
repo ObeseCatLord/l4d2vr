@@ -365,6 +365,17 @@ BodyGripInventoryEnabled=true
 // shoulder, pistol or melee on the dominant hip, grenade and pills/adrenaline on the chest.
 // Reach to a holster and hold the weapon-hand grip to draw it instantly; release a held item inside its
 // own holster to put it away. Offsets are metres from the head: forward, toward the dominant side, up.
+// Dynamic spread crosshair at the aim point (X or plus); the gap grows with the weapon's current
+// inaccuracy like the desktop crosshair. Works with or without the aim line.
+CrosshairEnabled=true
+CrosshairStyle=x
+CrosshairArmPixels=7
+CrosshairThicknessPixels=2
+CrosshairMinGapPixels=2
+CrosshairColorRGB=255,255,255
+CrosshairAlpha=210
+// Turn each drawn gun so its bore is parallel to the aim ray: the crosshair then sits on the sights.
+SightAutoAlignEnabled=true
 HolsterPavlovLayoutEnabled=true
 HolsterItemsVisible=true
 HolsterInstantDraw=true

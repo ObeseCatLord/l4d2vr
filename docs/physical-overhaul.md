@@ -23,7 +23,7 @@ Reach to a holster and hold the weapon-hand grip: the item is in your hand immed
 | Chest, dominant side | Pills or adrenaline |
 | Off-hand waist | Spare magazine (or a shell for shotguns) while you have reserve ammo |
 
-The holsters follow your head's yaw past a dead band, and snap turns move them instantly. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn while the first-person body is enabled.
+The holsters follow your head's yaw past a dead band, and snap turns move them instantly. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn in both eyes whether or not the first-person body is enabled.
 
 On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
 

@@ -2428,6 +2428,12 @@ void VR::UpdateTracking()
     PositionAngle viewmodelOffset = localPlayer->GetViewmodelOffset();
 
 	m_ViewmodelPosOffset = viewmodelOffset.position + m_ViewmodelPosAdjust + m_ViewmodelPosePosOffset;
+    // Melee weapons are held at the end of the handle (more reach): push the
+    // weapon forward from the hand. The encoded usercmd pose derives from this
+    // position, so the server's melee traces start further out as well.
+    if (m_MeleeGripReachMeters > 0.0f && !m_MouseModeEnabled && localPlayer && localPlayer->GetActiveWeapon() &&
+        reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon())->GetWeaponID() == C_WeaponCSBase::WeaponID::MELEE)
+        m_ViewmodelPosOffset.x += m_MeleeGripReachMeters * m_VRScale;
 	m_ViewmodelAngOffset = viewmodelOffset.angle + m_ViewmodelAngAdjust + m_ViewmodelPoseAngOffset;
     if (!m_MouseModeEnabled)
     {

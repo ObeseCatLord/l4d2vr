@@ -2840,6 +2840,12 @@ public:
 	bool m_SelfTestPrevValid = false;
 	// One-shot request to tag the next usercmd with the server shove intent (impulse 238).
 	std::atomic<bool> m_PhysicalShoveImpulsePending{ false };
+	// Shoves and melee come from motion only; the triggers do not shove or swing.
+	bool m_MotionOnlyMeleeAndShove = true;
+	// Melee weapons sit this far forward of the hand (held at the handle end).
+	float m_MeleeGripReachMeters = 0.12f;
+	// While set, the viewmodel holds its ready pose (no shove / melee swing animation).
+	std::atomic<uint64_t> m_ViewmodelAnimSuppressUntilMs{ 0 };
 	// Holster drop: a holster-drawn item is held by the grip; releasing drops it.
 	bool m_HolsterReleaseDropEnabled = true;
 	std::atomic<bool> m_HolsterHandInOwnZone{ false };

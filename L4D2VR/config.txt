@@ -405,6 +405,8 @@ ScopeEyeboxDeg=8
 ScopeVignetteExponent=0.25
 PhysicalShoveEnabled=true
 HolsterReleaseDrop=true
+MotionOnlyMeleeAndShove=true
+MeleeGripReachMeters=0.12
 ConsumableGiveEnabled=true
 // Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
 ConsumableGesturesEnabled=true

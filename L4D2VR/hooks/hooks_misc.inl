@@ -9188,7 +9188,11 @@ namespace
         const ModelRenderInfo_t& info,
         void*& pCustomBoneToWorld)
     {
-        if (!vr || !vr->m_IsVREnabled || !vr->m_BodyGripInventoryEnabled || !vr->m_HolsterInstantDraw ||
+        const uint64_t nowMsEarly = GetTickCount64();
+        const bool animSuppressWindow =
+            vr && nowMsEarly < vr->m_ViewmodelAnimSuppressUntilMs.load(std::memory_order_acquire);
+        if (!vr || !vr->m_IsVREnabled ||
+            (!(vr->m_BodyGripInventoryEnabled && vr->m_HolsterInstantDraw) && !animSuppressWindow) ||
             !drawState || !pCustomBoneToWorld || modelName.empty())
             return;
         const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
@@ -9223,8 +9227,9 @@ namespace
             return;
         const auto* sourceBones = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pCustomBoneToWorld);
 
-        const uint64_t nowMs = GetTickCount64();
-        const bool instantWindow = nowMs < vr->m_HolsterInstantDrawUntilMs.load(std::memory_order_acquire);
+        const uint64_t nowMs = nowMsEarly;
+        const bool instantWindow = vr->m_BodyGripInventoryEnabled && vr->m_HolsterInstantDraw &&
+            nowMs < vr->m_HolsterInstantDrawUntilMs.load(std::memory_order_acquire);
         constexpr float kDeployMaskSeconds = 0.9f;
         constexpr float kSettledSeconds = 1.6f;
 
@@ -9232,7 +9237,9 @@ namespace
         const bool readyMatches = ready.valid && ready.numBones == numBones &&
             static_cast<int>(ready.frozenLocalBones.size()) == numBones;
 
-        if (instantWindow && modelAge < kDeployMaskSeconds)
+        // Hold the ready pose through a deploy after an instant draw, and through
+        // motion shoves / melee swings (no native shove or swing animation).
+        if ((instantWindow && modelAge < kDeployMaskSeconds) || (animSuppressWindow && modelAge >= kSettledSeconds))
         {
             if (!readyMatches)
                 return;
@@ -9249,7 +9256,7 @@ namespace
 
         // Refresh the settled pose while the weapon has been out for a while and
         // nothing else is animating it.
-        if (modelAge >= kSettledSeconds && !vr->IsMagazineInteractionManualActive() &&
+        if (modelAge >= kSettledSeconds && !animSuppressWindow && !vr->IsMagazineInteractionManualActive() &&
             (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & (1u << 1)) == 0u)
         {
             MagazineInteractionFrozenViewmodelPoseEntry captured{};

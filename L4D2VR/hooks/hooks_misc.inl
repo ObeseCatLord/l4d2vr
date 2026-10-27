@@ -8791,7 +8791,12 @@ namespace
             (vr->m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine)
             ? "MagazineInteractionFresh"
             : "MagazineInteraction";
-        const int isolationRootBone = vr->m_MagazineInteractionShotgunShellMode
+        // The waist spare is drawn while no reload session is active, so shell mode cannot be
+        // taken from the session flag there; infer the shotgun from the viewmodel instead.
+        const bool shotgunShellDraw = bodySpare
+            ? MagazineInteractionWeaponIdIsShotgun(MagazineInteractionInferWeaponIdFromViewmodelModelName(lowerModel))
+            : vr->m_MagazineInteractionShotgunShellMode;
+        const int isolationRootBone = shotgunShellDraw
             ? ResolveMagazineInteractionShotgunShellIsolationRoot(boneNames, boneParents, clipBone)
             : clipBone;
         const bool built = BuildDetachedSourceMagazineBones(

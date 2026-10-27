@@ -252,7 +252,7 @@ MagazineInteractionQuickReloadMode=false
 MagazineInteractionUseButtonGripInput=true
 MagazineInteractionUseButtonDisbleReloadCommand=false
 MagazineInteractionSeparateButtonInput=false
-MagazineInteractionSuppressEmptyClipAutoReload=false
+MagazineInteractionSuppressEmptyClipAutoReload=true
 MagazineInteractionShotgunShellsPerInsert=1
 MagazineInteractionThumbIndexCurlStart=0.62
 MagazineInteractionThumbIndexCurlRelease=0.42
@@ -381,7 +381,14 @@ HolsterConsumableOffsetMeters=0.16,0.09,-0.34
 ManualPumpEnabled=false
 DualPistolsIndependentHandsEnabled=false
 DualPistolsNativeReloadFallbackEnabled=true
-MagazineReleaseButtonRequired=false
+// Pavlov-style: the release button drops detachable magazines (the AK-47's is pulled out by hand).
+// An empty gun never reloads or ejects on its own; its magazine glows to show a reload is needed.
+MagazineReleaseButtonRequired=true
+MagazineInteractionAutoEjectWhenEmpty=false
+MagazineEmptyGlowEnabled=true
+// Keep the physical reload on servers that cannot do physical magazine transactions (the stock
+// reload runs in step with the gestures there).
+PhysicalReloadOnUnsupportedServers=true
 ManualThrowVelocityScale=4.0
 ManualThrowHorizontalVelocityScale=1.0
 ManualThrowVerticalVelocityScale=1.0

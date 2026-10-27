@@ -1236,7 +1236,9 @@ public:
 	bool m_ManualThrowEnabled = false;
 	bool m_GripReleaseDropEnabled = false;
     std::atomic<unsigned> m_ServerPhysicalInteractionVersion{ 0u };
-	bool m_MagazineReleaseButtonRequired = false;
+	bool m_MagazineReleaseButtonRequired = true;
+	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
+	bool m_MagazineEmptyGlowEnabled = true;
 	bool m_MagazineReleaseJustPressed = false;
 	std::atomic<uint32_t> m_WeaponGripInputState{ 0 };
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };

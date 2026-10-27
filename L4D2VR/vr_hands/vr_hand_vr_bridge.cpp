@@ -6339,7 +6339,9 @@ bool VR::UpdateMagazineInteraction(
             reserve > 0 && reserve <= 5000;
         bodyAmmoAvailable = infinitePistol || reserveRead;
     }
-    if (m_MagazineReleaseButtonRequired && m_MagazineReleaseJustPressed &&
+    const bool releaseButtonRequired =
+        l4d2vr_magazine::ReleaseButtonRequiredFor(m_MagazineReleaseButtonRequired, activeWeaponIdInt);
+    if (releaseButtonRequired && m_MagazineReleaseJustPressed &&
         MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId))
     {
         m_VrHandsTwoHandedGripActive = false;
@@ -6616,7 +6618,7 @@ bool VR::UpdateMagazineInteraction(
             (!IsMagazineInteractionManualActive() || activeWeaponUsesShotgunShells) &&
             !m_MagazineInteractionLeftHandHolding &&
             (!leftHandTouchesMagazineForGripExclusion() || isSeparateInput ||
-             m_MagazineReleaseButtonRequired))
+             releaseButtonRequired))
         {
             float twoHandTargetDistance = FLT_MAX;
             if (leftHandTouchesTwoHandedGripTarget(twoHandTargetDistance))
@@ -8240,8 +8242,9 @@ bool VR::UpdateMagazineInteraction(
         return reloadCommandPending();
     }
 
-    if (l4d2vr_magazine::ShouldEject(m_MagazineReleaseButtonRequired,
-        m_MagazineReleaseJustPressed, m_MagazineInteractionSuppressEmptyClipAutoReload,
+    // Running empty never ejects or reloads on its own; the magazine glows instead.
+    if (l4d2vr_magazine::ShouldEject(releaseButtonRequired,
+        m_MagazineReleaseJustPressed, m_MagazineInteractionAutoEjectWhenEmpty,
         activeClip, MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId)))
     {
         MagazineInteractionBoxSnapshot box{};
@@ -8264,6 +8267,13 @@ bool VR::UpdateMagazineInteraction(
             {
                 if (!beginRemoteMagazineAction(l4d2vr_remote_mag::Action::Eject)) CancelMagazineInteractionManual();
                 return false;
+            }
+            if (choreographedNativeReload)
+            {
+                startImmediateReloadCommand("release-button");
+                MagazineInteractionPlayClipOutSound(this);
+                triggerMagazineInteractionBothHandsHaptic(0.020f, 95.0f, 0.30f, 2);
+                return reloadCommandPending();
             }
 
                 m_MagazineInteractionReloadTriggered = false;
@@ -8298,7 +8308,7 @@ bool VR::UpdateMagazineInteraction(
 
     // Attached magazines require the release button in physical-controls mode.
     // An off-hand grip near the magazine well must not start an ejection.
-    if (m_MagazineReleaseButtonRequired)
+    if (releaseButtonRequired)
         return reloadCommandPending();
 
     if (!MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId))

@@ -1119,6 +1119,28 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		resetEffectiveRangeAutoFireDelay();
 	}
 
+	// Motion melee on VR-aware servers: a detected swing presses the stock
+	// attack for a few ticks so the server's melee runs (its sweep follows the
+	// blade from the encoded pose). Plain servers use the swing path above.
+	{
+		static uint32_t s_vrMeleeSeenSwingSerial = 0u;
+		static int s_vrMeleeAttackTicks = 0;
+		const uint32_t swingSerial = m_VR->m_MeleeSwingStartSerial.load(std::memory_order_acquire);
+		if (swingSerial != s_vrMeleeSeenSwingSerial)
+		{
+			s_vrMeleeSeenSwingSerial = swingSerial;
+			if (m_VR->m_MotionOnlyMeleeAndShove && m_VR->m_IsVREnabled && !m_VR->m_ForceNonVRServerMovement &&
+				m_VR->m_MeleeMotionSwingEligible)
+				s_vrMeleeAttackTicks = 3;
+		}
+		if (s_vrMeleeAttackTicks > 0)
+		{
+			if (m_VR->m_MeleeMotionSwingEligible)
+				cmd->buttons |= (1 << 0); // IN_ATTACK
+			--s_vrMeleeAttackTicks;
+		}
+	}
+
 	// Pills/adrenaline used by gesture: hold the stock attack until consumed.
 	if (m_VR->m_ConsumableGesturesEnabled && std::chrono::steady_clock::now() < m_VR->m_ConsumableUseHoldUntil)
 		cmd->buttons |= (1 << 0); // IN_ATTACK

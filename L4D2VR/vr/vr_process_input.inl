@@ -552,6 +552,28 @@ void VR::ProcessInput()
             weaponGripInputState = gripData.bActive
                 ? (1u | (gripData.bState ? 2u : 0u)) : 0u;
         }
+        else
+        {
+            // Diagnostics only: the per-hand read also checks which device produced
+            // the press, and a press from an unverified device must never count
+            // (it could be the other hand). Log why it was rejected.
+            vr::InputDigitalActionData_t plain{};
+            if (GetDigitalActionData(m_ActionWeaponGrip, plain) && plain.bActive)
+            {
+                static uint64_t s_LastGripFallbackLogMs = 0;
+                const uint64_t nowMs = GetTickCount64();
+                if (plain.bState && nowMs - s_LastGripFallbackLogMs >= 10000u)
+                {
+                    s_LastGripFallbackLogMs = nowMs;
+                    vr::InputOriginInfo_t origin{};
+                    origin.trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;
+                    if (m_Input)
+                        m_Input->GetOriginTrackedDeviceInfo(plain.activeOrigin, &origin, sizeof(origin));
+                    Game::logMsg("[VR][Grip] weapon grip pressed but the per-hand check rejected it (origin device %u, expected %u)",
+                        origin.trackedDeviceIndex, GetPhysicalControllerIndexForHand(physicalLeft));
+                }
+            }
+        }
     }
 
     vr::InputDigitalActionData_t primaryAttackActionData{};
@@ -636,6 +658,30 @@ void VR::ProcessInput()
         dualLeftTriggerDown = (dualTriggerState & 8u) != 0u;
         secondaryAttackActive = false; // Left trigger fires its pistol rather than shoving.
         secondaryAttackJustPressed = false;
+    }
+
+    // Motion-only shoves and melee: the triggers never shove (secondary) with
+    // guns, melee weapons or throwables, and never swing a melee weapon (the
+    // chainsaw still runs on the trigger). Physical motion does both
+    // (vr/vr_melee_motion.inl). Medkits, pills and adrenaline keep secondary
+    // for healing and giving.
+    int triggerWeaponId = 0;
+    if (localPlayer && localPlayer->GetActiveWeapon())
+        triggerWeaponId = static_cast<int>(reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon())->GetWeaponID());
+    const bool motionOnlyMeleeTriggerBlock = m_MotionOnlyMeleeAndShove && m_IsVREnabled && !m_MouseModeEnabled &&
+        triggerWeaponId == C_WeaponCSBase::WeaponID::MELEE && m_MeleeMotionSwingEligible;
+    if (m_MotionOnlyMeleeAndShove && m_IsVREnabled && !m_MouseModeEnabled &&
+        (l4d2vr_calibration::IsFirearm(triggerWeaponId) || triggerWeaponId == C_WeaponCSBase::WeaponID::MELEE ||
+            triggerWeaponId == C_WeaponCSBase::WeaponID::CHAINSAW || triggerWeaponId == C_WeaponCSBase::WeaponID::MOLOTOV ||
+            triggerWeaponId == C_WeaponCSBase::WeaponID::PIPE_BOMB || triggerWeaponId == C_WeaponCSBase::WeaponID::VOMITJAR))
+    {
+        secondaryAttackActive = false;
+        secondaryAttackJustPressed = false;
+    }
+    if (motionOnlyMeleeTriggerBlock)
+    {
+        primaryAttackDown = false;
+        primaryAttackJustPressed = false;
     }
 
     // Manual magazine handling uses the gameplay left/off hand. In LeftHanded mode
@@ -1281,7 +1327,10 @@ void VR::ProcessInput()
                 return VectorLength(controllerPos - anchor) <= range;
             };
 
-        if (m_DrawInventoryAnchors && m_Game->m_DebugOverlay)
+        // The Pavlov holster layout replaces these legacy anchors: no debug
+        // shapes and no Reload/Crouch slot switching near them.
+        const bool holsterLayoutActive = m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled;
+        if (m_DrawInventoryAnchors && !holsterLayoutActive && m_Game->m_DebugOverlay)
         {
             // Highlight anchors when either hand is inside the region.
             const bool chestActive =
@@ -1383,6 +1432,8 @@ void VR::ProcessInput()
         // When consumed, we also swallow the button until release so it won't also reload/duck.
         auto triggerInventoryAtPos = [&](const Vector& controllerPos) -> bool
             {
+                if (holsterLayoutActive)
+                    return false;
                 const bool nearBack = isControllerNear(controllerPos, backAnchor, gestureRange);
                 const bool nearChest = isControllerNear(controllerPos, chestAnchor, chestGestureRange);
                 const bool nearLeftWaist = isControllerNear(controllerPos, leftWaistAnchor, gestureRange);
@@ -1517,6 +1568,30 @@ void VR::ProcessInput()
                         ready ? 1 : 0, frameValid ? 1 : 0, gripActive ? 1 : 0, gripDown ? 1 : 0,
                         static_cast<int>(grabInput.handZone), activeSlot, occupiedMask, distances);
                 }
+            }
+            {
+                // One line per grip press: what the holsters saw (helps tune zones).
+                static bool s_PrevHolsterGripDown = false;
+                if (gripDown && !s_PrevHolsterGripDown)
+                {
+                    float nearest = 99.0f;
+                    int nearestZone = -1;
+                    for (int zone = 0; frameValid && zone < l4d2vr_holster::kZoneCount; ++zone)
+                    {
+                        const float d = (l4d2vr_holster::ZoneCenterWorld(frame, m_HolsterLayout,
+                            static_cast<l4d2vr_holster::Zone>(zone)) - m_RightControllerPosAbs).Length() /
+                            (std::max)(1.0f, m_VRScale);
+                        if (d < nearest)
+                        {
+                            nearest = d;
+                            nearestZone = zone;
+                        }
+                    }
+                    Game::logMsg("[VR][Holster] grip pressed: ready=%d zone=%d nearest=slot%d at %.2f m (radius %.2f) active=slot%d",
+                        ready ? 1 : 0, static_cast<int>(grabInput.handZone), nearestZone + 1, nearest,
+                        nearestZone >= 0 ? m_HolsterLayout.radius[nearestZone] : 0.0f, activeSlot + 1);
+                }
+                s_PrevHolsterGripDown = gripDown;
             }
             m_HolsterHandInOwnZone.store(frameValid && activeSlot >= 0 &&
                 grabInput.ownZoneUnderHand == static_cast<l4d2vr_holster::Zone>(activeSlot), std::memory_order_release);

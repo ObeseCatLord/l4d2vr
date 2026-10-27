@@ -3195,6 +3195,8 @@ namespace
         sampleKeys.insert("VrHandsTwoHandedStabilizerMinCutoffHz");
         sampleKeys.insert("VrHandsTwoHandedStabilizerBeta");
         sampleKeys.insert("HolsterReleaseDrop");
+        sampleKeys.insert("MotionOnlyMeleeAndShove");
+        sampleKeys.insert("MeleeGripReachMeters");
         sampleKeys.insert("ConsumableGiveEnabled");
         for (const auto key : l4d2vr_calibration::kConfigKeys)
             sampleKeys.insert(std::string(key));

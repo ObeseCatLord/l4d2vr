@@ -3225,6 +3225,8 @@ void VR::ParseConfigFile()
     m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 150.0f), 100.0f, 1000.0f);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
     m_HolsterReleaseDropEnabled = getBool("HolsterReleaseDrop", true);
+    m_MotionOnlyMeleeAndShove = getBool("MotionOnlyMeleeAndShove", true);
+    m_MeleeGripReachMeters = std::clamp(getFloat("MeleeGripReachMeters", 0.12f), 0.0f, 0.4f);
     m_ConsumableGiveEnabled = getBool("ConsumableGiveEnabled", true);
     m_ConsumableGesturesEnabled = getBool("ConsumableGesturesEnabled", true);
     m_CrosshairEnabled = getBool("CrosshairEnabled", true);

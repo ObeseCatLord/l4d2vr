@@ -5397,9 +5397,22 @@ bool VR::UpdateMagazineInteraction(
         ~BodyAmmoPublication() { destination.store(value, std::memory_order_release); }
     } bodyAmmoPublication{ m_BodyAmmoAvailable, bodyAmmoAvailable };
     // Glow the gun's magazine while it is empty and nothing is reloading it.
-    m_MagazineEmptyGlowActive.store(m_MagazineEmptyGlowEnabled && activeClip == 0 &&
+    const bool emptyMagazineHint = m_MagazineEmptyGlowEnabled && activeClip == 0 &&
         MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId) &&
-        !IsMagazineInteractionManualActive(), std::memory_order_release);
+        !IsMagazineInteractionManualActive();
+    m_MagazineEmptyGlowActive.store(emptyMagazineHint, std::memory_order_release);
+    {
+        // Glow whatever the next reload step needs: the bolt, slide or pump while
+        // the gun waits to be cycled, and the spare magazine once the old one is out.
+        uint32_t hint = emptyMagazineHint ? 1u : 0u;
+        if (m_MagazineEmptyGlowEnabled &&
+            (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab ||
+                m_ManualPumpBlockingFire.load(std::memory_order_acquire)))
+            hint |= 2u;
+        if (m_MagazineEmptyGlowEnabled && m_MagazineInteractionState == MagazineInteractionManualState::WaitingForFreshMagazine)
+            hint |= 4u;
+        m_ReloadHintMask.store(hint, std::memory_order_release);
+    }
     const bool supportLeft = MagazineReloadSupportIsLeft();
     const Vector supportPosition = supportLeft ? m_LeftControllerPosAbs : m_RightControllerPosAbs;
     const QAngle supportAngles = supportLeft ? m_LeftControllerAngAbs : m_RightControllerAngAbs;

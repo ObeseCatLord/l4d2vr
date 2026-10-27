@@ -1316,6 +1316,9 @@ public:
 	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
 	bool m_MagazineEmptyGlowEnabled = true;
 	std::atomic<bool> m_MagazineEmptyGlowActive{ false };
+	// Reload hints that glow: 1 the gun's magazine (empty), 2 the bolt / slide /
+	// pump (needs cycling), 4 the spare magazine to grab next.
+	std::atomic<uint32_t> m_ReloadHintMask{ 0u };
 	// Ejected magazines that fall to the floor (rendered with the viewmodel's clip subtree).
 	bool m_MagazineDropEnabled = true;
 	float m_MagazineDropLifetimeSeconds = 8.0f;

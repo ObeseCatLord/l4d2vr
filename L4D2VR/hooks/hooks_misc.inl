@@ -8855,6 +8855,41 @@ namespace
             vr->m_RenderFrameSeq.load(std::memory_order_relaxed), false, outBones);
     }
 
+    // The bolt / slide / pump glows while the gun waits to be cycled. Its bone
+    // subtree is redrawn in place over the final viewmodel pose.
+    inline bool BuildReloadBoltGlowBones(
+        VR* vr,
+        void* drawState,
+        const std::string& modelName,
+        const void* pFinalBoneToWorld,
+        vr_vm_stabilize::Mat3x4*& outBones)
+    {
+        outBones = nullptr;
+        if (!vr || (vr->m_ReloadHintMask.load(std::memory_order_acquire) & 2u) == 0u || !drawState || !pFinalBoneToWorld)
+            return false;
+        const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        if (!HooksModelNameIsViewmodel(lowerModel))
+            return false;
+        MagazineInteractionBoxSnapshot box{};
+        if (!vr->GetMagazineInteractionBoltBox(box) || vr_vm_stabilize::ToLowerAscii(box.modelName) != lowerModel)
+            return false;
+        std::vector<std::string> boneNames;
+        std::vector<int> boneParents;
+        int numBones = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+        if (!vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, boneNames, boneParents, numBones,
+                boneIndex, stride, numBonesOffset) ||
+            numBones <= 0 || numBones > 512 || static_cast<int>(boneParents.size()) < numBones ||
+            box.boneIndex < 0 || box.boneIndex >= numBones)
+            return false;
+        const auto* bones = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pFinalBoneToWorld);
+        vr_vm_stabilize::Mat3x4 boltWorld{};
+        if (!vr_vm_stabilize::SafeRead(bones + box.boneIndex, boltWorld))
+            return false;
+        return BuildDetachedSourceMagazineBones("ReloadBoltGlow", modelName, boneParents, bones, numBones,
+            box.boneIndex, box.boneIndex, HooksMat3x4ToVrHandMatrix(boltWorld), nullptr,
+            vr->m_RenderFrameSeq.load(std::memory_order_relaxed), false, outBones);
+    }
+
     // Publish the drawn bore direction (weapon_bone +Z) in the viewmodel's own
     // frame for crosshair-to-sights alignment.
     inline void PublishViewmodelSightBore(
@@ -25684,6 +25719,18 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     // same active material, shader, skin, lighting and post-processing as the gun.
     if (drawMagazineInteractionDetachedMagazine && magazineInteractionDetachedMagazineBones)
         hkDrawModelExecute.fOriginal(ecx, state, *pDrawInfo, magazineInteractionDetachedMagazineBones);
+    // Reload hint: the spare magazine to grab next glows.
+    if (!shadowDepthDraw && drawMagazineInteractionDetachedMagazine && magazineInteractionDetachedMagazineBones &&
+        m_VR && (m_VR->m_ReloadHintMask.load(std::memory_order_acquire) & 4u) != 0u)
+    {
+        if (IMaterial* const hintMaterial = HooksHolsterHighlightMaterial())
+        {
+            const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
+            const float pulse = 0.45f + 0.35f * std::sin(t * 6.2831853f * 1.1f);
+            HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, magazineInteractionDetachedMagazineBones, hintMaterial,
+                pulse * 0.55f, pulse * 0.85f, pulse);
+        }
+    }
 
     if (!shadowDepthDraw && m_VR && pBonesToWorldFinal)
         PublishViewmodelSightBore(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
@@ -25729,6 +25776,14 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             const float pulse = 0.55f + 0.45f * std::sin(t * 6.2831853f * 1.1f);
             HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
                 pulse, pulse * 0.82f, pulse * 0.35f);
+        }
+        vr_vm_stabilize::Mat3x4* boltGlowBones = nullptr;
+        if (glowMaterial && BuildReloadBoltGlowBones(m_VR, state, modelName, pBonesToWorldFinal, boltGlowBones) && boltGlowBones)
+        {
+            const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
+            const float pulse = 0.45f + 0.35f * std::sin(t * 6.2831853f * 1.1f);
+            HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, boltGlowBones, glowMaterial,
+                pulse * 0.55f, pulse * 0.85f, pulse);
         }
     }
 

@@ -228,6 +228,18 @@ namespace l4d2vr_magazine
         return buttonRequired ? buttonPressed : (suppressEmptyAutoReload && clip == 0);
     }
 
+    // Pavlov-style release: detachable magazines drop with the release button,
+    // except rifles whose magazine is rocked out by hand (the AK-47, id 26).
+    inline bool MagazineRemovedByHand(int weaponId)
+    {
+        return weaponId == 26;
+    }
+
+    inline bool ReleaseButtonRequiredFor(bool configured, int weaponId)
+    {
+        return configured && !MagazineRemovedByHand(weaponId);
+    }
+
     inline int ChamberRoundsAfterEject(int clip)
     {
         // Reserve ammunition cannot add a round to an empty chamber or

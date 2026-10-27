@@ -3230,7 +3230,9 @@ void VR::ParseConfigFile()
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);
     m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", false);
     m_DualPistolsNativeReloadFallbackEnabled = getBool("DualPistolsNativeReloadFallbackEnabled", true);
-    m_MagazineReleaseButtonRequired = getBool("MagazineReleaseButtonRequired", false);
+    m_MagazineReleaseButtonRequired = getBool("MagazineReleaseButtonRequired", true);
+    m_MagazineInteractionAutoEjectWhenEmpty = getBool("MagazineInteractionAutoEjectWhenEmpty", false);
+    m_MagazineEmptyGlowEnabled = getBool("MagazineEmptyGlowEnabled", true);
     m_ManualThrowVelocityScale = std::clamp(getFloat("ManualThrowVelocityScale", m_ManualThrowVelocityScale), 0.0f, 20.0f);
     m_ManualThrowHorizontalVelocityScale = std::clamp(getFloat("ManualThrowHorizontalVelocityScale", m_ManualThrowHorizontalVelocityScale), 0.0f, 10.0f);
     m_ManualThrowVerticalVelocityScale = std::clamp(getFloat("ManualThrowVerticalVelocityScale", m_ManualThrowVerticalVelocityScale), 0.0f, 10.0f);

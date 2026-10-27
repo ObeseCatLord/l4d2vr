@@ -2970,6 +2970,21 @@
         return true;
     }
 
+    // Holstered items are placed only by the hooked SetupBones. A renderable
+    // whose class uses another SetupBones (or a hook that is not installed yet)
+    // would draw with its native carried bones, so the holster draw skips it.
+    bool HooksHolsterItemBonesPlaceable(void* renderable)
+    {
+        if (!renderable ||
+            !g_HooksWorldPoseWeaponSetupBonesHookReady.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+        void* target = nullptr;
+        return HooksWorldPoseProbeWeaponSetupBonesTarget(renderable, target) &&
+            target == g_HooksWorldPoseWeaponSetupBonesTarget.load(std::memory_order_acquire);
+    }
+
     inline bool HooksWorldPoseApplyWeaponSetupBones(
         VR* vr,
         Game* game,

@@ -54,6 +54,9 @@ namespace
         VR* vr,
         Game* game);
     void HooksWorldPoseBeginStereoFrame();
+    // Defined in hooks_world_pose.inl: true only when this renderable's
+    // SetupBones runs through the hooked weapon SetupBones detour.
+    bool HooksHolsterItemBonesPlaceable(void* renderable);
 
     // The local player is hidden in first person at multiple renderable stages:
     // ShouldDraw can unregister it, GetModel can return null, and the player
@@ -407,10 +410,15 @@ namespace
         }
     }
 
+    bool HooksHolsterItemsEnabled(const VR* vr)
+    {
+        return vr && vr->m_BodyGripInventoryEnabled && vr->m_HolsterPavlovLayoutEnabled &&
+            vr->m_HolsterItemsVisible;
+    }
+
     void HooksHolsterSubmitNativeStageItems(VR* vr, int flags)
     {
-        if (!vr || !vr->m_BodyGripInventoryEnabled || !vr->m_HolsterPavlovLayoutEnabled ||
-            !vr->m_HolsterItemsVisible)
+        if (!HooksHolsterItemsEnabled(vr))
             return;
         VR::HolsterRenderSnapshot snapshot{};
         if (!vr->GetHolsterRenderSnapshot(snapshot))
@@ -420,12 +428,87 @@ namespace
         for (int i = 0; i < snapshot.count; ++i)
         {
             VR::HolsterRenderItem item = snapshot.items[i];
+            // Without the hooked SetupBones the item would be drawn with its
+            // native carried bones (in the player's hand), not at the holster.
+            if (!item.renderable || !HooksHolsterItemBonesPlaceable(item.renderable))
+                continue;
             item.highlighted = item.slot == highlightSlot;
             l4d2vr_holster::ItemPose pose{};
             if (!vr->BuildHolsterItemWorld(item, pose))
                 continue;
             HooksHolsterDrawItemSafe(item, pose, flags, highlight);
         }
+    }
+
+    // Viewmodel-stage holster submission, used when the first-person body
+    // stage is not drawing for the current eye (FirstPersonBodyEnabled=false,
+    // body hooks not ready, ...). RenderView's main eye scene publishes a fresh
+    // nonzero token only in actual first person and only when the body eye
+    // scene is inactive; the body stage keeps drawing holsters itself, so the
+    // two paths never both draw in one eye. The first non-shadow viewmodel draw
+    // of that eye claims the token, so the items are submitted exactly once per
+    // eye view. Scope/rear-mirror RTTs, nested RenderViews and desktop views
+    // run outside the token's lifetime.
+    volatile LONG g_HolsterViewmodelStageToken = 0;
+    volatile LONG g_HolsterViewmodelStageClaimed = 0;
+    volatile LONG g_HolsterViewmodelStageSerial = 0;
+    // Set by DrawModelExecute when the current draw is a native viewmodel color
+    // draw; read by its outer wrapper after the viewmodel draw has finished.
+    thread_local bool t_HolsterViewmodelStageDrawSeen = false;
+    // Our own DrawModel calls re-enter DrawModelExecute; never submit from there.
+    thread_local bool t_HolsterViewmodelStageSubmitting = false;
+
+    LONG HooksHolsterNextViewmodelStageToken()
+    {
+        LONG token = InterlockedIncrement(&g_HolsterViewmodelStageSerial);
+        if (token == 0)
+            token = InterlockedIncrement(&g_HolsterViewmodelStageSerial);
+        return token;
+    }
+
+    bool HooksHolsterClaimViewmodelStage()
+    {
+        const LONG token = InterlockedCompareExchange(&g_HolsterViewmodelStageToken, 0, 0);
+        if (token == 0)
+            return false;
+        return InterlockedExchange(&g_HolsterViewmodelStageClaimed, token) != token;
+    }
+
+    void HooksHolsterSubmitViewmodelStageItems(VR* vr)
+    {
+        constexpr int kStudioRender = 0x00000001;
+        if (t_HolsterViewmodelStageSubmitting || !HooksHolsterItemsEnabled(vr) ||
+            !vr->m_IsVREnabled || vr->m_IsThirdPersonCamera ||
+            vr->m_ScopeRenderingPass || vr->m_RearMirrorRenderingPass ||
+            !Hooks::m_Game || !Hooks::m_Game->m_MaterialSystem || !Hooks::m_Game->m_ModelRender)
+        {
+            return;
+        }
+        if (!HooksHolsterClaimViewmodelStage())
+            return;
+
+        // Source brackets the viewmodel list with DepthRange(0, 0.1). VR eyes
+        // share one projection for world and viewmodels, so draw the holstered
+        // items with the full range and let world geometry occlude them. The
+        // call is recorded in order on the queued render context.
+        {
+            CRefPtr<IMatRenderContext> renderContext;
+            renderContext = Hooks::m_Game->m_MaterialSystem->GetRenderContext();
+            if (renderContext)
+                renderContext->DepthRange(0.0f, 1.0f);
+        }
+
+        // Under mat_queue_mode != 0 the viewmodel stage consumes the render
+        // frame snapshot (same as the native hands-only path), so place the
+        // holsters from the same HMD sample the eye was rendered from.
+        const bool queued = Hooks::m_Game->GetMatQueueMode() != 0;
+        const bool previousSnapshot = VR::t_UseRenderFrameSnapshot;
+        if (queued)
+            VR::t_UseRenderFrameSnapshot = true;
+        t_HolsterViewmodelStageSubmitting = true;
+        HooksHolsterSubmitNativeStageItems(vr, kStudioRender);
+        t_HolsterViewmodelStageSubmitting = false;
+        VR::t_UseRenderFrameSnapshot = previousSnapshot;
     }
 
     bool HooksFirstPersonBodyEnsureRenderableHooks(C_BasePlayer* player)

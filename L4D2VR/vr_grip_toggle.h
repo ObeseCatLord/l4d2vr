@@ -18,6 +18,7 @@ namespace l4d2vr_grip_toggle
         std::uint32_t pickupSerial = 0u;  // bumps when a contact pickup was requested from the server
         std::uint32_t heldItemTag = 0u;   // identity of the item in the hand (0 = none)
         bool inOwnHolster = false;        // the hand is inside the current item's own holster
+        bool inOtherHolster = false;      // the hand is over another occupied holster
     };
 
     struct Params
@@ -46,13 +47,41 @@ namespace l4d2vr_grip_toggle
                 return false;
             }
 
+            if (m_SwapPress)
+            {
+                // Second half of a swap: grab from the other holster.
+                m_SwapPress = false;
+                StartGrab(in, params);
+                return true;
+            }
             if (pressed)
             {
                 if (m_Held)
                 {
+                    // Squeezing over another holster swaps items: let go for one
+                    // frame (the item is not dropped over a holster), then grab.
+                    const bool swap = in.inOtherHolster;
                     Clear();
+                    m_SwapPress = swap;
                     return false;
                 }
+                StartGrab(in, params);
+            }
+            if (!m_Held)
+                return false;
+            return Continue(in, params);
+        }
+
+        bool Held() const { return m_Held; }
+        void Reset()
+        {
+            Clear();
+            m_PrevRaw = false;
+        }
+
+    private:
+        void StartGrab(const Input& in, const Params& params)
+        {
                 m_Held = true;
                 m_Pending = true;
                 m_PressMs = in.nowMs;
@@ -62,10 +91,10 @@ namespace l4d2vr_grip_toggle
                 m_TakeAtPress = in.takeSerial;
                 m_PickupAtPress = in.pickupSerial;
                 m_PinnedTag = 0u;
-            }
-            if (!m_Held)
-                return false;
+        }
 
+        bool Continue(const Input& in, const Params& params)
+        {
             if (m_Pending)
             {
                 if (in.takeSerial != m_TakeAtPress)
@@ -116,24 +145,18 @@ namespace l4d2vr_grip_toggle
             return true;
         }
 
-        bool Held() const { return m_Held; }
-        void Reset()
-        {
-            Clear();
-            m_PrevRaw = false;
-        }
-
-    private:
         void Clear()
         {
             m_Held = false;
             m_Pending = false;
+            m_SwapPress = false;
             m_PinnedTag = 0u;
         }
 
         bool m_PrevRaw = false;
         bool m_Held = false;
         bool m_Pending = false;
+        bool m_SwapPress = false;
         std::uint64_t m_PressMs = 0u;
         std::uint64_t m_TakenMs = 0u;
         std::uint32_t m_Deadline = 0u;

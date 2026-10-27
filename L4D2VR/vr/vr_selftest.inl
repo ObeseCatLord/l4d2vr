@@ -516,10 +516,64 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
+    if (step == "togglegrip")
+    {
+        // Toggle grips: squeeze once to take, again to let go.
+        static bool s_savedToggle = true;
+        auto squeeze = [&](bool down) { button(m_ActionWeaponGrip, down); };
+        if (at(0, 0.0f)) { s_savedToggle = m_GripToggleEnabled; m_GripToggleEnabled = true; cmd("give rifle"); button(m_ActionWeaponGrip, false); }
+        if (at(1, 1.0f)) cmd("use weapon_pistol");
+        if (m_SelfTestStage >= 2 && m_SelfTestStage <= 4) SelfTestReachHolster(0);
+        if (at(2, 1.6f)) {}
+        if (at(3, 2.4f)) squeeze(true);
+        if (at(4, 2.6f)) squeeze(false);
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(6, 4.5f))
+        {
+            const int slot = SelfTestActiveSlot(player);
+            std::snprintf(detail, sizeof(detail), "active slot %d, toggle %s", slot + 1, m_GripToggle.Held() ? "held" : "released");
+            SelfTestReport("toggle grip keeps the drawn item after letting go", slot == 0 && m_GripToggle.Held(), detail);
+        }
+        if (at(7, 4.8f)) squeeze(true);
+        if (at(8, 5.0f)) squeeze(false);
+        if (at(9, 6.5f))
+        {
+            void* const primary = player->Weapon_GetSlot(0);
+            std::snprintf(detail, sizeof(detail), "primary slot %s after the second squeeze",
+                primary ? "still occupied" : "empty");
+            SelfTestReport("toggle grip second squeeze drops the item", primary == nullptr && !m_GripToggle.Held(), detail);
+            cmd("give rifle");
+        }
+        if (at(10, 7.5f)) cmd("use weapon_pistol");
+        if (m_SelfTestStage >= 11 && m_SelfTestStage <= 13) SelfTestReachHolster(0);
+        if (at(11, 8.0f)) {}
+        if (at(12, 8.8f)) squeeze(true);
+        if (at(13, 9.0f)) squeeze(false);
+        if (at(14, 9.5f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
+        if (m_SelfTestStage >= 15 && m_SelfTestStage <= 17) SelfTestReachHolster(0);
+        if (at(15, 11.2f)) {}
+        if (at(16, 12.0f)) squeeze(true);
+        if (at(17, 12.2f)) squeeze(false);
+        if (at(18, 13.5f))
+        {
+            void* const primary = player->Weapon_GetSlot(0);
+            const int slot = SelfTestActiveSlot(player);
+            std::snprintf(detail, sizeof(detail), "primary %s, active slot %d", primary ? "kept" : "dropped", slot + 1);
+            SelfTestReport("toggle grip squeeze inside the holster puts it away", primary != nullptr && slot != 0, detail);
+            m_GripToggleEnabled = s_savedToggle;
+            return true;
+        }
+        return false;
+    }
+
     if (step == "holsterdrop")
     {
+        // Hold-to-grip mode.
+        static bool s_savedToggle = true;
         // 1) Draw the rifle from the back with the grip, swing, let go: dropped.
-        if (at(0, 0.0f)) cmd("give rifle");
+        // Register the grip as released first: a real grip action is always active,
+        // and a press that arrives together with activation is (rightly) ignored.
+        if (at(0, 0.0f)) { s_savedToggle = m_GripToggleEnabled; m_GripToggleEnabled = false; cmd("give rifle"); button(m_ActionWeaponGrip, false); }
         if (at(1, 1.0f)) cmd("use weapon_pistol");
         if (m_SelfTestStage >= 2 && m_SelfTestStage <= 3) SelfTestReachHolster(0);
         if (at(2, 1.6f)) {}
@@ -551,6 +605,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             const int slot = SelfTestActiveSlot(player);
             std::snprintf(detail, sizeof(detail), "primary %s, active slot %d", primary ? "kept" : "dropped", slot + 1);
             SelfTestReport("letting go inside the holster keeps the item", primary != nullptr && slot != 0, detail);
+            m_GripToggleEnabled = s_savedToggle;
             return true;
         }
         return false;

@@ -77,7 +77,9 @@ namespace l4d2vr_holster
             Vector(-0.10f, -0.16f, -0.12f),
             Vector(0.16f, 0.09f, -0.34f),
         };
-        float radius[kZoneCount] = { 0.20f, 0.15f, 0.11f, 0.20f, 0.11f };
+        // Generous, Pavlov-sized zones (its hips are 0.20 m capsules and its back a
+        // 0.40 m sphere): a holster you have to hunt for is a holster nobody uses.
+        float radius[kZoneCount] = { 0.25f, 0.20f, 0.13f, 0.25f, 0.13f };
         // Shoulder zones only accept a hand that reached over the shoulder:
         // behind the head's frontal plane and above this height below the head.
         bool overShoulder[kZoneCount] = { true, false, false, true, false };

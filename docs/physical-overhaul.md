@@ -12,7 +12,15 @@ Desktop players running the mod are unaffected; they can join VR servers and pla
 
 ## Holsters
 
-Reach to a holster and hold the weapon-hand grip: the item is in your hand immediately, with a haptic pulse, and the hovered item glows. Release a held item inside its own holster to put it away.
+Reach to a holster and squeeze the weapon-hand grip: the item is in your hand immediately, with a haptic pulse, and the hovered item glows.
+
+Grips are toggles, as in Pavlov (`GripToggle`, on by default). One firm squeeze takes an item and your hand keeps it after you let go; on Index controllers that means a hard squeeze, not a light grip. The next squeeze lets go of it:
+
+- inside the item's own holster, it is put away;
+- over another holster, you swap to that item;
+- anywhere else, it is dropped.
+
+A squeeze that takes nothing is ignored. With `GripToggle=false` you hold the grip to keep an item instead. The two-handed foregrip is also a toggle: squeeze once to take the front of the gun and again to let go (`VrHandsTwoHandedGripHeldMode=false`). Magazines, bolts and slides are held only while you keep squeezing.
 
 | Holster | Contents |
 |---|---|
@@ -27,7 +35,7 @@ The holsters follow your head's yaw past a dead band, and snap turns move them i
 
 On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
 
-Pavlov-style holding (`HolsterReleaseDrop`, on by default): an item you draw from a holster stays in your hand while you keep holding the grip. Letting go drops it with your hand's motion, so you can toss a gun to a teammate. Letting go inside the item's own holster puts it away instead. Items you already held before drawing aren't affected. Dropping needs a server with the plugin or a modded host; elsewhere letting go does nothing.
+Dropping (`HolsterReleaseDrop`, on by default): letting go of an item you took with the grip drops it with your hand's motion, so you can toss a gun to a teammate. Letting go inside or over a holster never drops it. Items you already held before drawing aren't affected. Dropping needs a server with the plugin or a modded host; elsewhere letting go does nothing.
 
 ## Reloading
 
@@ -35,6 +43,7 @@ Pavlov-style holding (`HolsterReleaseDrop`, on by default): an item you draw fro
 - **Fresh magazine:** grab the spare at your off-hand waist and insert it into the magazine well.
 - **Chamber:** if the gun was empty, pull the slide, bolt, charging handle or pump to chamber the first round. Pump shotguns need a pump after each shot (`ManualPumpEnabled`).
 - **Empty guns** never reload or eject on their own; the magazine glows instead (`MagazineEmptyGlowEnabled`).
+- **Reload hints:** whatever the next step needs glows softly. That is the magazine when the gun is empty, the spare magazine once the old one is out, and the slide, bolt, charging handle or pump while the gun waits to be cycled. All of these use the `MagazineEmptyGlowEnabled` setting.
 - **Released magazines** fall to the floor and disappear after a while (`MagazineDropEnabled`, `MagazineDropLifetimeSeconds`).
 - **Speed:** on servers with physical transactions (listen host or plugin) ammo is committed when the magazine seats, so you can reload faster than the animation. On other servers the stock reload runs in step with your hands, so its timer still applies (`PhysicalReloadOnUnsupportedServers`).
 
@@ -90,7 +99,7 @@ Both grips draw from holsters and hold magazines, bolts and foregrips; right A r
 
 ## Self-test (developers)
 
-`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `holsterdrop`, `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
 
 ## Headset test checklist
 

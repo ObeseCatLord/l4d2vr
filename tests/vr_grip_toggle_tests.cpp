@@ -107,8 +107,27 @@ static void TestNotReadyClearsAndDisabledPassesThrough()
     CHECK(!r.Step(false));
 }
 
+static void TestSqueezeOverOtherHolsterSwaps()
+{
+    Rig r;
+    r.Step(true);
+    r.in.takeSerial++;
+    r.Step(false);
+    r.in.heldItemTag = 9u;
+    CHECK(r.Step(false, 2000u));
+    r.in.inOtherHolster = true;
+    CHECK(!r.Step(true));         // one frame let go...
+    CHECK(r.Step(true));          // ...then grab from the other holster
+    r.in.takeSerial++;
+    CHECK(r.Step(false));
+    r.in.inOtherHolster = false;
+    r.in.heldItemTag = 4u;
+    CHECK(r.Step(false, 2000u));  // the new item is held
+}
+
 int main()
 {
+    TestSqueezeOverOtherHolsterSwaps();
     TestDrawKeepsItemAfterLettingGo();
     TestEmptyGrabBecomesTap();
     TestOwnHolsterSqueezeIsImmediateTap();

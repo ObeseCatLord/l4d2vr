@@ -2858,6 +2858,8 @@ public:
 	std::atomic<uint64_t> m_ViewmodelAnimSuppressUntilMs{ 0 };
 	// Holster drop: a holster-drawn item is held by the grip; releasing drops it.
 	bool m_HolsterReleaseDropEnabled = true;
+	// The weapon hand is over another occupied holster (letting go there never drops).
+	std::atomic<bool> m_HolsterHandOverOtherZone{ false };
 	std::atomic<bool> m_HolsterHandInOwnZone{ false };
 	// Handing pills/adrenaline to a teammate (gesture, then server intent or aimed IN_ATTACK2).
 	bool m_ConsumableGiveEnabled = true;

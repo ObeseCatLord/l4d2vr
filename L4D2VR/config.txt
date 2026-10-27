@@ -381,6 +381,8 @@ SightAutoAlignEnabled=true
 // bashing with a gun shoves along the motion.
 MeleeInertiaEnabled=true
 PhysicalShoveEnabled=true
+// Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
+ConsumableGesturesEnabled=true
 HolsterPavlovLayoutEnabled=true
 HolsterItemsVisible=true
 HolsterInstantDraw=true

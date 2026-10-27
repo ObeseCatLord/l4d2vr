@@ -2760,6 +2760,12 @@ public:
 	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
 	QAngle m_PhysicalShoveAngles{ 0.0f, 0.0f, 0.0f };
 	bool m_PhysicalShoveAimValid = false;
+	// Pills to the mouth, adrenaline stabbed into the chest or arm.
+	bool m_ConsumableGesturesEnabled = true;
+	l4d2vr_gesture::PillsMouthDetector m_PillsGesture;
+	l4d2vr_gesture::AdrenalineStabDetector m_AdrenalineGesture;
+	std::chrono::steady_clock::time_point m_ConsumableUseHoldUntil{};
+	C_WeaponCSBase* m_ConsumableUseWeapon = nullptr;
 	void UpdateMeleeMotion(C_BasePlayer* localPlayer);
 	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
 	std::chrono::steady_clock::time_point m_ReloadGestureHoldUntil{};

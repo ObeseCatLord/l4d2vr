@@ -1119,6 +1119,10 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		resetEffectiveRangeAutoFireDelay();
 	}
 
+	// Pills/adrenaline used by gesture: hold the stock attack until consumed.
+	if (m_VR->m_ConsumableGesturesEnabled && std::chrono::steady_clock::now() < m_VR->m_ConsumableUseHoldUntil)
+		cmd->buttons |= (1 << 0); // IN_ATTACK
+
 	// Physical shove (melee thrust / gun bash): aim the shove along the motion
 	// for as long as it is held.
 	if (m_VR->m_PhysicalShoveEnabled && m_VR->m_PhysicalShoveAimValid &&

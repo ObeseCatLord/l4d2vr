@@ -27,6 +27,12 @@ It's best to subscribe to this mod directly on the Workshop to avoid missing upd
 * You can join any server to play, but if the server wasn't created by VR, you will only have *some* VR-exclusive features. 
 * Versus works, but it's barely been tested.
 
+## Installing
+The easiest way to install or update this fork is the [L4D2VR Installer](installer/README.md) (Windows and Linux).
+It finds the game, installs the latest release with SHA-256 checks, keeps your configs, backs up what it replaces
+and has a **Launch in VR** button. On Linux it also checks for the Windows (Proton) build and sets the launch options.
+Manual steps are below.
+
 ## How to use
 1. Download [L4D2VR.zip](https://github.com/keyou91/l4d2vr/releases) and extract the files to your Left 4 Dead 2 installation directory at: `steamapps/common/Left 4 Dead 2`
     - You can also access the installation directory by right-clicking Left 4 Dead 2 in Steam and going to: Manage > **Browse local files**

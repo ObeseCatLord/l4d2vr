@@ -3156,6 +3156,7 @@ namespace
         sampleKeys.insert("HolsterPavlovLayoutEnabled");
         sampleKeys.insert("HolsterItemsVisible");
         sampleKeys.insert("HolsterInstantDraw");
+        sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawDeadbandDeg");
         sampleKeys.insert("HolsterYawSmoothingSeconds");
         sampleKeys.insert("HolsterHeightScale");

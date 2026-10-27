@@ -3245,6 +3245,7 @@ void VR::ParseConfigFile()
     m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
+    m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
     m_HolsterYawDeadbandDeg = std::clamp(getFloat("HolsterYawDeadbandDeg", 20.0f), 0.0f, 90.0f);
     m_HolsterYawSmoothingSeconds = std::clamp(getFloat("HolsterYawSmoothingSeconds", 0.25f), 0.0f, 3.0f);
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);

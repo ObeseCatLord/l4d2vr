@@ -1123,6 +1123,30 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 	if (m_VR->m_ConsumableGesturesEnabled && std::chrono::steady_clock::now() < m_VR->m_ConsumableUseHoldUntil)
 		cmd->buttons |= (1 << 0); // IN_ATTACK
 
+	// Handing pills/adrenaline to a teammate. Plugin servers run the give
+	// themselves (impulse 239, aimed from the eye through the hand); elsewhere
+	// press the stock secondary attack aimed at the teammate's chest.
+	if (m_VR->m_PillGiveImpulsePending.exchange(false, std::memory_order_acq_rel) &&
+		m_VR->m_IsVREnabled && s_ServerUnderstandsVR && m_VR->ServerFeature(l4d2vr_features::PillGive) &&
+		cmd->impulse == 0)
+	{
+		cmd->impulse = 239;
+		m_VR->m_PillGiveHoldUntil = {};
+	}
+	if (std::chrono::steady_clock::now() < m_VR->m_PillGiveHoldUntil && !m_VR->m_AdjustingViewmodel &&
+		!m_VR->m_AdjustingScope)
+	{
+		Vector toTarget = m_VR->m_PillGiveTargetPoint - m_VR->m_HmdPosAbs;
+		if (VectorLength(toTarget) > 1.0f)
+		{
+			QAngle giveAngles{};
+			QAngle::VectorAngles(toTarget, giveAngles);
+			NormalizeAndClampViewAngles(giveAngles);
+			cmd->viewangles = giveAngles;
+		}
+		cmd->buttons |= (1 << 11); // IN_ATTACK2
+	}
+
 	// Physical shove (melee thrust / gun bash): aim the shove along the motion
 	// for as long as it is held.
 	if (m_VR->m_PhysicalShoveEnabled && m_VR->m_PhysicalShoveAimValid &&
@@ -1835,7 +1859,12 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             const uint32_t pickupOffer = m_VR->m_GripPickupOfferTimeMs.load(std::memory_order_acquire);
             const uint32_t leftPickupOffer = m_VR->m_LeftPistolPickupOfferTimeMs.load(std::memory_order_acquire);
             const uint32_t bodySelection = m_VR->m_BodyGripSelectionSerial.load(std::memory_order_acquire);
-            const bool gripPickupEligible = gripSession.gameplay && m_VR->m_GripReleaseDropEnabled &&
+            // Holster drop: items drawn from a holster are held by the grip
+            // (Pavlov style) even without the contact-pickup mode.
+            const bool holsterGripHoldMode = m_VR->m_HolsterReleaseDropEnabled &&
+                m_VR->m_BodyGripInventoryEnabled && m_VR->m_HolsterPavlovLayoutEnabled;
+            const bool gripPickupEligible = gripSession.gameplay &&
+                (m_VR->m_GripReleaseDropEnabled || holsterGripHoldMode) &&
                 l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) &&
                 m_VR->m_IsVREnabled && m_VR->m_EncodeVRUsercmd && s_ServerUnderstandsVR &&
                 !m_VR->m_ForceNonVRServerMovement && !m_VR->m_SuppressPlayerInput &&
@@ -1908,7 +1937,10 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 
 			const bool gripDropEligible =
 				l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) &&
-				gripSession.gameplay && m_VR->m_GripReleaseDropEnabled && manualThrowInputActive && inventoryItem &&
+				gripSession.gameplay && (m_VR->m_GripReleaseDropEnabled || holsterGripHoldMode) &&
+				manualThrowInputActive && inventoryItem &&
+				// Letting go inside the item's own holster puts it away instead.
+				!m_VR->m_HolsterHandInOwnZone.load(std::memory_order_acquire) &&
 				m_VR->m_EncodeVRUsercmd && !m_VR->m_ForceNonVRServerMovement &&
 				m_VR->m_FirstPersonControlReady.load(std::memory_order_acquire) &&
 				!m_VR->m_SuppressPlayerInput &&

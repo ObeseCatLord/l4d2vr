@@ -539,4 +539,103 @@ namespace l4d2vr_gesture
         SampleClock m_Clock{};
         std::array<TargetState, 2> m_Targets{};
     };
+
+    // --------------------------------------------- hand an item to a teammate
+    // Hold the item against a teammate's chest for a moment to give it to them.
+    struct HandoverParams
+    {
+        float itemForwardOffset = 0.08f;  // item point = hand + handForward * offset
+        float radius = 0.30f;             // around the teammate's chest point
+        float dwell = 0.25f;
+        float rearmScale = 1.4f;          // re-arms once no target is within radius * rearmScale
+        float minHeadDistance = 0.30f;    // never near your own head (that is the mouth gesture)
+    };
+
+    struct HandoverTarget
+    {
+        int id = 0;
+        Vector point{ 0.0f, 0.0f, 0.0f };
+    };
+
+    struct HandoverEvent
+    {
+        bool fired = false;
+        int target = 0;
+    };
+
+    class HandoverDetector
+    {
+    public:
+        explicit HandoverDetector(const HandoverParams& params = HandoverParams{}) : m_Params(params) {}
+        void SetParams(const HandoverParams& params) { m_Params = params; }
+        void Reset() { *this = HandoverDetector(m_Params); }
+
+        HandoverEvent Update(const Sample& s, const HandoverTarget* targets, int count)
+        {
+            HandoverEvent event{};
+            Vector forward{};
+            if (!SampleFinite(s) || !Normalize(s.handForward, forward))
+                return event;
+            float dt = m_HasTime ? s.time - m_LastTime : 0.0f;
+            m_LastTime = s.time;
+            m_HasTime = true;
+            if (!std::isfinite(dt) || dt < 0.0f || dt > 0.1f)
+                dt = 0.0f;
+
+            const Vector item = s.handPosition + forward * m_Params.itemForwardOffset;
+            int best = -1;
+            float bestDistance = INFINITY, nearest = INFINITY;
+            if ((item - s.hmdPosition).Length() >= m_Params.minHeadDistance)
+            {
+                for (int i = 0; targets && i < count; ++i)
+                {
+                    if (!Finite(targets[i].point))
+                        continue;
+                    const float d = (targets[i].point - item).Length();
+                    nearest = (std::min)(nearest, d);
+                    if (d <= m_Params.radius && d < bestDistance)
+                    {
+                        best = i;
+                        bestDistance = d;
+                    }
+                }
+            }
+            if (!m_Armed)
+            {
+                if (nearest > m_Params.radius * m_Params.rearmScale)
+                    m_Armed = true;
+                return event;
+            }
+            if (best < 0)
+            {
+                m_Target = 0;
+                m_Dwell = 0.0f;
+                return event;
+            }
+            if (targets[best].id != m_Target)
+            {
+                m_Target = targets[best].id;
+                m_Dwell = 0.0f;
+                return event;
+            }
+            m_Dwell += dt;
+            if (m_Dwell >= m_Params.dwell)
+            {
+                event.fired = true;
+                event.target = m_Target;
+                m_Armed = false;
+                m_Target = 0;
+                m_Dwell = 0.0f;
+            }
+            return event;
+        }
+
+    private:
+        HandoverParams m_Params;
+        bool m_Armed = true;
+        bool m_HasTime = false;
+        float m_LastTime = 0.0f;
+        int m_Target = 0;
+        float m_Dwell = 0.0f;
+    };
 }

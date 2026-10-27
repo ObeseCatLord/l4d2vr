@@ -31,6 +31,7 @@
 #include "vr_holster.h"
 #include "vr_melee_inertia.h"
 #include "vr_selftest.h"
+#include "vr_one_euro.h"
 #include "vr_gesture.h"
 #include "vr_throw_ballistics.h"
 #include "vr_scope_lens.h"
@@ -2183,6 +2184,11 @@ public:
 	bool m_VrHandsTwoHandedGripPistol = false;
 	float m_VrHandsTwoHandedAimStrength = 1.0f;
 	float m_VrHandsTwoHandedAimSmoothingSeconds = 0.025f;
+	// Half-Life 2 VR style two-hand stabilizer (One Euro filter on the aim direction).
+	bool m_VrHandsTwoHandedStabilizerEnabled = true;
+	float m_VrHandsTwoHandedStabilizerMinCutoffHz = 1.2f;
+	float m_VrHandsTwoHandedStabilizerBeta = 1.5f;
+	l4d2vr_filter::OneEuroDirection m_VrHandsTwoHandedAimFilter;
 	float m_VrHandsTwoHandedAimMinHandDistanceMeters = 0.12f;
 	float m_VrHandsTwoHandedAimMaxHandDistanceMeters = 0.85f;
 	Vector m_VrHandsTwoHandedAimOffhandOffsetMeters = { 0.12f, 0.0f, 0.0f };
@@ -2834,6 +2840,15 @@ public:
 	bool m_SelfTestPrevValid = false;
 	// One-shot request to tag the next usercmd with the server shove intent (impulse 238).
 	std::atomic<bool> m_PhysicalShoveImpulsePending{ false };
+	// Holster drop: a holster-drawn item is held by the grip; releasing drops it.
+	bool m_HolsterReleaseDropEnabled = true;
+	std::atomic<bool> m_HolsterHandInOwnZone{ false };
+	// Handing pills/adrenaline to a teammate (gesture, then server intent or aimed IN_ATTACK2).
+	bool m_ConsumableGiveEnabled = true;
+	l4d2vr_gesture::HandoverDetector m_HandoverGesture;
+	std::atomic<bool> m_PillGiveImpulsePending{ false };
+	std::chrono::steady_clock::time_point m_PillGiveHoldUntil{};
+	Vector m_PillGiveTargetPoint{ 0.0f, 0.0f, 0.0f };
 	// Pills to the mouth, adrenaline stabbed into the chest or arm.
 	bool m_ConsumableGesturesEnabled = true;
 	l4d2vr_gesture::PillsMouthDetector m_PillsGesture;

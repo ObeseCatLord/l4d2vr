@@ -1928,6 +1928,9 @@ void VR::ParseConfigFile()
     m_VrHandsVirtualStockEnabled = getBool("VrHandsVirtualStockEnabled", m_VrHandsVirtualStockEnabled);
     m_VrHandsTwoHandedAimStrength = std::clamp(getFloat("VrHandsTwoHandedAimStrength", m_VrHandsTwoHandedAimStrength), 0.0f, 1.0f);
     m_VrHandsTwoHandedAimSmoothingSeconds = std::clamp(getFloat("VrHandsTwoHandedAimSmoothingSeconds", m_VrHandsTwoHandedAimSmoothingSeconds), 0.0f, 0.25f);
+    m_VrHandsTwoHandedStabilizerEnabled = getBool("VrHandsTwoHandedStabilizerEnabled", true);
+    m_VrHandsTwoHandedStabilizerMinCutoffHz = std::clamp(getFloat("VrHandsTwoHandedStabilizerMinCutoffHz", 1.2f), 0.2f, 10.0f);
+    m_VrHandsTwoHandedStabilizerBeta = std::clamp(getFloat("VrHandsTwoHandedStabilizerBeta", 1.5f), 0.0f, 10.0f);
     m_VrHandsTwoHandedAimMinHandDistanceMeters = std::clamp(getFloat("VrHandsTwoHandedAimMinHandDistanceMeters", m_VrHandsTwoHandedAimMinHandDistanceMeters), 0.0f, 1.0f);
     m_VrHandsTwoHandedAimMaxHandDistanceMeters = std::clamp(getFloat("VrHandsTwoHandedAimMaxHandDistanceMeters", m_VrHandsTwoHandedAimMaxHandDistanceMeters), 0.0f, 2.0f);
     m_VrHandsTwoHandedAimOffhandOffsetMeters = getVector3("VrHandsTwoHandedAimOffhandOffsetMeters", m_VrHandsTwoHandedAimOffhandOffsetMeters);
@@ -3221,6 +3224,8 @@ void VR::ParseConfigFile()
     m_IntermissionHudEnabled = getBool("IntermissionHudEnabled", true);
     m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 150.0f), 100.0f, 1000.0f);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
+    m_HolsterReleaseDropEnabled = getBool("HolsterReleaseDrop", true);
+    m_ConsumableGiveEnabled = getBool("ConsumableGiveEnabled", true);
     m_ConsumableGesturesEnabled = getBool("ConsumableGesturesEnabled", true);
     m_CrosshairEnabled = getBool("CrosshairEnabled", true);
     {

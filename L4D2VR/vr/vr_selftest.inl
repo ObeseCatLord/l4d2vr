@@ -516,6 +516,98 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
+    if (step == "holsterdrop")
+    {
+        // 1) Draw the rifle from the back with the grip, swing, let go: dropped.
+        if (at(0, 0.0f)) cmd("give rifle");
+        if (at(1, 1.0f)) cmd("use weapon_pistol");
+        if (m_SelfTestStage >= 2 && m_SelfTestStage <= 3) SelfTestReachHolster(0);
+        if (at(2, 1.6f)) {}
+        if (at(3, 2.4f)) button(m_ActionWeaponGrip, true);
+        if (at(4, 2.9f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(5, 3.6f))
+            SelfTestStartPath({ Key{ 0.0f, SelfTestVec(0.30f, 0.25f, -0.15f) }, Key{ 0.2f, SelfTestVec(0.70f, 0.15f, 0.05f), false } }, {});
+        if (at(6, 3.8f)) button(m_ActionWeaponGrip, false);
+        if (at(7, 5.5f))
+        {
+            void* const primary = player->Weapon_GetSlot(0);
+            std::snprintf(detail, sizeof(detail), "primary slot %s after letting go away from the holster",
+                primary ? "still occupied" : "empty");
+            SelfTestReport("holster drop on grip release", primary == nullptr, detail);
+            cmd("give rifle");
+        }
+        // 2) Draw it again and let go inside its own holster: kept, put away.
+        if (at(8, 6.5f)) cmd("use weapon_pistol");
+        if (m_SelfTestStage >= 9 && m_SelfTestStage <= 10) SelfTestReachHolster(0);
+        if (at(9, 7.0f)) {}
+        if (at(10, 7.8f)) button(m_ActionWeaponGrip, true);
+        if (at(11, 8.3f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
+        if (m_SelfTestStage >= 12 && m_SelfTestStage <= 13) SelfTestReachHolster(0);
+        if (at(12, 9.0f)) {}
+        if (at(13, 9.8f)) button(m_ActionWeaponGrip, false);
+        if (at(14, 11.0f))
+        {
+            void* const primary = player->Weapon_GetSlot(0);
+            const int slot = SelfTestActiveSlot(player);
+            std::snprintf(detail, sizeof(detail), "primary %s, active slot %d", primary ? "kept" : "dropped", slot + 1);
+            SelfTestReport("letting go inside the holster keeps the item", primary != nullptr && slot != 0, detail);
+            return true;
+        }
+        return false;
+    }
+
+    if (step == "give")
+    {
+        if (at(0, 0.0f)) cmd("give pain_pills");
+        if (at(1, 1.0f)) cmd("use weapon_pain_pills");
+        if (m_SelfTestStage == 2 && t >= 2.0f)
+        {
+            // Nearest living survivor teammate.
+            float best = 1e9f;
+            Vector chest{};
+            const int highest = (std::min)(64, m_Game->m_ClientEntityList->GetHighestEntityIndex());
+            for (int i = 1; i <= highest; ++i)
+            {
+                C_BaseEntity* const entity = m_Game->GetClientEntity(i);
+                if (!entity || entity == reinterpret_cast<C_BaseEntity*>(player))
+                    continue;
+                const unsigned char* const base = reinterpret_cast<const unsigned char*>(entity);
+                unsigned char lifeState = 1;
+                int team = 0;
+                Vector origin{};
+                if (!VR_TryReadU8(base, kLifeStateOffset, lifeState) || !VR_TryReadI32(base, kTeamNumOffset, team) ||
+                    lifeState != 0 || team != 2 || !VR_TryGetEntityAbsOrigin(entity, origin))
+                    continue;
+                const float d = (origin - m_HmdPosAbs).Length();
+                if (d < best)
+                {
+                    best = d;
+                    chest = origin + Vector(0.0f, 0.0f, 46.0f);
+                }
+            }
+            if (best > 1e8f)
+            {
+                SelfTestReport("hand pills to a teammate", false, "no teammate found");
+                return true;
+            }
+            m_SelfTestValueA = static_cast<int>(best / (std::max)(1.0f, m_VRScale) * 100.0f);
+            m_SelfTestRightWorld = chest;
+            m_SelfTestRightWorldValid = true;
+            m_SelfTestPathActive = false;
+            m_SelfTestStage = 3;
+        }
+        if (at(3, 4.5f)) SelfTestHoldRight(SelfTestVec(0.35f, 0.2f, -0.3f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(4, 6.0f))
+        {
+            void* const item = player->Weapon_GetSlot(4);
+            std::snprintf(detail, sizeof(detail), "teammate %.2f m away, pills %s", m_SelfTestValueA / 100.0f,
+                item ? "still held" : "given");
+            SelfTestReport("hand pills to a teammate", item == nullptr, detail);
+            return true;
+        }
+        return false;
+    }
+
     if (step == "wait")
         return t >= 10.0f;
 

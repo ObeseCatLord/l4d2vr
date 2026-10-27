@@ -237,6 +237,15 @@ namespace
         Check(!ctx.pillGiveStarted);
         ctx = PreExecute(pills, &give, 201, 0, Input(weapon::kPainPills, kFeatureAllMask), c);
         Check(ctx.pillGiveStarted && (ctx.addButtons & kInAttack2) && ctx.aim == AimReason::PillGive);
+        // With the real eye known, the give traces from the eye through the hand.
+        PlayerVRState handover{};
+        handover.isUsingVR = true;
+        ExecInput withEye = Input(weapon::kPainPills, kFeatureAllMask);
+        withEye.haveEye = true;
+        withEye.eye = Vec3(0, -10, 50);
+        ctx = PreExecute(handover, &give, 202, 0, withEye, c);
+        Check(ctx.aim == AimReason::PillGive && ctx.position.x == 0.0f && ctx.position.z == 50.0f);
+        Check(std::fabs(ctx.aimAngles.x) < 0.01f && std::fabs(ctx.aimAngles.y) < 0.01f);  // straight ahead (+x)
 
         // Grip pickup aims the use trace; mounted guns win over everything.
         PlayerVRState use{};

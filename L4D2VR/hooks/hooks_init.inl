@@ -364,8 +364,9 @@ void Hooks::RetryCreateMoveHook()
     const auto now = std::chrono::steady_clock::now();
     if (now < g_CreateMoveDiscoveryNext)
         return;
+    // Client mode can appear late under Proton/Wine; keep retrying (non-blocking) for two minutes.
     if (g_CreateMoveDiscoveryDeadline.time_since_epoch().count() == 0)
-        g_CreateMoveDiscoveryDeadline = now + std::chrono::seconds(30);
+        g_CreateMoveDiscoveryDeadline = now + std::chrono::seconds(120);
     g_CreateMoveDiscoveryNext = now + std::chrono::seconds(1);
     LPVOID target = ProbeCreateMoveTarget(m_Game->m_Offsets->g_pClientMode.address);
     if (!target)
@@ -373,7 +374,7 @@ void Hooks::RetryCreateMoveHook()
         if (now >= g_CreateMoveDiscoveryDeadline)
         {
             g_CreateMoveDiscoveryPending = false;
-            Game::logMsg("[VR][Input] CreateMove unavailable: client-mode discovery expired after 30s");
+            Game::logMsg("[VR][Input] CreateMove unavailable: client-mode discovery expired after 120s");
         }
         return;
     }

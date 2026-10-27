@@ -54,6 +54,7 @@ CLIENT_PRESERVE = (
     "vr/scope_adjustments.txt",
     "vr/*adjustments*.txt",
     "vr/*calibration*",
+    "vr/native_viewmodel_hands_freeze_pose.txt",  # saved by the in-game hand pose editor
 )
 SERVER_PRESERVE = ("*l4d2vr_server_config.txt", "cfg/*")
 

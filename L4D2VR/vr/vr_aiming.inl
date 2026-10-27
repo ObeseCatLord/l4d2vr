@@ -2647,6 +2647,40 @@ bool VR::ApplyVrHandsRealBulletSpreadServerViewAngles(
     return true;
 }
 
+bool VR::GetHandAimViewAngles(bool leftHand, const Vector& eyePosition, QAngle& outAngles)
+{
+    if (!m_Game || !m_Game->m_EngineTrace || !l4d2vr_interaction::Finite(eyePosition))
+        return false;
+    const Vector origin = leftHand ? GetLeftControllerAbsPos() : GetRightControllerAbsPos();
+    const QAngle handAngles = leftHand ? GetLeftControllerAbsAngle() : GetRightControllerAbsAngle();
+    Vector forward{};
+    QAngle::AngleVectors(handAngles, &forward, nullptr, nullptr);
+    if (!l4d2vr_interaction::Finite(origin) || !l4d2vr_interaction::Finite(forward))
+        return false;
+    Vector target = origin + forward * 8192.0f;
+    C_BasePlayer* const localPlayer = m_Game->m_EngineClient
+        ? reinterpret_cast<C_BasePlayer*>(m_Game->GetClientEntity(m_Game->m_EngineClient->GetLocalPlayer())) : nullptr;
+    __try
+    {
+        CGameTrace trace;
+        Ray_t ray;
+        CTraceFilterSkipSelf filter(reinterpret_cast<IHandleEntity*>(localPlayer), 0);
+        ray.Init(origin, target);
+        m_Game->m_EngineTrace->TraceRay(ray, STANDARD_TRACE_MASK, &filter, &trace);
+        if (trace.fraction < 1.0f && trace.fraction > 0.0f)
+            target = trace.endpos;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+    const Vector toTarget = target - eyePosition;
+    if (VectorLength(toTarget) < 1.0f)
+        return false;
+    QAngle::VectorAngles(toTarget, outAngles);
+    NormalizeAndClampViewAngles(outAngles);
+    return true;
+}
+
 void VR::RecordCrosshairShot(C_WeaponCSBase* weapon, float nativeSpreadDeg)
 {
     if (!m_CrosshairEnabled || !weapon)

@@ -390,7 +390,10 @@ HolsterThrowableOffsetMeters=0.16,-0.09,-0.34
 HolsterMedicalOffsetMeters=-0.10,-0.16,-0.12
 HolsterConsumableOffsetMeters=0.16,0.09,-0.34
 ManualPumpEnabled=false
-DualPistolsIndependentHandsEnabled=false
+DualPistolsIndependentHandsEnabled=true
+// True akimbo everywhere: each trigger fires its own pistol, aimed by its own hand (on servers
+// without the physical protocol the shot's view angles carry that hand's aim).
+DualPistolsAkimboOnAnyServer=true
 DualPistolsNativeReloadFallbackEnabled=true
 // Pavlov-style: the release button drops detachable magazines (the AK-47's is pulled out by hand).
 // An empty gun never reloads or ejects on its own; its magazine glows to show a reload is needed.

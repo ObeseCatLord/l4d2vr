@@ -3244,7 +3244,8 @@ void VR::ParseConfigFile()
         }
     }
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);
-    m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", false);
+    m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", true);
+    m_DualPistolsAkimboOnAnyServer = getBool("DualPistolsAkimboOnAnyServer", true);
     m_DualPistolsNativeReloadFallbackEnabled = getBool("DualPistolsNativeReloadFallbackEnabled", true);
     m_MagazineReleaseButtonRequired = getBool("MagazineReleaseButtonRequired", true);
     m_MagazineInteractionAutoEjectWhenEmpty = getBool("MagazineInteractionAutoEjectWhenEmpty", false);

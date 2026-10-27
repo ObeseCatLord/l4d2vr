@@ -133,7 +133,7 @@ struct VR
     static constexpr int kTeamNumOffset = offsetof(C_BasePlayer,team);
     static constexpr int kLifeStateOffset = offsetof(C_BasePlayer,life);
     static constexpr int kObserverModeOffset = offsetof(C_BasePlayer,observer);
-    bool m_IsVREnabled = true, m_DualPistolsIndependentHandsEnabled = true, m_MouseModeEnabled = false;
+    bool m_IsVREnabled = true, m_DualPistolsIndependentHandsEnabled = true, m_DualPistolsAkimboOnAnyServer = true, m_MouseModeEnabled = false;
     bool m_MagazineInteractionEnabled = true, m_VrHandsEnabled = true, m_NativeViewmodelHandsOnly = false;
     bool m_DualPistolsNativeReloadFallbackEnabled = false, m_PhysicalReloadObservedEmpty = false;
     bool m_MagazineInteractionSuppressEmptyClipAutoReload = false, m_ManualThrowEnabled = true;

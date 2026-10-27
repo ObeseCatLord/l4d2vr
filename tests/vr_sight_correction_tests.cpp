@@ -1,3 +1,14 @@
+#include <limits>
+#if defined(VECTOR_PARANOIA) && !defined(VEC_T_NAN)
+#define VEC_T_NAN std::numeric_limits<float>::quiet_NaN()
+#endif
+#ifdef _MSC_VER
+#pragma warning(push, 0)
+#endif
+#include "../L4D2VR/sdk/vector.h"
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #include "../L4D2VR/vr_sight_correction.h"
 #include <cstdio>
 #include <cstdlib>

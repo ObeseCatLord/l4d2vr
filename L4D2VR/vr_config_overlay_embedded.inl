@@ -311,13 +311,33 @@ namespace
         
         { "BlockFireOnFriendlyAimEnabled", CfgOptionType::Bool, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "\xE7\xA6\x81\xE6\xAD\xA2\xE5\x90\x91\xE9\x98\x9F\xE5\x8F\x8B\xE5\xBC\x80\xE7\x81\xAB", 0.0f, 0.0f, "false" },
         
-        { "ManualThrowEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE6\x8A\x95\xE6\x8E\xB7\xE7\x89\xA9", "\xE6\x89\x8B\xE5\x8A\xA8\xE6\x8A\x95\xE6\x8E\xB7", 0.0f, 0.0f, "false" },
+        { "ManualThrowEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE6\x8A\x95\xE6\x8E\xB7\xE7\x89\xA9", "\xE6\x89\x8B\xE5\x8A\xA8\xE6\x8A\x95\xE6\x8E\xB7", 0.0f, 0.0f, "true" },
         { "GripReleaseDropEnabled", CfgOptionType::Bool, "Weapons / Throwables", "Grip weapon pickup and release", 0.0f, 0.0f, "false" },
-        { "BodyGripInventoryEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Grip body inventory", 0.0f, 0.0f, "false" },
-        { "ManualPumpEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Manual shotgun pump", 0.0f, 0.0f, "false" },
+        { "BodyGripInventoryEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Grip body inventory", 0.0f, 0.0f, "true" },
+        { "ManualPumpEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Manual shotgun pump", 0.0f, 0.0f, "true" },
         { "DualPistolsNativeReloadFallbackEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol button reload", 0.0f, 0.0f, "true" },
-        { "DualPistolsIndependentHandsEnabled", CfgOptionType::Bool, "Weapons / Throwables", "Independent dual pistol hands", 0.0f, 0.0f, "false" },
-        { "MagazineReleaseButtonRequired", CfgOptionType::Bool, "Hands / Manual Reload", "Require magazine release button", 0.0f, 0.0f, "false" },
+        { "DualPistolsIndependentHandsEnabled", CfgOptionType::Bool, "Weapons / Throwables", "Independent dual pistol hands", 0.0f, 0.0f, "true" },
+        { "MagazineReleaseButtonRequired", CfgOptionType::Bool, "Hands / Manual Reload", "Require magazine release button", 0.0f, 0.0f, "true" },
+        { "HolsterPavlovLayoutEnabled", CfgOptionType::Bool, "Hands / Holsters", "Pavlov holster layout", 0.0f, 0.0f, "true" },
+        { "HolsterItemsVisible", CfgOptionType::Bool, "Hands / Holsters", "Show holstered items", 0.0f, 0.0f, "true" },
+        { "HolsterInstantDraw", CfgOptionType::Bool, "Hands / Holsters", "Instant draw from holster", 0.0f, 0.0f, "true" },
+        { "HolsterYawDeadbandDeg", CfgOptionType::Float, "Hands / Holsters", "Holster turn dead band", 0.0f, 90.0f, "20" },
+        { "HolsterHeightScale", CfgOptionType::Float, "Hands / Holsters", "Holster height scale", 0.5f, 1.6f, "1.0" },
+        { "MagazineEmptyGlowEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Glow empty magazine", 0.0f, 0.0f, "true" },
+        { "MagazineDropEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Drop released magazines", 0.0f, 0.0f, "true" },
+        { "PhysicalReloadOnUnsupportedServers", CfgOptionType::Bool, "Hands / Manual Reload", "Physical reload on any server", 0.0f, 0.0f, "true" },
+        { "DualPistolsAkimboOnAnyServer", CfgOptionType::Bool, "Weapons / Throwables", "Akimbo on any server", 0.0f, 0.0f, "true" },
+        { "MeleeInertiaEnabled", CfgOptionType::Bool, "Weapons / Melee", "Melee weapon inertia", 0.0f, 0.0f, "true" },
+        { "PhysicalShoveEnabled", CfgOptionType::Bool, "Weapons / Melee", "Thrust and gun-bash shove", 0.0f, 0.0f, "true" },
+        { "ConsumableGesturesEnabled", CfgOptionType::Bool, "Hands / Items", "Pills and adrenaline gestures", 0.0f, 0.0f, "true" },
+        { "CrosshairEnabled", CfgOptionType::Bool, "Weapons / Aim", "Dynamic spread crosshair", 0.0f, 0.0f, "true" },
+        { "CrosshairArmPixels", CfgOptionType::Float, "Weapons / Aim", "Crosshair arm length", 1.0f, 64.0f, "7" },
+        { "SightAutoAlignEnabled", CfgOptionType::Bool, "Weapons / Aim", "Align crosshair with sights", 0.0f, 0.0f, "true" },
+        { "ScopePictureInPictureLens", CfgOptionType::Bool, "Weapons / Aim", "Picture-in-picture scope lens", 0.0f, 0.0f, "true" },
+        { "ScopeEyeboxDeg", CfgOptionType::Float, "Weapons / Aim", "Scope eyebox", 1.0f, 45.0f, "8" },
+        { "LoadingFramePumpEnabled", CfgOptionType::Bool, "Display", "Keep loading screens live", 0.0f, 0.0f, "true" },
+        { "IntermissionHudEnabled", CfgOptionType::Bool, "Display", "Show HUD at intermissions", 0.0f, 0.0f, "true" },
+        { "BackgroundAudio", CfgOptionType::Bool, "Display", "Audio when unfocused", 0.0f, 0.0f, "true" },
         { "ObjectPullEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE9\x9A\x94\xE7\xA9\xBA\xE6\x8A\x93\xE5\x8F\x96", "\xE9\x9A\x94\xE7\xA9\xBA\xE6\x8A\x93\xE5\x8F\x96", 0.00f, 0.00f, "true" },
         
         { "MotionGesturesEnabled", CfgOptionType::Bool, "\xE5\x8A\xA8\xE4\xBD\x9C\xE6\x89\x8B\xE5\x8A\xBF", "\xE5\x90\xAF\xE7\x94\xA8\xE4\xBD\x93\xE6\x84\x9F\xE6\x89\x8B\xE5\x8A\xBF", 0.0f, 0.0f, "true" },
@@ -1037,6 +1057,22 @@ namespace
         { "DualPistolsIndependentHandsEnabled", "Weapons / Throwables", "Independent Dual Pistols", "Each pistol follows its own controller. Primary and secondary triggers fire from their corresponding hand on a VR-capable server.", "Left trigger replaces shove while dual pistols are equipped. Both held triggers alternate at the native weapon rate. Ammo, reload and firing animation remain the game's shared dual-pistol system." },
         { "BodyGripInventoryEnabled", "Hands / Manual Reload", "Body Grip Inventory", "Draw carried items by holding the weapon-hand grip near their body slot. Ammo pickup uses the same stable body reference.", "Back: primary. Weapon-side waist: secondary. Other waist: throwable/ammo. Chest: medical kit. Chest side: pills. Uses native inventory slots; items must already be carried." },
         { "ManualPumpEnabled", "Hands / Manual Reload", "Manual Shotgun Pump", "Pump and chrome shotguns require a full rear and forward fore-end stroke after a shot.", "Releasing the fore-end preserves its position. Automatic shotguns retain their normal cycling. Requires VR hands, manual reload and the shotgun server hook. Disable this option if an unsupported model has no usable pump pose." },
+        { "HolsterPavlovLayoutEnabled", "Hands / Holsters", "Pavlov Holster Layout", "Long gun behind the dominant shoulder, medkit/defib behind the other, pistol or melee on the hip, grenade and pills/adrenaline on the chest.", "Reach to a holster and hold the weapon-hand grip to draw the item; release a held item in its own holster to put it away. Requires Body Grip Inventory." },
+        { "HolsterItemsVisible", "Hands / Holsters", "Show Holstered Items", "Draws the items you carry at their holsters; the hovered one glows.", "Requires the first-person body." },
+        { "HolsterInstantDraw", "Hands / Holsters", "Instant Draw", "Items drawn from a holster appear in the hand immediately instead of playing the deploy animation.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
+        { "MagazineEmptyGlowEnabled", "Hands / Manual Reload", "Glow Empty Magazine", "An empty gun never reloads by itself; its magazine glows instead.", "" },
+        { "MagazineDropEnabled", "Hands / Manual Reload", "Drop Released Magazines", "Released magazines fall to the floor and disappear after a while.", "" },
+        { "PhysicalReloadOnUnsupportedServers", "Hands / Manual Reload", "Physical Reload On Any Server", "Keeps the physical reload on servers without the L4D2VR plugin by driving the stock reload in step with your hands.", "Reload speed there is limited by the stock reload timer." },
+        { "DualPistolsAkimboOnAnyServer", "Weapons / Throwables", "Akimbo On Any Server", "Each trigger fires its own pistol aimed by its own hand, also on servers without the L4D2VR plugin.", "" },
+        { "MeleeInertiaEnabled", "Weapons / Melee", "Melee Inertia", "Melee weapons lag your hand slightly so swings match the normal melee speed; swings are detected from the blade tip.", "The chainsaw only needs the trigger." },
+        { "PhysicalShoveEnabled", "Weapons / Melee", "Physical Shove", "Thrust a melee weapon forward or bash with a gun to shove in that direction.", "" },
+        { "ConsumableGesturesEnabled", "Hands / Items", "Consumable Gestures", "Bring pills to your mouth or stab adrenaline into your chest or other arm to use them.", "The trigger still works." },
+        { "CrosshairEnabled", "Weapons / Aim", "Dynamic Spread Crosshair", "Shows an X crosshair at the aim point whose gap grows with the weapon's current inaccuracy.", "" },
+        { "SightAutoAlignEnabled", "Weapons / Aim", "Align Crosshair With Sights", "Turns each drawn gun so its sights line up with the crosshair and bullets.", "" },
+        { "ScopePictureInPictureLens", "Weapons / Aim", "Picture-in-picture Scope", "The scope image shifts with your eye and darkens at the edge when your eye leaves the eyebox.", "" },
+        { "LoadingFramePumpEnabled", "Display", "Keep Loading Screens Live", "Keeps the headset updating during map loads and chapter transitions.", "" },
+        { "IntermissionHudEnabled", "Display", "Show HUD At Intermissions", "Shows the HUD overlay automatically for end-of-chapter stats and the scoreboard.", "" },
+        { "BackgroundAudio", "Display", "Audio When Unfocused", "Keeps game audio playing when the desktop window is not focused.", "Takes effect after a restart." },
         { "MagazineReleaseButtonRequired", "Hands / Manual Reload", "Button-controlled Magazine Release", "Requires Magazine Release to eject an attached magazine, including when it is empty.", "The off-hand grip handles support, loose magazines and the slide. Running out of ammunition does not eject the magazine." },
         { "VrHandsEnabled", "Hands / VR Hands", "Enable VR Hand System", "Enables VR hand tracking and hand rendering.", "Manual Reload is a separate child feature that requires VR Hands." },
         { "VrHandsGlovesEnabled", "Hands / VR Hands", "Use Separate VR Glove Models", "Uses separate GLB/SteamVR glove models instead of the game's built-in hand mesh.", "Requires VR Hands. Leave off for the simpler built-in hand path." },
@@ -1789,6 +1825,12 @@ namespace
             "DualPistolsIndependentHandsEnabled",
             "DualPistolsNativeReloadFallbackEnabled",
             "MagazineReleaseButtonRequired",
+            "HolsterPavlovLayoutEnabled",
+            "HolsterItemsVisible",
+            "MeleeInertiaEnabled",
+            "ConsumableGesturesEnabled",
+            "CrosshairEnabled",
+            "SightAutoAlignEnabled",
             "ObjectPullEnabled",
             "MotionGesturesEnabled",
             "ScopeEnabled",
@@ -2528,13 +2570,13 @@ AimLineFrameDurationMultiplier=0
 AimLineColor=255,0,0,100
 AimLineMinHitDistance=0
 
-ManualThrowEnabled=false
+ManualThrowEnabled=true
 GripReleaseDropEnabled=false
-BodyGripInventoryEnabled=false
-ManualPumpEnabled=false
-DualPistolsIndependentHandsEnabled=false
+BodyGripInventoryEnabled=true
+ManualPumpEnabled=true
+DualPistolsIndependentHandsEnabled=true
 DualPistolsNativeReloadFallbackEnabled=true
-MagazineReleaseButtonRequired=false
+MagazineReleaseButtonRequired=true
 ManualThrowVelocityScale=4.0
 ManualThrowHorizontalVelocityScale=1.0
 ManualThrowVerticalVelocityScale=1.0

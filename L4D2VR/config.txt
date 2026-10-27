@@ -114,7 +114,7 @@ HandHudWorldQuadYOffsetMeters=0.2
 HandHudWorldQuadXGapMeters=0.01
 HandHudWorldQuadAngleOffset=40,0,0
 
-LeftWristHudEnabled=false
+LeftWristHudEnabled=true
 LeftWristHudWidthMeters=0.1
 LeftWristHudCurvature=0
 LeftWristHudShowTeammates=true
@@ -126,7 +126,7 @@ LeftWristHudXOffset=0.01
 LeftWristHudYOffset=0.01
 LeftWristHudZOffset=-0.0
 LeftWristHudAngleOffset=-75,0,0
-RightAmmoHudEnabled=false
+RightAmmoHudEnabled=true
 RightAmmoHudWidthMeters=0.8
 RightAmmoHudXOffset=-0.07
 RightAmmoHudYOffset=0.03

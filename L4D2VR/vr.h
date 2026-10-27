@@ -2544,14 +2544,14 @@ public:
 	// ----------------------------
 	// Hand HUD overlays (SteamVR overlays, raw textures)
 	// ----------------------------
-	bool  m_LeftWristHudEnabled = false;
+	bool  m_LeftWristHudEnabled = true;
 	float m_LeftWristHudWidthMeters = 0.1f;
 	float m_LeftWristHudXOffset = 0.01f;
 	float m_LeftWristHudYOffset = 0.01f;
 	float m_LeftWristHudZOffset = -0.0f;
 	QAngle m_LeftWristHudAngleOffset = { -75.0f, 0.0f, 0.0f };
 
-	bool  m_RightAmmoHudEnabled = false;
+	bool  m_RightAmmoHudEnabled = true;
 	float m_RightAmmoHudWidthMeters = 0.13f; // width reduced by ~2/3 by default
 	float m_RightAmmoHudXOffset = -0.07f;
 	float m_RightAmmoHudYOffset = 0.03f;

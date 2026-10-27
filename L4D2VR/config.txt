@@ -409,6 +409,8 @@ HolsterReleaseDrop=true
 # the next squeeze lets it go (puts it away inside its holster, drops it elsewhere).
 # false = hold the grip to keep the item.
 GripToggle=true
+# Right stick: push forward to jump, pull back to crouch (hold). Turning pauses meanwhile.
+StickJumpCrouch=true
 MotionOnlyMeleeAndShove=true
 MeleeGripReachMeters=0.12
 ConsumableGiveEnabled=true

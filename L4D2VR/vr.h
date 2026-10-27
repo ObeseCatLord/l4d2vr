@@ -1349,6 +1349,12 @@ public:
 	std::atomic<uint32_t> m_WeaponGripInputState{ 0 };
 	// Toggle grips (Pavlov style): a firm squeeze takes an item, the next squeeze lets it go.
 	bool m_GripToggleEnabled = true;
+	// Right stick forward = jump, back = crouch (StickJumpCrouch).
+	bool m_StickJumpCrouchEnabled = true;
+	bool m_StickJumpDown = false;
+	bool m_StickCrouchDown = false;
+	bool m_StickJumpPressed = false;
+	bool m_StickCrouchPressed = false;
 	l4d2vr_grip_toggle::Toggle m_GripToggle;
 	std::atomic<uint32_t> m_GripToggleAdoptSerial{ 0u };   // contact pickups adopted by the grip
 	std::atomic<uint32_t> m_GripTogglePickupSerial{ 0u };  // contact pickups requested

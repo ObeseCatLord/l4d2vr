@@ -246,7 +246,25 @@ void VR::ProcessInput()
                 }
             };
 
-        if (!m_TeleportTargetingActive)
+        // Right stick forward jumps and back crouches (hold); turning pauses while
+        // the stick is pushed mostly forward or back.
+        {
+            const float sx = analogActionData.x, sy = analogActionData.y;
+            const bool vertical = std::fabs(sy) > std::fabs(sx) * 1.2f;
+            const bool wasJump = m_StickJumpDown, wasCrouch = m_StickCrouchDown;
+            if (!m_StickJumpCrouchEnabled || m_TeleportTargetingActive)
+            {
+                m_StickJumpDown = m_StickCrouchDown = false;
+            }
+            else
+            {
+                m_StickJumpDown = m_StickJumpDown ? sy > 0.45f : (sy > 0.75f && vertical);
+                m_StickCrouchDown = m_StickCrouchDown ? sy < -0.45f : (sy < -0.75f && vertical);
+            }
+            m_StickJumpPressed = m_StickJumpDown && !wasJump;
+            m_StickCrouchPressed = m_StickCrouchDown && !wasCrouch;
+        }
+        if (!m_TeleportTargetingActive && !m_StickJumpDown && !m_StickCrouchDown)
             applyTurnFromStick(analogActionData.x);
 
 
@@ -578,6 +596,27 @@ void VR::ProcessInput()
 
     vr::InputDigitalActionData_t primaryAttackActionData{};
     bool primaryAttackDown = false;
+    {
+        // One line whenever either grip action changes: proves what the runtime sends.
+        static uint32_t s_LastGripActionBits = ~0u;
+        vr::InputDigitalActionData_t weaponGripPlain{}, offHandGripPlain{};
+        const bool weaponGripRead = m_ActionWeaponGrip != vr::k_ulInvalidActionHandle &&
+            GetDigitalActionData(m_ActionWeaponGrip, weaponGripPlain);
+        const bool offHandGripRead = m_ActionOffHandGrip != vr::k_ulInvalidActionHandle &&
+            GetDigitalActionData(m_ActionOffHandGrip, offHandGripPlain);
+        const uint32_t bits = (weaponGripRead ? 1u : 0u) | (weaponGripPlain.bActive ? 2u : 0u) |
+            (weaponGripPlain.bState ? 4u : 0u) | (offHandGripRead ? 8u : 0u) |
+            (offHandGripPlain.bActive ? 16u : 0u) | (offHandGripPlain.bState ? 32u : 0u) |
+            (rightGripValid ? 64u : 0u) | (rightGripDown ? 128u : 0u);
+        if (bits != s_LastGripActionBits)
+        {
+            s_LastGripActionBits = bits;
+            Game::logMsg("[VR][GripInput] weapon grip read=%d active=%d down=%d (per-hand valid=%d down=%d) | off-hand grip read=%d active=%d down=%d",
+                weaponGripRead ? 1 : 0, weaponGripPlain.bActive ? 1 : 0, weaponGripPlain.bState ? 1 : 0,
+                rightGripValid ? 1 : 0, rightGripDown ? 1 : 0,
+                offHandGripRead ? 1 : 0, offHandGripPlain.bActive ? 1 : 0, offHandGripPlain.bState ? 1 : 0);
+        }
+    }
     // Toggle grips: one firm squeeze takes an item and keeps it, the next lets
     // it go. Everything below sees the virtual "held" grip. The right grip stays
     // a plain hold while it works the magazine of a left-held pistol.
@@ -629,6 +668,18 @@ void VR::ProcessInput()
     bool crouchButtonDown = false;
     bool crouchJustPressed = false;
     bool crouchDataValid = getActionState(&m_ActionCrouch, crouchActionData, crouchButtonDown, crouchJustPressed);
+    if (m_StickJumpDown || m_StickJumpPressed)
+    {
+        jumpDataValid = true;
+        jumpButtonDown = true;
+        jumpJustPressed = jumpJustPressed || m_StickJumpPressed;
+    }
+    if (m_StickCrouchDown || m_StickCrouchPressed)
+    {
+        crouchDataValid = true;
+        crouchButtonDown = true;
+        crouchJustPressed = crouchJustPressed || m_StickCrouchPressed;
+    }
 
     vr::InputDigitalActionData_t resetActionData{};
     [[maybe_unused]] bool resetButtonDown = false;

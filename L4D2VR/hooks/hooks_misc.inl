@@ -8817,6 +8817,44 @@ namespace
         return built;
     }
 
+    // An empty gun's magazine glows softly to show that a reload is needed. The
+    // clip subtree is redrawn in place over the final viewmodel pose.
+    inline bool BuildMagazineEmptyGlowBones(
+        VR* vr,
+        void* drawState,
+        const std::string& modelName,
+        const void* pFinalBoneToWorld,
+        vr_vm_stabilize::Mat3x4*& outBones)
+    {
+        outBones = nullptr;
+        if (!vr || !vr->m_MagazineEmptyGlowEnabled || !vr->m_MagazineEmptyGlowActive.load(std::memory_order_acquire) ||
+            !drawState || !pFinalBoneToWorld)
+            return false;
+        const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        if (!HooksModelNameIsViewmodel(lowerModel))
+            return false;
+        MagazineInteractionBoxSnapshot box{};
+        if (!vr->GetMagazineInteractionBox(box) || vr_vm_stabilize::ToLowerAscii(box.modelName) != lowerModel)
+            return false;
+
+        std::vector<std::string> boneNames;
+        std::vector<int> boneParents;
+        int numBones = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+        if (!vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, boneNames, boneParents, numBones,
+                boneIndex, stride, numBonesOffset) ||
+            numBones <= 0 || numBones > 512 || static_cast<int>(boneParents.size()) < numBones ||
+            box.boneIndex < 0 || box.boneIndex >= numBones)
+            return false;
+
+        const auto* bones = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pFinalBoneToWorld);
+        vr_vm_stabilize::Mat3x4 clipWorld{};
+        if (!vr_vm_stabilize::SafeRead(bones + box.boneIndex, clipWorld))
+            return false;
+        return BuildDetachedSourceMagazineBones("MagazineEmptyGlow", modelName, boneParents, bones, numBones,
+            box.boneIndex, box.boneIndex, HooksMat3x4ToVrHandMatrix(clipWorld), nullptr,
+            vr->m_RenderFrameSeq.load(std::memory_order_relaxed), false, outBones);
+    }
+
     inline void MaybeCaptureVrHandsVmPose(
         VR* vr,
         void* drawState,
@@ -24223,6 +24261,33 @@ namespace
     }
 }
 
+namespace
+{
+    void HooksDrawWithForcedMaterialSafe(void* ecx, void* state, const ModelRenderInfo_t* info,
+        void* bones, IMaterial* material, float r, float g, float b)
+    {
+        if (!Hooks::m_Game || !Hooks::m_Game->m_ModelRender || !material || !info)
+            return;
+        __try
+        {
+            material->ColorModulate(r, g, b);
+            Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(material);
+            Hooks::hkDrawModelExecute.fOriginal(ecx, state, *info, bones);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+        __try
+        {
+            Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr);
+            material->ColorModulate(1.0f, 1.0f, 1.0f);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+}
+
 bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
     void* ecx,
     void* edx,
@@ -25533,6 +25598,19 @@ void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRend
     // same active material, shader, skin, lighting and post-processing as the gun.
     if (drawMagazineInteractionDetachedMagazine && magazineInteractionDetachedMagazineBones)
         hkDrawModelExecute.fOriginal(ecx, state, *pDrawInfo, magazineInteractionDetachedMagazineBones);
+
+    if (!shadowDepthDraw && m_VR && m_Game && m_Game->m_ModelRender && pBonesToWorldFinal)
+    {
+        vr_vm_stabilize::Mat3x4* glowBones = nullptr;
+        IMaterial* const glowMaterial = HooksHolsterHighlightMaterial();
+        if (glowMaterial && BuildMagazineEmptyGlowBones(m_VR, state, modelName, pBonesToWorldFinal, glowBones) && glowBones)
+        {
+            const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
+            const float pulse = 0.55f + 0.45f * std::sin(t * 6.2831853f * 1.1f);
+            HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
+                pulse, pulse * 0.82f, pulse * 0.35f);
+        }
+    }
 
     if (drawMagazineInteractionCalibrationPreview &&
         magazineInteractionCalibrationPreviewBones &&

@@ -4429,6 +4429,18 @@ public:
 	void HandleMeleeHitHapticsGameEvent(IGameEvent* event);
 	void UpdateKillSoundFeedback();
 	void EnsureKillSoundEventListener();
+	// End-of-chapter / intermission screens: show the HUD overlay without a gesture.
+	bool m_IntermissionHudEnabled = true;
+	std::atomic<uint64_t> m_IntermissionHudUntilMs{ 0 };
+	IGameEventManager2* m_IntermissionEventManager = nullptr;
+	IGameEventListener2* m_IntermissionEventListener = nullptr;
+	bool m_IntermissionEventListenerRegistered = false;
+	std::chrono::steady_clock::time_point m_LastIntermissionRegisterAttempt{};
+	void EnsureIntermissionEventListener();
+	bool IsIntermissionHudActive() const
+	{
+		return m_IntermissionHudEnabled && GetTickCount64() < m_IntermissionHudUntilMs.load(std::memory_order_acquire);
+	}
 	void HandleKillSoundGameEvent(IGameEvent* event);
 	void EnsureDamageFeedbackEventListener();
 	void HandleDamageFeedbackGameEvent(IGameEvent* event);

@@ -5229,9 +5229,17 @@ bool VR::UpdateMagazineInteraction(
             m_LeftHandPistolActive.load(std::memory_order_acquire));
     const bool authoritativeShell = vrHandsInteractionAvailable &&
         MagazineInteractionWeaponUsesShotgunShells(activeWeaponId) && RemoteShellProtocolSupported();
+    // Servers without physical transactions still get the physical flow: it
+    // drives the stock reload command in step with the gestures.
+    const bool choreographedNativeReload = m_PhysicalReloadOnUnsupportedServers &&
+        MagazineInteractionWeaponUsesPhysicalReload(activeWeaponId) &&
+        !m_Game->IsDualPistolWeapon(activeWeapon) &&
+        !m_LeftHandPistolActive.load(std::memory_order_acquire) &&
+        !(authoritativePistol || authoritativeMagazine || authoritativeShell);
     m_PhysicalReloadOwnsStockInput.store(m_MagazineInteractionEnabled &&
         m_FirstPersonControlReady.load(std::memory_order_acquire) && !m_MouseModeEnabled &&
-        !m_SuppressPlayerInput && (authoritativePistol || authoritativeMagazine || authoritativeShell),
+        !m_SuppressPlayerInput &&
+        (authoritativePistol || authoritativeMagazine || authoritativeShell || choreographedNativeReload),
         std::memory_order_release);
     const unsigned int interactionInputMode = (m_MagazineInteractionEnabled ? 1u : 0u) |
         (m_VrHandsEnabled ? 2u : 0u) | (m_NativeViewmodelHandsOnly ? 4u : 0u) |
@@ -5269,7 +5277,7 @@ bool VR::UpdateMagazineInteraction(
         return false;
     }
     bool bodyAmmoAvailable = false;
-    const bool nativeAmmoFallback = l4d2vr_magazine::UseNativeReloadFallback(
+    const bool nativeAmmoFallback = !choreographedNativeReload && l4d2vr_magazine::UseNativeReloadFallback(
         m_MagazineInteractionEnabled, activeWeaponIdInt,
         MagazineInteractionWeaponUsesPhysicalReload(activeWeaponId),
         authoritativeMagazine || authoritativePistol || authoritativeShell);
@@ -5353,6 +5361,21 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionReloadCommandIssued &&
             m_MagazineInteractionReloadCommandHoldUntil.time_since_epoch().count() != 0 &&
             now < m_MagazineInteractionReloadCommandHoldUntil;
+    };
+
+    // Choreographed native backend: queue the stock reload so its server-side
+    // timer runs while the player physically swaps the magazine.
+    auto startImmediateReloadCommand = [&](const char* reason)
+    {
+        constexpr float kReloadCommandHoldSeconds = 0.35f;
+        m_MagazineInteractionReloadTriggered = true;
+        m_MagazineInteractionReloadCommandPending = true;
+        m_MagazineInteractionReloadCommandIssued = false;
+        m_MagazineInteractionReloadCommandHoldUntil =
+            now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<float>(kReloadCommandHoldSeconds));
+        Game::logMsg("[VR][MagazineInteraction] native backend reload queued reason=%s shotgun=%d",
+            reason ? reason : "unknown", m_MagazineInteractionShotgunShellMode ? 1 : 0);
     };
 
     auto stopNativeShellReloadPrediction = [&](const char*)
@@ -8072,6 +8095,27 @@ bool VR::UpdateMagazineInteraction(
         if (fitsSocket)
         {
             if (RemoteShellRequestPending() || RemoteMagazineRequestPending()) return false;
+            if (choreographedNativeReload)
+            {
+                m_MagazineInteractionFreshMagazineContactActive = false;
+                triggerMagazineInteractionBothHandsHaptic(0.026f, 105.0f, 0.42f, 2);
+                MagazineInteractionPlayClipInSound(this);
+                if (m_MagazineInteractionShotgunShellMode)
+                    startImmediateReloadCommand("shotgun-shell-inserted");
+                m_MagazineInteractionLeftHandHolding = false;
+                m_MagazineInteractionPostInsertStarted = now;
+                m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
+                const bool quickAutoBoltAfterBackend = quickReloadShouldAutoBolt();
+                const bool boltArmedBeforeBackend = !quickAutoBoltAfterBackend &&
+                    !m_MagazineInteractionShotgunShellMode &&
+                    beginBoltStage(activeWeaponId, "magazine-inserted-backend-pending", true);
+                if (!boltArmedBeforeBackend)
+                    m_MagazineInteractionState = MagazineInteractionManualState::WaitingForBackendReload;
+                Game::logMsg("[VR][MagazineInteraction] fresh %s inserted; native backend reload clip=%d startClip=%d boltArmed=%d",
+                    m_MagazineInteractionShotgunShellMode ? "shell" : "magazine", activeClip,
+                    m_MagazineInteractionStartClip, boltArmedBeforeBackend ? 1 : 0);
+                return reloadCommandPending();
+            }
             if (m_MagazineInteractionShotgunShellMode)
             {
                 captureShotgunStableSocketCapture("shell-insert-request");
@@ -8176,10 +8220,13 @@ bool VR::UpdateMagazineInteraction(
                 if (!beginRemoteMagazineAction(l4d2vr_remote_mag::Action::Eject)) CancelMagazineInteractionManual();
                 return false;
             }
+            if (!choreographedNativeReload)
+            {
+                CancelMagazineInteractionManual();
+                return false;
+            }
 
-            CancelMagazineInteractionManual();
-            return false;
-
+            startImmediateReloadCommand("clip-out");
             MagazineInteractionPlayClipOutSound(this);
             triggerMagazineInteractionBothHandsHaptic(0.026f, 95.0f, 0.42f, 2);
             Game::logMsg(

@@ -8855,6 +8855,63 @@ namespace
             vr->m_RenderFrameSeq.load(std::memory_order_relaxed), false, outBones);
     }
 
+    // Publish the drawn bore direction (weapon_bone +Z) in the viewmodel's own
+    // frame for crosshair-to-sights alignment.
+    inline void PublishViewmodelSightBore(
+        VR* vr,
+        void* drawState,
+        const std::string& modelName,
+        const ModelRenderInfo_t& info,
+        const void* pFinalBoneToWorld)
+    {
+        if (!vr || !vr->m_SightAutoAlignEnabled || !drawState || !pFinalBoneToWorld || modelName.empty())
+            return;
+        const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        if (!HooksModelNameIsViewmodel(lowerModel) || HooksModelNameIsArmsOrHands(lowerModel))
+            return;
+
+        static std::unordered_map<std::string, int> s_weaponBoneByModel;
+        auto cached = s_weaponBoneByModel.find(lowerModel);
+        int weaponBone = -1;
+        if (cached != s_weaponBoneByModel.end())
+        {
+            weaponBone = cached->second;
+        }
+        else
+        {
+            std::vector<std::string> boneNames;
+            std::vector<int> boneParents;
+            int numBones = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+            if (!vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, boneNames, boneParents, numBones,
+                    boneIndex, stride, numBonesOffset))
+                return;
+            for (int i = 0; i < numBones && i < static_cast<int>(boneNames.size()); ++i)
+            {
+                const std::string lower = vr_vm_stabilize::ToLowerAscii(boneNames[static_cast<size_t>(i)]);
+                if (lower == "valvebiped.weapon_bone" || lower == "weapon_bone")
+                {
+                    weaponBone = i;
+                    break;
+                }
+            }
+            s_weaponBoneByModel[lowerModel] = weaponBone;
+        }
+        if (weaponBone < 0)
+            return;
+
+        vr_vm_stabilize::Mat3x4 bone{};
+        if (!vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pFinalBoneToWorld) + weaponBone, bone))
+            return;
+        const Vector boreWorld(bone.m[0][2], bone.m[1][2], bone.m[2][2]);
+        Vector forward{}, right{}, up{};
+        QAngle::AngleVectors(info.angles, &forward, &right, &up);
+        const Vector boreLocal(DotProduct(boreWorld, forward), -DotProduct(boreWorld, right), DotProduct(boreWorld, up));
+        if (!std::isfinite(boreLocal.x) || !std::isfinite(boreLocal.y) || !std::isfinite(boreLocal.z) ||
+            boreLocal.x < 0.5f)
+            return;
+        vr->PublishSightBore(lowerModel, boreLocal);
+    }
+
     inline void MaybeCaptureVrHandsVmPose(
         VR* vr,
         void* drawState,
@@ -25598,6 +25655,9 @@ void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRend
     // same active material, shader, skin, lighting and post-processing as the gun.
     if (drawMagazineInteractionDetachedMagazine && magazineInteractionDetachedMagazineBones)
         hkDrawModelExecute.fOriginal(ecx, state, *pDrawInfo, magazineInteractionDetachedMagazineBones);
+
+    if (!shadowDepthDraw && m_VR && pBonesToWorldFinal)
+        PublishViewmodelSightBore(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
 
     if (!shadowDepthDraw && m_VR && m_VR->m_MagazineDropEnabled && pBonesToWorldFinal &&
         HooksModelNameIsViewmodel(vr_vm_stabilize::ToLowerAscii(modelName)))

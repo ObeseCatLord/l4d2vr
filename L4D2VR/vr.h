@@ -29,6 +29,7 @@
 #include "vr_interaction_geometry.h"
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
+#include "vr_sight_correction.h"
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
@@ -947,6 +948,26 @@ public:
 	ViewmodelAdjustment m_DefaultViewmodelAdjust{ {0,0,0}, {0,0,0} };
 	std::unordered_map<std::string, ViewmodelAdjustment> m_ViewmodelAdjustments{};
 	std::string m_CurrentViewmodelKey;
+	// Crosshair-to-sights alignment (see vr_sight_correction.h).
+	bool m_SightAutoAlignEnabled = true;
+	mutable std::mutex m_SightBoreMutex;
+	std::string m_SightBoreModel;
+	Vector m_SightBoreLocal{ 1.0f, 0.0f, 0.0f };
+	uint64_t m_SightBoreAtMs = 0;
+	uint32_t m_SightBoreSerial = 0;
+	struct SightCorrectionEntry
+	{
+		QAngle correction{ 0.0f, 0.0f, 0.0f };
+		QAngle baseOffset{ 0.0f, 0.0f, 0.0f };
+	};
+	std::unordered_map<std::string, SightCorrectionEntry> m_SightCorrections;
+	std::string m_SightCalibrationModel;
+	std::chrono::steady_clock::time_point m_SightCalibrationModelSince{};
+	l4d2vr_sight_correction::BoreAverage m_SightBoreAverage;
+	uint32_t m_SightLastSerial = 0;
+	QAngle m_SightActiveCorrection{ 0.0f, 0.0f, 0.0f };
+	void PublishSightBore(const std::string& modelLower, const Vector& boreLocal);
+	void UpdateSightAlignment(const QAngle& baseOffset);
 	std::string m_LastLoggedViewmodelKey;
 	bool m_ViewmodelAdjustmentsDirty = false;
 	std::string m_ViewmodelAdjustmentSavePath;

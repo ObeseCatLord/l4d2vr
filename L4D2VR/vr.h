@@ -31,6 +31,7 @@
 #include "vr_holster.h"
 #include "vr_melee_inertia.h"
 #include "vr_gesture.h"
+#include "vr_throw_ballistics.h"
 #include "vr_sight_correction.h"
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"

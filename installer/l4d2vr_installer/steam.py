@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, Iterable, List, Optional
 
 from . import APP_ID, vdf
@@ -339,8 +339,10 @@ def is_game_running(platform: Optional[str] = None, proc_root: Path = Path("/pro
     if is_windows(platform):
         return _windows_process_running("left4dead2.exe")
     for comm, args in _proc_entries(proc_root):
+        # Only an argument that *is* the game executable counts; a shell whose
+        # script merely mentions left4dead2.exe is not the game.
         if comm.lower().startswith("left4dead2") or any(
-            "left4dead2.exe" in arg.lower() for arg in args[:3]
+            PureWindowsPath(arg).name.lower() == "left4dead2.exe" for arg in args[:3]
         ):
             return True
     return False

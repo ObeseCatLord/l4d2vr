@@ -123,3 +123,11 @@ class SteamDiscoveryTests(TempDirTest):
     def test_game_running_detection(self):
         proc = self.fake_proc([("python3", ["proton", "waitforexitandrun", "Z:/x/left4dead2.exe"])])
         self.assertTrue(steam.is_game_running("linux", proc))
+
+    def test_script_mentioning_the_game_is_not_the_game(self):
+        proc = self.fake_proc([("bash", ["bash", "-c", "touch game/left4dead2.exe && ./install"])])
+        self.assertFalse(steam.is_game_running("linux", proc))
+
+    def test_wine_game_process_detected(self):
+        wine = self.fake_proc([("left4dead2.exe", ["S:\\steamapps\\common\\Left 4 Dead 2\\left4dead2.exe", "-insecure"])])
+        self.assertTrue(steam.is_game_running("linux", wine))

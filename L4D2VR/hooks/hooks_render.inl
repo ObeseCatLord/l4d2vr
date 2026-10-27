@@ -2418,6 +2418,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 		struct NestedFirstPersonBodyEyeStateScope
 		{
 			LONG previousOverride = 0;
+			LONG previousHolsterToken = 0;
 			HooksFirstPersonBodyEyeSceneState* previousState = nullptr;
 
 			NestedFirstPersonBodyEyeStateScope()
@@ -2426,10 +2427,16 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					&g_FirstPersonBodyEyeSceneActive, 0);
 				previousState = g_FirstPersonBodyPublishedState.exchange(
 					nullptr, std::memory_order_acq_rel);
+				// Nested (water/reflection) views must not claim the eye's
+				// viewmodel-stage holster submission.
+				previousHolsterToken = InterlockedExchange(
+					&g_HolsterViewmodelStageToken, 0);
 			}
 
 			~NestedFirstPersonBodyEyeStateScope()
 			{
+				InterlockedExchange(
+					&g_HolsterViewmodelStageToken, previousHolsterToken);
 				g_FirstPersonBodyPublishedState.store(
 					previousState, std::memory_order_release);
 				InterlockedExchange(
@@ -5438,6 +5445,37 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 				}
 			};
 
+			// Publishes this eye's viewmodel-stage holster token. Constructed
+			// after FirstPersonBodyEyeSceneScope: when the body eye scene is
+			// active, its native player draw stage submits the holsters and the
+			// viewmodel stage stays off for this eye (no double draw).
+			struct HolsterViewmodelStageEyeScope
+			{
+				LONG previousToken = 0;
+
+				HolsterViewmodelStageEyeScope(VR* owner, bool actualFirstPerson)
+				{
+					const bool bodyStageOwnsHolsters =
+						InterlockedCompareExchange(
+							&g_FirstPersonBodyEyeSceneActive, 0, 0) != 0;
+					const bool enable =
+						owner &&
+						owner->m_IsVREnabled &&
+						actualFirstPerson &&
+						!owner->m_IsThirdPersonCamera &&
+						!bodyStageOwnsHolsters &&
+						HooksHolsterItemsEnabled(owner);
+					previousToken = InterlockedExchange(
+						&g_HolsterViewmodelStageToken,
+						enable ? HooksHolsterNextViewmodelStageToken() : 0);
+				}
+
+				~HolsterViewmodelStageEyeScope()
+				{
+					InterlockedExchange(&g_HolsterViewmodelStageToken, previousToken);
+				}
+			};
+
 			{
 				ScopedNekoPostProbePass nekoPostProbePass(
 					rndrContext,
@@ -5454,6 +5492,9 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					eyeIndex,
 					firstPersonBodyActualFirstPerson,
 					!playerIncap);
+				HolsterViewmodelStageEyeScope holsterViewmodelStageScope(
+					m_VR,
+					firstPersonBodyActualFirstPerson);
 				callOriginalRenderView(eyeView, eyeHud, nClearFlags, whatToDraw);
 			}
 

@@ -1025,6 +1025,13 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
 VR::VR(Game* game)
 {
     m_Game = game;
+    if (g_L4D2VRDesktopMode)
+    {
+        // Desktop (receive-only) mode: same state as a failed VR_Init without
+        // the error box. m_IsVREnabled stays false.
+        Game::logMsg("[VR] desktop mode: OpenVR skipped; rendering remote VR poses only");
+        return;
+    }
 
     // Use exact argv matching: a config entry or a similarly named argument
     // must never activate the Left4Neko-specific render pipeline.

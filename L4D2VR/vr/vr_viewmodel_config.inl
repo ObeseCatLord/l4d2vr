@@ -1393,6 +1393,11 @@ void VR::ParseConfigFile()
     m_WorldModelVRPoseDebugLog = getBool(
         "WorldModelVRPoseDebugLog",
         m_WorldModelVRPoseDebugLog);
+    m_WorldModelVRPoseCrouchEnabled = getBool("WorldModelVRPoseCrouchEnabled", m_WorldModelVRPoseCrouchEnabled);
+    m_WorldModelVRPoseCrouchPelvisDrop = std::clamp(getFloat("WorldModelVRPoseCrouchPelvisDrop", m_WorldModelVRPoseCrouchPelvisDrop), 0.0f, 1.0f);
+    m_WorldModelVRPoseCrouchMaxLegFraction = std::clamp(getFloat("WorldModelVRPoseCrouchMaxLegFraction", m_WorldModelVRPoseCrouchMaxLegFraction), 0.0f, 0.85f);
+    m_WorldModelVRPoseCrouchMaxSpineBendDeg = std::clamp(getFloat("WorldModelVRPoseCrouchMaxSpineBendDeg", m_WorldModelVRPoseCrouchMaxSpineBendDeg), 0.0f, 60.0f);
+    m_WorldModelVRPoseStandingHeightDecayPerSecond = std::clamp(getFloat("WorldModelVRPoseStandingHeightDecayPerSecond", m_WorldModelVRPoseStandingHeightDecayPerSecond), 0.0f, 0.2f);
     m_ClothingMaterials.store(
         getBool(
             "ClothingMaterials",

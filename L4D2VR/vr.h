@@ -730,6 +730,17 @@ public:
 	// destroy mat_queue_mode 2 throughput. Instead, in queued mode we run a tiny "pose waiter" thread
 	// that blocks in WaitGetPoses() and publishes a seqlock snapshot. Render/main threads only read.
 	std::atomic<bool> m_PoseWaiterStarted{ false };
+	// Loading frame pump: keeps the compositor fed (WaitGetPoses) while the game
+	// thread is blocked in a level load, so the headset never freezes on the
+	// loading screen. Shares a frame mutex with VR::Update.
+	bool m_LoadingFramePumpEnabled = true;
+	float m_LoadingFramePumpStallMs = 40.0f;
+	std::mutex m_CompositorFrameMutex;
+	std::atomic<uint64_t> m_LastMainFrameMs{ 0 };
+	std::atomic<bool> m_LoadingFramePumpStarted{ false };
+	std::atomic<uint32_t> m_LoadingFramePumpFrames{ 0 };
+	std::atomic<bool> m_LastSubmitWasGameplay{ false };
+	void LoadingFramePumpThreadMain();
 	std::atomic<bool> m_PoseWaiterEnabled{ false };
 	std::atomic<uint32_t> m_PoseWaiterSeq{ 0 };
 	std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> m_PoseWaiterPoses{};

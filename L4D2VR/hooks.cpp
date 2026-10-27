@@ -6,6 +6,7 @@
 #include "sdk_server.h"
 #include "vr.h"
 #include "vr_pose_protocol.h"
+#include "vr_vrik_lower_body.h"
 #include "vr_grip_release.h"
 #include "vr_pistol_detachment.h"
 #include "vr_interaction_geometry.h"

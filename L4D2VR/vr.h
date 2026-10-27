@@ -2017,7 +2017,9 @@ public:
 	bool m_FirstPersonBodyHideArms = true;
 	// Multiplayer world-model reconstruction. The server only relays the compact
 	// HMD + two-controller packet; observers apply this visual IK locally.
-	bool m_WorldModelVRPoseEnabled = false;
+	// On by default so VR players (and desktop clients running the mod) see
+	// each other's tracked bodies.
+	bool m_WorldModelVRPoseEnabled = true;
 	bool m_WorldModelVRPoseLocalThirdPerson = false;
 	bool m_WorldModelVRPoseDebugLog = false;
 	// Per-map gameplay latch shared by world-model pose IK and native full-arm
@@ -2049,6 +2051,16 @@ public:
 	float m_BodyLeanMaxAngleDeg = 15.0f;
 	// Visual-only catch-up speed after the aim yaw exits the comfort cone.
 	float m_WorldModelVRPoseBodyYawTurnSpeedDegPerSecond = 180.0f;
+	// Remote-player physical crouch (visual lower-body stage). The pelvis drops
+	// by PelvisDrop * (calibrated standing eye height - current eye height)
+	// beyond Source's own duck animation, at most MaxLegFraction of the leg;
+	// feet stay planted with two-bone leg IK and the spine bends (bounded) for
+	// the rest of the head drop. Hitboxes are never affected.
+	bool m_WorldModelVRPoseCrouchEnabled = true;
+	float m_WorldModelVRPoseCrouchPelvisDrop = 0.9f;
+	float m_WorldModelVRPoseCrouchMaxLegFraction = 0.7f;
+	float m_WorldModelVRPoseCrouchMaxSpineBendDeg = 30.0f;
+	float m_WorldModelVRPoseStandingHeightDecayPerSecond = 0.01f;
 	struct HiddenMaterialNameRule
 	{
 		std::string characterName;

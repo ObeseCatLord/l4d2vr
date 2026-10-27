@@ -24391,6 +24391,22 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
 
 void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
 {
+    // Visible holsters without the first-person body: the first native
+    // viewmodel color draw of a VR eye view submits the holstered items once,
+    // after that viewmodel's own draw has fully completed (no engine model
+    // setup is in flight). The flag is saved/restored so nested draws (the
+    // holster DrawModel calls themselves) cannot leak into this decision.
+    const bool previousViewmodelStageDrawSeen = t_HolsterViewmodelStageDrawSeen;
+    t_HolsterViewmodelStageDrawSeen = false;
+    DrawModelExecuteImpl(ecx, edx, state, info, pCustomBoneToWorld);
+    const bool viewmodelStageDrawSeen = t_HolsterViewmodelStageDrawSeen;
+    t_HolsterViewmodelStageDrawSeen = previousViewmodelStageDrawSeen;
+    if (viewmodelStageDrawSeen)
+        HooksHolsterSubmitViewmodelStageItems(m_VR);
+}
+
+void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
+{
     vr_vm_stabilize::ScopedStableBoneScratch stableBoneScratchScope;
     struct ContactHandScope
     {
@@ -24724,6 +24740,12 @@ void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRend
                 return;
             }
         }
+        // Native viewmodel color draw inside a VR eye view: the outer
+        // DrawModelExecute wrapper submits the holsters once this draw ends.
+        if (teleportSuppressibleViewmodel && !shadowDepthDraw &&
+            !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
+            !t_HolsterViewmodelStageSubmitting)
+            t_HolsterViewmodelStageDrawSeen = true;
         if (teleportSuppressibleViewmodel && m_VR->ShouldSuppressTeleportViewmodelRender())
             return;
         if (teleportSuppressibleViewmodel)

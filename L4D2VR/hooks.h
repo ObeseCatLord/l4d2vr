@@ -324,6 +324,7 @@ public:
 	static C_BaseEntity* __fastcall dClientFindUseEntity(void* ecx, void* edx, float radius, float dotLimit, float defaultDotLimit, void* traceResult, void* extra);
 	static void __fastcall dPlayerUse(void* ecx, void* edx, void* useEntity);
 	static void __fastcall dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld);
+	static void __fastcall DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld);
 	static bool __fastcall dFirstPersonBodyRenderableShouldDraw(void* ecx, void* edx);
 	static void* __fastcall dFirstPersonBodyRenderableGetModel(void* ecx, void* edx);
 	static int __fastcall dFirstPersonBodyRenderableDrawModel(void* ecx, void* edx, int flags, const void* instance);

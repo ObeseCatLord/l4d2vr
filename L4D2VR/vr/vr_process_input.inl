@@ -599,6 +599,7 @@ void VR::ProcessInput()
         toggleInput.heldItemTag = localPlayer
             ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(localPlayer->GetActiveWeapon())) : 0u;
         toggleInput.inOwnHolster = m_HolsterHandInOwnZone.load(std::memory_order_acquire);
+        toggleInput.inOtherHolster = m_HolsterHandOverOtherZone.load(std::memory_order_acquire);
         const bool wasHeld = m_GripToggle.Held();
         const bool virtualDown = m_GripToggle.Update(toggleInput);
         if (toggleApplies && rightGripValid)
@@ -1634,6 +1635,8 @@ void VR::ProcessInput()
                 }
                 s_PrevHolsterGripDown = gripDown;
             }
+            m_HolsterHandOverOtherZone.store(frameValid && grabInput.handZone != l4d2vr_holster::Zone::None,
+                std::memory_order_release);
             m_HolsterHandInOwnZone.store(frameValid && activeSlot >= 0 &&
                 grabInput.ownZoneUnderHand == static_cast<l4d2vr_holster::Zone>(activeSlot), std::memory_order_release);
             const l4d2vr_holster::GrabOutput grab = m_HolsterGrab.Update(grabInput);

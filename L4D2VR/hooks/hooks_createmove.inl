@@ -1938,6 +1938,8 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                 s_bodyGripSelectionSerial = bodySelection;
                 if (rightPickupAllowed && weaponGripActionActive && weaponGripDown)
                     s_gripPickup.Begin(gripNowMs, s_previousGripWeapon);
+                Game::logMsg("[VR][GripDrop] holster draw seen: pickupAllowed=%d eligible=%d grip=%d/%d",
+                    rightPickupAllowed ? 1 : 0, gripPickupEligible ? 1 : 0, weaponGripActionActive ? 1 : 0, weaponGripDown ? 1 : 0);
             }
             const unsigned pickupResult = s_gripPickup.Update(rightPickupAllowed && !useLeft,
                 weaponGripActionActive, weaponGripDown,
@@ -1965,6 +1967,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				manualThrowInputActive && inventoryItem &&
 				// Letting go inside the item's own holster puts it away instead.
 				!m_VR->m_HolsterHandInOwnZone.load(std::memory_order_acquire) &&
+				!m_VR->m_HolsterHandOverOtherZone.load(std::memory_order_acquire) &&
 				m_VR->m_EncodeVRUsercmd && !m_VR->m_ForceNonVRServerMovement &&
 				m_VR->m_FirstPersonControlReady.load(std::memory_order_acquire) &&
 				!m_VR->m_SuppressPlayerInput &&
@@ -1996,6 +1999,25 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				weaponGripActionActive,
 				weaponGripDown,
 				activeWeaponTag, l4d2vr_input::GripSample::Generation(weaponGripInputState)) || pistolDropHand != l4d2vr_dual::Hand::None;
+			{
+				// One line per weapon-grip release: why it did or did not drop.
+				static bool s_prevGripDownForDropLog = false;
+				const bool gripDownNow = weaponGripActionActive && weaponGripDown;
+				if (s_prevGripDownForDropLog && !gripDownNow && (holsterGripHoldMode || m_VR->m_GripReleaseDropEnabled))
+				{
+					Game::logMsg("[VR][GripDrop] release: drop=%d eligible=%d proto=%d gameplay=%d(blocked 0x%X) throwActive=%d backend=%d inventoryItem=%d ownZone=%d otherZone=%d canRelease=%d weaponId=%d",
+						gripDropRequested ? 1 : 0, gripDropEligible ? 1 : 0,
+						l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) ? 1 : 0,
+						gripSession.gameplay ? 1 : 0, gripSession.blocked, manualThrowInputActive ? 1 : 0, throwBackendReady ? 1 : 0,
+						inventoryItem ? 1 : 0,
+						m_VR->m_HolsterHandInOwnZone.load(std::memory_order_acquire) ? 1 : 0,
+						m_VR->m_HolsterHandOverOtherZone.load(std::memory_order_acquire) ? 1 : 0,
+						l4d2vr_grip::CanReleaseInventoryItem(ManualInventoryThrowWeaponIdDoesMeleeDamage(activeWeaponId),
+							physicalAttackDown, s_manualCarryThrowPhysicalAttackDown, physicalUseDown, s_manualInventoryThrowArmed) ? 1 : 0,
+						activeWeaponId);
+				}
+				s_prevGripDownForDropLog = gripDownNow;
+			}
 			if (m_VR->m_GripReleaseDropEnabled && m_VR->m_VrHandsDebugLog)
 			{
 				static uint32_t previousGripGateState = ~0u;

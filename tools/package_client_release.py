@@ -36,6 +36,11 @@ CHANGES = [
     "1.2.1: items drawn from a holster are held by the grip and dropped when you let go (HolsterReleaseDrop).",
     "1.2.1: hand pills or adrenaline to a teammate by holding them against their chest.",
     "1.2.1: Half-Life 2 VR style two-handed aim with an adaptive stabilizer; the front hand no longer drifts.",
+    "1.2.2: toggle grips (GripToggle): a firm squeeze takes an item, the next squeeze holsters, swaps or drops it.",
+    "1.2.2: reload hints: the spare magazine and the bolt, slide or pump glow when the reload needs them.",
+    "1.2.2: point at menus with either controller and click with the trigger (MenuLaserPointerEnabled).",
+    "1.2.2: larger, Pavlov-sized holster zones; no stray anchor markers; turning no longer triggers melee bashes.",
+    "1.2.2: melee and shoves are motion only (no trigger bash or shove animation); the melee grip sits closer to the base of the handle.",
 ]
 
 

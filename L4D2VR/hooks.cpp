@@ -1331,7 +1331,9 @@ static GripGameplaySession ReadGripGameplaySession(VR* vr, Game* game)
         if (!state.weapon) state.blocked |= 0x8000u;
         if ((local.flags & (1 << 5)) != 0) state.blocked |= 32u;
         if (game->m_EngineClient->IsPaused()) state.blocked |= 64u;
-        if (game->m_VguiSurface && game->m_VguiSurface->IsCursorVisible()) state.blocked |= 128u;
+        // A headless self-test window never has focus, so its cursor reads as visible.
+        if (game->m_VguiSurface && game->m_VguiSurface->IsCursorVisible() &&
+            !(vr->m_SelfTestEnabled && vr->m_SelfTestPoseActive)) state.blocked |= 128u;
         if (vr->m_MouseModeEnabled) state.blocked |= 256u;
         if (vr->m_TeleportVisualScoutActive) state.blocked |= 512u;
         if (vr->m_SuppressPlayerInput) state.blocked |= 1024u;

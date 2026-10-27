@@ -701,13 +701,26 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 
 				const float angThr = std::max(0.0f, m_VR->m_NonVRMeleeAngVelThreshold);
 
-				const bool above =
+				bool above =
 					(thr > 0.0f && v > thr) ||
 					(angThr > 0.0f && angV > angThr);
 
-				const bool below =
+				bool below =
 					(thr <= 0.0f || v < rearmThr) &&
 					(angThr <= 0.0f || angV < angThr * hyst);
+
+				// With melee inertia on, the blade-tip swing detector decides swings
+				// (it already re-arms on rest and never fires for the chainsaw).
+				static uint32_t s_nonvrMeleeSeenSwingSerial = 0u;
+				if (m_VR->m_MeleeInertiaEnabled)
+				{
+					const uint32_t swingSerial = m_VR->m_MeleeSwingStartSerial.load(std::memory_order_acquire);
+					above = m_VR->m_MeleeMotionSwingEligible && swingSerial != s_nonvrMeleeSeenSwingSerial;
+					below = true;
+					s_nonvrMeleeSeenSwingSerial = swingSerial;
+					if (above && VectorLength(m_VR->m_MeleeSwingDirection) > 0.01f)
+						swingVel = m_VR->m_MeleeSwingDirection;
+				}
 
 				if (below)
 					s_nonvrMeleeArmed = true;
@@ -1067,6 +1080,15 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 	else
 	{
 		resetEffectiveRangeAutoFireDelay();
+	}
+
+	// Physical shove (melee thrust / gun bash): aim the shove along the motion
+	// for as long as it is held.
+	if (m_VR->m_PhysicalShoveEnabled && m_VR->m_PhysicalShoveAimValid &&
+		std::chrono::steady_clock::now() < m_VR->m_PhysicalShoveHoldUntil &&
+		!m_VR->m_AdjustingViewmodel && !m_VR->m_AdjustingScope)
+	{
+		cmd->viewangles = m_VR->m_PhysicalShoveAngles;
 	}
 
 	// Keep Source's main-thread viewangles aligned with the VR audio listener while

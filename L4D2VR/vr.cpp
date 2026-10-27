@@ -649,6 +649,7 @@ bool VR::IsQueuedHudFresh() const
 #include "vr/vr_holsters.inl"
 #include "vr/vr_dropped_mags.inl"
 #include "vr/vr_sight_alignment.inl"
+#include "vr/vr_melee_motion.inl"
 #include "vr/vr_viewmodel_config.inl"
 
 namespace

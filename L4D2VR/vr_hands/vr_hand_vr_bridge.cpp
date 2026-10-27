@@ -3980,8 +3980,13 @@ void VR::RecordMeleeCommand(int command, bool eligible, uintptr_t owner, uintptr
     }
     if (command == m_LastMeleeRecordedCommand) return;
     m_LastMeleeRecordedCommand = command;
-    sample.swinging = m_MeleeMotion.Update(sample.valid, owner, weapon,
+    const bool legacySwing = m_MeleeMotion.Update(sample.valid, owner, weapon,
         tracking.relativeVelocity.Length(), tracking.angularVelocity.Length());
+    // The blade-tip swing detector (vr_melee_motion.inl) decides swings; the
+    // chainsaw is never swing-triggered.
+    sample.swinging = sample.valid && (m_MeleeInertiaEnabled
+        ? (m_MeleeMotionSwingEligible && m_MeleeSwingActive.load(std::memory_order_acquire))
+        : legacySwing);
     m_MeleeCommands.Store(sample);
     if (m_VrHandsDebugLog && eligible)
     {

@@ -376,6 +376,11 @@ CrosshairColorRGB=255,255,255
 CrosshairAlpha=210
 // Turn each drawn gun so its bore is parallel to the aim ray: the crosshair then sits on the sights.
 SightAutoAlignEnabled=true
+// Melee weapons lag the hand slightly so swings match the regular melee speed; a swing is detected
+// from the blade tip (the chainsaw only needs the trigger). Thrusting a melee weapon forward or
+// bashing with a gun shoves along the motion.
+MeleeInertiaEnabled=true
+PhysicalShoveEnabled=true
 HolsterPavlovLayoutEnabled=true
 HolsterItemsVisible=true
 HolsterInstantDraw=true

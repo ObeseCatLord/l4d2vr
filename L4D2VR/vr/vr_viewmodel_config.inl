@@ -3206,6 +3206,8 @@ void VR::ParseConfigFile()
     m_BodyGripInventoryUseModelPelvis = getBool("BodyGripInventoryUseModelPelvis", true);
     m_PhysicalReloadOnUnsupportedServers = getBool("PhysicalReloadOnUnsupportedServers", true);
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
+    m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
+    m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
     m_CrosshairEnabled = getBool("CrosshairEnabled", true);
     {
         const std::string style = getString("CrosshairStyle", "x");

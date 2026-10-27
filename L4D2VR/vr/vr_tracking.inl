@@ -2466,6 +2466,10 @@ void VR::UpdateTracking()
     m_ViewmodelRight = VectorRotate(m_ViewmodelRight, m_ViewmodelForward, m_ViewmodelAngOffset.z);
     m_ViewmodelUp = VectorRotate(m_ViewmodelUp, m_ViewmodelForward, m_ViewmodelAngOffset.z);
 
+    // Melee weapons lag the hand slightly (physics inertia); also runs the
+    // swing and shove gesture detectors.
+    UpdateMeleeMotion(localPlayer);
+
     // Extra render-thread state (local player / third-person / aim line) captured on the update thread.
     Vector __rtLocalEye = localPlayer->EyePosition();
     const unsigned char* __lp = reinterpret_cast<const unsigned char*>(localPlayer);
@@ -2634,6 +2638,12 @@ void VR::UpdateTracking()
         sample.sampledAtMs = static_cast<uint32_t>(GetTickCount64());
         sample.position = m_RightControllerPosAbs;
         sample.angles = GetRightControllerAbsAngle();
+        if (m_MeleeLaggedPoseValid)
+        {
+            // Melee inertia: the swept blade is the lagged weapon.
+            sample.position = m_MeleeLaggedControllerPos;
+            sample.angles = m_MeleeLaggedControllerAng;
+        }
         sample.relativeVelocity = m_RightControllerPose.TrackedDeviceVel - m_HmdPose.TrackedDeviceVel;
         sample.angularVelocity = m_RightControllerPose.TrackedDeviceAngVel;
         std::lock_guard<std::mutex> lock(m_WorldPoseTrackingSnapshotMutex);

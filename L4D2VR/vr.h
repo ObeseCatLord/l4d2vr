@@ -29,6 +29,8 @@
 #include "vr_interaction_geometry.h"
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
+#include "vr_melee_inertia.h"
+#include "vr_gesture.h"
 #include "vr_sight_correction.h"
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
@@ -2731,6 +2733,34 @@ public:
 	Vector m_PrevRightControllerLocalPos = { 0,0,0 };
 	Vector m_PrevHmdLocalPos = { 0,0,0 };
 	std::chrono::steady_clock::time_point m_SecondaryAttackGestureHoldUntil{};
+	// Motion melee (vr/vr_melee_motion.inl).
+	bool m_MeleeInertiaEnabled = true;
+	bool m_PhysicalShoveEnabled = true;
+	bool m_MeleeMotionSwingEligible = false;
+	C_WeaponCSBase* m_MeleeMotionWeapon = nullptr;
+	std::string m_MeleeMotionScriptName;
+	l4d2vr_melee_inertia::Spring m_MeleeInertiaSpring;
+	mutable std::mutex m_MeleeInertiaMutex;
+	l4d2vr_melee_inertia::Pose m_MeleeInertiaDelta{};
+	bool m_MeleeInertiaDeltaValid = false;
+	Vector m_MeleeInertiaPosOffsetWorld{ 0.0f, 0.0f, 0.0f };
+	bool m_MeleeLaggedPoseValid = false;
+	Vector m_MeleeLaggedControllerPos{ 0.0f, 0.0f, 0.0f };
+	QAngle m_MeleeLaggedControllerAng{ 0.0f, 0.0f, 0.0f };
+	l4d2vr_gesture::SwingDetector m_MeleeSwing;
+	l4d2vr_gesture::ThrustDetector m_MeleeThrust{ l4d2vr_gesture::ThrustParams::Melee() };
+	l4d2vr_gesture::GunBashDetector m_GunBash;
+	std::atomic<bool> m_MeleeSwingActive{ false };
+	std::atomic<uint32_t> m_MeleeSwingStartSerial{ 0u };
+	Vector m_MeleeSwingDirection{ 0.0f, 0.0f, 0.0f };
+	Vector m_MeleeMotionPrevHand{ 0.0f, 0.0f, 0.0f };
+	bool m_MeleeMotionPrevValid = false;
+	std::chrono::steady_clock::time_point m_MeleeMotionLastUpdate{};
+	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
+	QAngle m_PhysicalShoveAngles{ 0.0f, 0.0f, 0.0f };
+	bool m_PhysicalShoveAimValid = false;
+	void UpdateMeleeMotion(C_BasePlayer* localPlayer);
+	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
 	std::chrono::steady_clock::time_point m_ReloadGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_JumpGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_SecondaryGestureCooldownEnd{};

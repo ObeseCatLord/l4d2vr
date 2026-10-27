@@ -1508,6 +1508,7 @@ Vector VR::GetRecommendedViewmodelAbsPos()
     viewmodelPos -= m_ViewmodelForward * m_ViewmodelPosOffset.x;
     viewmodelPos -= m_ViewmodelRight * m_ViewmodelPosOffset.y;
     viewmodelPos -= m_ViewmodelUp * m_ViewmodelPosOffset.z;
+    viewmodelPos += m_MeleeInertiaPosOffsetWorld;
 
     return viewmodelPos;
 }

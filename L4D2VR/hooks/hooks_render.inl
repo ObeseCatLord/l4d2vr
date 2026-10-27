@@ -4230,6 +4230,8 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 						- (vmForward * vp.viewmodelPosOffset.x)
 						- (vmRight * vp.viewmodelPosOffset.y)
 						- (vmUp * vp.viewmodelPosOffset.z);
+					// Melee inertia: re-apply the update thread's lag to this fresher pose.
+					m_VR->ApplyMeleeInertiaToViewmodel(vmForward, vmRight, vmUp, vmPosAbs);
 					QAngle::VectorAngles(vmForward, vmUp, vmAngAbs);
 				}
 

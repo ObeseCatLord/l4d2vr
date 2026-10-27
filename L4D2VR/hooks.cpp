@@ -798,6 +798,12 @@ static bool BuildEncodedVRUsercmdControllerPose(
 	}
 
 	controllerAngles = vr->GetRightControllerAbsAngle();
+	if (game && game->m_IsMeleeWeaponActive && vr->m_MeleeLaggedPoseValid)
+	{
+		// The server's melee sweep follows the lagged weapon the player sees.
+		controllerPos = vr->m_MeleeLaggedControllerPos;
+		controllerAngles = vr->m_MeleeLaggedControllerAng;
+	}
 	if (game && !game->m_IsMeleeWeaponActive)
 	{
 		Vector aimDirection{};

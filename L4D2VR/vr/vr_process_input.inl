@@ -948,7 +948,9 @@ void VR::ProcessInput()
         reloadJustPressed = false;
         suppressReload = true;
     }
-    const bool gestureSecondaryAttackActive = m_MotionGesturesEnabled && currentTime < m_SecondaryAttackGestureHoldUntil;
+    const bool gestureSecondaryAttackActive =
+        (m_MotionGesturesEnabled && currentTime < m_SecondaryAttackGestureHoldUntil) ||
+        (m_PhysicalShoveEnabled && currentTime < m_PhysicalShoveHoldUntil);
 
     vr::InputDigitalActionData_t flashlightActionData{};
     bool flashlightButtonDown = false;

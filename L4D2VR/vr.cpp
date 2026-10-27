@@ -638,6 +638,85 @@ bool VR::IsQueuedHudFresh() const
     return nowMs < freshUntilMs;
 }
 
+// OpenXR runtimes (XRizer) abort the whole frame when a layer pose is not
+// finite. Skip such transforms: the overlay keeps its last valid placement.
+namespace
+{
+    // Curvature 0 is the OpenVR default. Never send it explicitly: XRizer turns
+    // any SetOverlayCurvature call into a cylinder layer and divides by the
+    // curvature, producing a NaN layer pose that aborts the frame.
+    void L4D2VRSetOverlayCurvature(vr::IVROverlay* overlay, vr::VROverlayHandle_t handle, float curvature)
+    {
+        if (overlay && std::isfinite(curvature) && curvature > 0.001f)
+            overlay->SetOverlayCurvature(handle, (std::min)(curvature, 1.0f));
+    }
+
+    bool L4D2VROverlayMatrixFinite(const vr::HmdMatrix34_t* m)
+    {
+        if (!m)
+            return false;
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c)
+                if (!std::isfinite(m->m[r][c]))
+                    return false;
+        return true;
+    }
+
+    void L4D2VRLogRejectedOverlayTransform(vr::VROverlayHandle_t handle, int line)
+    {
+        static uint64_t s_LastLogMs = 0;
+        const uint64_t now = GetTickCount64();
+        if (now - s_LastLogMs < 2000u)
+            return;
+        s_LastLogMs = now;
+        Game::logMsg("[VR][Overlay] skipped non-finite transform for overlay %llu (source line %d)",
+            static_cast<unsigned long long>(handle), line);
+    }
+
+    vr::EVROverlayError L4D2VRSetOverlayTransformAbsolute(vr::VROverlayHandle_t handle,
+        vr::ETrackingUniverseOrigin origin, const vr::HmdMatrix34_t* transform, int line)
+    {
+        if (!L4D2VROverlayMatrixFinite(transform))
+        {
+            L4D2VRLogRejectedOverlayTransform(handle, line);
+            return vr::VROverlayError_InvalidParameter;
+        }
+        return vr::VROverlay()->SetOverlayTransformAbsolute(handle, origin, transform);
+    }
+
+}
+
+// Places an overlay relative to a tracked device by composing the device's
+// latest pose with the offset and setting an absolute transform. Device-
+// relative overlays are not implemented by every runtime (XRizer ignores
+// them, leaving the overlay at its default spot), so this works everywhere.
+// An untracked device keeps the overlay's last valid placement.
+vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROverlayHandle_t handle,
+    vr::TrackedDeviceIndex_t device, const vr::HmdMatrix34_t* transform, int line)
+{
+    if (!L4D2VROverlayMatrixFinite(transform) || device >= vr::k_unMaxTrackedDeviceCount)
+    {
+        L4D2VRLogRejectedOverlayTransform(handle, line);
+        return vr::VROverlayError_InvalidParameter;
+    }
+    const vr::TrackedDevicePose_t& pose = m_Poses[device];
+    if (!pose.bDeviceIsConnected || !pose.bPoseIsValid || !L4D2VROverlayMatrixFinite(&pose.mDeviceToAbsoluteTracking))
+        return vr::VROverlayError_InvalidParameter;
+    const vr::HmdMatrix34_t& a = pose.mDeviceToAbsoluteTracking;
+    vr::HmdMatrix34_t absolute{};
+    for (int r = 0; r < 3; ++r)
+    {
+        for (int c = 0; c < 4; ++c)
+        {
+            float value = a.m[r][0] * transform->m[0][c] + a.m[r][1] * transform->m[1][c] + a.m[r][2] * transform->m[2][c];
+            if (c == 3)
+                value += a.m[r][3];
+            absolute.m[r][c] = value;
+        }
+    }
+    return L4D2VRSetOverlayTransformAbsolute(handle, vr::VRCompositor()->GetTrackingSpace(), &absolute, line);
+}
+
 #include "vr/vr_lifecycle_init.inl"
 #include "vr/vr_lifecycle_update.inl"
 #include "vr/vr_lifecycle_pose_hud.inl"
@@ -650,6 +729,7 @@ bool VR::IsQueuedHudFresh() const
 #include "vr/vr_dropped_mags.inl"
 #include "vr/vr_sight_alignment.inl"
 #include "vr/vr_melee_motion.inl"
+#include "vr/vr_selftest.inl"
 #include "vr/vr_viewmodel_config.inl"
 
 namespace
@@ -8374,7 +8454,7 @@ void VR::UpdateKillIndicatorOverlays()
             continue;
 
         std::lock_guard<std::mutex> lock(m_VROverlayMutex);
-        overlay->SetOverlayTransformTrackedDeviceRelative(slot.overlayHandle, vr::k_unTrackedDeviceIndex_Hmd, &transform);
+        L4D2VRSetOverlayTransformTrackedDeviceRelative(slot.overlayHandle, vr::k_unTrackedDeviceIndex_Hmd, &transform, __LINE__);
         overlay->SetOverlayWidthInMeters(slot.overlayHandle, widthMeters);
         overlay->SetOverlayAlpha(slot.overlayHandle, alpha);
         if (!slot.visible)
@@ -11227,7 +11307,10 @@ void VR::DrawKillIndicators(IMatRenderContext* renderContext, ITexture* hudTextu
 
 void VR::UpdateKillSoundFeedback()
 {
-    auto resetState = [&]()
+    // The latched command number is shared with the magazine/shell/pistol
+    // transactions, so only a lost game/player clears it; disabling hit and
+    // kill feedback must not.
+    auto resetState = [&](bool clearCommandNumber)
         {
             const bool hadFeedbackState = m_HitSoundPending
                 || !m_PendingKillSoundHits.empty()
@@ -11254,7 +11337,8 @@ void VR::UpdateKillSoundFeedback()
             m_LastKillSoundSpecialKills = -1;
             m_PredictedHitFeedbackShotSerial = 0;
             m_LastPredictedHitSoundShotSerial = 0;
-            m_CurrentPredictedHitFeedbackCmdNumber = 0;
+            if (clearCommandNumber)
+                m_CurrentPredictedHitFeedbackCmdNumber = 0;
             m_RecentPredictedHitFeedbackShotSerials.fill(0);
             m_RecentPredictedHitFeedbackShotSerialCursor = 0;
             m_RecentPredictedHitFeedbackEmissions = {};
@@ -11266,15 +11350,15 @@ void VR::UpdateKillSoundFeedback()
     const bool wantsHitFeedback = m_HitSoundEnabled || m_HitIndicatorEnabled;
     const bool wantsKillFeedback = m_KillSoundEnabled || m_KillIndicatorEnabled;
     const bool wantsAnyFeedback = wantsHitFeedback || wantsKillFeedback;
-    if (!wantsAnyFeedback || !m_Game || !m_Game->m_EngineClient)
+    if (!m_Game || !m_Game->m_EngineClient || !m_Game->m_EngineClient->IsInGame())
     {
-        resetState();
+        resetState(true);
         return;
     }
 
-    if (!m_Game->m_EngineClient->IsInGame())
+    if (!wantsAnyFeedback)
     {
-        resetState();
+        resetState(false);
         return;
     }
 
@@ -11282,7 +11366,7 @@ void VR::UpdateKillSoundFeedback()
     C_BasePlayer* localPlayer = reinterpret_cast<C_BasePlayer*>(SafeGetProjectedItemLabelClientEntity(this, localPlayerIndex));
     if (!localPlayer)
     {
-        resetState();
+        resetState(true);
         return;
     }
 

@@ -2538,6 +2538,12 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 
 	static EngineThirdPersonCamSmoother s_engineTpCam;
 
+	// Desktop mode (no headset, or VR_Init failed): plain desktop rendering.
+	// The VR eye targets would be 0x0 and their creation fails inside the
+	// shader API. Remote VR bodies are posed by the model hooks, not here.
+	if (!m_VR->m_IsVREnabled)
+		return hkRenderView.fOriginal(ecx, setup, hudViewSetup, nClearFlags, whatToDraw);
+
 	if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
 		m_VR->CreateVRTextures();
 
@@ -4697,6 +4703,20 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	g_FirstPersonBodyActualFirstPerson.store(
 		firstPersonBodyActualFirstPerson,
 		std::memory_order_release);
+	if (!firstPersonBodyActualFirstPerson && l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+	{
+		static uint64_t s_LastCameraDiagMs = 0;
+		const uint64_t nowMs = GetTickCount64();
+		if (nowMs - s_LastCameraDiagMs >= 5000u)
+		{
+			s_LastCameraDiagMs = nowMs;
+			Game::logMsg("[VR][SelfTest] camera: thirdPerson=%d queueMode=%d playerValid=%d life=%d dead=%d observer=%d viewEntity=%d cooldown=%d queuedValid=%d queuedEligible=%d scout=%d",
+				renderThirdPerson ? 1 : 0, queueMode, localPlayerValid ? 1 : 0, tpStateDbg.lifeState, tpStateDbg.dead ? 1 : 0,
+				tpStateDbg.observerMode, hasViewEntityOverride ? 1 : 0, inMapLoadCooldown ? 1 : 0,
+				firstPersonBodyQueuedPlayerSnapshotValid ? 1 : 0, firstPersonBodyQueuedPlayerEligible ? 1 : 0,
+				m_VR->m_TeleportVisualScoutActive.load(std::memory_order_acquire) ? 1 : 0);
+		}
+	}
 
 	// ------------------------------
 	// Third-person shake damping:

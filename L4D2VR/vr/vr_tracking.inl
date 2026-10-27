@@ -748,6 +748,7 @@ void VR::UpdateTracking()
         (inGameNow && playerIndex > 0)
         ? (C_BasePlayer*)m_Game->GetClientEntity(playerIndex)
         : nullptr;
+    UpdateSelfTest(localPlayer);
     if (!localPlayer) {
         m_BulletAimWeaponEligible.store(false, std::memory_order_release);
         m_FirstPersonControlReady.store(false, std::memory_order_release);

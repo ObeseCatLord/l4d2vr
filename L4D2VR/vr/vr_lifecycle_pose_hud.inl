@@ -23,6 +23,7 @@ void VR::GetPoses()
     GetPoseData(hmdPose, m_HmdPose);
     GetPoseData(leftControllerPose, m_LeftControllerPose);
     GetPoseData(rightControllerPose, m_RightControllerPose);
+    ApplySelfTestPoses();
 }
 
 bool VR::ReadPoseWaiterSnapshot(vr::TrackedDevicePose_t* outPoses, uint32_t* outSeq) const
@@ -69,7 +70,7 @@ void VR::LoadingFramePumpThreadMain()
         // During gameplay only a real freeze (not a slow frame) hands frames to the pump.
         const float stallMs = m_LastSubmitWasGameplay.load(std::memory_order_acquire)
             ? std::max(300.0f, m_LoadingFramePumpStallMs)
-            : std::max(15.0f, m_LoadingFramePumpStallMs);
+            : std::max(100.0f, m_LoadingFramePumpStallMs);
         if (last == 0 || static_cast<float>(now - last) < stallMs)
         {
             if (pumpedSinceLog > 0)
@@ -711,6 +712,14 @@ bool VR::GetLeftHandedMirroredAnalogActionData(vr::VRActionHandle_t actionHandle
 bool VR::GetDigitalActionData(vr::VRActionHandle_t& actionHandle, vr::InputDigitalActionData_t& digitalDataOut)
 {
     digitalDataOut = {};
+    bool selfTestDown = false, selfTestChanged = false;
+    if (l4d2vr_selftest::Lookup(actionHandle, selfTestDown, selfTestChanged))
+    {
+        digitalDataOut.bActive = true;
+        digitalDataOut.bState = selfTestDown;
+        digitalDataOut.bChanged = selfTestChanged;
+        return true;
+    }
     const auto frame = m_InputActionFrame.Read();
     if (!m_Input || !l4d2vr_input::ActionFrame::Ready(frame))
         return false;
@@ -1456,7 +1465,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             ov->SetOverlayInputMethod(m_SpecialInfectedIntentSenseHudHandle, vr::VROverlayInputMethod_None);
             ov->SetOverlayAlpha(m_SpecialInfectedIntentSenseHudHandle, 1.0f);
             ov->SetOverlayTexelAspect(m_SpecialInfectedIntentSenseHudHandle, 1.0f);
-            ov->SetOverlayCurvature(m_SpecialInfectedIntentSenseHudHandle, 0.0f);
+            L4D2VRSetOverlayCurvature(ov, m_SpecialInfectedIntentSenseHudHandle, 0.0f);
             return true;
         };
     const bool wantsIntentSenseHudOutput =
@@ -1603,8 +1612,26 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     if (m_LeftHanded)
         std::swap(leftControllerIndex, rightControllerIndex);
 
-    const vr::TrackedDeviceIndex_t offHandIndex = leftControllerIndex;
-    const vr::TrackedDeviceIndex_t gunHandIndex = rightControllerIndex;
+    // A controller-relative overlay needs a valid controller pose: OpenXR
+    // runtimes (XRizer) reject the whole frame when a layer pose is invalid,
+    // e.g. while a controller has lost tracking. Hide those HUDs until it returns.
+    auto controllerPoseUsable = [&](vr::TrackedDeviceIndex_t index)
+        {
+            if (index == vr::k_unTrackedDeviceIndexInvalid || index >= vr::k_unMaxTrackedDeviceCount)
+                return false;
+            const vr::TrackedDevicePose_t& pose = m_Poses[index];
+            if (!pose.bDeviceIsConnected || !pose.bPoseIsValid || pose.eTrackingResult != vr::TrackingResult_Running_OK)
+                return false;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 4; ++c)
+                    if (!std::isfinite(pose.mDeviceToAbsoluteTracking.m[r][c]))
+                        return false;
+            return true;
+        };
+    const vr::TrackedDeviceIndex_t offHandIndex =
+        controllerPoseUsable(leftControllerIndex) ? leftControllerIndex : vr::k_unTrackedDeviceIndexInvalid;
+    const vr::TrackedDeviceIndex_t gunHandIndex =
+        controllerPoseUsable(rightControllerIndex) ? rightControllerIndex : vr::k_unTrackedDeviceIndexInvalid;
 
     const vr::TrackedDeviceIndex_t leftRoleIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
     const vr::TrackedDeviceIndex_t rightRoleIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
@@ -1773,7 +1800,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if ((!worldQuad || worldQuadAttachControllers) && !m_MouseModeEnabled && offHandIndex != vr::k_unTrackedDeviceIndexInvalid)
         {
             vr::HmdMatrix34_t rel = buildRel(m_LeftWristHudXOffset, m_LeftWristHudYOffset, m_LeftWristHudZOffset, m_LeftWristHudAngleOffset);
-            vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, offHandIndex, &rel);
+            L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, offHandIndex, &rel, __LINE__);
         }
         vr::VROverlay()->SetOverlayWidthInMeters(m_LeftWristHudHandle, (std::max)(0.01f, m_LeftWristHudWidthMeters));
         // Texel aspect is per-texel pixel aspect, not texture aspect ratio. Our pixels are square.
@@ -1781,7 +1808,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         float leftCurv = (std::max)(0.0f, m_LeftWristHudCurvature);
         if (worldQuad && !worldQuadAttachControllers)
             leftCurv = 0.0f;
-        vr::VROverlay()->SetOverlayCurvature(m_LeftWristHudHandle, leftCurv);
+        L4D2VRSetOverlayCurvature(vr::VROverlay(), m_LeftWristHudHandle, leftCurv);
         // Opacity applies to background only; keep overlay alpha at 1 so text/bars stay readable.
         vr::VROverlay()->SetOverlayAlpha(m_LeftWristHudHandle, 1.0f);
 
@@ -2275,7 +2302,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if ((!worldQuad || worldQuadAttachControllers) && !m_MouseModeEnabled && gunHandIndex != vr::k_unTrackedDeviceIndexInvalid)
         {
             vr::HmdMatrix34_t rel = buildRel(m_RightAmmoHudXOffset, m_RightAmmoHudYOffset, m_RightAmmoHudZOffset, m_RightAmmoHudAngleOffset);
-            vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, gunHandIndex, &rel);
+            L4D2VRSetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, gunHandIndex, &rel, __LINE__);
         }
         // Opacity applies to background only; keep overlay alpha at 1 so text/bars stay readable.
         vr::VROverlay()->SetOverlayAlpha(m_RightAmmoHudHandle, 1.0f);
@@ -2737,12 +2764,12 @@ after_right:
         if (leftVisible)
         {
             vr::HmdMatrix34_t rel = buildRel(xL, y, z, ang);
-            vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, parentDev, &rel);
+            L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, parentDev, &rel, __LINE__);
         }
         if (rightVisible)
         {
             vr::HmdMatrix34_t rel = buildRel(xR, y, z, ang);
-            vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, parentDev, &rel);
+            L4D2VRSetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, parentDev, &rel, __LINE__);
         }
     }
 
@@ -2817,12 +2844,12 @@ after_right:
                 if (leftVisible)
                 {
                     const vr::HmdMatrix34_t mat = mul34(originToMirror, translate34(xL, yRow, 0.0f));
-                    vr::VROverlay()->SetOverlayTransformAbsolute(m_LeftWristHudHandle, origin, &mat);
+                    L4D2VRSetOverlayTransformAbsolute(m_LeftWristHudHandle, origin, &mat, __LINE__);
                 }
                 if (rightVisible)
                 {
                     const vr::HmdMatrix34_t mat = mul34(originToMirror, translate34(xR, yRow, 0.0f));
-                    vr::VROverlay()->SetOverlayTransformAbsolute(m_RightAmmoHudHandle, origin, &mat);
+                    L4D2VRSetOverlayTransformAbsolute(m_RightAmmoHudHandle, origin, &mat, __LINE__);
                 }
             }
         }
@@ -2836,12 +2863,12 @@ after_right:
                 if (leftVisible)
                 {
                     const vr::HmdMatrix34_t mat = mul34(devToMirror, translate34(xL, yRow, 0.0f));
-                    vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, parentDev, &mat);
+                    L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, parentDev, &mat, __LINE__);
                 }
                 if (rightVisible)
                 {
                     const vr::HmdMatrix34_t mat = mul34(devToMirror, translate34(xR, yRow, 0.0f));
-                    vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, parentDev, &mat);
+                    L4D2VRSetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, parentDev, &mat, __LINE__);
                 }
             }
         }

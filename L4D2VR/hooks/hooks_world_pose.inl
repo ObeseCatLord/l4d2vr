@@ -6529,6 +6529,15 @@
             config);
         const float weight = std::clamp(trackingWeight, 0.0f, 1.0f);
         const float drop = crouch.valid ? crouch.addedDrop * weight : 0.0f;
+        {
+            // Rate-limited trace so a second client can confirm remote crouching.
+            static std::uint64_t s_LastCrouchLogMs = 0u;
+            if (drop >= 4.0f && now - s_LastCrouchLogMs >= 1000u)
+            {
+                s_LastCrouchLogMs = now;
+                Game::logMsg("[VR][VRIK] remote crouch: pelvis drop %.1f units (weight %.2f)", drop, weight);
+            }
+        }
         const float headRemainder = crouch.valid ? crouch.headRemainder * weight : 0.0f;
         constexpr float kMinimumAdjustment = 0.05f; // game units
         if (drop < kMinimumAdjustment && headRemainder < kMinimumAdjustment)

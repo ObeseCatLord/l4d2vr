@@ -78,6 +78,7 @@ struct VR
 #include "vr_controller_identity_cache.inl"
     void GetPoses();
     vr::TrackedDeviceIndex_t GetPhysicalControllerIndexForHand(bool leftHand) const;
+    void ApplySelfTestPoses() {}
     void GetPoseData(vr::TrackedDevicePose_t& source, vr::TrackedDevicePose_t& destination)
     { destination = source; }
 };

@@ -11,6 +11,7 @@
 #endif
 #include "../L4D2VR/vr_holster.h"
 #include <cstdio>
+#include <string>
 #include <cstdlib>
 
 using namespace l4d2vr_holster;
@@ -133,8 +134,19 @@ static void TestNextSlot()
     CHECK(GrabFsm::NextSlotAfterHolster(2, 0x03u) == 1);
 }
 
+static void TestWeaponClasses()
+{
+    CHECK(std::string(l4d2vr_holster::WeaponClassForId(1)) == "weapon_pistol");
+    CHECK(std::string(l4d2vr_holster::WeaponClassForId(14)) == "weapon_pipe_bomb");
+    CHECK(std::string(l4d2vr_holster::WeaponClassForId(19)) == "weapon_melee");
+    CHECK(std::string(l4d2vr_holster::WeaponClassForId(26)) == "weapon_rifle_ak47");
+    CHECK(l4d2vr_holster::WeaponClassForId(16) == nullptr);   // gas can is carried, not slotted
+    CHECK(l4d2vr_holster::WeaponClassForId(0) == nullptr);
+}
+
 int main()
 {
+    TestWeaponClasses();
     TestYawDeadband();
     TestZones();
     TestItemPoseOrthonormal();

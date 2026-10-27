@@ -3480,6 +3480,9 @@ void VR::UpdatePhysicalScopeWeapon(C_BasePlayer* owner, C_WeaponCSBase* weapon)
 
 bool VR::HasFreshMagazineInteractionTracking() const
 {
+    // Self-test (simulated headset): no controller action frame exists.
+    if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+        return true;
     if (!IsInputActionFrameAvailable() || !IsMagazineGripInputAvailable())
         return false;
     VRWorldPoseTrackingSnapshot pose{};
@@ -3502,7 +3505,8 @@ bool VR::BeginRemoteShellRequest(uint32_t handle, int id, int clip, int reserve,
         !m_FirstPersonControlReady.load(std::memory_order_acquire) ||
         m_RenderPlayerIncap.load(std::memory_order_acquire) ||
         m_RenderPlayerControlledBySI.load(std::memory_order_acquire) ||
-        (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible())) return false;
+        (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible() &&
+            !l4d2vr_selftest::Get().active.load(std::memory_order_acquire))) return false;
     if (!HasFreshMagazineInteractionTracking()) return false;
     l4d2vr_shell::Request request{};
     {
@@ -3914,7 +3918,8 @@ bool VR::BeginRemoteMagazineRequest(uint32_t handle, int id, int clip, int reser
         !m_FirstPersonControlReady.load(std::memory_order_acquire) ||
         m_RenderPlayerIncap.load(std::memory_order_acquire) ||
         m_RenderPlayerControlledBySI.load(std::memory_order_acquire) ||
-        (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible())) return false;
+        (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible() &&
+            !l4d2vr_selftest::Get().active.load(std::memory_order_acquire))) return false;
     if (!HasFreshMagazineInteractionTracking()) return false;
     l4d2vr_remote_mag::Request request{};
     {
@@ -3957,6 +3962,68 @@ l4d2vr_remote_mag::ClientRequest::Poll VR::PollRemoteMagazineReply(uint32_t hand
     }
     if (resend) SendRemoteMagazineRequest(retry,true);
     return result;
+}
+
+// Developer self-test: run one server magazine/shell transaction on the active
+// weapon without the hand choreography. kind: 0 eject, 1 insert, 2 one shell.
+// Returns 1 applied, 0 waiting, -1 failed; clip/reserve are the replicated values.
+int VR::SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut)
+{
+    clipOut = reserveOut = -1;
+    C_WeaponCSBase* const weapon = player ? static_cast<C_WeaponCSBase*>(player->GetActiveWeapon()) : nullptr;
+    if (!weapon)
+        return -1;
+    const int id = static_cast<int>(weapon->GetWeaponID());
+    int ammoType = -1;
+    MagazineInteractionTryReadValue(weapon, kClip1Offset, clipOut);
+    if (MagazineInteractionTryReadValue(weapon, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
+        MagazineInteractionTryReadValue(player, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), reserveOut);
+    const uint32_t handle = MagazineInteractionActiveWeaponHandle(m_Game, player, weapon);
+    const uint32_t generation = m_MagazineInteractionSessionGeneration.load(std::memory_order_acquire);
+    const uintptr_t owner = reinterpret_cast<uintptr_t>(player);
+    if (begin)
+    {
+        bool started = false;
+        if (kind == 2)
+            started = BeginRemoteShellRequest(handle, id, clipOut, reserveOut, owner, generation);
+        else
+            started = BeginRemoteMagazineRequest(handle, id, clipOut, reserveOut,
+                kind == 0 ? l4d2vr_remote_mag::Action::Eject : l4d2vr_remote_mag::Action::Insert, owner, generation);
+        if (!started)
+            Game::logMsg("[VR][SelfTest] ammo request not started kind=%d weapon=%d handle=%u shellProto=%d magProto=%d fresh=%d cmd=%d",
+                kind, id, handle, RemoteShellProtocolSupported() ? 1 : 0, RemoteMagazineProtocolSupported() ? 1 : 0,
+                HasFreshMagazineInteractionTracking() ? 1 : 0, m_CurrentPredictedHitFeedbackCmdNumber);
+        return started ? 0 : -1;
+    }
+    unsigned status = 0u;
+    bool result = false, waiting = false;
+    if (kind == 2)
+    {
+        l4d2vr_shell::Reply reply{};
+        const auto poll = PollRemoteShellReply(handle, id, owner, generation, clipOut, reserveOut, reply);
+        waiting = poll == l4d2vr_shell::ClientRequest::Poll::Waiting;
+        result = poll == l4d2vr_shell::ClientRequest::Poll::Result;
+        status = static_cast<unsigned>(reply.status);
+        if (result) { clipOut = reply.clip; reserveOut = reply.reserve; }
+    }
+    else
+    {
+        l4d2vr_remote_mag::Reply reply{};
+        const auto poll = PollRemoteMagazineReply(handle, id, owner, generation, clipOut, reserveOut, reply);
+        waiting = poll == l4d2vr_remote_mag::ClientRequest::Poll::Waiting;
+        result = poll == l4d2vr_remote_mag::ClientRequest::Poll::Result;
+        status = static_cast<unsigned>(reply.status);
+        if (result) { clipOut = reply.clip; reserveOut = reply.reserve; }
+    }
+    if (waiting)
+        return 0;
+    if (!result || status != 0u)
+    {
+        Game::logMsg("[VR][SelfTest] ammo transaction kind=%d ended without success (result=%d status=%u)",
+            kind, result ? 1 : 0, status);
+        return -1;
+    }
+    return 1;
 }
 
 void VR::RecordMeleeCommand(int command, bool eligible, uintptr_t owner, uintptr_t weapon)

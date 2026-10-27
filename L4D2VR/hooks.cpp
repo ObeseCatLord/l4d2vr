@@ -685,6 +685,26 @@ namespace
         C_BasePlayer* player,
         bool hasRealUserCmd)
     {
+        if (vr && !vr->m_FirstPersonControlReady.load(std::memory_order_acquire) &&
+            l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+        {
+            // Self-test diagnostics: why first-person control is not ready yet.
+            static uint64_t s_LastReadyDiagMs = 0;
+            const uint64_t nowMs = GetTickCount64();
+            if (nowMs - s_LastReadyDiagMs >= 5000u)
+            {
+                s_LastReadyDiagMs = nowMs;
+                HooksFirstPersonBodyLocalState diag{};
+                const bool stateOk = player && HooksFirstPersonBodyReadLocalStateSafe(player, &diag);
+                Game::logMsg("[VR][SelfTest] waiting for first-person control: realCmd=%d vr=%d inGame=%d player=%d cooldown=%d actualFirstPerson=%d state=%d team=%d life=%d observer=%d viewEntity=%d flags=0x%X",
+                    hasRealUserCmd ? 1 : 0, vr->m_IsVREnabled ? 1 : 0,
+                    (game && game->m_EngineClient && game->m_EngineClient->IsInGame()) ? 1 : 0, player ? 1 : 0,
+                    vr->IsThirdPersonMapLoadCooldownActive() ? 1 : 0,
+                    g_FirstPersonBodyActualFirstPerson.load(std::memory_order_acquire) ? 1 : 0,
+                    stateOk ? 1 : 0, diag.team, diag.lifeState, diag.observerMode,
+                    HooksFirstPersonBodyHandleValid(diag.viewEntity) ? 1 : 0, diag.flags);
+            }
+        }
         if (!vr ||
             vr->m_FirstPersonControlReady.load(std::memory_order_acquire) ||
             !hasRealUserCmd ||
@@ -694,7 +714,10 @@ namespace
             !game->m_EngineClient->IsInGame() ||
             !player ||
             vr->IsThirdPersonMapLoadCooldownActive() ||
-            !g_FirstPersonBodyActualFirstPerson.load(std::memory_order_acquire))
+            (!g_FirstPersonBodyActualFirstPerson.load(std::memory_order_acquire) &&
+                // The self-test (simulated headset) does not depend on the
+                // render path's camera report; the state checks below still apply.
+                !l4d2vr_selftest::Get().active.load(std::memory_order_acquire)))
         {
             return;
         }

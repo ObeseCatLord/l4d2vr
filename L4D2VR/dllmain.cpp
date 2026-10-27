@@ -3024,6 +3024,10 @@ namespace
         { "2026-10-27_physical_overhaul_DualPistolsIndependentHandsEnabled", "DualPistolsIndependentHandsEnabled", "true" },
         { "2026-10-27_physical_overhaul_LeftWristHudEnabled", "LeftWristHudEnabled", "true" },
         { "2026-10-27_physical_overhaul_RightAmmoHudEnabled", "RightAmmoHudEnabled", "true" },
+        // Half-Life 2 VR style two-handing: the gun points from the rear to the
+        // front hand (older forced samples left 0.5, which made the front hand drift).
+        { "2026-10-28_hl2vr_two_hand_strength", "VrHandsTwoHandedAimStrength", "1.0" },
+        { "2026-10-28_hl2vr_two_hand_smoothing", "VrHandsTwoHandedAimSmoothingSeconds", "0.025" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3187,6 +3191,11 @@ namespace
         sampleKeys.insert("ScopeEyeboxDeg");
         sampleKeys.insert("ScopeVignetteExponent");
         sampleKeys.insert("DualPistolsAkimboOnAnyServer");
+        sampleKeys.insert("VrHandsTwoHandedStabilizerEnabled");
+        sampleKeys.insert("VrHandsTwoHandedStabilizerMinCutoffHz");
+        sampleKeys.insert("VrHandsTwoHandedStabilizerBeta");
+        sampleKeys.insert("HolsterReleaseDrop");
+        sampleKeys.insert("ConsumableGiveEnabled");
         for (const auto key : l4d2vr_calibration::kConfigKeys)
             sampleKeys.insert(std::string(key));
         configChanged |= RemoveConfigParametersNotInSample(configText, sampleKeys);

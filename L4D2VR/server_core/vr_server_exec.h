@@ -124,6 +124,17 @@ namespace l4d2vr_server
             else if (p.shoveAimRemaining > 0 && (in.features & kFeatureShoveAim) != 0u) ctx.aim = AimReason::Shove;
             else if (p.throwAimRemaining > 0) ctx.aim = AimReason::Throw;
         }
+        // Handing over pills: the give traces from the real eye through the
+        // hand, so touching the item to a teammate aims at that teammate.
+        if (ctx.aim == AimReason::PillGive && in.haveEye)
+        {
+            Vec3 toHand{ ctx.position.x - in.eye.x, ctx.position.y - in.eye.y, ctx.position.z - in.eye.z };
+            if (Normalize(toHand) > 1.0f)
+            {
+                ctx.aimAngles = NormalizeAndClampViewAngles(VectorAngles(toHand));
+                ctx.position = in.eye;
+            }
+        }
         if (p.pillAimRemaining > 0) --p.pillAimRemaining;
         if (p.shoveAimRemaining > 0) --p.shoveAimRemaining;
         if (p.throwAimRemaining > 0 && released == 0) --p.throwAimRemaining;

@@ -397,6 +397,33 @@ bool VR::ResolvePavlovTwoHandedAimBasis(
 
 void VR::ApplyPavlovTwoHandedAimSmoothing(Vector& forward, Vector& right, Vector& up)
 {
+    if (m_VrHandsTwoHandedStabilizerEnabled)
+    {
+        // Half-Life 2 VR style: adaptive smoothing of the rear-to-front aim line.
+        // Holding still filters hand jitter hard; swinging loosens it so the gun
+        // does not trail the front hand. Roll keeps following the rear hand.
+        const float dt = std::clamp(m_LastFrameDuration, 0.0f, 0.1f);
+        l4d2vr_filter::OneEuroParams params{};
+        params.minCutoffHz = m_VrHandsTwoHandedStabilizerMinCutoffHz;
+        params.beta = m_VrHandsTwoHandedStabilizerBeta;
+        const bool wasValid = m_VrHandsTwoHandedAimFilter.Valid() && m_VrHandsTwoHandedAimSmoothingValid;
+        l4d2vr_filter::Dir3 in{};
+        in.x = forward.x; in.y = forward.y; in.z = forward.z;
+        const l4d2vr_filter::Dir3 out = m_VrHandsTwoHandedAimFilter.Update(in, wasValid ? dt : 0.0f, params);
+        const float alpha = m_VrHandsTwoHandedAimFilter.LastAlpha();
+        const Vector filteredForward(out.x, out.y, out.z);
+        const Vector filteredUp = wasValid
+            ? VrHandsAimNormalizedLerp(m_VrHandsTwoHandedAimUpSmoothed, up, alpha, up)
+            : up;
+        if (VrHandsAimBuildBasis(filteredForward, filteredUp, right, forward, right, up))
+        {
+            m_VrHandsTwoHandedAimForwardSmoothed = forward;
+            m_VrHandsTwoHandedAimUpSmoothed = up;
+            m_VrHandsTwoHandedAimSmoothingValid = true;
+        }
+        return;
+    }
+
     const float tau = std::clamp(m_VrHandsTwoHandedAimSmoothingSeconds, 0.0f, 0.25f);
     if (tau <= 0.0001f)
     {
@@ -435,6 +462,7 @@ void VR::ApplyPavlovTwoHandedAimSmoothing(Vector& forward, Vector& right, Vector
 void VR::ResetPavlovTwoHandedAimSmoothing()
 {
     m_VrHandsTwoHandedAimSmoothingValid = false;
+    m_VrHandsTwoHandedAimFilter.Reset();
 }
 
 bool VR::ReadWorldPoseTrackingSnapshot(VRWorldPoseTrackingSnapshot& outSnapshot) const

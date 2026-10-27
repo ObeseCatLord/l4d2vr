@@ -469,8 +469,67 @@ static void TestSampleGapRestartsTiming()
     Check(fires == 1);
 }
 
+static void TestHandover()
+{
+    using namespace l4d2vr_gesture;
+    HandoverDetector detector;
+    HandoverTarget teammate{ 7, Vector(1.0f, 0.0f, 1.1f) };
+    Sample s{};
+    s.hmdPosition = Vector(0.0f, 0.0f, 1.6f);
+    s.handForward = Vector(1.0f, 0.0f, 0.0f);
+    // Item point (hand + 8 cm) held 10 cm from the teammate's chest for 0.3 s: one give.
+    int fired = 0, target = 0;
+    for (int i = 0; i <= 30; ++i)
+    {
+        s.time = i * 0.01f;
+        s.handPosition = Vector(0.82f, 0.0f, 1.1f);
+        const HandoverEvent e = detector.Update(s, &teammate, 1);
+        if (e.fired) { ++fired; target = e.target; }
+    }
+    Check(fired == 1 && target == 7);
+    // Staying there does not give again; leaving and coming back re-arms.
+    for (int i = 31; i <= 60; ++i)
+    {
+        s.time = i * 0.01f;
+        if (detector.Update(s, &teammate, 1).fired) ++fired;
+    }
+    Check(fired == 1);
+    s.time = 0.61f;
+    s.handPosition = Vector(0.2f, 0.0f, 1.1f);
+    detector.Update(s, &teammate, 1);
+    for (int i = 62; i <= 95; ++i)
+    {
+        s.time = i * 0.01f;
+        s.handPosition = Vector(0.85f, 0.0f, 1.1f);
+        if (detector.Update(s, &teammate, 1).fired) ++fired;
+    }
+    Check(fired == 2);
+    // A brief touch is not a give.
+    HandoverDetector brief;
+    int briefFired = 0;
+    for (int i = 0; i <= 10; ++i)
+    {
+        s.time = 2.0f + i * 0.01f;
+        s.handPosition = Vector(0.85f, 0.0f, 1.1f);
+        if (brief.Update(s, &teammate, 1).fired) ++briefFired;
+    }
+    Check(briefFired == 0);
+    // Never near your own head.
+    HandoverDetector nearHead;
+    HandoverTarget atHead{ 3, Vector(0.1f, 0.0f, 1.55f) };
+    int headFired = 0;
+    for (int i = 0; i <= 40; ++i)
+    {
+        s.time = 3.0f + i * 0.01f;
+        s.handPosition = Vector(0.02f, 0.0f, 1.55f);
+        if (nearHead.Update(s, &atHead, 1).fired) ++headFired;
+    }
+    Check(headFired == 0);
+}
+
 int main()
 {
+    TestHandover();
     TestSwing();
     TestSwingIgnoresWalking();
     TestSwingValidation();

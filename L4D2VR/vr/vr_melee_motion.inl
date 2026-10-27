@@ -163,7 +163,52 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         (weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS || weaponId == C_WeaponCSBase::WeaponID::ADRENALINE))
     {
         bool consumed = false;
-        if (weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS)
+        // Hold the item against a teammate's chest to hand it over.
+        bool given = false;
+        if (m_ConsumableGiveEnabled && m_Game && m_Game->m_ClientEntityList)
+        {
+            l4d2vr_gesture::HandoverTarget targets[32];
+            int count = 0;
+            const int highest = std::min(64, m_Game->m_ClientEntityList->GetHighestEntityIndex());
+            for (int i = 1; i <= highest && count < 32; ++i)
+            {
+                C_BaseEntity* const entity = m_Game->GetClientEntity(i);
+                if (!entity || entity == reinterpret_cast<C_BaseEntity*>(localPlayer))
+                    continue;
+                const unsigned char* const base = reinterpret_cast<const unsigned char*>(entity);
+                unsigned char lifeState = 1;
+                int team = 0;
+                if (!VR_TryReadU8(base, kLifeStateOffset, lifeState) || !VR_TryReadI32(base, kTeamNumOffset, team) ||
+                    lifeState != 0 || team != 2)
+                    continue;
+                Vector origin{};
+                if (!VR_TryGetEntityAbsOrigin(entity, origin))
+                    continue;
+                const Vector chest = origin + Vector(0.0f, 0.0f, 46.0f);
+                targets[count].id = i;
+                targets[count].point = chest * (1.0f / scale);
+                ++count;
+            }
+            const l4d2vr_gesture::HandoverEvent handover = m_HandoverGesture.Update(sample, targets, count);
+            if (handover.fired)
+            {
+                given = true;
+                for (int i = 0; i < count; ++i)
+                    if (targets[i].id == handover.target)
+                        m_PillGiveTargetPoint = targets[i].point * scale;
+                m_PillGiveImpulsePending.store(true, std::memory_order_release);
+                m_PillGiveHoldUntil = now + std::chrono::milliseconds(500);
+                TriggerPhysicalHandHapticPulse(false, 0.04f, 90.0f, 0.4f, 2);
+                Game::logMsg("[VR][Consumable] %s handed to player %d",
+                    weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS ? "pills" : "adrenaline", handover.target);
+            }
+        }
+        if (given)
+        {
+            m_PillsGesture.Reset();
+            m_AdrenalineGesture.Reset();
+        }
+        else if (weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS)
         {
             consumed = m_PillsGesture.Update(sample).fired;
         }
@@ -197,6 +242,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     {
         m_PillsGesture.Reset();
         m_AdrenalineGesture.Reset();
+        m_HandoverGesture.Reset();
     }
     if (weapon != m_ConsumableUseWeapon)
         m_ConsumableUseHoldUntil = {};

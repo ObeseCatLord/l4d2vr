@@ -321,6 +321,7 @@ namespace
         { "HolsterPavlovLayoutEnabled", CfgOptionType::Bool, "Hands / Holsters", "Pavlov holster layout", 0.0f, 0.0f, "true" },
         { "HolsterItemsVisible", CfgOptionType::Bool, "Hands / Holsters", "Show holstered items", 0.0f, 0.0f, "true" },
         { "HolsterInstantDraw", CfgOptionType::Bool, "Hands / Holsters", "Instant draw from holster", 0.0f, 0.0f, "true" },
+        { "HolsterReleaseDrop", CfgOptionType::Bool, "Hands / Holsters", "Drop held items on grip release", 0.0f, 0.0f, "true" },
         { "HolsterYawDeadbandDeg", CfgOptionType::Float, "Hands / Holsters", "Holster turn dead band", 0.0f, 90.0f, "20" },
         { "HolsterHeightScale", CfgOptionType::Float, "Hands / Holsters", "Holster height scale", 0.5f, 1.6f, "1.0" },
         { "MagazineEmptyGlowEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Glow empty magazine", 0.0f, 0.0f, "true" },
@@ -330,6 +331,10 @@ namespace
         { "MeleeInertiaEnabled", CfgOptionType::Bool, "Weapons / Melee", "Melee weapon inertia", 0.0f, 0.0f, "true" },
         { "PhysicalShoveEnabled", CfgOptionType::Bool, "Weapons / Melee", "Thrust and gun-bash shove", 0.0f, 0.0f, "true" },
         { "ConsumableGesturesEnabled", CfgOptionType::Bool, "Hands / Items", "Pills and adrenaline gestures", 0.0f, 0.0f, "true" },
+        { "ConsumableGiveEnabled", CfgOptionType::Bool, "Hands / Items", "Hand pills/adrenaline to teammates", 0.0f, 0.0f, "true" },
+        { "VrHandsTwoHandedStabilizerEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Two-hand aim stabilizer", 0.0f, 0.0f, "true" },
+        { "VrHandsTwoHandedStabilizerMinCutoffHz", CfgOptionType::Float, "Hands / VR Hands", "Two-hand stabilizer (still)", 0.2f, 10.0f, "1.2" },
+        { "VrHandsTwoHandedStabilizerBeta", CfgOptionType::Float, "Hands / VR Hands", "Two-hand stabilizer (moving)", 0.0f, 10.0f, "1.5" },
         { "CrosshairEnabled", CfgOptionType::Bool, "Weapons / Aim", "Dynamic spread crosshair", 0.0f, 0.0f, "true" },
         { "CrosshairArmPixels", CfgOptionType::Float, "Weapons / Aim", "Crosshair arm length", 1.0f, 64.0f, "7" },
         { "SightAutoAlignEnabled", CfgOptionType::Bool, "Weapons / Aim", "Align crosshair with sights", 0.0f, 0.0f, "true" },
@@ -1059,6 +1064,7 @@ namespace
         { "ManualPumpEnabled", "Hands / Manual Reload", "Manual Shotgun Pump", "Pump and chrome shotguns require a full rear and forward fore-end stroke after a shot.", "Releasing the fore-end preserves its position. Automatic shotguns retain their normal cycling. Requires VR hands, manual reload and the shotgun server hook. Disable this option if an unsupported model has no usable pump pose." },
         { "HolsterPavlovLayoutEnabled", "Hands / Holsters", "Pavlov Holster Layout", "Long gun behind the dominant shoulder, medkit/defib behind the other, pistol or melee on the hip, grenade and pills/adrenaline on the chest.", "Reach to a holster and hold the weapon-hand grip to draw the item; release a held item in its own holster to put it away. Requires Body Grip Inventory." },
         { "HolsterItemsVisible", "Hands / Holsters", "Show Holstered Items", "Draws the items you carry at their holsters; the hovered one glows.", "Requires the first-person body." },
+        { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "HolsterInstantDraw", "Hands / Holsters", "Instant Draw", "Items drawn from a holster appear in the hand immediately instead of playing the deploy animation.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
         { "MagazineEmptyGlowEnabled", "Hands / Manual Reload", "Glow Empty Magazine", "An empty gun never reloads by itself; its magazine glows instead.", "" },
         { "MagazineDropEnabled", "Hands / Manual Reload", "Drop Released Magazines", "Released magazines fall to the floor and disappear after a while.", "" },
@@ -1066,6 +1072,10 @@ namespace
         { "DualPistolsAkimboOnAnyServer", "Weapons / Throwables", "Akimbo On Any Server", "Each trigger fires its own pistol aimed by its own hand, also on servers without the L4D2VR plugin.", "" },
         { "MeleeInertiaEnabled", "Weapons / Melee", "Melee Inertia", "Melee weapons lag your hand slightly so swings match the normal melee speed; swings are detected from the blade tip.", "The chainsaw only needs the trigger." },
         { "PhysicalShoveEnabled", "Weapons / Melee", "Physical Shove", "Thrust a melee weapon forward or bash with a gun to shove in that direction.", "" },
+        { "ConsumableGiveEnabled", "Hands / Items", "Give To Teammates", "Hold pills or adrenaline against a teammate's chest for a moment to hand them over.", "Works on every server." },
+        { "VrHandsTwoHandedStabilizerEnabled", "Hands / VR Hands", "Two-hand Stabilizer", "Adaptive smoothing of two-handed aim, like Half-Life 2 VR: steady while holding still, responsive while moving.", "Replaces Two-hand Aim Smoothing while on." },
+        { "VrHandsTwoHandedStabilizerMinCutoffHz", "Hands / VR Hands", "Stabilizer Still Cutoff", "Smoothing cutoff while the weapon is held still. Lower is steadier.", "1.2 Hz by default." },
+        { "VrHandsTwoHandedStabilizerBeta", "Hands / VR Hands", "Stabilizer Motion Response", "How fast the stabilizer loosens as you swing the weapon. Higher has less lag.", "1.5 by default." },
         { "ConsumableGesturesEnabled", "Hands / Items", "Consumable Gestures", "Bring pills to your mouth or stab adrenaline into your chest or other arm to use them.", "The trigger still works." },
         { "CrosshairEnabled", "Weapons / Aim", "Dynamic Spread Crosshair", "Shows an X crosshair at the aim point whose gap grows with the weapon's current inaccuracy.", "" },
         { "SightAutoAlignEnabled", "Weapons / Aim", "Align Crosshair With Sights", "Turns each drawn gun so its sights line up with the crosshair and bullets.", "" },
@@ -2398,6 +2408,9 @@ VrHandsTwoHandedAimMountFriendly=false
 VrHandsVirtualStockEnabled=false
 VrHandsTwoHandedAimStrength=1.0
 VrHandsTwoHandedAimSmoothingSeconds=0.025
+VrHandsTwoHandedStabilizerEnabled=true
+VrHandsTwoHandedStabilizerMinCutoffHz=1.2
+VrHandsTwoHandedStabilizerBeta=1.5
 VrHandsTwoHandedAimMinHandDistanceMeters=0.12
 VrHandsTwoHandedAimMaxHandDistanceMeters=0.85
 VrHandsTwoHandedAimOffhandOffsetMeters=0.12,0.0,0.0

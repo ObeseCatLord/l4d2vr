@@ -606,6 +606,43 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 			cmd->viewangles.y = aim.y;   // yaw
 			cmd->viewangles.z = 0.f;     // roll 一般不用
 
+			// Immersive throws on servers that cannot take a custom throw velocity:
+			// at release, aim the native fixed-speed throw so it lands where the
+			// hand's throw would have, and hold that aim through the throw window.
+			{
+				static bool s_t0ThrowPrevAttack = false;
+				static int s_t0ThrowGraceTicks = 0;
+				static QAngle s_t0ThrowAngles{};
+				C_WeaponCSBase* const throwWeapon = localPlayerForAutoActions
+					? reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon()) : nullptr;
+				const bool throwable = throwWeapon && m_VR->m_ManualThrowEnabled && !m_VR->m_MouseModeEnabled &&
+					m_VR->IsThrowableWeapon(throwWeapon);
+				const bool attackDownForThrow = (cmd->buttons & (1 << 0)) != 0;
+				if (throwable && attackDownForThrow && !s_t0ThrowPrevAttack)
+					m_VR->TriggerPhysicalHandHapticPulse(false, 0.025f, 140.0f, 0.2f, 2); // pin pulled
+				if (throwable && !attackDownForThrow && s_t0ThrowPrevAttack && localPlayerForAutoActions)
+				{
+					const Vector handVelocity = m_VR->m_DroppedMagazineHandVelocity[1] *
+						std::max(0.1f, m_VR->m_ManualThrowVelocityScale);
+					const l4d2vr_ballistics::NativeThrowAim solved = l4d2vr_ballistics::MapHandThrowToNative(
+						m_VR->GetRightControllerAbsPos(), handVelocity, localPlayerForAutoActions->EyePosition(),
+						localPlayerForAutoActions->GetAbsOrigin().z,
+						l4d2vr_ballistics::DefaultNativeThrowModel(l4d2vr_ballistics::Throwable::Molotov));
+					if (solved.solved || solved.fallback)
+					{
+						s_t0ThrowAngles = QAngle(solved.pitchDeg, solved.yawDeg, 0.0f);
+						NormalizeAndClampViewAngles(s_t0ThrowAngles);
+						s_t0ThrowGraceTicks = 48;
+					}
+				}
+				s_t0ThrowPrevAttack = throwable && attackDownForThrow;
+				if (s_t0ThrowGraceTicks > 0)
+				{
+					--s_t0ThrowGraceTicks;
+					cmd->viewangles = s_t0ThrowAngles;
+				}
+			}
+
 			// Third-person melee: when holding a melee weapon, steer the server-facing viewangles
 			// toward the rendered reticle convergence point so swings land where the crosshair points.
 			if (m_Game->m_IsMeleeWeaponActive && m_VR->IsThirdPersonCameraActive() && m_VR->m_HasAimConvergePoint && !m_VR->m_AdjustingViewmodel

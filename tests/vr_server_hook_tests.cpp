@@ -120,7 +120,7 @@ namespace
         return;
 #endif
         const bool loaded = image.LoadFile("/proc/self/exe", error);
-        if (sizeof(void*) != 4u)
+        if constexpr (sizeof(void*) != 4u)
         {
             Check(!loaded && error.find("32-bit") != std::string::npos);
             return;

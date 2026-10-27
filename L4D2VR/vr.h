@@ -2790,6 +2790,8 @@ public:
 	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
 	QAngle m_PhysicalShoveAngles{ 0.0f, 0.0f, 0.0f };
 	bool m_PhysicalShoveAimValid = false;
+	// One-shot request to tag the next usercmd with the server shove intent (impulse 238).
+	std::atomic<bool> m_PhysicalShoveImpulsePending{ false };
 	// Pills to the mouth, adrenaline stabbed into the chest or arm.
 	bool m_ConsumableGesturesEnabled = true;
 	l4d2vr_gesture::PillsMouthDetector m_PillsGesture;

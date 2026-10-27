@@ -236,6 +236,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
             m_PhysicalShoveAngles = aim;
             m_PhysicalShoveAimValid = true;
         }
+        m_PhysicalShoveImpulsePending.store(true, std::memory_order_release);
         TriggerShoveHaptics(false);
         Game::logMsg("[VR][Melee] physical shove (%s)", meleeActive ? "thrust" : "gun bash");
     }

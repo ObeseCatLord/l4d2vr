@@ -1243,6 +1243,7 @@ public:
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_BodyGripSelectionSerial{ 0 };
     bool m_BodyGripInventoryEnabled = false;
+    bool m_PhysicalReloadOnUnsupportedServers = true;
     bool m_ManualPumpEnabled = false;
     std::atomic<bool> m_ManualPumpBlockingFire{ false };
     std::atomic<bool> m_BodyAmmoAvailable{ false };

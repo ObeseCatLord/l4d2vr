@@ -3204,6 +3204,7 @@ void VR::ParseConfigFile()
     m_GripReleaseDropEnabled = getBool("GripReleaseDropEnabled", false);
     m_BodyGripInventoryEnabled = getBool("BodyGripInventoryEnabled", false);
     m_BodyGripInventoryUseModelPelvis = getBool("BodyGripInventoryUseModelPelvis", true);
+    m_PhysicalReloadOnUnsupportedServers = getBool("PhysicalReloadOnUnsupportedServers", true);
     m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);

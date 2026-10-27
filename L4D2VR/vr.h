@@ -28,6 +28,7 @@
 #include "vr_hand_input_validation.h"
 #include "vr_interaction_geometry.h"
 #include "vr_body_inventory.h"
+#include "vr_holster.h"
 #include "vr_dual_pistols.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
@@ -1306,6 +1307,46 @@ public:
     Vector m_BodyInventoryHeadPosAbs{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryForward{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryRight{0.0f, 0.0f, 0.0f};
+    std::chrono::steady_clock::time_point m_BodyInventoryLastUpdate{};
+
+    // Pavlov-style holsters (body grip inventory with visible, grabbable items).
+    bool m_HolsterPavlovLayoutEnabled = true;
+    bool m_HolsterItemsVisible = true;
+    bool m_HolsterInstantDraw = true;
+    float m_HolsterYawDeadbandDeg = 20.0f;
+    float m_HolsterYawSmoothingSeconds = 0.25f;
+    float m_HolsterHeightScale = 1.0f;
+    float m_HolsterHighlightBrightness = 1.6f;
+    float m_HolsterHoverHapticAmplitude = 0.15f;
+    float m_HolsterGrabHapticAmplitude = 0.35f;
+    l4d2vr_holster::Layout m_HolsterLayout{};
+    l4d2vr_holster::GrabFsm m_HolsterGrab;
+    struct HolsterRenderItem
+    {
+        void* renderable = nullptr;   // IClientRenderable of the carried weapon entity
+        int entityIndex = -1;
+        int slot = -1;
+        int weaponId = 0;
+        l4d2vr_holster::ItemShape shape = l4d2vr_holster::ItemShape::Equipment;
+        bool highlighted = false;
+    };
+    struct HolsterRenderSnapshot
+    {
+        HolsterRenderItem items[l4d2vr_holster::kZoneCount]{};
+        int count = 0;
+        uint32_t serial = 0;
+    };
+    mutable std::mutex m_HolsterRenderMutex;
+    HolsterRenderSnapshot m_HolsterRenderSnapshot{};
+    std::atomic<int> m_HolsterHighlightSlot{ -1 };
+    std::atomic<int> m_HolsterInstantDrawSlot{ -1 };
+    std::atomic<uint64_t> m_HolsterInstantDrawUntilMs{ 0 };
+    void* m_HolsterEntityIndexCacheKey[l4d2vr_holster::kZoneCount]{};
+    int m_HolsterEntityIndexCache[l4d2vr_holster::kZoneCount]{ -1, -1, -1, -1, -1 };
+    bool GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const;
+    void UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot);
+    bool GetHolsterRenderSnapshot(HolsterRenderSnapshot& out) const;
+    bool BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::ItemPose& pose) const;
 	struct ManualThrowUsercmdPoseSnapshot
 	{
 		bool valid = false;

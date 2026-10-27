@@ -24095,6 +24095,36 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
     return singleLeft ? (canRetarget ? l4d2vr_dual::Hand::Left : l4d2vr_dual::Hand::None) : l4d2vr_dual::Hand::Right;
 }
 
+namespace
+{
+    void HooksHolsterPlaceBones(const l4d2vr_holster::ItemPose& pose, vr_vm_stabilize::Mat3x4* bones, int count)
+    {
+        if (!bones || count <= 0 || count > 512 || !pose.valid)
+            return;
+        vr_vm_stabilize::Mat3x4 target{};
+        const Vector* axes[3] = { &pose.axisX, &pose.axisY, &pose.axisZ };
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int column = 0; column < 3; ++column)
+                target.m[row][column] = (*axes[column])[row];
+            target.m[row][3] = pose.origin[row];
+        }
+        vr_vm_stabilize::Mat3x4 root{};
+        if (!vr_vm_stabilize::SafeRead(bones, root))
+            return;
+        vr_vm_stabilize::Mat3x4 inverseRoot{}, delta{};
+        vr_vm_stabilize::InvertTR(root, inverseRoot);
+        vr_vm_stabilize::Mul(target, inverseRoot, delta);
+        for (int bone = 0; bone < count; ++bone)
+        {
+            vr_vm_stabilize::Mat3x4 source{};
+            if (!vr_vm_stabilize::SafeRead(bones + bone, source))
+                return;
+            vr_vm_stabilize::Mul(delta, source, bones[bone]);
+        }
+    }
+}
+
 bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
     void* ecx,
     void* edx,
@@ -24110,6 +24140,14 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
             maxBones,
             boneMask,
             currentTime);
+    if (result && boneToWorldOut && ecx && ecx == g_HolsterDrawScope.renderable)
+    {
+        // Holstered item: keep the model's own bone layout and move it rigidly so
+        // its root bone lands on the holster pose.
+        HooksHolsterPlaceBones(g_HolsterDrawScope.pose,
+            reinterpret_cast<vr_vm_stabilize::Mat3x4*>(boneToWorldOut), maxBones);
+        return result;
+    }
     if (result && boneToWorldOut)
     {
         HooksWorldPoseApplyWeaponSetupBones(

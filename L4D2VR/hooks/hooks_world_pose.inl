@@ -2740,22 +2740,47 @@
         return outTarget != nullptr;
     }
 
+    bool HooksWorldPoseEnsureWeaponSetupBonesHookForRenderable(
+        VR* vr,
+        void* renderable);
+
     bool HooksWorldPoseEnsureWeaponSetupBonesHookMainThread(
         VR* vr,
         Game* game)
     {
         if (!vr ||
             !game ||
-            !vr->m_WorldModelVRPoseEnabled ||
             !vr->m_FirstPersonControlReady.load(std::memory_order_acquire))
         {
             return false;
         }
 
+        // Visible holsters draw carried weapons through the same SetupBones
+        // hook, so it is needed even when world-model VR pose is disabled.
+        if (vr->m_BodyGripInventoryEnabled && vr->m_HolsterItemsVisible &&
+            !g_HooksWorldPoseWeaponSetupBonesHookReady.load(std::memory_order_acquire))
+        {
+            VR::HolsterRenderSnapshot holsters{};
+            if (vr->GetHolsterRenderSnapshot(holsters))
+                HooksWorldPoseEnsureWeaponSetupBonesHookForRenderable(vr, holsters.items[0].renderable);
+        }
+
+        if (!vr->m_WorldModelVRPoseEnabled)
+            return g_HooksWorldPoseWeaponSetupBonesHookReady.load(std::memory_order_acquire);
+
         void* const renderable =
             g_HooksWorldPosePendingWeaponRenderable.load(
                 std::memory_order_acquire);
         if (!renderable)
+            return false;
+        return HooksWorldPoseEnsureWeaponSetupBonesHookForRenderable(vr, renderable);
+    }
+
+    bool HooksWorldPoseEnsureWeaponSetupBonesHookForRenderable(
+        VR* vr,
+        void* renderable)
+    {
+        if (!vr || !renderable)
             return false;
 
         void* target = nullptr;

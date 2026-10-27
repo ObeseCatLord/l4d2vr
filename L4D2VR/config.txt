@@ -360,7 +360,24 @@ AimLineMinHitDistance=0
 
 ManualThrowEnabled=false
 GripReleaseDropEnabled=false
-BodyGripInventoryEnabled=false
+BodyGripInventoryEnabled=true
+// Pavlov-style holsters: long gun behind the dominant shoulder, medkit/defib/upgrade behind the other
+// shoulder, pistol or melee on the dominant hip, grenade and pills/adrenaline on the chest.
+// Reach to a holster and hold the weapon-hand grip to draw it instantly; release a held item inside its
+// own holster to put it away. Offsets are metres from the head: forward, toward the dominant side, up.
+HolsterPavlovLayoutEnabled=true
+HolsterItemsVisible=true
+HolsterInstantDraw=true
+HolsterYawDeadbandDeg=20
+HolsterYawSmoothingSeconds=0.25
+HolsterHeightScale=1.0
+HolsterHoverHapticAmplitude=0.15
+HolsterGrabHapticAmplitude=0.35
+HolsterPrimaryOffsetMeters=-0.10,0.16,-0.12
+HolsterSecondaryOffsetMeters=0.02,0.22,-0.70
+HolsterThrowableOffsetMeters=0.16,-0.09,-0.34
+HolsterMedicalOffsetMeters=-0.10,-0.16,-0.12
+HolsterConsumableOffsetMeters=0.16,0.09,-0.34
 ManualPumpEnabled=false
 DualPistolsIndependentHandsEnabled=false
 DualPistolsNativeReloadFallbackEnabled=true

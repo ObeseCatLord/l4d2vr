@@ -646,6 +646,7 @@ bool VR::IsQueuedHudFresh() const
 #include "vr/vr_tracking.inl"
 #include "vr/vr_aiming.inl"
 #include "vr/vr_object_pull.inl"
+#include "vr/vr_holsters.inl"
 #include "vr/vr_viewmodel_config.inl"
 
 namespace

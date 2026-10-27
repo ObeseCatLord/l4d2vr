@@ -1,0 +1,49 @@
+# L4D2VR dedicated server plugin configuration (optional).
+# Copy to left4dead2/addons/l4d2vr_server_config.txt and restart the server.
+# The plugin only reads this file; every key is optional and unknown keys are
+# reported in the server log. Values are clamped to safe ranges.
+
+# Feature bits the server may offer (hex). A bit is only advertised when its
+# hooks resolved as well. 0x1 MeleeSweepV2, 0x2 ShoveAim, 0x4 AkimboRays,
+# 0x8 MagTxn, 0x10 ShellTxn, 0x20 HolsterDrop, 0x40 ThrowVelocity,
+# 0x80 PillGive, 0x100 PoseV3, 0x200 InstantDeploy.
+FeatureMask=0x3ff
+
+# Physical melee (same meaning as the previous dedicated plugin).
+MeleeSwingBlockWhileControlled=true
+MeleeSwingBlockWhileIncapacitated=true
+MeleeSwingCooldownSeconds=0.35
+MeleeSwingBurstWindowSeconds=2.0
+MeleeSwingBurstMax=4
+
+# Pose sanity: a hand farther than this from the eye is pulled back (max 1.2).
+UnitsPerMeter=43.2
+MaxHandReachMeters=1.2
+
+# Manual throws (client ManualThrow* defaults). ThrowMaxSpeed is the hard
+# anti-abuse clamp in units/s; slower releases than ThrowMinSpeed keep the
+# game's own throw.
+ThrowVelocityScale=4.0
+ThrowHorizontalVelocityScale=1.0
+ThrowVerticalVelocityScale=1.0
+ThrowArcLiftRatio=0.0
+ThrowVelocityWindowTicks=5
+ThrowPeakVelocityBlend=0.5
+ThrowMaxSpeed=1400
+ThrowMinSpeed=40
+DropMaxSpeed=450
+
+# Eye-override windows in executed commands, and the use aim mode
+# (0 off, 1 grip pickup only, 2 every +use of a VR player).
+ThrowAimCommands=48
+ShoveAimCommands=16
+PillAimCommands=8
+UseAimMode=1
+
+# Intent rate limits.
+HolsterDropMinIntervalMs=400
+ShoveMinIntervalMs=250
+PillGiveMinIntervalMs=500
+IntentBudgetPerSecond=12
+
+Verbose=false

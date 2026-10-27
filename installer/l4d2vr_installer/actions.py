@@ -122,6 +122,13 @@ def download_asset(asset: sources.Asset, log: Log, progress=None) -> Path:
     return path
 
 
+def bundled_client_zip() -> Optional[Path]:
+    """l4d2vr.zip shipped next to the installer (the full release archive)."""
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
+    candidate = base / sources.CLIENT_ASSET
+    return candidate if candidate.is_file() else None
+
+
 def install_client(game_dir: Path, *, zip_path: Optional[Path] = None, options: Optional[SourceOptions] = None,
                    pin_workshop: bool = True, extra_preserve: Optional[List[str]] = None,
                    force: bool = False, dry_run: bool = False, log: Log = _print,
@@ -134,20 +141,30 @@ def install_client(game_dir: Path, *, zip_path: Optional[Path] = None, options: 
     release = None
     if zip_path is None:
         options = options or SourceOptions()
-        release = fetch_release(options, log)
-        if release.client is None:
-            raise InstallerError(f"The latest release ({release.tag}) has no {sources.CLIENT_ASSET} asset.")
-        state = target.read_state() or {}
-        same_archive = (not release.client.sha256
-                        or state.get("archive_sha256") == release.client.sha256.lower())
-        if not force and state.get("tag") == release.tag and same_archive:
-            log(f"Already up to date ({release.tag}). Use --force to reinstall.")
-            return install.Plan(target, None)
-        for pattern in release.preserve:
-            if pattern not in target.preserve:
-                target.preserve.append(pattern)
-        zip_path = download_asset(release.client, log, progress)
-        log(f"Installing {release.tag} into {game_dir}")
+        try:
+            release = fetch_release(options, log)
+            if release.client is None:
+                raise InstallerError(f"The latest release ({release.tag}) has no {sources.CLIENT_ASSET} asset.")
+            state = target.read_state() or {}
+            same_archive = (not release.client.sha256
+                            or state.get("archive_sha256") == release.client.sha256.lower())
+            if not force and state.get("tag") == release.tag and same_archive:
+                log(f"Already up to date ({release.tag}). Use --force to reinstall.")
+                return install.Plan(target, None)
+            for pattern in release.preserve:
+                if pattern not in target.preserve:
+                    target.preserve.append(pattern)
+            zip_path = download_asset(release.client, log, progress)
+            log(f"Installing {release.tag} into {game_dir}")
+        except InstallerError as error:
+            # Offline: the full release archive ships l4d2vr.zip next to the installer.
+            bundled = bundled_client_zip()
+            if bundled is None:
+                raise
+            release = None
+            zip_path = bundled
+            log(f"Could not get the latest release ({error}); installing the bundled {bundled.name} instead.")
+            log(f"Installing {bundled.name} into {game_dir}")
     else:
         log(f"Installing {Path(zip_path).name} into {game_dir}")
     return install.install_package(target, Path(zip_path), _metadata(release, options, Path(zip_path).name),

@@ -29,6 +29,7 @@
 #include "vr_interaction_geometry.h"
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
+#include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
 #include "vector.h"
@@ -1237,6 +1238,11 @@ public:
 	bool m_ManualThrowEnabled = false;
 	bool m_GripReleaseDropEnabled = false;
     std::atomic<unsigned> m_ServerPhysicalInteractionVersion{ 0u };
+    std::atomic<uint32_t> m_ServerFeatureMask{ 0u };
+    bool ServerFeature(uint32_t bit) const
+    {
+        return (m_ServerFeatureMask.load(std::memory_order_acquire) & bit) == bit && bit != 0u;
+    }
 	bool m_MagazineReleaseButtonRequired = true;
 	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
 	bool m_MagazineEmptyGlowEnabled = true;

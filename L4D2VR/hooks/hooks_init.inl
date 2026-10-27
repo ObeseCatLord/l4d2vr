@@ -393,6 +393,7 @@ Hooks::Hooks(Game* game)
 
 	m_Game = game;
 	m_VR = m_Game->m_VR;
+	InstallBackgroundAudioHooks(m_VR && m_VR->m_BackgroundAudioEnabled);
 
 	m_HUDStep = HUDPushStep::None;
 	m_PushedHud = false;

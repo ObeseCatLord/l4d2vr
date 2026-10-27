@@ -735,6 +735,7 @@ public:
 	// thread is blocked in a level load, so the headset never freezes on the
 	// loading screen. Shares a frame mutex with VR::Update.
 	bool m_LoadingFramePumpEnabled = true;
+	bool m_BackgroundAudioEnabled = true;
 	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
 	bool m_ScopePictureInPictureLens = true;
 	float m_ScopeParallaxStrength = 1.0f;

@@ -3208,6 +3208,7 @@ void VR::ParseConfigFile()
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
+    m_BackgroundAudioEnabled = getBool("BackgroundAudio", true);
     m_ScopePictureInPictureLens = getBool("ScopePictureInPictureLens", true);
     m_ScopeParallaxStrength = std::clamp(getFloat("ScopeParallaxStrength", 1.0f), 0.0f, 4.0f);
     m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 8.0f), 1.0f, 45.0f);

@@ -358,7 +358,7 @@ AimLineFrameDurationMultiplier=0
 AimLineColor=255,0,0,100
 AimLineMinHitDistance=0
 
-ManualThrowEnabled=false
+ManualThrowEnabled=true
 GripReleaseDropEnabled=false
 BodyGripInventoryEnabled=true
 // Pavlov-style holsters: long gun behind the dominant shoulder, medkit/defib/upgrade behind the other
@@ -385,6 +385,8 @@ LoadingFramePumpEnabled=true
 LoadingFramePumpStallMs=40
 // Show the HUD overlay (end-of-chapter stats, scoreboard) automatically at intermissions.
 IntermissionHudEnabled=true
+// Keep game audio playing when the desktop window is not focused.
+BackgroundAudio=true
 // Picture-in-picture scope lens: the scope image shifts with your eye (parallax) and darkens toward the
 // edge as your eye leaves the eyebox, like a real optic.
 ScopePictureInPictureLens=true
@@ -407,7 +409,7 @@ HolsterSecondaryOffsetMeters=0.02,0.22,-0.70
 HolsterThrowableOffsetMeters=0.16,-0.09,-0.34
 HolsterMedicalOffsetMeters=-0.10,-0.16,-0.12
 HolsterConsumableOffsetMeters=0.16,0.09,-0.34
-ManualPumpEnabled=false
+ManualPumpEnabled=true
 DualPistolsIndependentHandsEnabled=true
 // True akimbo everywhere: each trigger fires its own pistol, aimed by its own hand (on servers
 // without the physical protocol the shot's view angles carry that hand's aim).

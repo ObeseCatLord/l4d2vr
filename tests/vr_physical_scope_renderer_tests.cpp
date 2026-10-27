@@ -6,6 +6,7 @@
 #pragma warning(push, 0)
 #endif
 #include "../L4D2VR/vr_scope_optics.h"
+#include "../L4D2VR/vr_scope_lens.h"
 #include "../L4D2VR/vr_hands/vr_hand_math.h"
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -49,7 +50,7 @@ constexpr DWORD D3DTOP_SELECTARG1 = 2, D3DTOP_MODULATE = 4, D3DTOP_DISABLE = 1;
 constexpr DWORD D3DTA_TFACTOR = 3, D3DTA_DIFFUSE = 0, D3DTA_TEXTURE = 2;
 constexpr DWORD D3DTEXF_LINEAR = 2, D3DTADDRESS_CLAMP = 3;
 constexpr DWORD D3DBLENDOP_ADD = 1, D3DBLEND_SRCALPHA = 5, D3DBLEND_INVSRCALPHA = 6;
-constexpr int D3DPT_TRIANGLEFAN = 6, D3DPT_LINELIST = 2;
+constexpr int D3DPT_TRIANGLEFAN = 6, D3DPT_LINELIST = 2, D3DPT_TRIANGLELIST = 4;
 static std::uint64_t GetTickCount64() { return 1000u; }
 static D3DCOLOR D3DCOLOR_ARGB(DWORD alpha, DWORD red, DWORD green, DWORD blue)
 { return (alpha << 24) | (red << 16) | (green << 8) | blue; }
@@ -257,6 +258,9 @@ struct VR {
     IDirect3DSurface9* m_D9ScopeSurface = nullptr;
     IDirect3DTexture9* m_D9ScopeLensTexture = nullptr;
     float m_VRScale = 43.2f, m_ScopeReticleAlpha = 0.5f;
+    // The picture-in-picture lens mesh is covered by vr_scope_lens_tests.
+    bool m_ScopePictureInPictureLens = false;
+    float m_ScopeParallaxStrength = 1.0f, m_ScopeEyeboxDeg = 8.0f, m_ScopeVignetteExponent = 0.25f;
     VR() { m_PhysicalScopeWeapons.Observe(1u, 0x3005u, 6); }
     bool IsPhysicalScopeMode() const { return true; }
     bool HasFreshPhysicalScopeTracking() const { return true; }

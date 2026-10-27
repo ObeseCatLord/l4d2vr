@@ -9069,6 +9069,104 @@ namespace
         pCustomBoneToWorld = frozenBones;
     }
 
+    // Holster draws put the item straight into the hand: while the native deploy
+    // animation plays, show the weapon's last settled idle pose instead.
+    struct HolsterInstantDrawPoseState
+    {
+        VR* owner = nullptr;
+        std::string currentModel;
+        std::chrono::steady_clock::time_point modelSince{};
+        std::unordered_map<std::string, MagazineInteractionFrozenViewmodelPoseEntry> readyPoses;
+    };
+
+    inline HolsterInstantDrawPoseState& GetHolsterInstantDrawPoseState()
+    {
+        static HolsterInstantDrawPoseState state;
+        return state;
+    }
+
+    inline void ApplyHolsterInstantDrawViewmodelPose(
+        VR* vr,
+        void* drawState,
+        const std::string& modelName,
+        bool drawEntityIsViewmodelClass,
+        const ModelRenderInfo_t& info,
+        void*& pCustomBoneToWorld)
+    {
+        if (!vr || !vr->m_IsVREnabled || !vr->m_BodyGripInventoryEnabled || !vr->m_HolsterInstantDraw ||
+            !drawState || !pCustomBoneToWorld || modelName.empty())
+            return;
+        const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        const bool armsModel = HooksModelNameIsArmsOrHands(lowerModel);
+        if (!armsModel && !drawEntityIsViewmodelClass && !HooksModelNameIsViewmodel(lowerModel))
+            return;
+
+        HolsterInstantDrawPoseState& state = GetHolsterInstantDrawPoseState();
+        if (state.owner != vr)
+        {
+            state = {};
+            state.owner = vr;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        // Arms are bone-merged to the weapon and redrawn separately; they share the
+        // weapon's deploy timing and keep one ready pose per weapon.
+        if (!armsModel && state.currentModel != lowerModel)
+        {
+            state.currentModel = lowerModel;
+            state.modelSince = now;
+        }
+        if (state.currentModel.empty())
+            return;
+        const float modelAge = std::chrono::duration<float>(now - state.modelSince).count();
+        const std::string poseKey = armsModel ? lowerModel + "|" + state.currentModel : lowerModel;
+
+        int numBones = 0;
+        if (!vr_vm_stabilize::TryGetNumBonesFromDrawState(drawState, numBones) || numBones <= 0 || numBones > 512)
+            return;
+        vr_vm_stabilize::Mat3x4 modelAnchor{};
+        if (!TryGetMagazineInteractionModelAnchor(info, modelAnchor))
+            return;
+        const auto* sourceBones = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pCustomBoneToWorld);
+
+        const uint64_t nowMs = GetTickCount64();
+        const bool instantWindow = nowMs < vr->m_HolsterInstantDrawUntilMs.load(std::memory_order_acquire);
+        constexpr float kDeployMaskSeconds = 0.9f;
+        constexpr float kSettledSeconds = 1.6f;
+
+        MagazineInteractionFrozenViewmodelPoseEntry& ready = state.readyPoses[poseKey];
+        const bool readyMatches = ready.valid && ready.numBones == numBones &&
+            static_cast<int>(ready.frozenLocalBones.size()) == numBones;
+
+        if (instantWindow && modelAge < kDeployMaskSeconds)
+        {
+            if (!readyMatches)
+                return;
+            uint32_t seqEven = vr->m_RenderFrameSeq.load(std::memory_order_acquire) & ~1u;
+            if (seqEven == 0u)
+                seqEven = (static_cast<uint32_t>(GetTickCount()) << 1u) | 2u;
+            vr_vm_stabilize::Mat3x4* readyBones = vr_vm_stabilize::AllocStableBones(numBones, seqEven);
+            if (!readyBones)
+                return;
+            ApplyMagazineInteractionLocalPose(modelAnchor, ready.frozenLocalBones, readyBones, numBones);
+            pCustomBoneToWorld = readyBones;
+            return;
+        }
+
+        // Refresh the settled pose while the weapon has been out for a while and
+        // nothing else is animating it.
+        if (modelAge >= kSettledSeconds && !vr->IsMagazineInteractionManualActive() &&
+            (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & (1u << 1)) == 0u)
+        {
+            MagazineInteractionFrozenViewmodelPoseEntry captured{};
+            captured.modelName = modelName;
+            captured.numBones = numBones;
+            captured.valid = BuildMagazineInteractionLocalBones(modelAnchor, sourceBones, numBones,
+                captured.frozenLocalBones);
+            if (captured.valid && !readyMatches)
+                ready = std::move(captured);
+        }
+    }
+
     inline void ApplyMagazineInteractionBoltPose(
         VR* vr,
         const std::string& modelName,
@@ -25113,6 +25211,14 @@ void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRend
             pBonesToWorldFinal);
 
         ApplyManualThrowViewmodelAnimationFreeze(
+            m_VR,
+            state,
+            modelName,
+            drawEntityIsViewmodelClass,
+            *pDrawInfo,
+            pBonesToWorldFinal);
+
+        ApplyHolsterInstantDrawViewmodelPose(
             m_VR,
             state,
             modelName,

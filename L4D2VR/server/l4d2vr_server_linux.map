@@ -1,0 +1,5 @@
+/* Export only the Source plugin factory. */
+{
+    global: CreateInterface;
+    local: *;
+};

@@ -2399,6 +2399,14 @@ void VR::UpdateTracking()
 
 	m_ViewmodelPosOffset = viewmodelOffset.position + m_ViewmodelPosAdjust + m_ViewmodelPosePosOffset;
 	m_ViewmodelAngOffset = viewmodelOffset.angle + m_ViewmodelAngAdjust + m_ViewmodelPoseAngOffset;
+    if (!m_MouseModeEnabled)
+    {
+        // Turn the drawn gun so its bore is parallel to the aim ray; the sights
+        // then sit on the crosshair.
+        UpdateSightAlignment(m_ViewmodelAngOffset);
+        m_ViewmodelAngOffset.x += m_SightActiveCorrection.x;
+        m_ViewmodelAngOffset.y += m_SightActiveCorrection.y;
+    }
 
     if (m_MouseModeEnabled)
     {

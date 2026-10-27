@@ -45,7 +45,7 @@ if [[ $native -eq 0 ]]; then
             g++ --version | head -1
             ldd --version | head -1
             L4D2VR/server/build_release_linux.sh $inner
-            chown -R \$HOST_UID:\$HOST_GID Release/linux"
+            chown \$HOST_UID:\$HOST_GID Release && chown -R \$HOST_UID:\$HOST_GID Release/linux"
 fi
 
 out_dir="$repo_root/Release/linux"

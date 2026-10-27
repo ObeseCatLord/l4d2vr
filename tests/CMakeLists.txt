@@ -191,6 +191,7 @@ foreach(server_suite vr_server_usercmd_codec vr_server_policy vr_server_session 
     target_compile_features(${server_suite}_tests PRIVATE cxx_std_17)
     if(MSVC)
         target_compile_options(${server_suite}_tests PRIVATE /W4 /WX)
+        target_compile_definitions(${server_suite}_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
     endif()
     add_test(NAME ${server_suite} COMMAND ${server_suite}_tests)
 endforeach()

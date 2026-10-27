@@ -2206,6 +2206,13 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		cmd->command_number,
 		manualThrowPoseRelevant);
 
+    // Servers with the shove-aim feature run the shove themselves, aimed along
+    // the hand from the encoded pose; the view-angle lock above covers the rest.
+    if (m_VR && m_VR->m_PhysicalShoveImpulsePending.exchange(false, std::memory_order_acq_rel) &&
+        cmd->impulse == 0 && m_VR->m_IsVREnabled && Hooks::s_ServerUnderstandsVR &&
+        m_VR->ServerFeature(l4d2vr_features::ShoveAim))
+        cmd->impulse = 238;
+
     if (m_VR && routingPistol && cmd->impulse == 0 &&
         l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) &&
         m_VR->m_MagazineInteractionEnabled && m_VR->m_MagazineInteractionSuppressEmptyClipAutoReload &&

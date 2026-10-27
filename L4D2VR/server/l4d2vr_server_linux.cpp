@@ -775,7 +775,10 @@ namespace
         const Vec3 previousOrigin = g_DecodeOrigin;
         g_DecodeIndex = PlayerIndexFromEdict(edict);
         g_DecodeHaveOrigin = false;
-        if (g_DecodeIndex > 0)
+        // Only players that completed the VR hello get any extra engine calls;
+        // desktop players' packets are processed exactly as without the plugin.
+        const SessionClient* client = g_Session.Client(g_DecodeIndex);
+        if (g_DecodeIndex > 0 && client && client->helloSeen && g_N.absOrigin)
         {
             void* player = EntityFromEdict(edict);
             const Vector* origin = player ? g_N.absOrigin(player) : nullptr;

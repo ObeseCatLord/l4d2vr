@@ -2052,8 +2052,14 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
     C_WeaponCSBase* routingPistol = localPlayerForAutoActions
         ? reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon()) : nullptr;
     if (m_VR) m_VR->UpdatePistolAmmoSnapshot(localPlayerForAutoActions, routingPistol);
+    const bool dualNegotiated = m_VR &&
+        l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire));
+    // Without the server protocol, akimbo still routes each trigger to its own
+    // pistol; the command's view angles carry that hand's aim instead.
+    const bool dualClientOnly = m_VR && !dualNegotiated && m_VR->m_DualPistolsAkimboOnAnyServer &&
+        m_VR->m_IsVREnabled && routingPistol && m_Game->IsDualPistolWeapon(routingPistol);
     const bool dualEquipped = m_VR && routingPistol &&
-        l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) &&
+        (dualNegotiated || dualClientOnly) &&
         routingPistol->GetWeaponID() == C_WeaponCSBase::WeaponID::PISTOL &&
         (m_Game->IsDualPistolWeapon(routingPistol) || pistolMask == 2u) &&
         m_VR->m_DualPistolsIndependentHandsEnabled;
@@ -2062,8 +2068,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         const uint32_t triggers = m_VR->m_DualPistolTriggerState.load(std::memory_order_acquire);
         int clip = -1;
         clip = ReadNetvar<int>(routingPistol, VR::kClip1Offset);
-        const bool eligible = m_VR->m_EncodeVRUsercmd && !m_VR->m_ForceNonVRServerMovement &&
-            s_ServerUnderstandsVR && !m_VR->m_SuppressPlayerInput &&
+        const bool serverPathReady = dualClientOnly ||
+            (m_VR->m_EncodeVRUsercmd && !m_VR->m_ForceNonVRServerMovement && s_ServerUnderstandsVR);
+        const bool eligible = serverPathReady && !m_VR->m_SuppressPlayerInput &&
             m_VR->m_FirstPersonControlReady.load(std::memory_order_acquire) &&
             !m_VR->m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
             !m_VR->m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) &&
@@ -2081,8 +2088,18 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         if (dualShotHand != l4d2vr_dual::Hand::None)
         {
             cmd->buttons |= 1u;
-            cmd->viewangles = dualShotHand == l4d2vr_dual::Hand::Left
-                ? m_VR->GetLeftControllerAbsAngle() : m_VR->GetRightControllerAbsAngle();
+            const bool leftShot = dualShotHand == l4d2vr_dual::Hand::Left;
+            QAngle handAim{};
+            if (dualClientOnly && localPlayerForAutoActions &&
+                m_VR->GetHandAimViewAngles(leftShot, localPlayerForAutoActions->EyePosition(), handAim))
+            {
+                // The server fires from the eye: aim the eye at where this hand points.
+                cmd->viewangles = handAim;
+            }
+            else
+            {
+                cmd->viewangles = leftShot ? m_VR->GetLeftControllerAbsAngle() : m_VR->GetRightControllerAbsAngle();
+            }
         }
     }
     else

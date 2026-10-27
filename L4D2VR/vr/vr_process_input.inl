@@ -96,7 +96,7 @@ void VR::ProcessInput()
         nativePistol && !nativeDualPistols && m_PistolOwnershipMask.load(std::memory_order_acquire) == 2u;
     m_LeftHandPistolActive.store(leftHeldPistol, std::memory_order_release);
     const bool dualPistolsActive = m_DualPistolsIndependentHandsEnabled && !m_MouseModeEnabled && nativeDualPistols &&
-        m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire) == 1u;
+        (m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire) == 1u || m_DualPistolsAkimboOnAnyServer);
     m_DualPistolsActive.store(dualPistolsActive, std::memory_order_release);
 
     if (m_InGameVguiMouseDown && m_Game && m_Game->m_VguiInput)

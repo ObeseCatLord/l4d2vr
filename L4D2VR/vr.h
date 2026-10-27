@@ -1327,7 +1327,11 @@ public:
     bool m_ManualPumpEnabled = false;
     std::atomic<bool> m_ManualPumpBlockingFire{ false };
     std::atomic<bool> m_BodyAmmoAvailable{ false };
-    bool m_DualPistolsIndependentHandsEnabled = false;
+    bool m_DualPistolsIndependentHandsEnabled = true;
+    // True akimbo on servers without the physical-interaction protocol: each
+    // trigger fires its own pistol with view angles aimed through that hand.
+    bool m_DualPistolsAkimboOnAnyServer = true;
+    bool GetHandAimViewAngles(bool leftHand, const Vector& eyePosition, QAngle& outAngles);
     bool m_DualPistolsNativeReloadFallbackEnabled = true;
     std::atomic<uint32_t> m_DualPistolNativeReloadState{ 0u };
     l4d2vr_dual::ReloadPulse m_DualPistolNativeReloadPulse;

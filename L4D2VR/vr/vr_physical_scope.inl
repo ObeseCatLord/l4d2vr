@@ -359,7 +359,7 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
                     mesh.push_back(p00); mesh.push_back(p11); mesh.push_back(p01);
                 }
             }
-            ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, static_cast<UINT>(mesh.size() / 3),
+            ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, static_cast<unsigned>(mesh.size() / 3),
                 mesh.data(), sizeof(Vertex)));
         }
         else if (ok)

@@ -782,6 +782,32 @@ namespace
         return g_DataCacheForceState.exactLimitApplied;
     }
 
+    // Workshop 1.1.7 "AnimationBudget": give the model cache's animation block
+    // section more room so large campaigns stop evicting and re-streaming
+    // animation data (hitches/crashes). Eviction stays native.
+    void ApplyAnimationBlockBudget()
+    {
+        SourceDataCache* dataCache = FindSourceDataCache();
+        if (!dataCache)
+            return;
+        constexpr uint32_t kAnimBlockLimitBytes = 384u * 1024u * 1024u;
+        SourceDataCacheLimits limits{};
+        limits.maxBytes = kAnimBlockLimitBytes;
+        limits.maxItems = UINT32_MAX;
+        limits.minBytes = 0;
+        limits.minItems = 0;
+        __try
+        {
+            dataCache->SetSectionLimits("AnimBlock", limits);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            Game::logMsg("[VR][AnimationBudget] section limit call failed");
+            return;
+        }
+        Game::logMsg("[VR][AnimationBudget] AnimBlock limit set to %u bytes", kAnimBlockLimitBytes);
+    }
+
     void FinalizeForcedDataCachePolicy()
     {
         // Judge the effective cache capacity rather than the presence of any
@@ -800,6 +826,7 @@ namespace
             exactLimitApplied ? 1 : 0,
             g_DataCacheForceState.observedLimitBytes,
             g_DataCacheForceState.exactLimitCandidateCount);
+        ApplyAnimationBlockBudget();
     }
 
     bool ShouldUseChineseLaunchArgumentPrompt()
@@ -2938,6 +2965,15 @@ namespace
         { "2026-05-23_auto_mat_queue_mode_default_false", "AutoMatQueueMode", "false" },
         { "2026-06-12_vr_recommended_video_settings_default_false", "VrRecommendedVideoSettingsEnabled", "false" },
         { "2026-08-12_vr_hands_gloves_disable_once", "VrHandsGlovesEnabled", "false" },
+        // Physical overhaul: Pavlov-style holsters/reload and HL2VR-style interactions on by default.
+        { "2026-10-27_physical_overhaul_BodyGripInventoryEnabled", "BodyGripInventoryEnabled", "true" },
+        { "2026-10-27_physical_overhaul_MagazineReleaseButtonRequired", "MagazineReleaseButtonRequired", "true" },
+        { "2026-10-27_physical_overhaul_MagazineInteractionSuppressEmptyClipAutoReload", "MagazineInteractionSuppressEmptyClipAutoReload", "true" },
+        { "2026-10-27_physical_overhaul_ManualThrowEnabled", "ManualThrowEnabled", "true" },
+        { "2026-10-27_physical_overhaul_ManualPumpEnabled", "ManualPumpEnabled", "true" },
+        { "2026-10-27_physical_overhaul_DualPistolsIndependentHandsEnabled", "DualPistolsIndependentHandsEnabled", "true" },
+        { "2026-10-27_physical_overhaul_LeftWristHudEnabled", "LeftWristHudEnabled", "true" },
+        { "2026-10-27_physical_overhaul_RightAmmoHudEnabled", "RightAmmoHudEnabled", "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3063,6 +3099,44 @@ namespace
         sampleKeys.insert("DualPistolsNativeReloadFallbackEnabled");
         sampleKeys.insert("ScopePhysicalLensEnabled");
         sampleKeys.insert("ScopeBaseMagnification");
+        sampleKeys.insert("HolsterPavlovLayoutEnabled");
+        sampleKeys.insert("HolsterItemsVisible");
+        sampleKeys.insert("HolsterInstantDraw");
+        sampleKeys.insert("HolsterYawDeadbandDeg");
+        sampleKeys.insert("HolsterYawSmoothingSeconds");
+        sampleKeys.insert("HolsterHeightScale");
+        sampleKeys.insert("HolsterHoverHapticAmplitude");
+        sampleKeys.insert("HolsterGrabHapticAmplitude");
+        sampleKeys.insert("HolsterPrimaryOffsetMeters");
+        sampleKeys.insert("HolsterSecondaryOffsetMeters");
+        sampleKeys.insert("HolsterThrowableOffsetMeters");
+        sampleKeys.insert("HolsterMedicalOffsetMeters");
+        sampleKeys.insert("HolsterConsumableOffsetMeters");
+        sampleKeys.insert("MagazineInteractionAutoEjectWhenEmpty");
+        sampleKeys.insert("MagazineEmptyGlowEnabled");
+        sampleKeys.insert("MagazineDropEnabled");
+        sampleKeys.insert("MagazineDropLifetimeSeconds");
+        sampleKeys.insert("PhysicalReloadOnUnsupportedServers");
+        sampleKeys.insert("CrosshairEnabled");
+        sampleKeys.insert("CrosshairStyle");
+        sampleKeys.insert("CrosshairArmPixels");
+        sampleKeys.insert("CrosshairThicknessPixels");
+        sampleKeys.insert("CrosshairMinGapPixels");
+        sampleKeys.insert("CrosshairColorRGB");
+        sampleKeys.insert("CrosshairAlpha");
+        sampleKeys.insert("SightAutoAlignEnabled");
+        sampleKeys.insert("MeleeInertiaEnabled");
+        sampleKeys.insert("PhysicalShoveEnabled");
+        sampleKeys.insert("ConsumableGesturesEnabled");
+        sampleKeys.insert("LoadingFramePumpEnabled");
+        sampleKeys.insert("LoadingFramePumpStallMs");
+        sampleKeys.insert("IntermissionHudEnabled");
+        sampleKeys.insert("BackgroundAudio");
+        sampleKeys.insert("ScopePictureInPictureLens");
+        sampleKeys.insert("ScopeParallaxStrength");
+        sampleKeys.insert("ScopeEyeboxDeg");
+        sampleKeys.insert("ScopeVignetteExponent");
+        sampleKeys.insert("DualPistolsAkimboOnAnyServer");
         for (const auto key : l4d2vr_calibration::kConfigKeys)
             sampleKeys.insert(std::string(key));
         configChanged |= RemoveConfigParametersNotInSample(configText, sampleKeys);

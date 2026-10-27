@@ -2747,6 +2747,7 @@ static bool TryGetExecutingPistolNativeReload(void* owner, int index,
 static bool TryGetExecutingPistolPickup(void* owner, int& index, l4d2vr_pistol::Hand& hand);
 static void RefreshGripPickupContact(VR* vr, Game* game, C_BasePlayer* player, bool left);
 
+#include "hooks/hooks_background_audio.inl"
 #include "hooks/hooks_init.inl"
 #include "hooks/hooks_render.inl"
 #include "hooks/hooks_createmove.inl"

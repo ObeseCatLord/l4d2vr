@@ -173,6 +173,7 @@ class ShortcutTests(TempDirTest):
         exec_line = next(line for line in text.splitlines() if line.startswith("Exec="))
         self.assertEqual(exec_line, 'Exec="/opt/my games/l4d2vr-installer" launch --game-dir /a/100%%')
 
+    @unittest.skipIf(sys.platform.startswith("win"), "Linux desktop entries need POSIX permissions")
     def test_linux_shortcut_written(self):
         paths = shortcut.install_linux_shortcut(["xdg-open", "steam://rungameid/550"],
                                                 desktop_dir=self.tmp / "Desktop")

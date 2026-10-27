@@ -1,10 +1,12 @@
+import sys
+import unittest
 import contextlib
 import io
 import json
 from pathlib import Path
 from unittest import mock
 
-from l4d2vr_installer import actions, cli, install, sources, steam
+from l4d2vr_installer import actions, cli, install, settings, sources, steam
 
 from .helpers import CLIENT_V1, CLIENT_V2, SERVER_FILES, TempDirTest, make_game, make_zip, sha, snapshot
 from .test_sources import FakeGitHub
@@ -45,7 +47,7 @@ class CliTests(CliTestCase):
         self.assertEqual(code, 0, err)
         self.assertFalse((self.game / "d3d9.dll").exists())
         # The game folder is remembered in the (temporary) settings file.
-        settings_file = Path(self.home / ".config" / "l4d2vr-installer" / "settings.json")
+        settings_file = settings.settings_path()
         self.assertEqual(json.loads(settings_file.read_text())["game_dir"], str(self.game))
 
     def test_errors_are_reported_with_exit_code(self):
@@ -121,6 +123,7 @@ class CliTests(CliTestCase):
         self.assertIn("Would write", out)
         self.assertFalse((self.home / ".local/share/applications/l4d2vr.desktop").exists())
 
+    @unittest.skipIf(sys.platform.startswith("win"), "Steam launch options are only changed on Linux")
     def test_launch_options_cli_with_fake_steam(self):
         steam_root = self.home / ".local/share/Steam"
         (steam_root / "steamapps").mkdir(parents=True)

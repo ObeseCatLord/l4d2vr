@@ -386,6 +386,9 @@ DualPistolsNativeReloadFallbackEnabled=true
 MagazineReleaseButtonRequired=true
 MagazineInteractionAutoEjectWhenEmpty=false
 MagazineEmptyGlowEnabled=true
+// Released magazines fall to the floor and disappear after a while.
+MagazineDropEnabled=true
+MagazineDropLifetimeSeconds=8
 // Keep the physical reload on servers that cannot do physical magazine transactions (the stock
 // reload runs in step with the gestures there).
 PhysicalReloadOnUnsupportedServers=true

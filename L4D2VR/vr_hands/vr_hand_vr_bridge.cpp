@@ -8176,7 +8176,10 @@ bool VR::UpdateMagazineInteraction(
                 m_MagazineInteractionLeftHandHolding = false;
                 m_MagazineInteractionFreshPickupBasisValid = false;
                 m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
-                Game::logMsg("[VR][MagazineInteraction] pulled old magazine released; old magazine stays hidden, waiting for fresh magazine");
+                // Letting go of the pulled magazine drops it with the hand's motion.
+                SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+                    m_MagazineInteractionDetachedMagazineWorld, MagazineReloadSupportIsLeft());
+                Game::logMsg("[VR][MagazineInteraction] pulled old magazine released; dropped, waiting for fresh magazine");
                 return reloadCommandPending();
             }
             else
@@ -8267,6 +8270,9 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionViewmodelFreezeDeferredUntil =
                 now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                     std::chrono::duration<float>(GetMagazineInteractionEmptyClipAutoEjectFreezeDelaySeconds(activeWeaponId)));
+            // The released magazine falls out of the well.
+            SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+                m_MagazineInteractionSocketWorld, !MagazineReloadSupportIsLeft());
             if (activeAuthoritativeMagazineBackend)
             {
                 if (!beginRemoteMagazineAction(l4d2vr_remote_mag::Action::Eject)) CancelMagazineInteractionManual();

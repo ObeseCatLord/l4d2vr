@@ -29,6 +29,7 @@
 #include "vr_interaction_geometry.h"
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
+#include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
@@ -1240,6 +1241,30 @@ public:
 	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
 	bool m_MagazineEmptyGlowEnabled = true;
 	std::atomic<bool> m_MagazineEmptyGlowActive{ false };
+	// Ejected magazines that fall to the floor (rendered with the viewmodel's clip subtree).
+	bool m_MagazineDropEnabled = true;
+	float m_MagazineDropLifetimeSeconds = 8.0f;
+	struct DroppedMagazineInfo
+	{
+		std::string modelLower;
+		int boneIndex = -1;
+		VrHandMatrix4 rotation{};
+	};
+	struct DroppedMagazineRender
+	{
+		int boneIndex = -1;
+		VrHandMatrix4 world{};
+	};
+	mutable std::mutex m_DroppedMagazineMutex;
+	l4d2vr_dropped_mags::Pool<4> m_DroppedMagazinePool;
+	DroppedMagazineInfo m_DroppedMagazineInfo[4]{};
+	std::chrono::steady_clock::time_point m_DroppedMagazineLastUpdate{};
+	Vector m_DroppedMagazinePrevHand[2]{};
+	Vector m_DroppedMagazineHandVelocity[2]{};
+	bool m_DroppedMagazinePrevHandValid = false;
+	void SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const VrHandMatrix4& world, bool leftHand);
+	void UpdateDroppedMagazines();
+	int GetDroppedMagazineRenders(const std::string& lowerModel, DroppedMagazineRender* out, int capacity) const;
 	bool m_MagazineReleaseJustPressed = false;
 	std::atomic<uint32_t> m_WeaponGripInputState{ 0 };
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };

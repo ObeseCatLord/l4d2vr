@@ -3208,6 +3208,7 @@ void VR::ParseConfigFile()
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
+    m_ConsumableGesturesEnabled = getBool("ConsumableGesturesEnabled", true);
     m_CrosshairEnabled = getBool("CrosshairEnabled", true);
     {
         const std::string style = getString("CrosshairStyle", "x");

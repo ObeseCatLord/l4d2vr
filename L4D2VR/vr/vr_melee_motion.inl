@@ -157,6 +157,50 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         m_MeleeSwingActive.store(false, std::memory_order_release);
     }
 
+    // Consumables: bring pills to the mouth, stab adrenaline into the chest or
+    // the other arm. Using them holds the stock attack until the item is used.
+    if (m_ConsumableGesturesEnabled && weapon &&
+        (weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS || weaponId == C_WeaponCSBase::WeaponID::ADRENALINE))
+    {
+        bool consumed = false;
+        if (weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS)
+        {
+            consumed = m_PillsGesture.Update(sample).fired;
+        }
+        else
+        {
+            l4d2vr_gesture::StabTargets targets{};
+            l4d2vr_holster::BodyFrame frame{};
+            if (GetHolsterBodyFrame(frame))
+            {
+                targets.chest = l4d2vr_holster::ToWorld(frame, Vector(0.12f, 0.0f, -0.30f)) * (1.0f / scale);
+                targets.chestValid = true;
+            }
+            Vector arm{};
+            if (l4d2vr_gesture::ArmTargetPoint(m_LeftControllerPosAbs * (1.0f / scale), m_LeftControllerForward, 0.15f, arm))
+            {
+                targets.arm = arm;
+                targets.armValid = true;
+            }
+            consumed = m_AdrenalineGesture.Update(sample, targets).fired;
+        }
+        if (consumed)
+        {
+            m_ConsumableUseWeapon = weapon;
+            m_ConsumableUseHoldUntil = now + std::chrono::milliseconds(1500);
+            TriggerPhysicalHandHapticPulse(false, 0.04f, 110.0f, 0.4f, 2);
+            Game::logMsg("[VR][Consumable] %s used by gesture",
+                weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS ? "pills" : "adrenaline");
+        }
+    }
+    else
+    {
+        m_PillsGesture.Reset();
+        m_AdrenalineGesture.Reset();
+    }
+    if (weapon != m_ConsumableUseWeapon)
+        m_ConsumableUseHoldUntil = {};
+
     // Shoves: thrust a melee weapon forward, or bash with a gun.
     if (!m_PhysicalShoveEnabled || !localPlayer || !weapon)
         return;

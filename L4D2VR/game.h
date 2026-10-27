@@ -47,6 +47,9 @@ class Hooks;
 
 // === Global Game Instance ===
 inline Game* g_Game = nullptr;
+// Set by InitL4D2VR before Game is constructed when the DLL runs in desktop
+// (receive-only) mode: hooks are installed, OpenVR is not initialised.
+inline bool g_L4D2VRDesktopMode = false;
 
 // === Per-Player VR State ===
 struct ManualThrowPoseSample

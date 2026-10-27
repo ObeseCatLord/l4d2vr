@@ -1035,7 +1035,7 @@ namespace
         return value == "1" || value == "true" || value == "yes" || value == "on";
     }
 
-    bool IsVrRecommendedVideoSettingsEnabledInConfig()
+    bool IsConfigBoolEnabledInConfig(const char* configKey)
     {
         const std::filesystem::path gameRootPath = GetGameRootPath();
         if (gameRootPath.empty())
@@ -1068,13 +1068,33 @@ namespace
                 continue;
 
             const std::string key = TrimAsciiWhitespace(line.substr(0, equals));
-            if (_stricmp(key.c_str(), kVrRecommendedVideoSettingsConfigKey) != 0)
+            if (_stricmp(key.c_str(), configKey) != 0)
                 continue;
 
             return ConfigValueIsEnabled(line.substr(equals + 1));
         }
 
         return false;
+    }
+
+    bool IsVrRecommendedVideoSettingsEnabledInConfig()
+    {
+        return IsConfigBoolEnabledInConfig(kVrRecommendedVideoSettingsConfigKey);
+    }
+
+    // Desktop (receive-only) mode: "-l4d2vrdesktop" or DesktopModeEnabled=true.
+    bool IsDesktopModeRequested()
+    {
+        int nArgs = 0;
+        LPWSTR* szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
+        bool requested = false;
+        if (szArglist)
+        {
+            for (int i = 0; i < nArgs && !requested; ++i)
+                requested = _wcsicmp(szArglist[i], L"-l4d2vrdesktop") == 0;
+            LocalFree(szArglist);
+        }
+        return requested || IsConfigBoolEnabledInConfig("DesktopModeEnabled");
     }
 
     void InsertVideoCfgLineBeforeClosingBrace(std::vector<std::wstring>& lines, const wchar_t* key, const wchar_t* value)
@@ -3285,6 +3305,21 @@ DWORD WINAPI InitL4D2VR(HMODULE hModule)
 		// for desktop/VR output comparison without changing desktop rendering.
 		Hooks::InitializeNoHmdNekoPostProbe();
         FinalizeForcedDataCachePolicy();
+        return 0;
+    }
+
+    if (IsDesktopModeRequested())
+    {
+        // Desktop (receive-only) mode: install the normal hooks but skip OpenVR
+        // (VR::VR checks g_L4D2VRDesktopMode), the VR window title/focus
+        // workers, the VR launch-argument notice and the VR video settings.
+        // m_IsVREnabled stays false, so this client never publishes poses or
+        // VR usercmds; it only answers the relay's pose ACK with a hello and
+        // renders the IK bodies of remote VR players.
+        g_L4D2VRDesktopMode = true;
+        g_Game = new Game();
+        FinalizeForcedDataCachePolicy();
+        CheckWorkshopUpdateOnce();
         return 0;
     }
 

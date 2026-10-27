@@ -2025,14 +2025,19 @@ void Game::HandleVRPoseServerAck(int protocolVersion)
 
     if (!wasCapable)
     {
+        // A client without an active HMD (desktop mode or a failed VR_Init)
+        // still answers with a hello so the relay forwards remote VR poses to
+        // it; PublishLocalVRPose never uploads without m_IsVREnabled.
         Game::logMsg(
-            "[VR][WorldPose] server relay protocol %d acknowledged",
-            protocolVersion);
+            "[VR][WorldPose] server relay protocol %d acknowledged receiveOnly=%d",
+            protocolVersion,
+            (m_VR && m_VR->m_IsVREnabled) ? 0 : 1);
     }
 }
 
 void Game::PublishLocalVRPose(VR* vr, C_BasePlayer* localPlayer)
 {
+    // Desktop/receive-only clients (m_IsVREnabled false) never upload poses.
     if (!vr ||
         !localPlayer ||
         !vr->m_IsVREnabled ||

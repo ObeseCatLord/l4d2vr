@@ -91,6 +91,16 @@
         HooksWorldPoseFingerLayout leftFingers{};
         HooksWorldPoseFingerLayout rightFingers{};
         std::vector<int> parents;
+        // Lower-body (physical crouch) chain; [0] left, [1] right. The stage
+        // is disabled for rigs whose pelvis/spine/leg hierarchy does not
+        // match (lowerBodyValid false). Spine bones may be -1 individually.
+        int pelvis = -1;
+        int spineLower = -1;
+        int spineMid = -1;
+        std::array<int, 2> thigh{ -1, -1 };
+        std::array<int, 2> calf{ -1, -1 };
+        std::array<int, 2> foot{ -1, -1 };
+        bool lowerBodyValid = false;
     };
 
     struct HooksWorldPoseCalibration
@@ -157,6 +167,10 @@
         float visualBodyYaw = 0.0f;
         std::uint64_t visualBodyYawTickMs = 0u;
         std::uint64_t lastStereoSceneGeneration = 0u;
+        // Physical-crouch calibration (standing eye height, animated standing
+        // pelvis height). Cleared by Reset() on entity/model changes and by
+        // its own teleport/silence detection.
+        l4d2vr_vrik::lower::State lowerBody{};
 
         void ResetHeadCalibration()
         {
@@ -342,6 +356,37 @@
 				cache.valid = false;
 			}
         }
+    }
+
+    // World-model poses start on a VR client once first-person control is
+    // ready. A desktop client (hooks installed, OpenVR inactive) never has a
+    // local pose; it only renders the relayed poses of remote VR players.
+    inline bool HooksWorldPoseRenderActive(const VR* vr)
+    {
+        if (!vr || !vr->m_WorldModelVRPoseEnabled)
+            return false;
+        if (!vr->m_IsVREnabled)
+            return true;
+        return vr->m_FirstPersonControlReady.load(std::memory_order_acquire);
+    }
+
+    // Desktop clients never run the stereo RenderView, so the shared stereo
+    // scene generation never advances there. Give each desktop player solve
+    // its own generation: no cross-frame bone replay, and per-sample head
+    // calibration still progresses.
+    std::atomic<std::uint64_t>
+        g_HooksWorldPoseDesktopSceneGeneration{ 1u };
+
+    inline std::uint64_t HooksWorldPoseSceneGeneration(const VR* vr)
+    {
+        if (vr && !vr->m_IsVREnabled)
+        {
+            return g_HooksWorldPoseDesktopSceneGeneration.fetch_add(
+                1u,
+                std::memory_order_acq_rel) + 1u;
+        }
+        return g_HooksWorldPoseStereoSceneGeneration.load(
+            std::memory_order_acquire);
     }
 
     inline bool HooksWorldPoseLoadStereoPlayerBones(
@@ -1177,6 +1222,58 @@
         return arm.restChainValid;
     }
 
+    // Pelvis, two spine links and both thigh/calf/foot chains for the
+    // physical-crouch stage. Every link must sit in the expected hierarchy
+    // (legs and spine under the pelvis, head under the spine, legs disjoint
+    // from the spine and from each other) or the stage stays disabled.
+    inline void HooksWorldPoseResolveLowerBody(
+        const std::vector<std::string>& boneNames,
+        HooksWorldPoseBoneLayout& layout)
+    {
+        layout.lowerBodyValid = false;
+        const int n = layout.numBones;
+        auto inRange = [n](int bone) { return bone >= 0 && bone < n; };
+        auto under = [&](int child, int ancestor)
+        {
+            return inRange(child) && inRange(ancestor) && child != ancestor &&
+                HooksNativeViewmodelHandsOnlyIsAncestor(layout.parents, child, ancestor, n);
+        };
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_pelvis", "pelvis" }, layout.pelvis);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_spine", "spine" }, layout.spineLower);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_spine1", "spine1" }, layout.spineMid);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_l_thigh", "l_thigh" }, layout.thigh[0]);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_l_calf", "l_calf" }, layout.calf[0]);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_l_foot", "l_foot" }, layout.foot[0]);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_r_thigh", "r_thigh" }, layout.thigh[1]);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_r_calf", "r_calf" }, layout.calf[1]);
+        HooksFirstPersonBodyFindBone(boneNames, { "bip01_r_foot", "r_foot" }, layout.foot[1]);
+
+        if (!inRange(layout.pelvis) || !under(layout.head, layout.pelvis))
+            return;
+        if (!under(layout.spineLower, layout.pelvis) || !under(layout.head, layout.spineLower))
+            layout.spineLower = -1;
+        if (!under(layout.spineMid, layout.spineLower >= 0 ? layout.spineLower : layout.pelvis) ||
+            !under(layout.head, layout.spineMid))
+        {
+            layout.spineMid = -1;
+        }
+        for (int side = 0; side < 2; ++side)
+        {
+            const int t = layout.thigh[static_cast<size_t>(side)];
+            const int c = layout.calf[static_cast<size_t>(side)];
+            const int f = layout.foot[static_cast<size_t>(side)];
+            if (!under(t, layout.pelvis) || !under(c, t) || !under(f, c) ||
+                under(layout.head, t) ||
+                (inRange(layout.spineLower) && under(t, layout.spineLower)))
+            {
+                return;
+            }
+        }
+        if (under(layout.thigh[1], layout.thigh[0]) || under(layout.thigh[0], layout.thigh[1]))
+            return;
+        layout.lowerBodyValid = true;
+    }
+
     inline bool HooksWorldPoseBuildBoneLayout(
         void* drawState,
         HooksWorldPoseBoneLayout& layout)
@@ -1279,6 +1376,10 @@
                     layout.parents[static_cast<size_t>(current)];
             }
         }
+
+        HooksWorldPoseResolveLowerBody(
+            boneNames,
+            layout);
 
         HooksWorldPoseResolveArm(
             boneNames,
@@ -1503,6 +1604,19 @@
                     static_cast<int>(layout.right.restChainBones.size()) : 0,
                 layout.right.palmToHandValid ? 1 : 0,
                 layout.rightFingers.mappedSegments);
+            Game::logMsg(
+                "[VR][WorldPose] lower body hdr=%p valid=%d pelvis=%d spine=(%d %d) left=(%d %d %d) right=(%d %d %d)",
+                layout.studioHdr,
+                layout.lowerBodyValid ? 1 : 0,
+                layout.pelvis,
+                layout.spineLower,
+                layout.spineMid,
+                layout.thigh[0],
+                layout.calf[0],
+                layout.foot[0],
+                layout.thigh[1],
+                layout.calf[1],
+                layout.foot[1]);
             if (HooksWorldPoseArmChainValid(
                     layout.left,
                     layout.parents,
@@ -3334,8 +3448,7 @@
         outMatchMask = 0;
         if (!vr ||
             !game ||
-            !vr->m_WorldModelVRPoseEnabled ||
-            !vr->m_FirstPersonControlReady.load(std::memory_order_acquire))
+            !HooksWorldPoseRenderActive(vr))
         {
             return false;
         }
@@ -6287,6 +6400,341 @@
         return suppressed;
     }
 
+    inline bool HooksWorldPoseReadPlayerFlagsSafe(
+        const C_BaseEntity* entity,
+        int& outFlags)
+    {
+        outFlags = 0;
+        if (!entity)
+            return false;
+        bool valid = false;
+#ifdef _MSC_VER
+        __try
+        {
+#endif
+            constexpr int kPlayerFlagsOffset = 0xF0; // DT_BasePlayer::m_fFlags
+            outFlags = ReadNetvar<int>(entity, kPlayerFlagsOffset);
+            valid = true;
+#ifdef _MSC_VER
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            outFlags = 0;
+            valid = false;
+        }
+#endif
+        return valid;
+    }
+
+    inline l4d2vr_vrik::Vec3 HooksWorldPoseToVrik(const Vector& v)
+    {
+        return { v.x, v.y, v.z };
+    }
+
+    inline bool HooksWorldPoseApplyRigidToBranch(
+        const HooksWorldPoseBoneLayout& layout,
+        int rootBone,
+        const l4d2vr_vrik::lower::Rigid& rigid,
+        vr_vm_stabilize::Mat3x4* bones)
+    {
+        vr_vm_stabilize::Mat3x4 delta{};
+        l4d2vr_vrik::lower::ToMatrix34(rigid, delta.m);
+        return HooksWorldPoseApplyDeltaToBranch(
+            layout,
+            rootBone,
+            delta,
+            bones);
+    }
+
+    // Physical crouch for a tracked world model (visual bones only). Runs on
+    // the render copy after the visual body yaw and before the head, lean and
+    // arm stages, so those stages solve against the lowered torso:
+    //  1. Calibrate the standing eye height (pose HMD height above the
+    //     rendered origin) and Source's animated standing pelvis height.
+    //  2. Lower the pelvis branch by the physical crouch the native duck
+    //     animation does not already show (scaled by the blend weight).
+    //  3. Re-plant both feet at their animated transforms with two-bone IK.
+    //  4. Bend the lower spine (bounded) for the remaining head drop.
+    // Any failure restores the incoming bones.
+    inline bool HooksWorldPoseApplyLowerBody(
+        VR* vr,
+        const HooksWorldPoseBoneLayout& layout,
+        const C_BaseEntity* entity,
+        const ModelRenderInfo_t& info,
+        const VRPoseFrame& pose,
+        const Vector& bodyForward,
+        const Vector& bodyUp,
+        float trackingWeight,
+        std::uint64_t now,
+        HooksWorldPoseCalibration& calibration,
+        vr_vm_stabilize::Mat3x4* bones)
+    {
+        namespace lower = l4d2vr_vrik::lower;
+        using l4d2vr_vrik::Vec3;
+        if (!vr ||
+            !vr->m_WorldModelVRPoseCrouchEnabled ||
+            !layout.lowerBodyValid ||
+            !bones ||
+            (pose.validMask & l4d2vr_pose::kValidHmd) == 0u ||
+            !std::isfinite(pose.hmd.position.z))
+        {
+            return false;
+        }
+
+        lower::Config config{};
+        config.pelvisDrop = vr->m_WorldModelVRPoseCrouchPelvisDrop;
+        config.maxDropLegFraction = vr->m_WorldModelVRPoseCrouchMaxLegFraction;
+        config.maxSpineBendDegrees = vr->m_WorldModelVRPoseCrouchMaxSpineBendDeg;
+        config.standingDecayPerSecond = vr->m_WorldModelVRPoseStandingHeightDecayPerSecond;
+        config.silenceResetSeconds = 10.0f;
+
+        lower::State& state = calibration.lowerBody;
+        const Vec3 origin = HooksWorldPoseToVrik(info.origin);
+        const float dt = state.Begin(origin, now, config);
+        // Pose positions are relative to the sender's player origin in a
+        // yaw-only frame, so z is the eye height above the feet.
+        const float eyeHeight = pose.hmd.position.z;
+        state.eye.Update(eyeHeight, dt, config);
+
+        int flags = 0;
+        const bool flagsValid = HooksWorldPoseReadPlayerFlagsSafe(entity, flags);
+        constexpr int kDuckingFlag = 1 << 1;   // FL_DUCKING
+        const bool nativeCrouched = !flagsValid || (flags & kDuckingFlag) != 0;
+        const float animatedPelvisHeight =
+            bones[layout.pelvis].m[2][3] - info.origin.z;
+        // Only a non-ducking animation defines the standing pelvis.
+        state.pelvis.Update(
+            animatedPelvisHeight,
+            dt,
+            nativeCrouched,
+            config);
+        if (!state.eye.valid || !state.pelvis.valid)
+            return false;
+
+        float legLength = 0.0f;
+        for (int side = 0; side < 2; ++side)
+        {
+            const Vec3 hip = lower::MatrixOrigin(bones[layout.thigh[static_cast<size_t>(side)]].m);
+            const Vec3 knee = lower::MatrixOrigin(bones[layout.calf[static_cast<size_t>(side)]].m);
+            const Vec3 ankle = lower::MatrixOrigin(bones[layout.foot[static_cast<size_t>(side)]].m);
+            legLength += 0.5f * (l4d2vr_vrik::Length(knee - hip) + l4d2vr_vrik::Length(ankle - knee));
+        }
+
+        const lower::CrouchResult crouch = lower::ComputeCrouch(
+            state.eye.standing,
+            eyeHeight,
+            state.pelvis.height,
+            animatedPelvisHeight,
+            legLength,
+            config);
+        const float weight = std::clamp(trackingWeight, 0.0f, 1.0f);
+        const float drop = crouch.valid ? crouch.addedDrop * weight : 0.0f;
+        const float headRemainder = crouch.valid ? crouch.headRemainder * weight : 0.0f;
+        constexpr float kMinimumAdjustment = 0.05f; // game units
+        if (drop < kMinimumAdjustment && headRemainder < kMinimumAdjustment)
+            return false;
+
+        const std::vector<vr_vm_stabilize::Mat3x4> incoming(
+            bones,
+            bones + layout.numBones);
+        auto fail = [&]()
+        {
+            std::copy(incoming.begin(), incoming.end(), bones);
+            return false;
+        };
+
+        const Vec3 forward = HooksWorldPoseToVrik(bodyForward);
+        const Vec3 up = HooksWorldPoseToVrik(bodyUp);
+        bool changed = false;
+        bool pelvisMoved = false;
+        const vr_vm_stabilize::Mat3x4 plantedFoot[2] = {
+            bones[layout.foot[0]],
+            bones[layout.foot[1]],
+        };
+
+        // 1. Pelvis drop beyond the native crouch animation.
+        if (drop >= kMinimumAdjustment)
+        {
+            if (!HooksWorldPoseApplyRigidToBranch(
+                    layout,
+                    layout.pelvis,
+                    lower::Translation({ 0.0f, 0.0f, -drop }),
+                    bones))
+            {
+                return fail();
+            }
+            pelvisMoved = true;
+            changed = true;
+        }
+
+        // 2. Lower spine bends forward (bounded) for the head drop the pelvis
+        //    did not cover, split over Bip01_Spine / Bip01_Spine1.
+        if (headRemainder >= kMinimumAdjustment && layout.head >= 0)
+        {
+            const int spineBones[2] = { layout.spineLower, layout.spineMid };
+            const int spineCount =
+                (spineBones[0] >= 0 ? 1 : 0) + (spineBones[1] >= 0 ? 1 : 0);
+            const float maxBend =
+                std::clamp(config.maxSpineBendDegrees, 0.0f, 60.0f) *
+                (l4d2vr_vrik::kPi / 180.0f) /
+                static_cast<float>(std::max(1, spineCount));
+            const Vec3 headBeforeBend = lower::MatrixOrigin(bones[layout.head].m);
+            int applied = 0;
+            bool bent = false;
+            for (int bone : spineBones)
+            {
+                if (bone < 0 || maxBend <= 0.0f)
+                    continue;
+                const float remaining =
+                    headRemainder - (headBeforeBend.z - bones[layout.head].m[2][3]);
+                // Split the remainder over the available links; the last
+                // link takes whatever is still missing.
+                const float share =
+                    (spineCount - applied) > 1 ? 0.5f : 1.0f;
+                const Vec3 pivot = lower::MatrixOrigin(bones[bone].m);
+                const float angle = lower::SpineBendForDrop(
+                    lower::MatrixOrigin(bones[layout.head].m) - pivot,
+                    up,
+                    forward,
+                    remaining * share,
+                    maxBend);
+                ++applied;
+                if (angle <= 0.0f)
+                    continue;
+                if (!HooksWorldPoseApplyRigidToBranch(
+                        layout,
+                        bone,
+                        lower::RotationAbout(
+                            l4d2vr_vrik::FromAxisAngle(
+                                lower::SpineBendAxis(up, forward),
+                                angle),
+                            pivot),
+                        bones))
+                {
+                    return fail();
+                }
+                bent = true;
+                changed = true;
+            }
+
+            // 3. Hips go back as the torso pitches forward (squat balance):
+            //    the head keeps its horizontal place and only loses height.
+            //    Horizontal head offset stays with the HMD lean stage.
+            if (bent)
+            {
+                const float headForwardShift = l4d2vr_vrik::Dot(
+                    lower::MatrixOrigin(bones[layout.head].m) - headBeforeBend,
+                    forward);
+                if (headForwardShift > 0.01f)
+                {
+                    if (!HooksWorldPoseApplyRigidToBranch(
+                            layout,
+                            layout.pelvis,
+                            lower::Translation(forward * -headForwardShift),
+                            bones))
+                    {
+                        return fail();
+                    }
+                    pelvisMoved = true;
+                }
+            }
+        }
+
+        // 4. Re-plant both feet at their animated transforms.
+        if (pelvisMoved)
+        {
+            for (int side = 0; side < 2; ++side)
+            {
+                const int thigh = layout.thigh[static_cast<size_t>(side)];
+                const int calf = layout.calf[static_cast<size_t>(side)];
+                const int foot = layout.foot[static_cast<size_t>(side)];
+                const Vec3 hip = lower::MatrixOrigin(bones[thigh].m);
+                const Vec3 target = lower::MatrixOrigin(plantedFoot[side].m);
+                const lower::LegSolution leg = lower::SolvePlantedLeg(
+                    hip,
+                    lower::MatrixOrigin(bones[calf].m),
+                    lower::MatrixOrigin(bones[foot].m),
+                    target,
+                    forward,
+                    up);
+                if (!leg.valid ||
+                    !HooksWorldPoseApplyRigidToBranch(
+                        layout,
+                        thigh,
+                        lower::RotationAbout(leg.thighRotation, hip),
+                        bones) ||
+                    !HooksWorldPoseApplyRigidToBranch(
+                        layout,
+                        calf,
+                        lower::RotationAbout(
+                            leg.calfRotation,
+                            lower::MatrixOrigin(bones[calf].m)),
+                        bones))
+                {
+                    return fail();
+                }
+                // Restore the animated foot (and toes) exactly when planted;
+                // keep the solved ankle if the target was out of reach.
+                l4d2vr_vrik::Quat currentFoot{};
+                l4d2vr_vrik::Quat animatedFoot{};
+                if (!lower::MatrixRotation(bones[foot].m, currentFoot) ||
+                    !lower::MatrixRotation(plantedFoot[side].m, animatedFoot))
+                {
+                    return fail();
+                }
+                const Vec3 ankle = lower::MatrixOrigin(bones[foot].m);
+                if (!HooksWorldPoseApplyRigidToBranch(
+                        layout,
+                        foot,
+                        lower::MapFrame(
+                            currentFoot,
+                            ankle,
+                            animatedFoot,
+                            leg.reached ? target : ankle),
+                        bones))
+                {
+                    return fail();
+                }
+            }
+        }
+
+        for (int bone = 0; bone < layout.numBones; ++bone)
+        {
+            if (!HooksNativeViewmodelHandsOnlyMatrixFinite(bones[bone]))
+                return fail();
+        }
+
+        if (vr->m_WorldModelVRPoseDebugLog)
+        {
+            static thread_local std::array<
+                std::uint64_t,
+                Game::kMaxPlayers> s_lastLowerBodyLogTick{};
+            if (info.entity_index > 0 &&
+                info.entity_index < static_cast<int>(Game::kMaxPlayers))
+            {
+                std::uint64_t& last =
+                    s_lastLowerBodyLogTick[static_cast<size_t>(info.entity_index)];
+                if (now - last >= 1000u)
+                {
+                    last = now;
+                    Game::logMsg(
+                        "[VR][WorldPose] crouch player=%d eye=%.1f standing=%.1f physical=%.1f animatedDrop=%.1f added=%.1f headRemainder=%.1f leg=%.1f ducking=%d weight=%.2f",
+                        info.entity_index,
+                        eyeHeight,
+                        state.eye.standing,
+                        crouch.physicalCrouch,
+                        crouch.animatedDrop,
+                        drop,
+                        headRemainder,
+                        legLength,
+                        nativeCrouched ? 1 : 0,
+                        weight);
+                }
+            }
+        }
+        return changed;
+    }
+
     inline bool HooksWorldPoseBuildPlayerBones(
         VR* vr,
         Game* game,
@@ -6303,8 +6751,7 @@
             !drawState ||
             !entity ||
             !sourceBonePointer ||
-            !vr->m_WorldModelVRPoseEnabled ||
-            !vr->m_FirstPersonControlReady.load(std::memory_order_acquire) ||
+            !HooksWorldPoseRenderActive(vr) ||
             info.entity_index <= 0 ||
             !game->IsValidPlayerIndex(info.entity_index))
         {
@@ -6478,8 +6925,7 @@
         const std::uint64_t stereoNow =
             static_cast<std::uint64_t>(GetTickCount64());
         const std::uint64_t stereoSceneGeneration =
-            g_HooksWorldPoseStereoSceneGeneration.load(
-                std::memory_order_acquire);
+            HooksWorldPoseSceneGeneration(vr);
         if (HooksWorldPoseLoadStereoPlayerBones(
                 entity,
                 layout->studioHdr,
@@ -6903,6 +7349,22 @@
         }
 
         bool changed = visualBodyYawApplied;
+        // Physical crouch / planted legs before the head, lean and arms so
+        // they all solve against the lowered torso.
+        changed =
+            HooksWorldPoseApplyLowerBody(
+                vr,
+                *layout,
+                entity,
+                info,
+                pose,
+                bodyForward,
+                bodyUp,
+                trackingWeight,
+                worldPoseNow,
+                calibration,
+                bones) ||
+            changed;
         if (hmdPoseValid &&
             HooksNativeViewmodelHandsOnlyMatrixFinite(
                 headTarget))

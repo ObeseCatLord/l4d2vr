@@ -1058,14 +1058,20 @@ VR::VR(Game* game)
     if (error != vr::VRInitError_None)
     {
         snprintf(errorString, MAX_STR_LEN, "VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
-        Game::errorMsg(errorString);
+        if (L4D2VR_DesktopFallbackAllowed())
+            L4D2VR_EnterDesktopFallback(errorString);
+        else
+            Game::errorMsg(errorString);
         return;
     }
 
     m_Compositor = vr::VRCompositor();
     if (!m_Compositor)
     {
-        Game::errorMsg("Compositor initialization failed.");
+        if (L4D2VR_DesktopFallbackAllowed())
+            L4D2VR_EnterDesktopFallback("Compositor initialization failed");
+        else
+            Game::errorMsg("Compositor initialization failed.");
         return;
     }
 

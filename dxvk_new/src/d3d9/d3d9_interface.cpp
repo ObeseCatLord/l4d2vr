@@ -13,6 +13,10 @@
 #include <algorithm>
 #include <cstdio>
 
+extern "C" bool L4D2VR_DesktopModeActive();
+extern "C" bool L4D2VR_DesktopFallbackAllowed();
+extern "C" void L4D2VR_EnterDesktopFallback(const char* reason);
+
 namespace dxvk {
 
   static bool IsNoHmdLaunchArgPresent() {
@@ -322,7 +326,9 @@ namespace dxvk {
       return D3DERR_INVALIDCALL;
 
     const bool noHmd = IsNoHmdLaunchArgPresent();
-    if (!noHmd) {
+    // Desktop mode (no headset, or requested): run without OpenVR instead of
+    // failing VR_Init and exiting.
+    if (!noHmd && !L4D2VR_DesktopModeActive()) {
       vr::HmdError error = vr::VRInitError_None;
       vr::IVRSystem* system = vr::VR_Init(&error, vr::VRApplication_Scene);
 
@@ -336,8 +342,12 @@ namespace dxvk {
       } else {
         char errorString[256];
         std::snprintf(errorString, 256, "VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
-        MessageBox(0, errorString, "DXVK", MB_ICONERROR | MB_OK);
-        ExitProcess(0);
+        if (L4D2VR_DesktopFallbackAllowed()) {
+          L4D2VR_EnterDesktopFallback(errorString);
+        } else {
+          MessageBox(0, errorString, "DXVK", MB_ICONERROR | MB_OK);
+          ExitProcess(0);
+        }
       }
     }
 

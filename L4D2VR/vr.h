@@ -30,6 +30,7 @@
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
 #include "vr_melee_inertia.h"
+#include "vr_selftest.h"
 #include "vr_gesture.h"
 #include "vr_throw_ballistics.h"
 #include "vr_scope_lens.h"
@@ -741,7 +742,7 @@ public:
 	float m_ScopeParallaxStrength = 1.0f;
 	float m_ScopeEyeboxDeg = 8.0f;
 	float m_ScopeVignetteExponent = 0.25f;
-	float m_LoadingFramePumpStallMs = 40.0f;
+	float m_LoadingFramePumpStallMs = 150.0f;
 	std::mutex m_CompositorFrameMutex;
 	std::atomic<uint64_t> m_LastMainFrameMs{ 0 };
 	std::atomic<bool> m_LoadingFramePumpStarted{ false };
@@ -2790,6 +2791,47 @@ public:
 	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
 	QAngle m_PhysicalShoveAngles{ 0.0f, 0.0f, 0.0f };
 	bool m_PhysicalShoveAimValid = false;
+	vr::EVROverlayError L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROverlayHandle_t handle,
+		vr::TrackedDeviceIndex_t device, const vr::HmdMatrix34_t* transform, int line);
+	// Developer self-test (-l4d2vrselftest); see vr_selftest.h and vr/vr_selftest.inl.
+	void UpdateSelfTest(C_BasePlayer* localPlayer);
+	void ApplySelfTestPoses();
+	bool RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
+	void SelfTestReport(const char* name, bool ok, const char* detail);
+	void SelfTestStartPath(const std::vector<l4d2vr_selftest::Key>& position, const std::vector<l4d2vr_selftest::Key>& angles);
+	void SelfTestHoldRight(const l4d2vr_selftest::Vec3& local, const QAngle& angles);
+	void SelfTestReachHolster(int zone);
+	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
+	bool m_SelfTestParsed = false;
+	bool m_SelfTestEnabled = false;
+	std::vector<std::string> m_SelfTestSteps;
+	size_t m_SelfTestIndex = 0;
+	uint64_t m_SelfTestReadySinceMs = 0;
+	uint64_t m_SelfTestStepStartMs = 0;
+	int m_SelfTestStage = 0;
+	int m_SelfTestPass = 0;
+	int m_SelfTestFail = 0;
+	int m_SelfTestValueA = 0;
+	int m_SelfTestValueB = 0;
+	int m_SelfTestValueC = 0;
+	uint32_t m_SelfTestSerial = 0;
+	bool m_SelfTestPoseActive = false;
+	float m_SelfTestHeadDrop = 0.0f;
+	l4d2vr_selftest::Vec3 m_SelfTestRightLocal{ 0.35f, 0.2f, -0.3f };
+	l4d2vr_selftest::Vec3 m_SelfTestLeftLocal{ 0.35f, -0.2f, -0.35f };
+	QAngle m_SelfTestRightAngLocal{ 0.0f, 0.0f, 0.0f };
+	QAngle m_SelfTestLeftAngLocal{ 0.0f, 0.0f, 0.0f };
+	bool m_SelfTestRightWorldValid = false;
+	Vector m_SelfTestRightWorld{ 0.0f, 0.0f, 0.0f };
+	std::vector<l4d2vr_selftest::Key> m_SelfTestPath;
+	std::vector<l4d2vr_selftest::Key> m_SelfTestAngPath;
+	uint64_t m_SelfTestPathStartMs = 0;
+	bool m_SelfTestPathActive = false;
+	Vector m_SelfTestPrevRight{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestPrevLeft{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestPrevHmd{ 0.0f, 0.0f, 0.0f };
+	uint64_t m_SelfTestPrevPoseMs = 0;
+	bool m_SelfTestPrevValid = false;
 	// One-shot request to tag the next usercmd with the server shove intent (impulse 238).
 	std::atomic<bool> m_PhysicalShoveImpulsePending{ false };
 	// Pills to the mouth, adrenaline stabbed into the chest or arm.
@@ -4314,7 +4356,13 @@ public:
 	void GetPoses();
 	bool UpdatePosesAndActions();
 	void UpdateInputActionState(const l4d2vr_input::ActionFrame::Attempt& attempt);
-	bool IsInputActionFrameAvailable() const { return l4d2vr_input::ActionFrame::Ready(m_InputActionFrame.Read()); }
+	// The self-test supplies its own button states (vr_selftest.h); a simulated
+	// headset may have no controller action frame at all.
+	bool IsInputActionFrameAvailable() const
+	{
+		return l4d2vr_input::ActionFrame::Ready(m_InputActionFrame.Read()) ||
+			l4d2vr_selftest::Get().active.load(std::memory_order_acquire);
+	}
 	void GetViewParameters();
 	void ProcessMenuInput();
 	void ProcessInput();

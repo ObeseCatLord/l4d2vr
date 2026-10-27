@@ -22,7 +22,10 @@
 #include <cstring>
 #include <limits>
 #include <unordered_set>
+#include <mutex>
+#include <atomic>
 #include "game.h"
+#include "openvr.h"
 #include "hooks.h"
 #include "sdk.h"
 #include "vr_weapon_calibration.h"
@@ -1035,16 +1038,16 @@ namespace
         return value == "1" || value == "true" || value == "yes" || value == "on";
     }
 
-    bool IsConfigBoolEnabledInConfig(const char* configKey)
+    bool ReadConfigBoolFromFile(const char* configKey, bool defaultValue)
     {
         const std::filesystem::path gameRootPath = GetGameRootPath();
         if (gameRootPath.empty())
-            return false;
+            return defaultValue;
 
         const std::filesystem::path configPath = gameRootPath / L"VR" / L"config.txt";
         std::ifstream input(configPath);
         if (!input.is_open())
-            return false;
+            return defaultValue;
 
         std::string line;
         while (std::getline(input, line))
@@ -1074,7 +1077,12 @@ namespace
             return ConfigValueIsEnabled(line.substr(equals + 1));
         }
 
-        return false;
+        return defaultValue;
+    }
+
+    bool IsConfigBoolEnabledInConfig(const char* configKey)
+    {
+        return ReadConfigBoolFromFile(configKey, false);
     }
 
     bool IsVrRecommendedVideoSettingsEnabledInConfig()
@@ -1095,6 +1103,28 @@ namespace
             LocalFree(szArglist);
         }
         return requested || IsConfigBoolEnabledInConfig("DesktopModeEnabled");
+    }
+
+    // With the mod installed but no OpenVR runtime at all, start on the desktop
+    // directly (DesktopModeAuto=true). With a runtime, VR starts as usual and a
+    // failed VR_Init falls back to desktop mode instead of exiting (see
+    // L4D2VR_EnterDesktopFallback). Headset presence is not probed up front:
+    // through Proton/OpenXR bridges VR_IsHmdPresent and an early VR_Init can
+    // fail although the game's own VR_Init later succeeds.
+    bool ShouldAutoSelectDesktopMode(std::string& reason)
+    {
+        if (!ReadConfigBoolFromFile("DesktopModeAuto", true))
+            return false;
+        char value[8]{};
+        if (GetEnvironmentVariableA("VR_OVERRIDE", value, sizeof(value)) > 0 ||
+            GetEnvironmentVariableA("XR_RUNTIME_JSON", value, sizeof(value)) > 0)
+            return false;
+        if (!vr::VR_IsRuntimeInstalled())
+        {
+            reason = "no OpenVR runtime installed";
+            return true;
+        }
+        return false;
     }
 
     void InsertVideoCfgLineBeforeClosingBrace(std::vector<std::wstring>& lines, const wchar_t* key, const wchar_t* value)
@@ -3271,6 +3301,54 @@ bool L4D2VR_ApplyRecommendedVideoSettings()
     return EnsureVideoCfgSettings();
 }
 
+// One desktop/VR decision for the whole module, made on first use from
+// whichever thread gets there first (InitL4D2VR or DXVK's CreateDevice).
+// -nohmd stays the separate, fully vanilla path.
+static std::atomic<bool> g_L4D2VRDesktopFallback{ false };
+
+// Whether a failed VR_Init may switch to desktop mode (DesktopModeAuto=true).
+extern "C" bool L4D2VR_DesktopFallbackAllowed()
+{
+    static const bool allowed = ReadConfigBoolFromFile("DesktopModeAuto", true);
+    return allowed;
+}
+
+extern "C" void L4D2VR_EnterDesktopFallback(const char* reason)
+{
+    g_L4D2VRDesktopMode = true;
+    if (!g_L4D2VRDesktopFallback.exchange(true))
+        Game::logMsg("[VR] %s; continuing in desktop mode (set DesktopModeAuto=false in VR/config.txt to show the error instead)",
+            reason ? reason : "VR unavailable");
+}
+
+extern "C" bool L4D2VR_DesktopModeActive()
+{
+    if (g_L4D2VRDesktopFallback.load(std::memory_order_acquire))
+        return true;
+
+    static std::once_flag once;
+    static bool desktop = false;
+    std::call_once(once, []()
+    {
+        if (IsNoHmdLaunchArgPresent())
+            return;
+        std::string reason;
+        if (IsDesktopModeRequested())
+        {
+            desktop = true;
+            reason = "desktop mode requested";
+        }
+        else
+        {
+            desktop = ShouldAutoSelectDesktopMode(reason);
+        }
+        if (desktop)
+            Game::logMsg("[VR] %s; starting in desktop mode (set DesktopModeAuto=false in VR/config.txt to always start VR)",
+                reason.c_str());
+    });
+    return desktop;
+}
+
 DWORD WINAPI InitL4D2VR(HMODULE hModule)
 {
     timeBeginPeriod(1);
@@ -3308,7 +3386,7 @@ DWORD WINAPI InitL4D2VR(HMODULE hModule)
         return 0;
     }
 
-    if (IsDesktopModeRequested())
+    if (L4D2VR_DesktopModeActive())
     {
         // Desktop (receive-only) mode: install the normal hooks but skip OpenVR
         // (VR::VR checks g_L4D2VRDesktopMode), the VR window title/focus

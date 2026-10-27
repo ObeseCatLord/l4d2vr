@@ -2376,6 +2376,20 @@ bool Game::ReceiveVRPosePayload(
     if (fromServer)
         m_VRPoseServerCapable.store(true, std::memory_order_release);
 
+    {
+        // One line per sender every 10 s: confirms the relay without debug logging.
+        static std::uint64_t s_LastReceiveLogMs[65] = {};
+        static unsigned s_ReceivedSinceLog[65] = {};
+        if (playerIndex < 65 && ++s_ReceivedSinceLog[playerIndex] > 0u &&
+            frame.receivedTickMs - s_LastReceiveLogMs[playerIndex] >= 10000u)
+        {
+            Game::logMsg("[VR][WorldPose] receiving VR pose from player %d: %u packets, seq %u, head z %.2f",
+                playerIndex, s_ReceivedSinceLog[playerIndex], static_cast<unsigned>(sequence), frame.hmd.position.z);
+            s_LastReceiveLogMs[playerIndex] = frame.receivedTickMs;
+            s_ReceivedSinceLog[playerIndex] = 0u;
+        }
+    }
+
     if (m_VR && m_VR->m_WorldModelVRPoseDebugLog)
     {
         static std::array<std::uint64_t, Game::kMaxPlayers> s_lastLogMs{};

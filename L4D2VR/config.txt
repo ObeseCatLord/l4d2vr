@@ -175,6 +175,7 @@ WorldModelVRPoseCrouchMaxLegFraction=0.7
 WorldModelVRPoseCrouchMaxSpineBendDeg=30
 WorldModelVRPoseStandingHeightDecayPerSecond=0.01
 DesktopModeEnabled=false
+DesktopModeAuto=true
 ClothingMaterials=true
 HiddenMaterialNames=francis:xie-v2,francis:xie,coach:xie-v2,coach:xie,nick:xie-v2,nick:xie,louis:xie-v2,louis:xie,ellis:xie-v2,ellis:xie,bill:xie-v2,bill:xie,rochelle:xie-v2,rochelle:xie,zoey:xie-v2,zoey:xie
 FirstPersonBodyVisibleUpperArmLengthMeters=0.10
@@ -388,7 +389,7 @@ SightAutoAlignEnabled=true
 MeleeInertiaEnabled=true
 // Keep the headset fed with frames during loading screens and chapter transitions.
 LoadingFramePumpEnabled=true
-LoadingFramePumpStallMs=40
+LoadingFramePumpStallMs=150
 // Show the HUD overlay (end-of-chapter stats, scoreboard) automatically at intermissions.
 IntermissionHudEnabled=true
 // Keep game audio playing when the desktop window is not focused.

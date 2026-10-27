@@ -3219,7 +3219,7 @@ void VR::ParseConfigFile()
     m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 8.0f), 1.0f, 45.0f);
     m_ScopeVignetteExponent = std::clamp(getFloat("ScopeVignetteExponent", 0.25f), 0.05f, 4.0f);
     m_IntermissionHudEnabled = getBool("IntermissionHudEnabled", true);
-    m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 40.0f), 15.0f, 1000.0f);
+    m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 150.0f), 100.0f, 1000.0f);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
     m_ConsumableGesturesEnabled = getBool("ConsumableGesturesEnabled", true);
     m_CrosshairEnabled = getBool("CrosshairEnabled", true);

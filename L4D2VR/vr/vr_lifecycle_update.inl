@@ -2109,9 +2109,11 @@ void VR::Update()
         return;
     }
 
+    // Headless self-test windows never get pointer focus, so Source keeps its
+    // cursor visible; the self-test drives gameplay input regardless.
     const bool menuInputActive =
         (m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
-        m_Game->m_VguiSurface->IsCursorVisible();
+        (m_Game->m_VguiSurface->IsCursorVisible() && !(m_SelfTestEnabled && m_SelfTestPoseActive));
 
     if (menuInputActive)
     {
@@ -4986,7 +4988,7 @@ void VR::UpdateRearMirrorOverlayTransform()
     };
 
     const vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_RearMirrorHandle, trackingOrigin, &mirrorAbs);
+    L4D2VRSetOverlayTransformAbsolute(m_RearMirrorHandle, trackingOrigin, &mirrorAbs, __LINE__);
     float mirrorWidth = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
     if (m_RearMirrorSpecialWarningDistance > 0.0f && m_RearMirrorSpecialEnlargeActive)
         mirrorWidth *= 2.0f;
@@ -5134,7 +5136,7 @@ void VR::UpdateScopeOverlayTransform()
         R20, R21, R22, overlayPos.z
     };
     const vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_ScopeHandle, trackingOrigin, &scopeAbs);
+    L4D2VRSetOverlayTransformAbsolute(m_ScopeHandle, trackingOrigin, &scopeAbs, __LINE__);
     vr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, scopeWidth);
 }
 
@@ -5278,7 +5280,7 @@ void VR::RepositionOverlays()
     menuTransform.m[2][0] = -sin(hmdRotationDegrees) * xScale;
     menuTransform.m[2][2] *= cos(hmdRotationDegrees);
 
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform);
+    L4D2VRSetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform, __LINE__);
     vr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, 1.5 * (1.0 / heightRatio));
 
     auto buildFacingTransform = [&](const Vector& position)
@@ -5331,9 +5333,9 @@ void VR::RepositionOverlays()
 
     vr::HmdMatrix34_t hudTopTransform = hudFollowHmdMovement ? buildHmdFollowTransform(hudNewPos) : buildFacingTransform(hudNewPos);
 
-    vr::VROverlay()->SetOverlayTransformAbsolute(m_HUDTopHandle, trackingOrigin, &hudTopTransform);
+    L4D2VRSetOverlayTransformAbsolute(m_HUDTopHandle, trackingOrigin, &hudTopTransform, __LINE__);
     vr::VROverlay()->SetOverlayWidthInMeters(m_HUDTopHandle, m_HudSize);
-    vr::VROverlay()->SetOverlayCurvature(m_HUDTopHandle, (std::max)(0.0f, m_TopHudCurvature));
+    L4D2VRSetOverlayCurvature(vr::VROverlay(), m_HUDTopHandle, m_TopHudCurvature);
 
     // Place the intent-sense panel in the upper-right area of the same in-game HUD plane.
     if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
@@ -5349,10 +5351,10 @@ void VR::RepositionOverlays()
         const float yOff = (hudHeightMeters * 0.5f) - (panelHeight * 0.5f) - m_SpecialInfectedIntentSenseHudMarginYMeters;
         Vector panelPos = hudNewPos + hudRight * xOff + hudUp * yOff;
         vr::HmdMatrix34_t intentHudTransform = hudFollowHmdMovement ? buildHmdFollowTransform(panelPos) : buildFacingTransform(panelPos);
-        vr::VROverlay()->SetOverlayTransformAbsolute(m_SpecialInfectedIntentSenseHudHandle, trackingOrigin, &intentHudTransform);
+        L4D2VRSetOverlayTransformAbsolute(m_SpecialInfectedIntentSenseHudHandle, trackingOrigin, &intentHudTransform, __LINE__);
         vr::VROverlay()->SetOverlayWidthInMeters(m_SpecialInfectedIntentSenseHudHandle, panelWidth);
         // Intent-sense HUD is an independent flat overlay. Do not inherit the main game HUD curvature.
-        vr::VROverlay()->SetOverlayCurvature(m_SpecialInfectedIntentSenseHudHandle, 0.0f);
+        L4D2VRSetOverlayCurvature(vr::VROverlay(), m_SpecialInfectedIntentSenseHudHandle, 0.0f);
     }
 
     for (size_t i = 0; i < m_HUDBottomHandles.size(); ++i)
@@ -5377,7 +5379,19 @@ void VR::RepositionOverlays()
                 std::swap(leftControllerIndex, rightControllerIndex);
 
             const vr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;
-            if (gunControllerIndex != vr::k_unTrackedDeviceIndexInvalid)
+            bool gunPoseUsable = gunControllerIndex != vr::k_unTrackedDeviceIndexInvalid &&
+                gunControllerIndex < vr::k_unMaxTrackedDeviceCount &&
+                m_Poses[gunControllerIndex].bDeviceIsConnected && m_Poses[gunControllerIndex].bPoseIsValid &&
+                m_Poses[gunControllerIndex].eTrackingResult == vr::TrackingResult_Running_OK;
+            for (int r = 0; gunPoseUsable && r < 3; ++r)
+                for (int c = 0; c < 4; ++c)
+                    gunPoseUsable = gunPoseUsable && std::isfinite(m_Poses[gunControllerIndex].mDeviceToAbsoluteTracking.m[r][c]);
+            if (!gunPoseUsable)
+            {
+                // OpenXR runtimes reject frames with an invalid layer pose.
+                vr::VROverlay()->HideOverlay(m_ScopeHandle);
+            }
+            else
             {
                 const float deg2rad = 3.14159265358979323846f / 180.0f;
 
@@ -5426,7 +5440,7 @@ void VR::RepositionOverlays()
                     R[2][0], R[2][1], R[2][2], m_ScopeOverlayZOffset
                 };
 
-                vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(m_ScopeHandle, gunControllerIndex, &scopeRelative);
+                L4D2VRSetOverlayTransformTrackedDeviceRelative(m_ScopeHandle, gunControllerIndex, &scopeRelative, __LINE__);
                 vr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, (std::max)(0.01f, m_ScopeOverlayWidthMeters));
             }
         }

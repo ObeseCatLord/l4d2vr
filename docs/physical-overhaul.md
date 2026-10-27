@@ -8,7 +8,7 @@ Pavlov Shack style body holsters and reloading, Half-Life 2 VR style melee, gren
 | Dedicated server running the `l4d2vr_server` plugin | The same, server-side. The plugin advertises what it supports with `l4d2vr_feature_ack`. |
 | Any other server | Client-side approximations that only use standard input (weapon slots, view angles, buttons). Desktop players and servers see a normal client. |
 
-Desktop players running the mod are unaffected; they can join VR servers and play alongside VR players.
+Desktop players running the mod are unaffected; they can join VR servers and play alongside VR players. Without a headset the mod starts in desktop mode by itself: with no OpenVR runtime installed it never tries VR, and if VR fails to start it continues on the desktop instead of showing an error (`DesktopModeAuto=true`; `-nohmd` still runs the game fully vanilla). Desktop players with the mod see VR players' bodies.
 
 ## Holsters
 
@@ -81,6 +81,10 @@ Before trusting a new game build, run `l4d2vr_server_symcheck <path to server_sr
 ## Controls (physical layout)
 
 Both grips draw from holsters and hold magazines, bolts and foregrips; right A releases the magazine; the right stick click jumps; left trigger shoves, or fires the left pistol in akimbo. Oculus Touch, Index (Knuckles) and Vive Cosmos defaults follow this layout.
+
+## Self-test (developers)
+
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
 
 ## Headset test checklist
 

@@ -2,6 +2,7 @@
 
 #include "openvr.h"
 #include "vr_input_recovery.h"
+#include "vr_selftest.h"
 #include <cmath>
 
 namespace l4d2vr_hand_input
@@ -29,6 +30,14 @@ namespace l4d2vr_hand_input
         vr::InputDigitalActionData_t& out)
     {
         out = {};
+        bool selfTestDown = false, selfTestChanged = false;
+        if (l4d2vr_selftest::Lookup(action, selfTestDown, selfTestChanged))
+        {
+            out.bActive = true;
+            out.bState = selfTestDown;
+            out.bChanged = selfTestChanged;
+            return true;
+        }
         const auto frame = actionFrame.Read();
         if (!input || !system || !sourcePath || !l4d2vr_input::ActionFrame::Ready(frame) ||
             action == vr::k_ulInvalidActionHandle)

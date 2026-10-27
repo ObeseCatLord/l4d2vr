@@ -25,6 +25,46 @@ namespace l4d2vr_holster
 
     inline int SlotIndex(Zone zone) { return static_cast<int>(zone); }
 
+    // Entity class for "use <class>", which switches weapons directly instead
+    // of going through the HUD's slot selection. Null for unknown ids.
+    inline const char* WeaponClassForId(int id)
+    {
+        switch (id)
+        {
+        case 1: return "weapon_pistol";
+        case 2: return "weapon_smg";
+        case 3: return "weapon_pumpshotgun";
+        case 4: return "weapon_autoshotgun";
+        case 5: return "weapon_rifle";
+        case 6: return "weapon_hunting_rifle";
+        case 7: return "weapon_smg_silenced";
+        case 8: return "weapon_shotgun_chrome";
+        case 9: return "weapon_rifle_desert";
+        case 10: return "weapon_sniper_military";
+        case 11: return "weapon_shotgun_spas";
+        case 12: return "weapon_first_aid_kit";
+        case 13: return "weapon_molotov";
+        case 14: return "weapon_pipe_bomb";
+        case 15: return "weapon_pain_pills";
+        case 19: return "weapon_melee";
+        case 20: return "weapon_chainsaw";
+        case 21: return "weapon_grenade_launcher";
+        case 23: return "weapon_adrenaline";
+        case 24: return "weapon_defibrillator";
+        case 25: return "weapon_vomitjar";
+        case 26: return "weapon_rifle_ak47";
+        case 30: return "weapon_upgradepack_incendiary";
+        case 31: return "weapon_upgradepack_explosive";
+        case 32: return "weapon_pistol_magnum";
+        case 33: return "weapon_smg_mp5";
+        case 34: return "weapon_rifle_sg552";
+        case 35: return "weapon_sniper_awp";
+        case 36: return "weapon_sniper_scout";
+        case 37: return "weapon_rifle_m60";
+        default: return nullptr;
+        }
+    }
+
     // Offsets are metres in the body frame relative to the head:
     // x forward, y toward the DOMINANT side, z up. Mirroring is implicit in
     // the dominant-side convention.

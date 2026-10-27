@@ -15,6 +15,8 @@ using VR_InitInternalProc        = vr::IVRSystem* (VR_CALLTYPE *)(vr::EVRInitErr
 using VR_ShutdownInternalProc    = void  (VR_CALLTYPE *)();
 using VR_GetGenericInterfaceProc = void* (VR_CALLTYPE *)(const char*, vr::EVRInitError*);
 
+extern "C" bool L4D2VR_DesktopModeActive();
+
 namespace dxvk {
 
   static bool IsNoHmdLaunchArgPresent() {
@@ -79,7 +81,7 @@ namespace dxvk {
   void VrInstance::initInstanceExtensions() {
     std::lock_guard<dxvk::mutex> lock(m_mutex);
 
-    if (m_no_vr || m_initializedDevExt)
+    if (m_no_vr || m_initializedDevExt || L4D2VR_DesktopModeActive())
         return;
 
     if (!m_vr_key)
@@ -104,7 +106,7 @@ namespace dxvk {
   void VrInstance::initDeviceExtensions(const DxvkInstance* instance) {
     std::lock_guard<dxvk::mutex> lock(m_mutex);
 
-    if (m_no_vr || (!m_vr_key && !m_compositor) || m_initializedDevExt)
+    if (m_no_vr || (!m_vr_key && !m_compositor) || m_initializedDevExt || L4D2VR_DesktopModeActive())
       return;
     
     for (uint32_t i = 0; instance->enumAdapters(i) != nullptr; i++) {

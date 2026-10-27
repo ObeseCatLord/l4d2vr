@@ -203,8 +203,8 @@
                "mode": "button",
                "parameters": {
                   "force_input": "force",
-                  "click_activate_threshold": "0.45",
-                  "click_deactivate_threshold": "0.4"
+                  "click_activate_threshold": "0.7",
+                  "click_deactivate_threshold": "0.35"
                },
                "path": "/user/hand/right/input/grip"
             },

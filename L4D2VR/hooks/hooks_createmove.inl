@@ -1946,9 +1946,11 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             if ((pickupResult & l4d2vr_physical::PickupIntent::AdoptWeapon) != 0u)
             {
                 s_pendingGripAdoption = activeWeaponTag;
+                m_VR->m_GripToggleAdoptSerial.fetch_add(1u, std::memory_order_acq_rel);
             }
             if ((pickupResult & l4d2vr_physical::PickupIntent::RequestUse) != 0u)
             {
+                m_VR->m_GripTogglePickupSerial.fetch_add(1u, std::memory_order_acq_rel);
                 cmd->buttons |= 1u << 5; // Native, server-validated IN_USE pickup.
                 cmd->impulse = l4d2vr_grip::kPickupImpulse;
                 pistolInteractionHand = l4d2vr_dual::Hand::Right;

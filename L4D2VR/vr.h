@@ -32,6 +32,7 @@
 #include "vr_melee_inertia.h"
 #include "vr_selftest.h"
 #include "vr_one_euro.h"
+#include "vr_grip_toggle.h"
 #include "vr_gesture.h"
 #include "vr_throw_ballistics.h"
 #include "vr_scope_lens.h"
@@ -1346,6 +1347,11 @@ public:
 	int GetDroppedMagazineRenders(const std::string& lowerModel, DroppedMagazineRender* out, int capacity) const;
 	bool m_MagazineReleaseJustPressed = false;
 	std::atomic<uint32_t> m_WeaponGripInputState{ 0 };
+	// Toggle grips (Pavlov style): a firm squeeze takes an item, the next squeeze lets it go.
+	bool m_GripToggleEnabled = true;
+	l4d2vr_grip_toggle::Toggle m_GripToggle;
+	std::atomic<uint32_t> m_GripToggleAdoptSerial{ 0u };   // contact pickups adopted by the grip
+	std::atomic<uint32_t> m_GripTogglePickupSerial{ 0u };  // contact pickups requested
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_BodyGripSelectionSerial{ 0 };

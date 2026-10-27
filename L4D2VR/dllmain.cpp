@@ -3196,6 +3196,7 @@ namespace
         sampleKeys.insert("VrHandsTwoHandedStabilizerMinCutoffHz");
         sampleKeys.insert("VrHandsTwoHandedStabilizerBeta");
         sampleKeys.insert("HolsterReleaseDrop");
+        sampleKeys.insert("GripToggle");
         sampleKeys.insert("MotionOnlyMeleeAndShove");
         sampleKeys.insert("MeleeGripReachMeters");
         sampleKeys.insert("ConsumableGiveEnabled");

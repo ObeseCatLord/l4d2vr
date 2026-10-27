@@ -25599,6 +25599,37 @@ void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRend
     if (drawMagazineInteractionDetachedMagazine && magazineInteractionDetachedMagazineBones)
         hkDrawModelExecute.fOriginal(ecx, state, *pDrawInfo, magazineInteractionDetachedMagazineBones);
 
+    if (!shadowDepthDraw && m_VR && m_VR->m_MagazineDropEnabled && pBonesToWorldFinal &&
+        HooksModelNameIsViewmodel(vr_vm_stabilize::ToLowerAscii(modelName)))
+    {
+        VR::DroppedMagazineRender drops[4]{};
+        const int dropCount = m_VR->GetDroppedMagazineRenders(vr_vm_stabilize::ToLowerAscii(modelName), drops, 4);
+        if (dropCount > 0)
+        {
+            std::vector<std::string> boneNames;
+            std::vector<int> boneParents;
+            int numBones = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+            if (vr_vm_stabilize::TryCollectBoneNamesFromDrawState(state, boneNames, boneParents, numBones,
+                    boneIndex, stride, numBonesOffset) && numBones > 0 && numBones <= 512 &&
+                static_cast<int>(boneParents.size()) >= numBones)
+            {
+                for (int i = 0; i < dropCount; ++i)
+                {
+                    if (drops[i].boneIndex < 0 || drops[i].boneIndex >= numBones)
+                        continue;
+                    vr_vm_stabilize::Mat3x4* dropBones = nullptr;
+                    if (BuildDetachedSourceMagazineBones("MagazineDrop", modelName, boneParents,
+                            reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBonesToWorldFinal), numBones,
+                            drops[i].boneIndex, drops[i].boneIndex, drops[i].world, nullptr,
+                            m_VR->m_RenderFrameSeq.load(std::memory_order_relaxed), false, dropBones) && dropBones)
+                    {
+                        hkDrawModelExecute.fOriginal(ecx, state, *pDrawInfo, dropBones);
+                    }
+                }
+            }
+        }
+    }
+
     if (!shadowDepthDraw && m_VR && m_Game && m_Game->m_ModelRender && pBonesToWorldFinal)
     {
         vr_vm_stabilize::Mat3x4* glowBones = nullptr;

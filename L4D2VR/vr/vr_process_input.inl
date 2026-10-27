@@ -618,6 +618,15 @@ void VR::ProcessInput()
         secondaryAttackActionData,
         secondaryAttackActive,
         secondaryAttackJustPressed);
+    if (m_MenuPointerSuppressTriggers)
+    {
+        // A trigger that clicked a menu with the laser pointer stays out of
+        // gameplay until both triggers are released (no shot on "Resume").
+        if (!primaryAttackDown && !secondaryAttackActive)
+            m_MenuPointerSuppressTriggers = false;
+        primaryAttackDown = primaryAttackJustPressed = false;
+        secondaryAttackActive = secondaryAttackJustPressed = false;
+    }
 
     const bool dualTriggerRouting = (dualPistolsActive || leftHeldPistol) && m_EncodeVRUsercmd &&
         !m_ForceNonVRServerMovement && Hooks::s_ServerUnderstandsVR;

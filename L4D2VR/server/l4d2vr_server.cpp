@@ -22,6 +22,11 @@
 #include "sigscanner.h"
 #include "sdk/vector.h"
 
+// Shared, std-only dedicated-server core (also used by the Linux shell).
+#include "../server_core/vr_server_session.h"
+#include "../server_core/vr_server_limits.h"
+#include "../server_core/vr_usercmd_codec.h"
+
 class Server_BaseEntity;
 
 class IHandleEntity
@@ -40,15 +45,36 @@ public:
     virtual Server_BaseEntity* GetBaseEntity() = 0;
 };
 
+// L4D2's CBaseEdict: four 32-bit fields and no cached index (see
+// vr_edict_identity.h, verified on the Windows server.dll); the player index
+// is derived from the edict array that ServerActivate supplies.
 struct edict_t
 {
     int m_fStateFlags;
-    short m_NetworkSerialNumber;
-    short m_EdictIndex;
+    int m_NetworkSerialNumber;
     void* m_pNetworkable;
     IServerUnknown* m_pUnk;
-    float freetime;
 };
+static_assert(sizeof(edict_t) == 16, "Unexpected L4D2 edict layout.");
+
+class CCommand
+{
+public:
+    int ArgC() const { return m_nArgc; }
+    const char* Arg(int index) const
+    {
+        if (index < 0 || index >= m_nArgc) return "";
+        return m_ppArgv[index] ? m_ppArgv[index] : "";
+    }
+private:
+    enum { COMMAND_MAX_ARGC = 64, COMMAND_MAX_LENGTH = 512 };
+    int m_nArgc;
+    int m_nArgv0Size;
+    char m_pArgSBuffer[COMMAND_MAX_LENGTH];
+    char m_pArgvBuffer[COMMAND_MAX_LENGTH];
+    const char* m_ppArgv[COMMAND_MAX_ARGC];
+};
+static_assert(sizeof(CCommand) == 1288, "Unexpected 32-bit Source CCommand layout.");
 
 #include "sdk/sdk_server.h"
 
@@ -254,19 +280,8 @@ namespace
     constexpr int kWeaponVomitJar = 25;
     constexpr int kUsingMountedGunOffset = 0x1EBA;
     constexpr int kUsingMountedWeaponOffset = 0x1EBB;
-    constexpr int kVrExtraCommandMagic = 0x56000000;
-    constexpr int kVrExtraCommandMagicMask = 0xFF000000;
-    constexpr int kVrExtraTypeShift = 20;
-    constexpr int kVrExtraFlagsShift = 16;
-    constexpr int kVrExtraLowMask = 0xFFFF;
-    constexpr int kVrExtraTypeTeleport = 1;
-    constexpr int kVrExtraTypeRoomscale = 2;
-    constexpr int kVrExtraFlagCrouched = 1 << 0;
-    constexpr int kServerAckMaxAttempts = 8;
-    constexpr int kServerAckRetryMs = 1000;
     constexpr int kMeleeSwingHistoryCapacity = 16;
     constexpr float kDefaultTeleportMaxDistanceUnits = 2500.0f;
-    constexpr char kServerAckCommand[] = "l4d2vr_server_ack 1\n";
     constexpr char kServerLogFileName[] = "l4d2vr_server_log.txt";
     constexpr char kServerConfigFileName[] = "l4d2vr_server_config.txt";
 
@@ -301,30 +316,14 @@ namespace
         bool physicalCrouch = false;
         bool isNewSwing = false;
         bool currentMeleeSwingAllowed = false;
-        bool serverAckPending = false;
-        int serverAckAttempts = 0;
-        edict_t* serverAckEdict = nullptr;
-        std::chrono::steady_clock::time_point nextServerAckTime{};
+        bool haveViewYaw = false;
+        float viewYaw = 0.0f;
         std::chrono::steady_clock::time_point lastTeleportTime{};
         std::chrono::steady_clock::time_point lastMeleeSwingTime{};
         std::array<std::chrono::steady_clock::time_point, kMeleeSwingHistoryCapacity> meleeSwingHistory{};
         Vector controllerPos = Vector(0.0f, 0.0f, 0.0f);
         QAngle controllerAngle = QAngle(0.0f, 0.0f, 0.0f);
         QAngle prevControllerAngle = QAngle(0.0f, 0.0f, 0.0f);
-    };
-
-    enum class VrExtraCommandType
-    {
-        None,
-        Teleport,
-        Roomscale,
-    };
-
-    struct VrExtraCommand
-    {
-        VrExtraCommandType type = VrExtraCommandType::None;
-        bool crouched = false;
-        Vector value = Vector(0.0f, 0.0f, 0.0f);
     };
 
     class CUserCmd
@@ -368,7 +367,6 @@ namespace
     std::mutex g_logMutex;
     std::array<PlayerVrState, kMaxPlayers> g_players{};
     std::atomic_bool g_hooksInstalled{ false };
-    std::atomic_bool g_hookWorkerStarted{ false };
     std::atomic_bool g_unloading{ false };
     HMODULE g_module = nullptr;
     IEngineTrace* g_engineTraceServer = nullptr;
@@ -389,7 +387,6 @@ namespace
     thread_local Vector g_useControllerAimOrigin = Vector(0.0f, 0.0f, 0.0f);
     thread_local QAngle g_useControllerAimAngles = QAngle(0.0f, 0.0f, 0.0f);
     thread_local QAngle g_returnEyeAngles = QAngle(0.0f, 0.0f, 0.0f);
-    thread_local VrExtraCommand g_pendingExtraCommand{};
 
     void ResetLogFile()
     {
@@ -608,79 +605,60 @@ namespace
             g_config.meleeSwingBurstMax);
     }
 
+    // Player index from the engine's edict array (ServerActivate); Windows and
+    // Linux L4D2 edicts carry no index of their own.
+    edict_t* g_edictList = nullptr;
+    int g_edictCount = 0;
+    int g_clientMax = l4d2vr_server::kMaxPlayerSlots;
+
     int GetPlayerIndexFromEdict(const edict_t* entity)
     {
-        if (!entity)
+        if (!entity || !g_edictList || g_edictCount <= 0)
             return -1;
-
-        return static_cast<int>(entity->m_EdictIndex);
+        const auto base = reinterpret_cast<uintptr_t>(g_edictList);
+        const auto address = reinterpret_cast<uintptr_t>(entity);
+        if (address < base || (address - base) % sizeof(edict_t) != 0u)
+            return -1;
+        const uintptr_t index = (address - base) / sizeof(edict_t);
+        if (index >= static_cast<uintptr_t>(g_edictCount) || index < 1u ||
+            index > static_cast<uintptr_t>(g_clientMax) || index >= static_cast<uintptr_t>(kMaxPlayers))
+            return -1;
+        return static_cast<int>(index);
     }
 
-    bool SendServerAckToClient(edict_t* entity, int playerIndex, const char* reason)
+    // Handshake, pose relay (v2 + v3) and capability bundle from the shared core.
+    class SessionHost final : public l4d2vr_server::SessionHost
     {
-        if (!g_engineServer || !entity || !IsValidPlayerIndex(playerIndex))
-            return false;
-
+    public:
+        void SendToClient(const void* entity, const char* text) override
+        {
+            if (!g_engineServer || !entity || !text)
+                return;
+            edict_t* edict = const_cast<edict_t*>(static_cast<const edict_t*>(entity));
 #ifdef _MSC_VER
-        __try
-        {
-            g_engineServer->ClientCommand(entity, kServerAckCommand);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            Log("failed to send L4D2VR server ack to player %d (%s)", playerIndex, reason ? reason : "unknown");
-            return false;
-        }
-#else
-        g_engineServer->ClientCommand(entity, kServerAckCommand);
-#endif
-
-        Log("sent L4D2VR server ack to player %d (%s)", playerIndex, reason ? reason : "unknown");
-        return true;
-    }
-
-    void QueueServerAckForClient(edict_t* entity, const char* reason)
-    {
-        const int playerIndex = GetPlayerIndexFromEdict(entity);
-        if (!IsValidPlayerIndex(playerIndex))
-            return;
-
-        PlayerVrState& player = g_players[playerIndex];
-        player.serverAckEdict = entity;
-        player.serverAckPending = true;
-        player.serverAckAttempts = 0;
-        player.nextServerAckTime = {};
-        SendServerAckToClient(entity, playerIndex, reason);
-        player.serverAckAttempts = 1;
-        player.nextServerAckTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(kServerAckRetryMs);
-    }
-
-    void PumpPendingServerAcks()
-    {
-        if (!g_engineServer)
-            return;
-
-        const auto now = std::chrono::steady_clock::now();
-        for (int playerIndex = 1; playerIndex < static_cast<int>(g_players.size()); ++playerIndex)
-        {
-            PlayerVrState& player = g_players[playerIndex];
-            if (!player.serverAckPending || !player.serverAckEdict)
-                continue;
-
-            if (player.serverAckAttempts >= kServerAckMaxAttempts)
+            __try
             {
-                player.serverAckPending = false;
-                continue;
+                g_engineServer->ClientCommand(edict, "%s", text);
             }
-
-            if (player.nextServerAckTime.time_since_epoch().count() != 0 && now < player.nextServerAckTime)
-                continue;
-
-            SendServerAckToClient(player.serverAckEdict, playerIndex, "retry");
-            ++player.serverAckAttempts;
-            player.nextServerAckTime = now + std::chrono::milliseconds(kServerAckRetryMs);
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+            }
+#else
+            g_engineServer->ClientCommand(edict, "%s", text);
+#endif
         }
-    }
+        uint64_t NowMs() const override { return static_cast<uint64_t>(GetTickCount64()); }
+        uint64_t NowUs() const override
+        {
+            return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        }
+        bool ViewYaw(int playerIndex, float& yaw) const override;
+        void Log(const char* line) override;
+    };
+
+    SessionHost g_sessionHost;
+    l4d2vr_server::Session g_session(g_sessionHost);
 
     bool IsFiniteVector(const Vector& value)
     {
@@ -752,59 +730,6 @@ namespace
             HandleValid(jockeyAttacker);
     }
 
-    int DecodeSigned16(int value)
-    {
-        return static_cast<int>(static_cast<int16_t>(value & 0xFFFF));
-    }
-
-    bool DecodeVrExtraCommand(const CUserCmd* move, VrExtraCommand& out)
-    {
-        out = {};
-        if (!move)
-            return false;
-
-        const int header = move->weaponselect;
-        if ((header & kVrExtraCommandMagicMask) != kVrExtraCommandMagic)
-            return false;
-
-        const int type = (header >> kVrExtraTypeShift) & 0x0F;
-        const int flags = (header >> kVrExtraFlagsShift) & 0x0F;
-        const int z = DecodeSigned16(header);
-        const int packedXY = move->weaponsubtype;
-        const int x = DecodeSigned16(packedXY);
-        const int y = DecodeSigned16(packedXY >> 16);
-
-        out.crouched = (flags & kVrExtraFlagCrouched) != 0;
-        if (type == kVrExtraTypeTeleport)
-        {
-            out.type = VrExtraCommandType::Teleport;
-            out.value = Vector(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
-        }
-        else if (type == kVrExtraTypeRoomscale)
-        {
-            out.type = VrExtraCommandType::Roomscale;
-            out.value = Vector(static_cast<float>(x) / 10.0f, static_cast<float>(y) / 10.0f, 0.0f);
-        }
-        else
-        {
-            return false;
-        }
-
-        return IsFiniteVector(out.value);
-    }
-
-    void ClearVrExtraCommandFields(CUserCmd* move)
-    {
-        if (!move)
-            return;
-
-        if ((move->weaponselect & kVrExtraCommandMagicMask) == kVrExtraCommandMagic)
-        {
-            move->weaponselect = 0;
-            move->weaponsubtype = 0;
-        }
-    }
-
     void NormalizeAndClampViewAngles(QAngle& angles)
     {
         while (angles.x > 180.0f) angles.x -= 360.0f;
@@ -831,28 +756,6 @@ namespace
         }
 #else
         return player->m_pUnk->GetBaseEntity();
-#endif
-    }
-
-    void TraceServerRay(const Ray_t& ray, unsigned int mask, CTraceFilter* filter, CGameTrace& outTrace)
-    {
-        outTrace = {};
-        outTrace.fraction = 1.0f;
-        if (!g_engineTraceServer)
-            return;
-
-#ifdef _MSC_VER
-        __try
-        {
-            g_engineTraceServer->TraceRay(ray, mask, filter, &outTrace);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            outTrace = {};
-            outTrace.fraction = 1.0f;
-        }
-#else
-        g_engineTraceServer->TraceRay(ray, mask, filter, &outTrace);
 #endif
     }
 
@@ -1043,250 +946,6 @@ namespace
 #endif
     }
 
-    Vector* SafeGetAbsOrigin(Server_BaseEntity* entity)
-    {
-        if (!entity || !g_offsets.CBaseEntity_GetAbsOrigin_Server.valid)
-            return nullptr;
-
-        auto getAbsOrigin = reinterpret_cast<tGetAbsOriginServer>(g_offsets.CBaseEntity_GetAbsOrigin_Server.address);
-#ifdef _MSC_VER
-        __try
-        {
-            return getAbsOrigin(entity);
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return nullptr;
-        }
-#else
-        return getAbsOrigin(entity);
-#endif
-    }
-
-    bool SafeSetOrigin(Server_BaseEntity* entity, const Vector& origin)
-    {
-        if (!entity || !g_offsets.CBaseEntity_SetOrigin_Server.valid || !IsFiniteVector(origin))
-            return false;
-
-        auto setOrigin = reinterpret_cast<tSetOriginServer>(g_offsets.CBaseEntity_SetOrigin_Server.address);
-#ifdef _MSC_VER
-        __try
-        {
-            setOrigin(entity, origin);
-            return true;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return false;
-        }
-#else
-        setOrigin(entity, origin);
-        return true;
-#endif
-    }
-
-    bool IsTeleportServerWalkableFloor(const CGameTrace& trace)
-    {
-        return !trace.allsolid && !trace.startsolid && trace.fraction < 0.999f;
-    }
-
-    bool ValidateServerTeleportLanding(
-        Server_BaseEntity* serverPlayer,
-        IServerUnknown* serverUnknown,
-        const Vector& requestedTarget,
-        bool crouched,
-        Vector& outStart,
-        Vector& outLandingTarget)
-    {
-        if (!serverPlayer || !serverUnknown || !g_engineTraceServer || !IsFiniteVector(requestedTarget))
-            return false;
-
-        Vector* originPtr = SafeGetAbsOrigin(serverPlayer);
-        if (!originPtr || !IsFiniteVector(*originPtr))
-            return false;
-
-        outStart = *originPtr;
-        const Vector requestedDelta = requestedTarget - outStart;
-        const float requestedDistance = requestedDelta.Length();
-        if (!std::isfinite(requestedDistance) || requestedDistance > g_config.teleportMaxDistanceUnits)
-            return false;
-
-        constexpr unsigned int kTeleportLandingStaticTraceMask =
-            CONTENTS_SOLID | CONTENTS_PLAYERCLIP | CONTENTS_WINDOW | CONTENTS_GRATE;
-        CTraceFilterSkipSelf filter(serverUnknown, 0);
-
-        Ray_t floorRay;
-        floorRay.Init(
-            requestedTarget + Vector(0.0f, 0.0f, 4.0f),
-            requestedTarget - Vector(0.0f, 0.0f, 256.0f));
-        CGameTrace floorTrace{};
-        TraceServerRay(floorRay, kTeleportLandingStaticTraceMask, &filter, floorTrace);
-        if (!IsTeleportServerWalkableFloor(floorTrace))
-            return false;
-
-        const float hullHeight = crouched ? 36.0f : 72.0f;
-        const Vector occupancyMins(-14.0f, -14.0f, 1.0f);
-        const Vector occupancyMaxs(14.0f, 14.0f, hullHeight - 1.0f);
-
-        Vector landingTarget = floorTrace.endpos + Vector(0.0f, 0.0f, 2.0f);
-        if (!IsFiniteVector(landingTarget))
-            return false;
-
-        const Vector acceptedDelta = landingTarget - outStart;
-        const float acceptedDistance = acceptedDelta.Length();
-        if (!std::isfinite(acceptedDistance) || acceptedDistance > g_config.teleportMaxDistanceUnits)
-            return false;
-
-        bool occupancyClear = false;
-        for (int liftStep = 0; liftStep <= 24; ++liftStep)
-        {
-            Vector candidate = landingTarget + Vector(0.0f, 0.0f, static_cast<float>(liftStep));
-            Ray_t occupancyRay;
-            occupancyRay.Init(candidate, candidate, occupancyMins, occupancyMaxs);
-            CGameTrace occupancyTrace{};
-            TraceServerRay(occupancyRay, kTeleportLandingStaticTraceMask, &filter, occupancyTrace);
-            if (!occupancyTrace.startsolid && !occupancyTrace.allsolid && occupancyTrace.fraction >= 0.999f)
-            {
-                landingTarget = candidate;
-                occupancyClear = true;
-                break;
-            }
-        }
-
-        if (!occupancyClear)
-            return false;
-
-        outLandingTarget = landingTarget;
-        return true;
-    }
-
-    bool ApplyServerTeleportMove(Server_BaseEntity* serverPlayer, IServerUnknown* serverUnknown, int playerIndex, const VrExtraCommand& command)
-    {
-        if (command.type != VrExtraCommandType::Teleport)
-            return false;
-
-        if (!g_config.teleportEnabled)
-        {
-            Log("teleport rejected player=%d reason=disabled", playerIndex);
-            return false;
-        }
-
-        if (g_config.teleportBlockWhileControlled && IsServerPlayerControlledBySI(serverPlayer))
-        {
-            Log("teleport rejected player=%d reason=controlled", playerIndex);
-            return false;
-        }
-
-        if (g_config.teleportBlockWhileIncapacitated && IsServerPlayerIncapacitated(serverPlayer))
-        {
-            Log("teleport rejected player=%d reason=incapacitated", playerIndex);
-            return false;
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (IsValidPlayerIndex(playerIndex) && g_config.teleportCooldownSeconds > 0.0f)
-        {
-            PlayerVrState& vrPlayer = g_players[playerIndex];
-            if (vrPlayer.lastTeleportTime.time_since_epoch().count() != 0)
-            {
-                const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - vrPlayer.lastTeleportTime).count();
-                const float elapsedSeconds = static_cast<float>(elapsedMs) / 1000.0f;
-                if (elapsedSeconds < g_config.teleportCooldownSeconds)
-                {
-                    Log("teleport rejected player=%d reason=cooldown remaining=%.2f", playerIndex, g_config.teleportCooldownSeconds - elapsedSeconds);
-                    return false;
-                }
-            }
-        }
-
-        Vector start{};
-        Vector landingTarget{};
-        if (!ValidateServerTeleportLanding(serverPlayer, serverUnknown, command.value, command.crouched, start, landingTarget))
-        {
-            Log("teleport rejected player=%d target=(%.1f %.1f %.1f)", playerIndex, command.value.x, command.value.y, command.value.z);
-            return false;
-        }
-
-        if (!SafeSetOrigin(serverPlayer, landingTarget))
-            return false;
-
-        if (IsValidPlayerIndex(playerIndex))
-            g_players[playerIndex].lastTeleportTime = now;
-
-        Log("teleport applied player=%d start=(%.1f %.1f %.1f) target=(%.1f %.1f %.1f)",
-            playerIndex, start.x, start.y, start.z, landingTarget.x, landingTarget.y, landingTarget.z);
-        return true;
-    }
-
-    bool ApplyServerRoomscaleMove(Server_BaseEntity* serverPlayer, IServerUnknown* serverUnknown, int playerIndex, const VrExtraCommand& command, CUserCmd* move)
-    {
-        if (command.type != VrExtraCommandType::Roomscale)
-            return false;
-
-        if (!serverPlayer || !serverUnknown || !move || !g_engineTraceServer)
-            return false;
-
-        Vector worldDelta(command.value.x, command.value.y, 0.0f);
-        const float requestedLen = worldDelta.Length();
-        if (!std::isfinite(requestedLen) || requestedLen <= 0.01f)
-            return false;
-
-        Vector* originPtr = SafeGetAbsOrigin(serverPlayer);
-        if (!originPtr || !IsFiniteVector(*originPtr))
-            return false;
-
-        const Vector start = *originPtr;
-        Vector target = start + worldDelta;
-        target.z = start.z;
-
-        const Vector hullMins(-16.0f, -16.0f, 0.0f);
-        const Vector hullMaxs(16.0f, 16.0f, command.crouched ? 36.0f : 72.0f);
-        constexpr unsigned int kRoomscaleServerMoveMask =
-            CONTENTS_SOLID | CONTENTS_MOVEABLE | CONTENTS_PLAYERCLIP | CONTENTS_WINDOW | CONTENTS_MONSTER | CONTENTS_GRATE;
-
-        Ray_t ray;
-        ray.Init(start, target, hullMins, hullMaxs);
-        CTraceFilterSkipSelf filter(serverUnknown, 0);
-        CGameTrace trace{};
-        TraceServerRay(ray, kRoomscaleServerMoveMask, &filter, trace);
-
-        if (!trace.allsolid && !trace.startsolid && trace.fraction >= 0.999f)
-        {
-            Vector clippedTarget = trace.endpos;
-            clippedTarget.z = start.z;
-            if (SafeSetOrigin(serverPlayer, clippedTarget))
-                return true;
-        }
-
-        constexpr float kFallbackTickSeconds = (1.0f / 30.0f);
-        constexpr float kFallbackMaxSpeed = 250.0f;
-        Vector fallbackWorldVelocity = worldDelta * (1.0f / kFallbackTickSeconds);
-        const float fallbackSpeed = fallbackWorldVelocity.Length();
-        if (std::isfinite(fallbackSpeed) && fallbackSpeed > kFallbackMaxSpeed)
-            fallbackWorldVelocity *= (kFallbackMaxSpeed / fallbackSpeed);
-
-        QAngle yawOnly(0.0f, move->viewangles.y, 0.0f);
-        Vector cmdForward, cmdRight, cmdUp;
-        QAngle::AngleVectors(yawOnly, &cmdForward, &cmdRight, &cmdUp);
-        Vector worldMove = (cmdForward * move->forwardmove) + (cmdRight * move->sidemove);
-        worldMove += fallbackWorldVelocity;
-        move->forwardmove = DotProduct(worldMove, cmdForward);
-        move->sidemove = DotProduct(worldMove, cmdRight);
-
-        constexpr int kInForward = (1 << 3);
-        constexpr int kInBack = (1 << 4);
-        constexpr int kInMoveLeft = (1 << 9);
-        constexpr int kInMoveRight = (1 << 10);
-        if (move->forwardmove > 0.5f) move->buttons |= kInForward;
-        else if (move->forwardmove < -0.5f) move->buttons |= kInBack;
-        if (move->sidemove > 0.5f) move->buttons |= kInMoveRight;
-        else if (move->sidemove < -0.5f) move->buttons |= kInMoveLeft;
-
-        Log("roomscale fallback injected player=%d delta=(%.1f %.1f) move=(%.1f %.1f)",
-            playerIndex, worldDelta.x, worldDelta.y, move->forwardmove, move->sidemove);
-        return true;
-    }
-
     bool IsThrowableWeapon(int weaponId)
     {
         return weaponId == kWeaponMolotov || weaponId == kWeaponPipeBomb || weaponId == kWeaponVomitJar;
@@ -1413,10 +1072,10 @@ namespace
 
     int __cdecl DetourReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
     {
-        static thread_local uintptr_t s_throwableAimWeapon = 0;
-        static thread_local bool s_prevAttackDown = false;
-        static thread_local bool s_prevWeaponThrowable = false;
-        static thread_local int s_throwableAimTicks = 0;
+        static uintptr_t s_throwableAimWeapon = 0;
+        static bool s_prevAttackDown = false;
+        static bool s_prevWeaponThrowable = false;
+        static int s_throwableAimTicks = 0;
 
         g_commandControllerAimOverride = false;
         g_commandControllerAimPlayer = nullptr;
@@ -1426,133 +1085,145 @@ namespace
         if (!move)
             return originalResult;
 
-        VrExtraCommand extraCommand{};
-        const bool hasExtraCommand = DecodeVrExtraCommand(move, extraCommand);
-        ClearVrExtraCommandFields(move);
-
         const int playerIndex = g_currentUsercmdPlayerIndex;
         const bool hasValidPlayer = IsValidPlayerIndex(playerIndex);
-        if (move->tick_count < 0)
+        if (move->tick_count >= 0)
         {
-            move->tick_count *= -1;
-
-            if (move->command_number < 0)
+            // Plain (desktop) command: never modified.
+            if (hasValidPlayer)
             {
-                move->command_number *= -1;
-                if (hasValidPlayer)
-                    g_players[playerIndex].isMeleeing = true;
-            }
-            else if (hasValidPlayer)
-            {
+                g_players[playerIndex].isUsingVR = false;
                 g_players[playerIndex].isMeleeing = false;
                 g_players[playerIndex].currentMeleeSwingAllowed = false;
             }
-
-            int rollEncoding = move->command_number / 10000000;
-            move->command_number -= rollEncoding * 10000000;
-
-            const int decodedZInt = static_cast<int>(move->viewangles.x / 10000.0f);
-            float decodedPitch = std::fabs((move->viewangles.x - static_cast<float>(decodedZInt * 10000)) / 10.0f);
-            decodedPitch -= 360.0f;
-            const float decodedZ = static_cast<float>(decodedZInt) / 10.0f;
-
-            if (hasValidPlayer)
-            {
-                PlayerVrState& vrPlayer = g_players[playerIndex];
-                vrPlayer.isUsingVR = true;
-                vrPlayer.physicalCrouch = hasExtraCommand ? extraCommand.crouched : false;
-                vrPlayer.controllerAngle.x = static_cast<float>(move->mousedx) / 10.0f;
-                vrPlayer.controllerAngle.y = static_cast<float>(move->mousedy) / 10.0f;
-                vrPlayer.controllerAngle.z = static_cast<float>((rollEncoding * 2) - 180);
-                vrPlayer.controllerPos.x = move->viewangles.z;
-                vrPlayer.controllerPos.y = move->upmove;
-                vrPlayer.controllerPos.z = decodedZ;
-                NormalizeAndClampViewAngles(vrPlayer.controllerAngle);
-
-                if (!IsFiniteVector(vrPlayer.controllerPos) || !IsFiniteAngles(vrPlayer.controllerAngle))
-                {
-                    vrPlayer.isUsingVR = false;
-                    vrPlayer.isMeleeing = false;
-                    vrPlayer.currentMeleeSwingAllowed = false;
-                }
-            }
-
-            move->viewangles.x = decodedPitch;
-            move->viewangles.z = 0.0f;
-            move->upmove = 0.0f;
-
-            if (hasExtraCommand && hasValidPlayer)
-            {
-                if (extraCommand.type == VrExtraCommandType::Teleport)
-                    ApplyServerTeleportMove(g_currentUsercmdPlayer, g_currentUsercmdUnknown, playerIndex, extraCommand);
-                else if (extraCommand.type == VrExtraCommandType::Roomscale)
-                    ApplyServerRoomscaleMove(g_currentUsercmdPlayer, g_currentUsercmdUnknown, playerIndex, extraCommand, move);
-            }
-
-            Server_WeaponCSBase* serverWeapon = nullptr;
-            int serverWeaponId = 0;
-            TryGetCurrentServerWeapon(serverWeapon, serverWeaponId);
-            const uintptr_t weaponTag = reinterpret_cast<uintptr_t>(serverWeapon);
-            if (weaponTag != s_throwableAimWeapon)
-            {
-                if (s_prevWeaponThrowable && s_prevAttackDown)
-                    s_throwableAimTicks = std::max(s_throwableAimTicks, 48);
-                s_throwableAimWeapon = weaponTag;
-                s_prevAttackDown = false;
-                s_prevWeaponThrowable = false;
-            }
-
-            constexpr int kInAttack = (1 << 0);
-            const bool attackDown = (move->buttons & kInAttack) != 0;
-            const bool activeWeaponIsThrowable = IsThrowableWeapon(serverWeaponId);
-            bool commandControllerAim = false;
-            int commandControllerAimReason = 0;
-
-            if (activeWeaponIsThrowable)
-            {
-                if (attackDown || (s_prevAttackDown && !attackDown))
-                    s_throwableAimTicks = std::max(s_throwableAimTicks, 48);
-                commandControllerAim = attackDown || (s_throwableAimTicks > 0);
-                commandControllerAimReason = attackDown ? 2 : 3;
-                if (s_throwableAimTicks > 0)
-                    --s_throwableAimTicks;
-            }
-            else
-            {
-                commandControllerAim = s_throwableAimTicks > 0;
-                commandControllerAimReason = 3;
-                if (s_throwableAimTicks > 0)
-                    --s_throwableAimTicks;
-            }
-
-            s_prevAttackDown = activeWeaponIsThrowable && attackDown;
-            s_prevWeaponThrowable = activeWeaponIsThrowable;
-
-            if (IsCurrentServerPlayerUsingMountedWeapon())
-            {
-                commandControllerAim = true;
-                commandControllerAimReason = 4;
-            }
-
-            if (commandControllerAim && hasValidPlayer && g_players[playerIndex].isUsingVR)
-            {
-                const PlayerVrState& vrPlayer = g_players[playerIndex];
-                g_commandControllerAimOverride = true;
-                g_commandControllerAimPlayer = g_currentUsercmdPlayer;
-                g_commandControllerAimOrigin = vrPlayer.controllerPos;
-                g_commandControllerAimAngles = vrPlayer.controllerAngle;
-                NormalizeAndClampViewAngles(g_commandControllerAimAngles);
-                g_commandControllerAimReason = commandControllerAimReason;
-            }
+            return originalResult;
         }
-        else if (hasValidPlayer)
+
+        // Shared codec: identical decode/strip to the listen host's dReadUsercmd.
+        l4d2vr_server::UsercmdData cmd{};
+        cmd.command_number = move->command_number;
+        cmd.tick_count = move->tick_count;
+        cmd.viewangles[0] = move->viewangles.x;
+        cmd.viewangles[1] = move->viewangles.y;
+        cmd.viewangles[2] = move->viewangles.z;
+        cmd.forwardmove = move->forwardmove;
+        cmd.sidemove = move->sidemove;
+        cmd.upmove = move->upmove;
+        cmd.buttons = move->buttons;
+        cmd.impulse = move->impulse;
+        cmd.weaponselect = move->weaponselect;
+        cmd.weaponsubtype = move->weaponsubtype;
+        cmd.random_seed = move->random_seed;
+        cmd.mousedx = move->mousedx;
+        cmd.mousedy = move->mousedy;
+        const l4d2vr_server::DecodedUsercmd decoded = l4d2vr_server::DecodeVRUsercmd(cmd);
+        move->command_number = cmd.command_number;
+        move->tick_count = cmd.tick_count;
+        move->viewangles.x = cmd.viewangles[0];
+        move->viewangles.z = cmd.viewangles[2];
+        move->upmove = cmd.upmove;
+        move->buttons = cmd.buttons;
+        move->impulse = cmd.impulse;
+        move->weaponselect = cmd.weaponselect;
+        move->weaponsubtype = cmd.weaponsubtype;
+
+        if (hasValidPlayer)
         {
-            g_players[playerIndex].isUsingVR = false;
-            g_players[playerIndex].isMeleeing = false;
-            g_players[playerIndex].currentMeleeSwingAllowed = false;
+            PlayerVrState& vrPlayer = g_players[playerIndex];
+            g_session.NoteVRUsercmd(playerIndex);
+            vrPlayer.viewYaw = move->viewangles.y;
+            vrPlayer.haveViewYaw = std::isfinite(vrPlayer.viewYaw);
+            vrPlayer.isMeleeing = decoded.meleeSwing;
+            if (!decoded.meleeSwing)
+                vrPlayer.currentMeleeSwingAllowed = false;
+            vrPlayer.isUsingVR = decoded.poseValid && l4d2vr_server::SaneControllerAngles(decoded.controllerAngles);
+            vrPlayer.controllerPos = Vector(decoded.controllerPos.x, decoded.controllerPos.y, decoded.controllerPos.z);
+            vrPlayer.controllerAngle = QAngle(decoded.controllerAngles.x, decoded.controllerAngles.y, decoded.controllerAngles.z);
+            NormalizeAndClampViewAngles(vrPlayer.controllerAngle);
+            if (!vrPlayer.isUsingVR)
+            {
+                vrPlayer.isMeleeing = false;
+                vrPlayer.currentMeleeSwingAllowed = false;
+            }
         }
 
+        Server_WeaponCSBase* serverWeapon = nullptr;
+        int serverWeaponId = 0;
+        TryGetCurrentServerWeapon(serverWeapon, serverWeaponId);
+        const uintptr_t weaponTag = reinterpret_cast<uintptr_t>(serverWeapon);
+        if (weaponTag != s_throwableAimWeapon)
+        {
+            if (s_prevWeaponThrowable && s_prevAttackDown)
+                s_throwableAimTicks = std::max(s_throwableAimTicks, 48);
+            s_throwableAimWeapon = weaponTag;
+            s_prevAttackDown = false;
+            s_prevWeaponThrowable = false;
+        }
+
+        constexpr int kInAttack = (1 << 0);
+        const bool attackDown = (move->buttons & kInAttack) != 0;
+        const bool activeWeaponIsThrowable = IsThrowableWeapon(serverWeaponId);
+        bool commandControllerAim = false;
+        int commandControllerAimReason = 0;
+        if (activeWeaponIsThrowable)
+        {
+            if (attackDown || (s_prevAttackDown && !attackDown))
+                s_throwableAimTicks = std::max(s_throwableAimTicks, 48);
+            commandControllerAim = attackDown || (s_throwableAimTicks > 0);
+            commandControllerAimReason = attackDown ? 2 : 3;
+            if (s_throwableAimTicks > 0)
+                --s_throwableAimTicks;
+        }
+        else
+        {
+            commandControllerAim = s_throwableAimTicks > 0;
+            commandControllerAimReason = 3;
+            if (s_throwableAimTicks > 0)
+                --s_throwableAimTicks;
+        }
+        s_prevAttackDown = activeWeaponIsThrowable && attackDown;
+        s_prevWeaponThrowable = activeWeaponIsThrowable;
+
+        if (IsCurrentServerPlayerUsingMountedWeapon())
+        {
+            commandControllerAim = true;
+            commandControllerAimReason = 4;
+        }
+        if (decoded.intent == l4d2vr_server::Intent::GripPickup && decoded.useDown)
+        {
+            commandControllerAim = true;
+            commandControllerAimReason = 8;
+        }
+
+        if (commandControllerAim && hasValidPlayer && g_players[playerIndex].isUsingVR)
+        {
+            const PlayerVrState& vrPlayer = g_players[playerIndex];
+            g_commandControllerAimOverride = true;
+            g_commandControllerAimPlayer = g_currentUsercmdPlayer;
+            g_commandControllerAimOrigin = vrPlayer.controllerPos;
+            g_commandControllerAimAngles = vrPlayer.controllerAngle;
+            NormalizeAndClampViewAngles(g_commandControllerAimAngles);
+            g_commandControllerAimReason = commandControllerAimReason;
+        }
         return originalResult;
+    }
+
+    bool SessionHost::ViewYaw(int playerIndex, float& yaw) const
+    {
+        if (!IsValidPlayerIndex(playerIndex) || !g_players[playerIndex].haveViewYaw)
+            return false;
+        yaw = g_players[playerIndex].viewYaw;
+        return true;
+    }
+
+    void SessionHost::Log(const char* line)
+    {
+        char trimmed[512];
+        std::snprintf(trimmed, sizeof(trimmed), "%s", line ? line : "");
+        const size_t length = std::strlen(trimmed);
+        if (length > 0 && trimmed[length - 1] == '\n')
+            trimmed[length - 1] = '\0';
+        ::Log("%s", trimmed);
     }
 
     int CountRecentMeleeSwings(const PlayerVrState& vrPlayer, std::chrono::steady_clock::time_point now)
@@ -1725,7 +1396,7 @@ namespace
         Server_BaseEntity* const previousPlayer = g_currentUsercmdPlayer;
         IServerUnknown* const previousUnknown = g_currentUsercmdUnknown;
 
-        g_currentUsercmdPlayerIndex = player ? static_cast<int>(player->m_EdictIndex) : -1;
+        g_currentUsercmdPlayerIndex = GetPlayerIndexFromEdict(player);
         g_currentUsercmdUnknown = player ? player->m_pUnk : nullptr;
         g_currentUsercmdPlayer = GetBaseEntityFromEdict(player);
 
@@ -1918,29 +1589,6 @@ namespace
         Log("L4D2VR dedicated server hooks uninstalled");
     }
 
-    DWORD WINAPI HookWorker(LPVOID)
-    {
-        InstallHooks();
-        return 0;
-    }
-
-    void StartHookWorker()
-    {
-        bool expected = false;
-        if (!g_hookWorkerStarted.compare_exchange_strong(expected, true))
-            return;
-
-        HANDLE thread = CreateThread(nullptr, 0, HookWorker, nullptr, 0, nullptr);
-        if (thread)
-        {
-            CloseHandle(thread);
-            return;
-        }
-
-        Log("CreateThread failed for hook worker; installing synchronously");
-        InstallHooks();
-    }
-
     using CreateInterfaceFn = void* (*)(const char* name, int* returnCode);
     using QueryCvarCookie_t = int;
 
@@ -1964,8 +1612,6 @@ namespace
         eQueryCvarValueStatus_NotACvar = 2,
         eQueryCvarValueStatus_CvarProtected = 3,
     };
-
-    class CCommand;
 
     class IServerPluginCallbacks
     {
@@ -1992,6 +1638,20 @@ namespace
         virtual void OnEdictFreed(const edict_t* edict) = 0;
     };
 
+    void PublishCapabilities()
+    {
+        // This shell decodes VR usercmds (server_ack 4) and relays poses (v2 +
+        // v3). It implements none of the newer per-feature server paths, so
+        // only PoseV3 is advertised; see l4d2vr_server_linux.cpp for those.
+        l4d2vr_server::SessionCapabilities caps{};
+        caps.usercmdDecoder = g_hooksInstalled.load() && g_readUsercmd.original != nullptr;
+        caps.interaction = false;
+        caps.features = l4d2vr_server::kFeaturePoseV3;
+        g_session.SetCapabilities(caps);
+        Log("capabilities: usercmd_decoder=%d interaction=0 features=0x%03X [PoseV3]",
+            caps.usercmdDecoder ? 1 : 0, static_cast<unsigned>(caps.features));
+    }
+
     class L4D2VRServerPlugin final : public IServerPluginCallbacks
     {
     public:
@@ -2003,25 +1663,28 @@ namespace
             g_unloading.store(false);
             g_engineTraceServer = nullptr;
             g_engineServer = nullptr;
+            g_edictList = nullptr;
+            g_edictCount = 0;
+            g_clientMax = l4d2vr_server::kMaxPlayerSlots;
+            g_session.ResetAll();
+            g_session.SetClientMax(g_clientMax);
+            g_session.SeedTokens(static_cast<uint32_t>(GetTickCount64()) ^ (GetCurrentProcessId() << 16));
             if (interfaceFactory)
             {
                 int returnCode = IFACE_FAILED;
                 g_engineServer = static_cast<IVEngineServer*>(interfaceFactory("VEngineServer022", &returnCode));
-                if (!g_engineServer)
-                    g_engineServer = static_cast<IVEngineServer*>(interfaceFactory("VEngineServer021", &returnCode));
-                if (!g_engineServer)
-                    g_engineServer = static_cast<IVEngineServer*>(interfaceFactory("VEngineServer023", &returnCode));
                 g_engineTraceServer = static_cast<IEngineTrace*>(interfaceFactory("EngineTraceServer003", &returnCode));
-                if (!g_engineTraceServer)
-                    g_engineTraceServer = static_cast<IEngineTrace*>(interfaceFactory("EngineTraceClient003", &returnCode));
             }
 
             if (!g_engineServer)
-                Log("VEngineServer022 unavailable; L4D2VR client ack handshake will be disabled");
-            if (!g_engineTraceServer)
-                Log("EngineTraceServer003 unavailable; teleport and roomscale server movement will be disabled until it resolves");
-            Log("L4D2VR dedicated server plugin loaded");
-            StartHookWorker();
+            {
+                Log("VEngineServer022 unavailable");
+                return false;
+            }
+            // server.dll is loaded before plugins: install synchronously.
+            InstallHooks();
+            PublishCapabilities();
+            Log("L4D2VR dedicated server plugin loaded (pose relay v2+v3)");
             return true;
         }
 
@@ -2029,7 +1692,10 @@ namespace
         {
             g_unloading.store(true);
             UninstallHooks();
+            g_session.ResetAll();
             g_engineServer = nullptr;
+            g_edictList = nullptr;
+            g_edictCount = 0;
             Log("L4D2VR dedicated server plugin unloaded");
         }
 
@@ -2038,7 +1704,7 @@ namespace
 
         const char* GetPluginDescription() override
         {
-            return "L4D2VR dedicated server usercmd decoder";
+            return "L4D2VR dedicated server: VR usercmd decoder + body/hand/finger pose relay (v2/v3)";
         }
 
         void LevelInit(const char*) override
@@ -2046,38 +1712,85 @@ namespace
             LoadServerConfig();
             for (PlayerVrState& player : g_players)
                 player = PlayerVrState{};
+            g_session.ResetAll();
+            g_edictList = nullptr;
+            g_edictCount = 0;
         }
 
-        void ServerActivate(edict_t*, int, int) override {}
+        void ServerActivate(edict_t* edictList, int edictCount, int clientMax) override
+        {
+            g_clientMax = (clientMax >= 1 && clientMax <= l4d2vr_server::kMaxPlayerSlots)
+                ? clientMax : l4d2vr_server::kMaxPlayerSlots;
+            g_edictList = edictList;
+            g_edictCount = edictCount > 0 ? edictCount : 0;
+            g_session.SetClientMax(g_clientMax);
+        }
+
         void GameFrame(bool) override
         {
-            if (!g_hooksInstalled.load() && !g_unloading.load())
-                StartHookWorker();
-            PumpPendingServerAcks();
+            g_session.GameFrame();
         }
-        void LevelShutdown() override {}
+
+        void LevelShutdown() override
+        {
+            g_session.ResetAll();
+            g_session.SetClientMax(l4d2vr_server::kMaxPlayerSlots);
+            g_clientMax = l4d2vr_server::kMaxPlayerSlots;
+            g_edictList = nullptr;
+            g_edictCount = 0;
+        }
+
         void ClientActive(edict_t* entity) override
         {
-            QueueServerAckForClient(entity, "ClientActive");
+            const int playerIndex = GetPlayerIndexFromEdict(entity);
+            if (playerIndex >= 0)
+                g_session.ClientActive(playerIndex, entity);
         }
+
         void ClientDisconnect(edict_t* entity) override
         {
             const int playerIndex = GetPlayerIndexFromEdict(entity);
-            if (IsValidPlayerIndex(playerIndex))
-                g_players[playerIndex] = PlayerVrState{};
+            if (playerIndex < 0)
+                return;
+            g_players[playerIndex] = PlayerVrState{};
+            g_session.ClientDisconnect(playerIndex, entity);
         }
+
         void ClientPutInServer(edict_t* entity, const char*) override
         {
-            QueueServerAckForClient(entity, "ClientPutInServer");
+            const int playerIndex = GetPlayerIndexFromEdict(entity);
+            if (playerIndex < 0)
+                return;
+            g_players[playerIndex] = PlayerVrState{};
+            g_session.ClientPutInServer(playerIndex, entity);
         }
+
         void SetCommandClient(int) override {}
         void ClientSettingsChanged(edict_t*) override {}
         PLUGIN_RESULT ClientConnect(bool*, edict_t*, const char*, const char*, char*, int) override { return PLUGIN_CONTINUE; }
-        PLUGIN_RESULT ClientCommand(edict_t*, const CCommand&) override { return PLUGIN_CONTINUE; }
+
+        PLUGIN_RESULT ClientCommand(edict_t* entity, const CCommand& args) override
+        {
+            const int argc = (std::min)(args.ArgC(), 16);
+            const char* argv[16] = {};
+            for (int i = 0; i < argc; ++i)
+                argv[i] = args.Arg(i);
+            if (argc > 0 && args.ArgC() > 16)
+                return std::strncmp(argv[0], "l4d2vr_", 7) == 0 ? PLUGIN_STOP : PLUGIN_CONTINUE;
+            const auto result = g_session.ClientCommand(GetPlayerIndexFromEdict(entity), entity, argc, argv, nullptr);
+            return result == l4d2vr_server::CommandResult::Stop ? PLUGIN_STOP : PLUGIN_CONTINUE;
+        }
+
         PLUGIN_RESULT NetworkIDValidated(const char*, const char*) override { return PLUGIN_CONTINUE; }
         void OnQueryCvarValueFinished(QueryCvarCookie_t, edict_t*, EQueryCvarValueStatus, const char*, const char*) override {}
         void OnEdictAllocated(edict_t*) override {}
-        void OnEdictFreed(const edict_t*) override {}
+
+        void OnEdictFreed(const edict_t* entity) override
+        {
+            const int playerIndex = GetPlayerIndexFromEdict(entity);
+            if (playerIndex >= 0)
+                g_session.EdictFreed(playerIndex, entity);
+        }
     };
 
     L4D2VRServerPlugin g_plugin;

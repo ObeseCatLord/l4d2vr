@@ -1,1 +1,4 @@
-"Plugin" { "file" "../left4dead2/addons/l4d2vr_server" }
+"Plugin"
+{
+    "file"    "../left4dead2/addons/l4d2vr_server"
+}

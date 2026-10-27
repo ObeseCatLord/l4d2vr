@@ -184,6 +184,17 @@ if(MSVC)
 endif()
 add_test(NAME vr_client_command COMMAND vr_client_command_tests)
 
+# Dedicated-server core (L4D2VR/server_core). The 32-bit plugin build and its
+# callback harness run from L4D2VR/server/run_server_tests.sh.
+foreach(server_suite vr_server_usercmd_codec vr_server_policy vr_server_session vr_server_hook)
+    add_executable(${server_suite}_tests ${server_suite}_tests.cpp)
+    target_compile_features(${server_suite}_tests PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(${server_suite}_tests PRIVATE /W4 /WX)
+    endif()
+    add_test(NAME ${server_suite} COMMAND ${server_suite}_tests)
+endforeach()
+
 # Compile the production functions against scripted input without pulling in
 # the game's rendering and engine dependencies.
 function(extract_mirrored_analog_fixture source_text begin_marker end_marker result_name)

@@ -373,6 +373,15 @@ struct D3DAimLineOverlayEyeState
 	float endpointPixels = 0.0f;
 	uint32_t color = 0;
 	uint32_t outlineColor = 0;
+	bool lineVisible = true;
+	// Desktop-style dynamic spread crosshair at the aim point.
+	bool crosshairValid = false;
+	int crosshairStyle = 1; // 0 = plus, 1 = X
+	float crosshairGapPixels = 0.0f;
+	float crosshairArmPixels = 0.0f;
+	float crosshairThicknessPixels = 0.0f;
+	uint32_t crosshairColor = 0;
+	uint32_t crosshairOutlineColor = 0;
 };
 
 class VR
@@ -1048,6 +1057,19 @@ public:
 	bool m_ScopeForcingAimLine = false;
 	bool m_MeleeAimLineEnabled = false;
 	bool m_D3DAimLineOverlayEnabled = false;
+	// Dynamic spread crosshair (Workshop 1.1.7 style): an X or plus whose gap
+	// grows with the weapon's current inaccuracy, drawn at the aim point.
+	bool m_CrosshairEnabled = true;
+	int m_CrosshairStyle = 1;
+	float m_CrosshairArmPixels = 7.0f;
+	float m_CrosshairThicknessPixels = 2.0f;
+	float m_CrosshairMinGapPixels = 2.0f;
+	int m_CrosshairColorR = 255, m_CrosshairColorG = 255, m_CrosshairColorB = 255, m_CrosshairColorA = 210;
+	std::atomic<float> m_RenderCrosshairSpreadDeg{ -1.0f };
+	float m_CrosshairAccumSpreadDeg = 0.0f;
+	std::chrono::steady_clock::time_point m_CrosshairLastUpdate{};
+	void UpdateCrosshairSpread(C_BasePlayer* localPlayer);
+	void RecordCrosshairShot(C_WeaponCSBase* weapon, float nativeSpreadDeg);
 	bool m_D3DAimLineOverlaySyncAimLineColor = true;
 	float m_D3DAimLineOverlayWidthPixels = 2.0f;
 	float m_D3DAimLineOverlayOutlinePixels = 1.0f;
@@ -1093,6 +1115,9 @@ public:
 		float pelletScatterYaw = 0.0f;
 		float range = 8192.0f;
 		float maxPlayerSpeed = 250.0f;
+		float spreadPerShot = 0.0f;
+		float maxSpread = 0.0f;
+		float spreadDecay = 0.0f;
 		int bullets = 1;
 		std::string source;
 	};

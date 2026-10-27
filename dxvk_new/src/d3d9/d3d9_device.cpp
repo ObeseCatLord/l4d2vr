@@ -352,12 +352,45 @@ namespace dxvk {
             device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
 
             const float outlineWidth = std::max(0.0f, line.outlinePixels);
-            if (outlineWidth > 0.0f && VrAimLineColorVisible(line.outlineColor))
+            if (line.lineVisible && outlineWidth > 0.0f && VrAimLineColorVisible(line.outlineColor))
                 VrAimLineDrawLine(device, line.x0, line.y0, line.x1, line.y1, line.widthPixels + outlineWidth * 2.0f, line.outlineColor);
 
-            VrAimLineDrawLine(device, line.x0, line.y0, line.x1, line.y1, line.widthPixels, line.color);
+            if (line.lineVisible)
+                VrAimLineDrawLine(device, line.x0, line.y0, line.x1, line.y1, line.widthPixels, line.color);
 
-            const float endpoint = std::max(0.0f, line.endpointPixels);
+            // Dynamic spread crosshair: four arms whose inner ends sit on the
+            // spread circle around the aim point.
+            if (line.crosshairValid && VrAimLineColorVisible(line.crosshairColor))
+            {
+                const float gap = std::max(0.0f, line.crosshairGapPixels);
+                const float arm = std::max(1.0f, line.crosshairArmPixels);
+                const float thickness = std::max(0.5f, line.crosshairThicknessPixels);
+                const float diagonal = 0.70710678f;
+                const float dirs[4][2] = {
+                    { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f } };
+                const float diag[4][2] = {
+                    { diagonal, diagonal }, { -diagonal, diagonal }, { diagonal, -diagonal }, { -diagonal, -diagonal } };
+                const float (*arms)[2] = line.crosshairStyle == 0 ? dirs : diag;
+                for (int pass = 0; pass < 2; ++pass)
+                {
+                    const bool outline = pass == 0;
+                    if (outline && !VrAimLineColorVisible(line.crosshairOutlineColor))
+                        continue;
+                    const float width = outline ? thickness + 2.0f : thickness;
+                    const float extend = outline ? 1.0f : 0.0f;
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const float x0 = line.x1 + arms[i][0] * (gap - extend);
+                        const float y0 = line.y1 + arms[i][1] * (gap - extend);
+                        const float x1 = line.x1 + arms[i][0] * (gap + arm + extend);
+                        const float y1 = line.y1 + arms[i][1] * (gap + arm + extend);
+                        VrAimLineDrawLine(device, x0, y0, x1, y1, width,
+                            outline ? line.crosshairOutlineColor : line.crosshairColor);
+                    }
+                }
+            }
+
+            const float endpoint = line.lineVisible ? std::max(0.0f, line.endpointPixels) : 0.0f;
             if (endpoint > 0.0f)
             {
                 if (outlineWidth > 0.0f && VrAimLineColorVisible(line.outlineColor))
@@ -390,7 +423,7 @@ namespace dxvk {
 
 
         static void VrAimLineDrawOverlaysToEyeSurfaces(D3D9DeviceEx* device, VR* vr, bool backupTarget) {
-            if (!device || !vr || !vr->m_D3DAimLineOverlayEnabled)
+            if (!device || !vr || (!vr->m_D3DAimLineOverlayEnabled && !vr->m_CrosshairEnabled))
                 return;
 
             if (vr->m_D9LeftEyeSurface)
@@ -400,7 +433,7 @@ namespace dxvk {
         }
 
         static void VrAimLineDrawOverlaysToSubmitTargets(D3D9DeviceEx* device, VR* vr, bool manageScene = true) {
-            if (!device || !vr || !vr->m_D3DAimLineOverlayEnabled)
+            if (!device || !vr || (!vr->m_D3DAimLineOverlayEnabled && !vr->m_CrosshairEnabled))
                 return;
 
             IDirect3DSurface9* leftTarget = vr->m_D9LeftEyeSubmitSurface ? vr->m_D9LeftEyeSubmitSurface : vr->m_D9LeftEyeSurface;

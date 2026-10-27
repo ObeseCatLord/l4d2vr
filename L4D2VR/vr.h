@@ -39,6 +39,7 @@
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
+#include "vr_overlay_pointer.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -3619,6 +3620,34 @@ public:
 	std::array<KillIndicatorOverlayTexture, 3> m_KillIndicatorOverlayTextures{};
 	std::array<KillIndicatorOverlaySlot, 16> m_KillIndicatorOverlaySlots{};
 	uint64_t m_NextKillIndicatorOverlaySerial = 1;
+	// Controller laser pointer for menu/VGUI overlays on runtimes without
+	// ComputeOverlayIntersection/overlay mouse events (XRizer). The panel
+	// geometry is what RepositionOverlays last gave the runtime.
+	struct MenuPointerPanelGeometry
+	{
+		bool valid = false;
+		vr::HmdMatrix34_t transform{};
+		float widthMeters = 0.0f;
+		float textureAspect = 0.0f; // texture height / width
+	};
+	bool m_MenuLaserPointerEnabled = true;
+	std::mutex m_MenuPointerGeometryMutex;
+	MenuPointerPanelGeometry m_MenuPointerMenuGeometry{};
+	MenuPointerPanelGeometry m_MenuPointerHudGeometry{};
+	l4d2vr_overlay_pointer::PointerTracker m_MenuPointerTracker{};
+	bool m_MenuPointerTracking = false;
+	bool m_MenuPointerMouseDown = false;
+	bool m_MenuPointerSuppressTriggers = false;
+	bool m_MenuPointerNativeIntersection = false;
+	bool m_MenuPointerTexturesFailed = false;
+	bool m_MenuPointerVisualsShown = false;
+	int m_MenuPointerLastCursorX = -1;
+	int m_MenuPointerLastCursorY = -1;
+	std::chrono::steady_clock::time_point m_MenuPointerLastProbe{};
+	vr::VROverlayHandle_t m_MenuPointerDotHandle = vr::k_ulOverlayHandleInvalid;
+	vr::VROverlayHandle_t m_MenuPointerBeamHandle = vr::k_ulOverlayHandleInvalid;
+	KillIndicatorOverlayTexture m_MenuPointerDotTexture{};
+	KillIndicatorOverlayTexture m_MenuPointerBeamTexture{};
 	IGameEventManager2* m_KillSoundEventManager = nullptr;
 	IGameEventListener2* m_KillSoundEventListener = nullptr;
 	bool m_KillSoundEventListenerRegistered = false;
@@ -4389,6 +4418,15 @@ public:
 	}
 	void GetViewParameters();
 	void ProcessMenuInput();
+	void StoreMenuPointerGeometry(bool hud, const vr::HmdMatrix34_t& transform, float widthMeters, float textureAspect);
+	bool ProbeNativeOverlayIntersection(vr::VROverlayHandle_t overlay);
+	bool UpdateMenuLaserPointer(bool inGame, int windowWidth, int windowHeight);
+	void ReleaseMenuLaserPointer();
+	bool EnsureMenuPointerOverlays();
+	bool CreateMenuPointerTexture(KillIndicatorOverlayTexture& texture, int width, int height, const std::vector<uint8_t>& rgba);
+	void DestroyMenuPointerTexture(KillIndicatorOverlayTexture& texture);
+	void HideMenuPointerVisuals();
+	void ShowMenuPointerVisuals(const l4d2vr_overlay_pointer::Panel& panel, const l4d2vr_overlay_pointer::Hit& hit, const l4d2vr_overlay_pointer::Vec3& beamStart, bool pressed);
 	void ProcessInput();
 	void ReleaseCustomActionInputs();
 	void SendCustomActionTransition(const l4d2vr_input::HeldTarget& target, bool down);

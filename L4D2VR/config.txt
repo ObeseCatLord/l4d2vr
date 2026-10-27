@@ -413,6 +413,8 @@ ConsumableGesturesEnabled=true
 HolsterPavlovLayoutEnabled=true
 HolsterItemsVisible=true
 HolsterInstantDraw=true
+// Point a controller at a menu panel to move the cursor; the trigger clicks (for runtimes such as XRizer without the SteamVR laser mouse).
+MenuLaserPointerEnabled=true
 HolsterYawDeadbandDeg=20
 HolsterYawSmoothingSeconds=0.25
 HolsterHeightScale=1.0

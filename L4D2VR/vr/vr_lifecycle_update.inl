@@ -2122,7 +2122,10 @@ void VR::Update()
         ProcessMenuInput();
     }
     else
+    {
+        ReleaseMenuLaserPointer();
         ProcessInput();
+    }
 
     // UpdateTracking publishes the queued ViewParams snapshot before ProcessInput,
     // while smooth/snap turning modifies m_RotationOffset inside ProcessInput.
@@ -5281,7 +5284,9 @@ void VR::RepositionOverlays()
     menuTransform.m[2][2] *= cos(hmdRotationDegrees);
 
     L4D2VRSetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform, __LINE__);
-    vr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, 1.5 * (1.0 / heightRatio));
+    const float menuWidthMeters = static_cast<float>(1.5 * (1.0 / heightRatio));
+    vr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, menuWidthMeters);
+    StoreMenuPointerGeometry(false, menuTransform, menuWidthMeters, renderHeight / renderWidth);
 
     auto buildFacingTransform = [&](const Vector& position)
         {
@@ -5335,6 +5340,12 @@ void VR::RepositionOverlays()
 
     L4D2VRSetOverlayTransformAbsolute(m_HUDTopHandle, trackingOrigin, &hudTopTransform, __LINE__);
     vr::VROverlay()->SetOverlayWidthInMeters(m_HUDTopHandle, m_HudSize);
+    {
+        // The HUD texture is the window-sized vrHUD render target.
+        const float hudTexW = static_cast<float>(m_VKHUD.m_VulkanData.m_nWidth > 0 ? m_VKHUD.m_VulkanData.m_nWidth : static_cast<uint32_t>(windowWidth));
+        const float hudTexH = static_cast<float>(m_VKHUD.m_VulkanData.m_nHeight > 0 ? m_VKHUD.m_VulkanData.m_nHeight : static_cast<uint32_t>(windowHeight));
+        StoreMenuPointerGeometry(true, hudTopTransform, m_HudSize, hudTexH / (std::max)(1.0f, hudTexW));
+    }
     L4D2VRSetOverlayCurvature(vr::VROverlay(), m_HUDTopHandle, m_TopHudCurvature);
 
     // Place the intent-sense panel in the upper-right area of the same in-game HUD plane.

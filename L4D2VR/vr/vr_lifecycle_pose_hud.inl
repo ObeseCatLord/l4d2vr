@@ -897,7 +897,19 @@ void VR::ProcessMenuInput()
     const bool isHoveringOverlay = hoveredOverlay != vr::k_ulOverlayHandleInvalid;
 
     if (isHoveringOverlay)
+    {
         currentOverlay = hoveredOverlay;
+        m_MenuPointerNativeIntersection = true;
+    }
+
+    // Runtimes without overlay intersection and mouse events (XRizer) never
+    // report a hover above. Ray-cast the panel here and drive the VGUI cursor
+    // directly; SteamVR keeps using its own laser mouse below.
+    if (!isHoveringOverlay && m_MenuLaserPointerEnabled && !m_MouseModeEnabled &&
+        !ProbeNativeOverlayIntersection(inGame ? m_HUDTopHandle : m_MainMenuHandle))
+        UpdateMenuLaserPointer(inGame, windowWidth, windowHeight);
+    else
+        ReleaseMenuLaserPointer();
 
     const bool isHudOverlay = inGame && (currentOverlay == m_HUDTopHandle ||
         std::find(m_HUDBottomHandles.begin(), m_HUDBottomHandles.end(), currentOverlay) != m_HUDBottomHandles.end());
@@ -1009,6 +1021,492 @@ void VR::ProcessMenuInput()
             m_Game->m_VguiInput->InternalKeyCodePressed(ButtonCode_t::KEY_RIGHT);
             m_Game->m_VguiInput->InternalKeyCodeReleased(ButtonCode_t::KEY_RIGHT);
         }
+    }
+}
+
+
+namespace
+{
+    l4d2vr_overlay_pointer::Mat34 ToPointerMat(const vr::HmdMatrix34_t& in)
+    {
+        l4d2vr_overlay_pointer::Mat34 out;
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c)
+                out.m[r][c] = in.m[r][c];
+        return out;
+    }
+
+    vr::HmdMatrix34_t ToHmdMat(const l4d2vr_overlay_pointer::Mat34& in)
+    {
+        vr::HmdMatrix34_t out{};
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c)
+                out.m[r][c] = in.m[r][c];
+        return out;
+    }
+
+    // Pointer dot: white core, blue ring, dark outline so it reads on light and dark menus.
+    std::vector<uint8_t> BuildMenuPointerDotPixels(int size)
+    {
+        std::vector<uint8_t> rgba(static_cast<size_t>(size) * static_cast<size_t>(size) * 4u, 0u);
+        const float half = static_cast<float>(size) * 0.5f;
+        for (int y = 0; y < size; ++y)
+        {
+            for (int x = 0; x < size; ++x)
+            {
+                const float dx = (static_cast<float>(x) + 0.5f - half) / half;
+                const float dy = (static_cast<float>(y) + 0.5f - half) / half;
+                const float r = std::sqrt(dx * dx + dy * dy);
+                float cr = 0.0f, cg = 0.0f, cb = 0.0f, a = 0.0f;
+                if (r < 0.45f) { cr = 1.0f; cg = 1.0f; cb = 1.0f; a = 1.0f; }
+                else if (r < 0.75f) { cr = 0.15f; cg = 0.65f; cb = 1.0f; a = 1.0f; }
+                else if (r < 1.0f) { a = 0.75f * (1.0f - (r - 0.75f) / 0.25f); }
+                uint8_t* px = &rgba[(static_cast<size_t>(y) * static_cast<size_t>(size) + static_cast<size_t>(x)) * 4u];
+                px[0] = static_cast<uint8_t>(cr * 255.0f);
+                px[1] = static_cast<uint8_t>(cg * 255.0f);
+                px[2] = static_cast<uint8_t>(cb * 255.0f);
+                px[3] = static_cast<uint8_t>(a * 255.0f);
+            }
+        }
+        return rgba;
+    }
+
+    // Beam: thin light-blue strip, fainter at the controller end (u = 0).
+    std::vector<uint8_t> BuildMenuPointerBeamPixels(int width, int height)
+    {
+        std::vector<uint8_t> rgba(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u, 0u);
+        for (int y = 0; y < height; ++y)
+        {
+            const float edge = (y == 0 || y == height - 1) ? 0.35f : 1.0f;
+            for (int x = 0; x < width; ++x)
+            {
+                const float along = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
+                const float a = edge * (0.2f + 0.6f * along);
+                uint8_t* px = &rgba[(static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u];
+                px[0] = 140u;
+                px[1] = 210u;
+                px[2] = 255u;
+                px[3] = static_cast<uint8_t>(a * 255.0f);
+            }
+        }
+        return rgba;
+    }
+
+    constexpr int kMenuPointerDotSize = 64;
+    constexpr int kMenuPointerBeamTexWidth = 1024; // beam thickness = length / 256
+    constexpr int kMenuPointerBeamTexHeight = 4;
+    constexpr uint32_t kMenuPointerSortOrder = 0x7FFFFE00u; // above the menu/HUD, below the config overlay
+    constexpr float kMenuPointerMaxDistance = 20.0f;
+}
+
+void VR::StoreMenuPointerGeometry(bool hud, const vr::HmdMatrix34_t& transform, float widthMeters, float textureAspect)
+{
+    const bool valid = l4d2vr_overlay_pointer::Finite(ToPointerMat(transform)) &&
+        std::isfinite(widthMeters) && widthMeters > 0.0f &&
+        std::isfinite(textureAspect) && textureAspect > 0.0f;
+    // Keep the last valid placement, as L4D2VRSetOverlayTransformAbsolute does.
+    if (!valid)
+        return;
+    std::lock_guard<std::mutex> lock(m_MenuPointerGeometryMutex);
+    MenuPointerPanelGeometry& geometry = hud ? m_MenuPointerHudGeometry : m_MenuPointerMenuGeometry;
+    geometry.valid = true;
+    geometry.transform = transform;
+    geometry.widthMeters = widthMeters;
+    geometry.textureAspect = textureAspect;
+}
+
+// True once the runtime has shown it implements ComputeOverlayIntersection
+// (SteamVR). Until then a synthetic ray at the panel centre is tried once a
+// second; XRizer always returns false, so the manual pointer stays active.
+bool VR::ProbeNativeOverlayIntersection(vr::VROverlayHandle_t overlay)
+{
+    if (m_MenuPointerNativeIntersection)
+        return true;
+    if (!m_Overlay || !m_Compositor || overlay == vr::k_ulOverlayHandleInvalid)
+        return false;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (m_MenuPointerLastProbe.time_since_epoch().count() != 0 &&
+        now - m_MenuPointerLastProbe < std::chrono::seconds(1))
+        return false;
+    m_MenuPointerLastProbe = now;
+
+    MenuPointerPanelGeometry geometry;
+    {
+        std::lock_guard<std::mutex> lock(m_MenuPointerGeometryMutex);
+        geometry = overlay == m_HUDTopHandle ? m_MenuPointerHudGeometry : m_MenuPointerMenuGeometry;
+    }
+    if (!geometry.valid || !m_Overlay->IsOverlayVisible(overlay))
+        return false;
+
+    namespace op = l4d2vr_overlay_pointer;
+    const op::Mat34 m = ToPointerMat(geometry.transform);
+    op::Vec3 normal;
+    if (!op::Normalize(op::Column(m, 2), normal))
+        return false;
+    const op::Vec3 source = op::Add(op::Column(m, 3), op::Scale(normal, 0.5f));
+
+    vr::VROverlayIntersectionParams_t params{};
+    vr::VROverlayIntersectionResults_t results{};
+    params.eOrigin = m_Compositor->GetTrackingSpace();
+    params.vSource = { source.x, source.y, source.z };
+    params.vDirection = { -normal.x, -normal.y, -normal.z };
+    if (m_Overlay->ComputeOverlayIntersection(overlay, &params, &results))
+    {
+        m_MenuPointerNativeIntersection = true;
+        Game::logMsg("[VR][MenuPointer] runtime overlay intersection available; using the runtime laser mouse");
+        ReleaseMenuLaserPointer();
+    }
+    return m_MenuPointerNativeIntersection;
+}
+
+bool VR::UpdateMenuLaserPointer(bool inGame, int windowWidth, int windowHeight)
+{
+    namespace op = l4d2vr_overlay_pointer;
+    vr::IVROverlay* overlayApi = vr::VROverlay();
+    const vr::VROverlayHandle_t panelHandle = inGame ? m_HUDTopHandle : m_MainMenuHandle;
+    if (!overlayApi || !m_System || !m_Game || !m_Game->m_VguiInput ||
+        panelHandle == vr::k_ulOverlayHandleInvalid || windowWidth <= 0 || windowHeight <= 0 ||
+        !overlayApi->IsOverlayVisible(panelHandle))
+    {
+        ReleaseMenuLaserPointer();
+        return false;
+    }
+
+    MenuPointerPanelGeometry geometry;
+    {
+        std::lock_guard<std::mutex> lock(m_MenuPointerGeometryMutex);
+        geometry = inGame ? m_MenuPointerHudGeometry : m_MenuPointerMenuGeometry;
+    }
+    float curvature = 0.0f;
+    if (overlayApi->GetOverlayCurvature(panelHandle, &curvature) != vr::VROverlayError_None)
+        curvature = 0.0f;
+    // The manual path only runs on runtimes without overlay intersection,
+    // i.e. OpenXR layers (rotation only; XR cylinder sizing).
+    op::Panel panel;
+    if (!geometry.valid ||
+        !op::BuildPanel(ToPointerMat(geometry.transform), geometry.widthMeters, geometry.textureAspect,
+            curvature, op::RuntimeModel::OpenXRLayer, panel))
+    {
+        ReleaseMenuLaserPointer();
+        return false;
+    }
+
+    struct HandRay
+    {
+        vr::TrackedDeviceIndex_t device = vr::k_unTrackedDeviceIndexInvalid;
+        bool hits = false;
+        op::Ray ray;
+        op::Hit hit;
+    };
+    HandRay hands[2];
+    for (int h = 0; h < 2; ++h)
+    {
+        const vr::ETrackedControllerRole role = h == op::kLeft
+            ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand;
+        const vr::TrackedDeviceIndex_t device = m_System->GetTrackedDeviceIndexForControllerRole(role);
+        if (device == vr::k_unTrackedDeviceIndex_Hmd || device >= vr::k_unMaxTrackedDeviceCount)
+            continue;
+        HandRay& hand = hands[h];
+        hand.device = device;
+        const vr::TrackedDevicePose_t& pose = m_Poses[device];
+        if (!pose.bPoseIsValid || !pose.bDeviceIsConnected)
+            continue;
+        // Same pointing ray as the SteamVR path: controller tip, -Z forward.
+        const op::Mat34 world = op::Multiply(ToPointerMat(pose.mDeviceToAbsoluteTracking),
+            ToPointerMat(GetControllerTipMatrix(role)));
+        hand.hits = op::RayFromPose(world, hand.ray) &&
+            op::Intersect(panel, hand.ray, kMenuPointerMaxDistance, hand.hit);
+    }
+
+    // Right trigger = PrimaryAttack, left trigger = SecondaryAttack. The action
+    // origin names the physical hand; fall back to the gameplay-hand mapping.
+    bool trigger[2] = { false, false };
+    const auto readTrigger = [&](vr::VRActionHandle_t& action, int fallbackHand)
+        {
+            vr::InputDigitalActionData_t data{};
+            if (!GetDigitalActionData(action, data) || !data.bActive || !data.bState)
+                return;
+            int hand = fallbackHand;
+            if (m_Input && data.activeOrigin != vr::k_ulInvalidInputValueHandle)
+            {
+                vr::InputOriginInfo_t info{};
+                info.trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;
+                if (m_Input->GetOriginTrackedDeviceInfo(data.activeOrigin, &info, sizeof(info)) == vr::VRInputError_None &&
+                    info.trackedDeviceIndex != vr::k_unTrackedDeviceIndexInvalid)
+                {
+                    if (info.trackedDeviceIndex == hands[op::kLeft].device)
+                        hand = op::kLeft;
+                    else if (info.trackedDeviceIndex == hands[op::kRight].device)
+                        hand = op::kRight;
+                }
+            }
+            trigger[hand] = true;
+        };
+    readTrigger(m_ActionPrimaryAttack, IsGameplayHandLeftPhysical(false) ? op::kLeft : op::kRight);
+    readTrigger(m_ActionSecondaryAttack, IsGameplayHandLeftPhysical(true) ? op::kLeft : op::kRight);
+
+    if (!m_MenuPointerTracking)
+    {
+        // A trigger already held when the menu appears must be pressed again.
+        op::ResetTracker(m_MenuPointerTracker, trigger);
+        m_MenuPointerTracking = true;
+        m_MenuPointerLastCursorX = -1;
+        m_MenuPointerLastCursorY = -1;
+        static bool s_LoggedManualPointer = false;
+        if (!s_LoggedManualPointer)
+        {
+            s_LoggedManualPointer = true;
+            Game::logMsg("[VR][MenuPointer] runtime has no overlay intersection; using the mod's controller laser pointer");
+        }
+    }
+
+    op::PointerFrame frame;
+    for (int h = 0; h < 2; ++h)
+    {
+        frame.hits[h] = hands[h].hits;
+        frame.trigger[h] = trigger[h];
+    }
+    const op::PointerDecision decision = op::StepTracker(m_MenuPointerTracker, frame);
+    const HandRay* active = decision.hand >= 0 ? &hands[decision.hand] : nullptr;
+    const bool onPanel = active && active->hits;
+
+    if (onPanel)
+    {
+        const op::Pixel pixel = op::UvToPixel(active->hit.u, active->hit.v, windowWidth, windowHeight);
+        // Only move on change so a real mouse is not pinned by a resting controller.
+        if (pixel.x != m_MenuPointerLastCursorX || pixel.y != m_MenuPointerLastCursorY)
+        {
+            m_Game->m_VguiInput->SetCursorPos(pixel.x, pixel.y);
+            m_MenuPointerLastCursorX = pixel.x;
+            m_MenuPointerLastCursorY = pixel.y;
+        }
+    }
+
+    if (decision.action == op::ClickAction::Press)
+    {
+        m_Game->m_VguiInput->InternalMousePressed(ButtonCode_t::MOUSE_LEFT);
+        m_MenuPointerMouseDown = true;
+        m_MenuPointerSuppressTriggers = true;
+        if (active)
+            TriggerLegacyHapticPulse(active->device, 0.01f, 0.3f);
+    }
+    else if (decision.action == op::ClickAction::Release && m_MenuPointerMouseDown)
+    {
+        m_Game->m_VguiInput->InternalMouseReleased(ButtonCode_t::MOUSE_LEFT);
+        m_MenuPointerMouseDown = false;
+    }
+
+    if (onPanel)
+        ShowMenuPointerVisuals(panel, active->hit, active->ray.origin, m_MenuPointerMouseDown);
+    else
+        HideMenuPointerVisuals();
+    return onPanel;
+}
+
+void VR::ReleaseMenuLaserPointer()
+{
+    if (m_MenuPointerMouseDown && m_Game && m_Game->m_VguiInput)
+        m_Game->m_VguiInput->InternalMouseReleased(ButtonCode_t::MOUSE_LEFT);
+    m_MenuPointerMouseDown = false;
+    m_MenuPointerTracking = false;
+    HideMenuPointerVisuals();
+}
+
+void VR::DestroyMenuPointerTexture(KillIndicatorOverlayTexture& texture)
+{
+    if (texture.d3dSurface)
+    {
+        texture.d3dSurface->Release();
+        texture.d3dSurface = nullptr;
+    }
+    if (texture.d3dTexture)
+    {
+        texture.d3dTexture->Release();
+        texture.d3dTexture = nullptr;
+    }
+    texture.width = 0;
+    texture.height = 0;
+    std::memset(&texture.sharedTexture, 0, sizeof(texture.sharedTexture));
+}
+
+// Same upload path as the kill indicator overlays: a dynamic D3D9 texture
+// shared with the runtime as a Vulkan image.
+bool VR::CreateMenuPointerTexture(KillIndicatorOverlayTexture& texture, int width, int height, const std::vector<uint8_t>& rgba)
+{
+    if (texture.sharedTexture.m_VRTexture.handle)
+        return true;
+    if (!g_D3DVR9 || width <= 0 || height <= 0 ||
+        rgba.size() < static_cast<size_t>(width) * static_cast<size_t>(height) * 4u)
+        return false;
+
+    IDirect3DDevice9* device = nullptr;
+    if (m_D9HUDSurface)
+        m_D9HUDSurface->GetDevice(&device);
+    else if (m_D9LeftEyeSurface)
+        m_D9LeftEyeSurface->GetDevice(&device);
+    else if (m_D9RightEyeSurface)
+        m_D9RightEyeSurface->GetDevice(&device);
+    if (!device)
+        return false;
+
+    g_D3DVR9->LockDevice();
+    bool ok = false;
+    const HRESULT hr = device->CreateTexture(static_cast<UINT>(width), static_cast<UINT>(height), 1,
+        D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &texture.d3dTexture, nullptr);
+    if (SUCCEEDED(hr) && texture.d3dTexture &&
+        SUCCEEDED(texture.d3dTexture->GetSurfaceLevel(0, &texture.d3dSurface)) && texture.d3dSurface)
+    {
+        D3DLOCKED_RECT locked{};
+        if (SUCCEEDED(texture.d3dTexture->LockRect(0, &locked, nullptr, D3DLOCK_DISCARD)) && locked.pBits)
+        {
+            uint8_t* dst0 = reinterpret_cast<uint8_t*>(locked.pBits);
+            for (int y = 0; y < height; ++y)
+            {
+                const uint8_t* src = rgba.data() + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+                uint8_t* dst = dst0 + static_cast<size_t>(y) * static_cast<size_t>(locked.Pitch);
+                for (int x = 0; x < width; ++x)
+                {
+                    dst[x * 4 + 0] = src[x * 4 + 2];
+                    dst[x * 4 + 1] = src[x * 4 + 1];
+                    dst[x * 4 + 2] = src[x * 4 + 0];
+                    dst[x * 4 + 3] = src[x * 4 + 3];
+                }
+            }
+            texture.d3dTexture->UnlockRect(0);
+
+            D3D9_TEXTURE_VR_DESC desc{};
+            if (SUCCEEDED(g_D3DVR9->TransferSurface(texture.d3dSurface, FALSE)) &&
+                SUCCEEDED(g_D3DVR9->GetVRDesc(texture.d3dSurface, &desc)))
+            {
+                std::memcpy(&texture.sharedTexture.m_VulkanData, &desc, sizeof(vr::VRVulkanTextureData_t));
+                texture.sharedTexture.m_VRTexture.handle = &texture.sharedTexture.m_VulkanData;
+                texture.sharedTexture.m_VRTexture.eColorSpace = vr::ColorSpace_Auto;
+                texture.sharedTexture.m_VRTexture.eType = vr::TextureType_Vulkan;
+                texture.width = width;
+                texture.height = height;
+                ok = true;
+            }
+        }
+    }
+    g_D3DVR9->UnlockDevice();
+    device->Release();
+    if (!ok)
+        DestroyMenuPointerTexture(texture);
+    return ok;
+}
+
+bool VR::EnsureMenuPointerOverlays()
+{
+    if (m_MenuPointerTexturesFailed)
+        return false;
+    if (m_MenuPointerDotHandle != vr::k_ulOverlayHandleInvalid &&
+        m_MenuPointerBeamHandle != vr::k_ulOverlayHandleInvalid)
+        return true;
+
+    vr::IVROverlay* overlayApi = vr::VROverlay();
+    if (!overlayApi)
+        return false;
+
+    // The D3D device may not exist yet; this is retried on the next frame.
+    if (!CreateMenuPointerTexture(m_MenuPointerDotTexture, kMenuPointerDotSize, kMenuPointerDotSize,
+            BuildMenuPointerDotPixels(kMenuPointerDotSize)) ||
+        !CreateMenuPointerTexture(m_MenuPointerBeamTexture, kMenuPointerBeamTexWidth, kMenuPointerBeamTexHeight,
+            BuildMenuPointerBeamPixels(kMenuPointerBeamTexWidth, kMenuPointerBeamTexHeight)))
+        return false;
+
+    std::lock_guard<std::mutex> lock(m_VROverlayMutex);
+    const auto createOverlay = [&](const char* key, const char* name, vr::VROverlayHandle_t& handle,
+        KillIndicatorOverlayTexture& texture)
+        {
+            if (handle != vr::k_ulOverlayHandleInvalid)
+                return true;
+            if (overlayApi->CreateOverlay(key, name, &handle) != vr::VROverlayError_None)
+            {
+                handle = vr::k_ulOverlayHandleInvalid;
+                return false;
+            }
+            static const vr::VRTextureBounds_t fullBounds{ 0.0f, 0.0f, 1.0f, 1.0f };
+            overlayApi->SetOverlayTextureBounds(handle, &fullBounds);
+            overlayApi->SetOverlaySortOrder(handle, kMenuPointerSortOrder);
+            overlayApi->SetOverlayWidthInMeters(handle, 0.02f);
+            if (SetOverlayTextureSynchronized(overlayApi, handle, &texture.sharedTexture.m_VRTexture, false) != vr::VROverlayError_None)
+            {
+                overlayApi->DestroyOverlay(handle);
+                handle = vr::k_ulOverlayHandleInvalid;
+                return false;
+            }
+            overlayApi->HideOverlay(handle);
+            return true;
+        };
+    const bool ok = createOverlay("L4D2VRMenuPointerDotKey", "MenuPointerDot", m_MenuPointerDotHandle, m_MenuPointerDotTexture) &&
+        createOverlay("L4D2VRMenuPointerBeamKey", "MenuPointerBeam", m_MenuPointerBeamHandle, m_MenuPointerBeamTexture);
+    if (!ok)
+    {
+        m_MenuPointerTexturesFailed = true;
+        Game::logMsg("[VR][MenuPointer] could not create the pointer overlays; the cursor still follows the controller");
+    }
+    return ok;
+}
+
+void VR::HideMenuPointerVisuals()
+{
+    if (!m_MenuPointerVisualsShown)
+        return;
+    m_MenuPointerVisualsShown = false;
+    vr::IVROverlay* overlayApi = vr::VROverlay();
+    if (!overlayApi)
+        return;
+    if (m_MenuPointerDotHandle != vr::k_ulOverlayHandleInvalid)
+        overlayApi->HideOverlay(m_MenuPointerDotHandle);
+    if (m_MenuPointerBeamHandle != vr::k_ulOverlayHandleInvalid)
+        overlayApi->HideOverlay(m_MenuPointerBeamHandle);
+}
+
+void VR::ShowMenuPointerVisuals(const l4d2vr_overlay_pointer::Panel& panel, const l4d2vr_overlay_pointer::Hit& hit,
+    const l4d2vr_overlay_pointer::Vec3& beamStart, bool pressed)
+{
+    namespace op = l4d2vr_overlay_pointer;
+    if (!EnsureMenuPointerOverlays())
+        return;
+    vr::IVROverlay* overlayApi = vr::VROverlay();
+    if (!overlayApi || !m_Compositor)
+        return;
+    const vr::ETrackingUniverseOrigin origin = m_Compositor->GetTrackingSpace();
+    m_MenuPointerVisualsShown = true;
+
+    op::Mat34 dot;
+    if (op::MarkerTransform(panel, hit, 0.005f, dot))
+    {
+        const vr::HmdMatrix34_t dotTransform = ToHmdMat(dot);
+        const float dotWidth = std::clamp(0.012f * hit.distance, 0.012f, 0.05f) * (pressed ? 0.7f : 1.0f);
+        if (L4D2VRSetOverlayTransformAbsolute(m_MenuPointerDotHandle, origin, &dotTransform, __LINE__) == vr::VROverlayError_None)
+        {
+            overlayApi->SetOverlayWidthInMeters(m_MenuPointerDotHandle, dotWidth);
+            overlayApi->ShowOverlay(m_MenuPointerDotHandle);
+        }
+    }
+
+    // The beam stops just short of the dot and turns its face to the headset.
+    const vr::HmdMatrix34_t& hmd = m_Poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
+    const op::Vec3 viewer{ hmd.m[0][3], hmd.m[1][3], hmd.m[2][3] };
+    op::Vec3 toHit;
+    op::Mat34 beam;
+    float beamLength = 0.0f;
+    if (op::Normalize(op::Sub(hit.point, beamStart), toHit) && hit.distance > 0.05f &&
+        op::BeamTransform(beamStart, op::Sub(hit.point, op::Scale(toHit, 0.01f)), viewer, beam, beamLength) &&
+        beamLength > 0.01f)
+    {
+        const vr::HmdMatrix34_t beamTransform = ToHmdMat(beam);
+        if (L4D2VRSetOverlayTransformAbsolute(m_MenuPointerBeamHandle, origin, &beamTransform, __LINE__) == vr::VROverlayError_None)
+        {
+            overlayApi->SetOverlayWidthInMeters(m_MenuPointerBeamHandle, beamLength);
+            overlayApi->ShowOverlay(m_MenuPointerBeamHandle);
+        }
+    }
+    else
+    {
+        overlayApi->HideOverlay(m_MenuPointerBeamHandle);
     }
 }
 

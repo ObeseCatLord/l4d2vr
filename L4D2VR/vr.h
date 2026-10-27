@@ -32,6 +32,7 @@
 #include "vr_melee_inertia.h"
 #include "vr_gesture.h"
 #include "vr_throw_ballistics.h"
+#include "vr_scope_lens.h"
 #include "vr_sight_correction.h"
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
@@ -734,6 +735,11 @@ public:
 	// thread is blocked in a level load, so the headset never freezes on the
 	// loading screen. Shares a frame mutex with VR::Update.
 	bool m_LoadingFramePumpEnabled = true;
+	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
+	bool m_ScopePictureInPictureLens = true;
+	float m_ScopeParallaxStrength = 1.0f;
+	float m_ScopeEyeboxDeg = 8.0f;
+	float m_ScopeVignetteExponent = 0.25f;
 	float m_LoadingFramePumpStallMs = 40.0f;
 	std::mutex m_CompositorFrameMutex;
 	std::atomic<uint64_t> m_LastMainFrameMs{ 0 };

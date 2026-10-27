@@ -311,7 +311,61 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
             SUCCEEDED(device->SetSamplerState(0,D3DSAMP_MAGFILTER,D3DTEXF_LINEAR)) &&
             SUCCEEDED(device->SetSamplerState(0,D3DSAMP_ADDRESSU,D3DTADDRESS_CLAMP)) &&
             SUCCEEDED(device->SetSamplerState(0,D3DSAMP_ADDRESSV,D3DTADDRESS_CLAMP));
-        if (ok) ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN,64,vertices.data(),sizeof(Vertex)));
+        if (ok && m_ScopePictureInPictureLens)
+        {
+            // HL2VR-style lens: the image shifts with the eye's offset from the
+            // optical axis (parallax) and closes in from the edge as the eye
+            // leaves the eyebox. Rings of vertices carry the shifted UVs and the
+            // vignette as vertex colour.
+            l4d2vr_scope_lens::LensGeometry geometry{};
+            geometry.center = lens.center;
+            geometry.axis = lens.forward;
+            geometry.up = lens.up;
+            geometry.radius = lens.radius;
+            geometry.eyeRelief = std::max(0.5f, DotProduct(lens.center - view.origin, lens.forward));
+            l4d2vr_scope_lens::LensParams lensParams{};
+            lensParams.parallaxK = m_ScopeParallaxStrength;
+            lensParams.eyeboxDeg = m_ScopeEyeboxDeg;
+            lensParams.vignetteExponent = m_ScopeVignetteExponent;
+            const l4d2vr_scope_lens::LensState state = l4d2vr_scope_lens::EvaluateLens(geometry, view.origin, lensParams);
+            Vector basisForward{}, basisRight{}, basisUp{};
+            const float uSign = l4d2vr_scope_lens::Basis(geometry, basisForward, basisRight, basisUp) &&
+                DotProduct(basisRight, lens.right) < 0.0f ? -1.0f : 1.0f;
+            constexpr int kRings = 6;
+            constexpr int kSegments = 48;
+            std::vector<Vertex> mesh;
+            mesh.reserve(static_cast<size_t>(kRings) * kSegments * 6);
+            auto makeVertex = [&](float r, float angle) -> Vertex
+            {
+                const float u = r * std::cos(angle), v = r * std::sin(angle);
+                float texU = 0.5f, texV = 0.5f;
+                l4d2vr_scope_lens::SampleUV(state, u * uSign, v, texU, texV);
+                const float transmission = 1.0f - l4d2vr_scope_lens::VignetteAlphaAt(state, u * uSign, v);
+                const auto level = static_cast<unsigned char>(std::clamp(eye.alpha * transmission, 0.0f, 1.0f) * 255.0f);
+                if (uSign < 0.0f) texU = 1.0f - texU;
+                return Vertex{ lens.center + lens.right * (u * lens.radius) + lens.up * (v * lens.radius),
+                    D3DCOLOR_ARGB(255, level, level, level), std::clamp(texU, 0.0f, 1.0f), std::clamp(texV, 0.0f, 1.0f) };
+            };
+            for (int ring = 0; ring < kRings; ++ring)
+            {
+                const float r0 = static_cast<float>(ring) / kRings, r1 = static_cast<float>(ring + 1) / kRings;
+                for (int segment = 0; segment < kSegments; ++segment)
+                {
+                    const float a0 = segment * (2.0f * 3.14159265358979323846f / kSegments);
+                    const float a1 = (segment + 1) * (2.0f * 3.14159265358979323846f / kSegments);
+                    const Vertex p00 = makeVertex(r0, a0), p01 = makeVertex(r0, a1);
+                    const Vertex p10 = makeVertex(r1, a0), p11 = makeVertex(r1, a1);
+                    mesh.push_back(p00); mesh.push_back(p10); mesh.push_back(p11);
+                    mesh.push_back(p00); mesh.push_back(p11); mesh.push_back(p01);
+                }
+            }
+            ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, static_cast<UINT>(mesh.size() / 3),
+                mesh.data(), sizeof(Vertex)));
+        }
+        else if (ok)
+        {
+            ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN,64,vertices.data(),sizeof(Vertex)));
+        }
         if (ok && rawTexture && m_ScopeReticleAlpha > 0.0f)
         {
             const Vector center = lens.center - lens.forward * 0.005f;

@@ -33,6 +33,9 @@ CHANGES = [
     "Loading screens and intermissions stay visible in the headset; wrist HUDs on by default; background audio.",
     "Other VR players' bodies crouch with them; desktop players with the mod see VR bodies, and the mod starts in desktop mode when no headset is found.",
     "Dedicated server plugin (Linux and Windows) with full support for every feature; plain servers use client-side fallbacks.",
+    "1.2.1: items drawn from a holster are held by the grip and dropped when you let go (HolsterReleaseDrop).",
+    "1.2.1: hand pills or adrenaline to a teammate by holding them against their chest.",
+    "1.2.1: Half-Life 2 VR style two-handed aim with an adaptive stabilizer; the front hand no longer drifts.",
 ]
 
 

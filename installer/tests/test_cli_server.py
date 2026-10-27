@@ -196,3 +196,21 @@ class ServerInstallTests(CliTestCase):
         code, _, err = self.run_cli("install-server", "--server-dir", other, "--zip", self.tmp / "x.zip")
         self.assertEqual(code, 1)
         self.assertIn("gameinfo.txt", err)
+
+
+class BundledZipTests(TempDirTest):
+    def test_offline_falls_back_to_bundled_zip(self):
+        game = make_game(self.tmp)
+        bundled = make_zip(self.tmp / "dist" / "l4d2vr.zip", CLIENT_V1)
+        with mock.patch.object(actions, "fetch_release", side_effect=actions.InstallerError("offline")), \
+                mock.patch.object(actions, "bundled_client_zip", return_value=bundled):
+            actions.install_client(game, check_running=False, log=lambda *_: None)
+        self.assertEqual((game / "d3d9.dll").read_bytes(), CLIENT_V1["d3d9.dll"])
+
+    def test_offline_without_bundled_zip_still_fails(self):
+        game = make_game(self.tmp)
+        with mock.patch.object(actions, "fetch_release", side_effect=actions.InstallerError("offline")), \
+                mock.patch.object(actions, "bundled_client_zip", return_value=None):
+            with self.assertRaises(actions.InstallerError):
+                actions.install_client(game, check_running=False, log=lambda *_: None)
+

@@ -1705,9 +1705,12 @@ void VR::ProcessInput()
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
                     m_RightControllerPosAbs, drawableMask);
                 // The held item's own holster takes it back when the hand is in
-                // its volume (chest items: anywhere in the vest, as in Pavlov).
+                // its volume (chest items: anywhere in the vest, as in Pavlov;
+                // back items: their half, or the whole back while the other
+                // half is empty).
                 const bool inOwnVolume = activeSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,
-                    m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(activeSlot), m_RightControllerPosAbs);
+                    m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(activeSlot), m_RightControllerPosAbs,
+                    occupiedMask);
                 grabInput.ownZoneUnderHand = inOwnVolume
                     ? static_cast<l4d2vr_holster::Zone>(activeSlot)
                     : l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, 0x1Fu);

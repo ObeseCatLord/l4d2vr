@@ -3283,6 +3283,9 @@ void VR::ParseConfigFile()
     m_ManualThrowVelocityWindowTicks = std::clamp(getInt("ManualThrowVelocityWindowTicks", m_ManualThrowVelocityWindowTicks), 1, static_cast<int>(Player::kManualThrowPoseSampleCount) - 1);
     m_ManualThrowPeakVelocityBlend = std::clamp(getFloat("ManualThrowPeakVelocityBlend", m_ManualThrowPeakVelocityBlend), 0.0f, 1.0f);
     m_ManualThrowMaxVelocity = std::clamp(getFloat("ManualThrowMaxVelocity", m_ManualThrowMaxVelocity), 0.0f, 5000.0f);
+    m_ManualThrowPinRequired = getBool("ManualThrowPinRequired", m_ManualThrowPinRequired);
+    m_ManualThrowHandVelocityScale = std::clamp(getFloat("ManualThrowHandVelocityScale", m_ManualThrowHandVelocityScale), 0.0f, 10.0f);
+    m_ManualThrowVelocityWindowMs = std::clamp(getInt("ManualThrowVelocityWindowMs", m_ManualThrowVelocityWindowMs), 20, 250);
     m_ObjectPullEnabled = getBool("ObjectPullEnabled", m_ObjectPullEnabled);
     m_ObjectPullVisualsEnabled = getBool("ObjectPullVisualsEnabled", m_ObjectPullVisualsEnabled);
     m_ObjectPullMaxDistanceMeters = std::clamp(getFloat("ObjectPullMaxDistanceMeters", m_ObjectPullMaxDistanceMeters), 0.1f, 30.0f);

@@ -6,8 +6,8 @@
 # Feature bits the server may offer (hex). A bit is only advertised when its
 # hooks resolved as well. 0x1 MeleeSweepV2, 0x2 ShoveAim, 0x4 AkimboRays,
 # 0x8 MagTxn, 0x10 ShellTxn, 0x20 HolsterDrop, 0x40 ThrowVelocity,
-# 0x80 PillGive, 0x100 PoseV3, 0x200 InstantDeploy.
-FeatureMask=0x3ff
+# 0x80 PillGive, 0x100 PoseV3, 0x200 InstantDeploy, 0x400 HandThrow.
+FeatureMask=0x7ff
 
 # Physical melee (same meaning as the previous dedicated plugin).
 MeleeSwingBlockWhileControlled=true
@@ -32,6 +32,13 @@ ThrowPeakVelocityBlend=0.5
 ThrowMaxSpeed=1400
 ThrowMinSpeed=40
 DropMaxSpeed=450
+
+# Hand throws (HandThrow): the grenade leaves the hand in the release command
+# itself. The client measures the hand velocity at headset rate; the
+# projectile gets hand velocity * ThrowHandVelocityScale + the player's own
+# velocity, clamped to ThrowMaxSpeed. One throw per HandThrowMinIntervalMs.
+ThrowHandVelocityScale=3.0
+HandThrowMinIntervalMs=250
 
 # Eye-override windows in executed commands, and the use aim mode
 # (0 off, 1 grip pickup only, 2 every +use of a VR player).

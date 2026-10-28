@@ -3210,6 +3210,9 @@ namespace
         sampleKeys.insert("MotionOnlyMeleeAndShove");
         sampleKeys.insert("MeleeGripReachMeters");
         sampleKeys.insert("ConsumableGiveEnabled");
+        sampleKeys.insert("ManualThrowPinRequired");
+        sampleKeys.insert("ManualThrowHandVelocityScale");
+        sampleKeys.insert("ManualThrowVelocityWindowMs");
         for (const auto key : l4d2vr_calibration::kConfigKeys)
             sampleKeys.insert(std::string(key));
         configChanged |= RemoveConfigParametersNotInSample(configText, sampleKeys);

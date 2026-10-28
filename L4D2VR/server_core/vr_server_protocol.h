@@ -30,6 +30,10 @@
 //   238 shove: this command shoves (IN_ATTACK2 is added) aimed by the hand
 //   239 pill give: give pills/adrenaline to the teammate the hand points at
 //   240..243 object pull (stripped; not implemented by the dedicated plugin)
+//   244 hand throw: throw the held grenade from the hand in this command, with
+//       the hand velocity packed into forwardmove/sidemove/weaponselect/
+//       weaponsubtype (vr_hand_throw.h); only sent when HandThrow (0x400) is
+//       advertised
 
 #include <cstdint>
 #include <cstdio>
@@ -51,8 +55,9 @@ namespace l4d2vr_server
         kFeaturePillGive = 0x80u,
         kFeaturePoseV3 = 0x100u,
         kFeatureInstantDeploy = 0x200u,
+        kFeatureHandThrow = 0x400u,
     };
-    constexpr std::uint32_t kFeatureAllMask = 0x3FFu;
+    constexpr std::uint32_t kFeatureAllMask = 0x7FFu;
     constexpr unsigned kFeatureAckVersion = 1u;
 
     inline const char* FeatureName(std::uint32_t bit)
@@ -69,6 +74,7 @@ namespace l4d2vr_server
         case kFeaturePillGive: return "PillGive";
         case kFeaturePoseV3: return "PoseV3";
         case kFeatureInstantDeploy: return "InstantDeploy";
+        case kFeatureHandThrow: return "HandThrow";
         default: return "?";
         }
     }
@@ -88,6 +94,7 @@ namespace l4d2vr_server
     constexpr std::uint8_t kImpulsePillGive = 239u;
     constexpr std::uint8_t kImpulseObjectPullBegin = 240u;
     constexpr std::uint8_t kImpulseObjectPullEnd = 243u;
+    constexpr std::uint8_t kImpulseHandThrow = 244u;      // l4d2vr_hand_throw::kImpulse
 
     // ---- buttons bits 26..31 ("carry word") -----------------------------------
     constexpr std::uint32_t kCarryWordShift = 26u;

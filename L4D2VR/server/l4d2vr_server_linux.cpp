@@ -513,7 +513,9 @@ namespace
             pounceAttacker = -1, jockeyAttacker = -1;
         int clip1 = -1, primaryAmmoType = -1, inReload = -1, nextPrimary = -1, nextSecondary = -1, dualWielding = -1;
         int reloadState = -1;
-        bool status = false, ammoOk = false, shell = false, deploy = false;
+        // Hand throws: CBaseCSGrenade's throw state machine and the player's velocity.
+        int grenadeRedraw = -1, grenadePinPulled = -1, grenadeThrowTime = -1, weaponIdle = -1, playerVelocity = -1;
+        bool status = false, ammoOk = false, shell = false, deploy = false, grenade = false;
     };
 
     Natives g_N;
@@ -832,6 +834,8 @@ namespace
         move->impulse = cmd.impulse;
         move->weaponselect = cmd.weaponselect;
         move->weaponsubtype = cmd.weaponsubtype;
+        move->forwardmove = cmd.forwardmove;   // a hand throw packs its velocity here
+        move->sidemove = cmd.sidemove;
         if (!IsValidPlayerIndex(g_DecodeIndex)) return;
         PlayerVRState& p = g_Players[static_cast<std::size_t>(g_DecodeIndex)];
         RecordDecodedCommand(p, cmd, decoded, g_DecodeHaveOrigin, g_DecodeOrigin, SteadyMs());
@@ -905,23 +909,57 @@ namespace
         return g_N.shotgunReload(weapon);
     }
 
+    // The hand throw that ran inside the executing command (player index,
+    // command number); set by the Create detours, read after the command.
+    int g_HandThrowSpawnedIndex = -1;
+    int g_HandThrowSpawnedCommand = 0;
+
     // Returns the pending throw to apply for `owner`, or nullptr.
     const PendingThrow* TakePendingThrow(void* owner, int expectedWeaponId, PendingThrow& storage)
     {
-        if ((g_Features & kFeatureThrowVelocity) == 0u) return nullptr;
         const int index = PlayerIndexFromEntity(owner);
         if (index < 0) return nullptr;
         PlayerVRState& p = g_Players[static_cast<std::size_t>(index)];
-        if ((g_Session.EffectiveFeatures(index) & kFeatureThrowVelocity) == 0u) return nullptr;
         PendingThrow& pending = p.pendingThrow;
+        const std::uint32_t feature = pending.hand ? kFeatureHandThrow : kFeatureThrowVelocity;
+        if ((g_Features & feature) == 0u || (g_Session.EffectiveFeatures(index) & feature) == 0u) return nullptr;
         if (!p.isUsingVR || !pending.valid || pending.owner != reinterpret_cast<std::uintptr_t>(owner) ||
-            pending.weaponId != expectedWeaponId || pending.executedSinceRelease > 48 || pending.release.belowMinimum)
+            pending.weaponId != expectedWeaponId || pending.executedSinceRelease > 48 ||
+            (!pending.hand && pending.release.belowMinimum))
+            return nullptr;
+        // A hand throw belongs to its release command only.
+        if (pending.hand && !(g_Exec && g_Exec->index == index && g_Exec->ctx.handThrow &&
+            g_Exec->ctx.command == pending.releaseCommand))
             return nullptr;
         storage = pending;
         pending = {};
-        Log("throw player=%d weapon=%d velocity=(%.1f %.1f %.1f)", index, expectedWeaponId,
-            storage.release.velocity.x, storage.release.velocity.y, storage.release.velocity.z);
+        if (storage.hand)
+        {
+            g_HandThrowSpawnedIndex = index;
+            g_HandThrowSpawnedCommand = storage.releaseCommand;
+            const std::uint64_t now = SteadyMs();
+            const double waitedMs = storage.decodedAtMs && now >= storage.decodedAtMs
+                ? static_cast<double>(now - storage.decodedAtMs) : -1.0;
+            Log("hand throw spawn player=%d weapon=%d command=%d origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f) "
+                "speed=%.1f hand=(%.1f %.1f %.1f) body=(%.1f %.1f %.1f) receiveToSpawnMs=%.1f ticksAfterRelease=0",
+                index, expectedWeaponId, storage.releaseCommand, storage.release.origin.x, storage.release.origin.y,
+                storage.release.origin.z, storage.release.velocity.x, storage.release.velocity.y,
+                storage.release.velocity.z, storage.release.velocity.Length(), storage.handVelocity.x,
+                storage.handVelocity.y, storage.handVelocity.z, storage.playerVelocity.x, storage.playerVelocity.y,
+                storage.playerVelocity.z, waitedMs);
+        }
+        else
+        {
+            Log("throw player=%d weapon=%d velocity=(%.1f %.1f %.1f)", index, expectedWeaponId,
+                storage.release.velocity.x, storage.release.velocity.y, storage.release.velocity.z);
+        }
         return &storage;
+    }
+
+    // Native spin for hand throws (ThrowGrenade's own), the measured one otherwise.
+    Vector ThrowSpin(const PendingThrow& t, const Vector& native)
+    {
+        return t.hand ? native : ToVector(t.release.angularVelocity);
     }
 
     void* DetourMolotovCreate(const Vector& pos, const QAngle& ang, const Vector& vel, const Vector& angVel, void* owner)
@@ -929,7 +967,7 @@ namespace
         PendingThrow t{};
         if (const PendingThrow* p = TakePendingThrow(owner, weapon::kMolotov, t))
             return g_N.molotovCreate(ToVector(p->release.origin), ToQAngle(p->release.angles),
-                ToVector(p->release.velocity), ToVector(p->release.angularVelocity), owner);
+                ToVector(p->release.velocity), ThrowSpin(*p, angVel), owner);
         return g_N.molotovCreate(pos, ang, vel, angVel, owner);
     }
 
@@ -938,7 +976,7 @@ namespace
         PendingThrow t{};
         if (const PendingThrow* p = TakePendingThrow(owner, weapon::kPipeBomb, t))
             return g_N.pipeCreate(ToVector(p->release.origin), ToQAngle(p->release.angles),
-                ToVector(p->release.velocity), ToVector(p->release.angularVelocity), owner, timer);
+                ToVector(p->release.velocity), ThrowSpin(*p, angVel), owner, timer);
         return g_N.pipeCreate(pos, ang, vel, angVel, owner, timer);
     }
 
@@ -947,7 +985,7 @@ namespace
         PendingThrow t{};
         if (const PendingThrow* p = TakePendingThrow(owner, weapon::kVomitJar, t))
             return g_N.vomitCreate(ToVector(p->release.origin), ToQAngle(p->release.angles),
-                ToVector(p->release.velocity), ToVector(p->release.angularVelocity), owner);
+                ToVector(p->release.velocity), ThrowSpin(*p, angVel), owner);
         return g_N.vomitCreate(pos, ang, vel, angVel, owner);
     }
 
@@ -998,6 +1036,15 @@ namespace
         in.usingMounted = status.mounted;
         in.nowMs = SteadyMs();
         in.tickSeconds = TickSeconds();
+        in.handThrowBackend = (g_Features & kFeatureHandThrow) != 0u && g_P.grenade && g_GlobalsValidated &&
+            weaponBefore && g_N.getOwner && g_N.getOwner(weaponBefore) == self;
+        if (in.handThrowBackend)
+        {
+            const Vec3 velocity(Field<float>(self, g_P.playerVelocity), Field<float>(self, g_P.playerVelocity + 4),
+                Field<float>(self, g_P.playerVelocity + 8));
+            in.havePlayerVelocity = velocity.Finite();
+            in.playerVelocity = velocity;
+        }
         if (pose && pose->poseValid && g_N.eyePosition)
         {
             const Vector eye = g_N.eyePosition(self);
@@ -1014,10 +1061,65 @@ namespace
         if (g_Config.verbose && frame.ctx.aim != AimReason::None)
             Log("player=%d command=%d eye override %s", index, ucmd->command_number, AimReasonName(frame.ctx.aim));
 
+        // Hand throw: let the grenade's own state machine throw inside this
+        // command. ItemPostFrame throws when m_fThrowTime has passed and the pin
+        // is not held (RemoveAmmo, ThrowGrenade -> EmitGrenade -> Create, where
+        // the detour puts the projectile at the hand), with no pin-pull or throw
+        // animation wait. The deploy wait (player m_flNextAttack) is skipped too.
+        float savedNextAttack = 0.0f;
+        const bool handThrow = frame.ctx.handThrow && weaponBefore && Curtime() > 0.01f;
+        if (handThrow)
+        {
+            const float now = Curtime();
+            Field<unsigned char>(weaponBefore, g_P.grenadePinPulled) = 0;
+            Field<float>(weaponBefore, g_P.grenadeThrowTime) = 0.001f;
+            savedNextAttack = Field<float>(self, g_P.nextAttack);
+            Field<float>(self, g_P.nextAttack) = std::min(savedNextAttack, now);
+            g_HandThrowSpawnedIndex = -1;
+            g_HandThrowSpawnedCommand = 0;
+        }
+        else if (frame.ctx.handThrow)
+        {
+            p.pendingThrow = {};
+        }
+
         ExecFrame* previous = g_Exec;
         g_Exec = &frame;
         g_N.playerRunCommand(self, ucmd, moveHelper);
         g_Exec = previous;
+
+        if (handThrow)
+        {
+            const bool spawned = g_HandThrowSpawnedIndex == index && g_HandThrowSpawnedCommand == ucmd->command_number;
+            void* const activeNow = g_N.getActiveWeapon(self);
+            const bool stillHeld = activeNow == weaponBefore && g_N.getOwner(weaponBefore) == self;
+            if (spawned)
+            {
+                // No throw animation to wait for: the empty hand switches on the next command.
+                if (stillHeld)
+                {
+                    Field<float>(weaponBefore, g_P.weaponIdle) = std::min(Field<float>(weaponBefore, g_P.weaponIdle), Curtime());
+                    MarkChanged(weaponBefore);
+                }
+            }
+            else
+            {
+                // The game refused the throw this command (state the native
+                // throw also refuses): undo, so it cannot fire later by itself.
+                if (stillHeld)
+                {
+                    Field<float>(weaponBefore, g_P.grenadeThrowTime) = 0.0f;
+                    Field<float>(self, g_P.nextAttack) = std::max(Field<float>(self, g_P.nextAttack), savedNextAttack);
+                    MarkChanged(weaponBefore);
+                }
+                p.pendingThrow = {};
+                Log("hand throw not executed player=%d command=%d weapon=%d stillHeld=%d", index,
+                    ucmd->command_number, in.weaponId, stillHeld ? 1 : 0);
+            }
+            MarkChanged(self);
+            g_HandThrowSpawnedIndex = -1;
+            g_HandThrowSpawnedCommand = 0;
+        }
 
         void* weaponAfter = g_N.getActiveWeapon(self);
         const Status after = ReadStatus(self);
@@ -1168,6 +1270,11 @@ namespace
         g_P.nextSecondary = Netprop("CPistol", "m_flNextSecondaryAttack");
         g_P.dualWielding = Netprop("CPistol", "m_isDualWielding");
         g_P.reloadState = Netprop("CPumpShotgun", "m_reloadState");
+        g_P.grenadeRedraw = Netprop("CPipeBomb", "m_bRedraw");
+        g_P.grenadePinPulled = Netprop("CPipeBomb", "m_bPinPulled");
+        g_P.grenadeThrowTime = Netprop("CPipeBomb", "m_fThrowTime");
+        g_P.weaponIdle = Netprop("CPipeBomb", "m_flTimeWeaponIdle");
+        g_P.playerVelocity = Netprop(player, "m_vecVelocity[0]");
 
         // Cross-check the SendProp layout against offsets inside accessor code.
         const bool layout =
@@ -1192,10 +1299,23 @@ namespace
         g_P.shell = g_P.ammoOk && g_P.reloadState > 0;
         g_P.deploy = (groups & l4d2vr_linux::kGroupDeploy) != 0u && g_P.nextPrimary > 0 && g_P.nextSecondary > 0 &&
             g_P.nextAttack > 0;
+        // All three grenades share DT_BaseCSGrenade: m_bRedraw, m_bPinPulled
+        // (bytes) and m_fThrowTime (float) are adjacent there (0x17DC/0x17DD/
+        // 0x17E0 on build 10097, matching CBaseCSGrenade::StartGrenadeThrow).
+        const bool grenadeLayout = g_P.grenadeRedraw > 0 && g_P.grenadePinPulled == g_P.grenadeRedraw + 1 &&
+            g_P.grenadeThrowTime == g_P.grenadeRedraw + 4 &&
+            Netprop("CMolotov", "m_fThrowTime") == g_P.grenadeThrowTime &&
+            Netprop("CItem_VomitJar", "m_fThrowTime") == g_P.grenadeThrowTime;
+        g_P.grenade = grenadeLayout && g_P.weaponIdle > 0 && g_P.playerVelocity > 0;
+        if (!g_P.grenade)
+            Log("grenade netprops unavailable (redraw 0x%X pin 0x%X throwTime 0x%X idle 0x%X velocity 0x%X); "
+                "hand throws disabled", g_P.grenadeRedraw, g_P.grenadePinPulled, g_P.grenadeThrowTime, g_P.weaponIdle,
+                g_P.playerVelocity);
         Log("netprops: activeWeapon=0x%X ammo=0x%X clip1=0x%X ammoType=0x%X inReload=0x%X reloadState=0x%X "
-            "nextAttack=0x%X nextPrimary=0x%X mounted=0x%X/0x%X", g_P.activeWeapon, g_P.ammo, g_P.clip1,
-            g_P.primaryAmmoType, g_P.inReload, g_P.reloadState, g_P.nextAttack, g_P.nextPrimary,
-            g_P.usingMountedGun, g_P.usingMountedWeapon);
+            "nextAttack=0x%X nextPrimary=0x%X mounted=0x%X/0x%X grenade pin=0x%X throwTime=0x%X idle=0x%X velocity=0x%X",
+            g_P.activeWeapon, g_P.ammo, g_P.clip1, g_P.primaryAmmoType, g_P.inReload, g_P.reloadState, g_P.nextAttack,
+            g_P.nextPrimary, g_P.usingMountedGun, g_P.usingMountedWeapon, g_P.grenadePinPulled, g_P.grenadeThrowTime,
+            g_P.weaponIdle, g_P.playerVelocity);
     }
 
     // ---- Configuration -------------------------------------------------------------------
@@ -1413,6 +1533,7 @@ namespace
         inputs.netpropShell = g_P.shell;
         inputs.netpropDeploy = g_P.deploy;   // curtime is validated at ServerActivate
         inputs.meleeOperands = g_N.melee.ok;
+        inputs.netpropGrenade = g_P.grenade;
         g_Resolved = l4d2vr_linux::ResolveFeatures(inputs);
         g_Features = g_Resolved.features & g_Config.featureMask;
         g_Image = l4d2vr_elf::Image{};   // ~20 MB file copy is only needed while installing
@@ -1421,7 +1542,7 @@ namespace
     void PublishCapabilities()
     {
         std::uint32_t features = g_Features;
-        if (!g_GlobalsValidated) features &= ~kFeatureInstantDeploy;
+        if (!g_GlobalsValidated) features &= ~(kFeatureInstantDeploy | kFeatureHandThrow);
         SessionCapabilities caps{};
         caps.usercmdDecoder = g_Resolved.usercmdDecoder;
         caps.interaction = g_Resolved.interaction;
@@ -1433,7 +1554,7 @@ namespace
     {
         const auto& caps = g_Session.Capabilities();
         std::string names;
-        for (std::uint32_t bit = 1u; bit <= kFeatureInstantDeploy; bit <<= 1u)
+        for (std::uint32_t bit = 1u; bit <= kFeatureHandThrow; bit <<= 1u)
             if (caps.features & bit) { if (!names.empty()) names += ' '; names += FeatureName(bit); }
         Log("%s: usercmd_decoder=%d interaction=%d features=0x%03X [%s]", when, caps.usercmdDecoder ? 1 : 0,
             caps.interaction ? 1 : 0, caps.features, names.c_str());

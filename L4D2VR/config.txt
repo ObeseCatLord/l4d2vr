@@ -468,6 +468,13 @@ ManualThrowArcLiftRatio=0.0
 ManualThrowVelocityWindowTicks=5
 ManualThrowPeakVelocityBlend=0.5
 ManualThrowMaxVelocity=1400.0
+// Grenades on servers with hand throws (Pavlov style): the grip holds the grenade, the trigger pulls the
+// pin, letting go of the grip throws it from your hand at your hand's speed (no throw animation, no
+// delay). Without the pin, letting go drops the grenade. Holding the trigger through the swing and
+// letting go of it also throws. HandVelocityScale multiplies the hand speed when you host the game.
+ManualThrowPinRequired=true
+ManualThrowHandVelocityScale=3.0
+ManualThrowVelocityWindowMs=80
 
 # Object pull uses the existing weapon-hand Grip binding; there is no separate SteamVR Object Pull action.
 # Merely point anywhere on a supported item's collision bounds to select it and show its native outline.

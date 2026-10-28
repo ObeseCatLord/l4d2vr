@@ -42,6 +42,11 @@ namespace l4d2vr_server
         float throwMinSpeed = 40.0f;          // below this keep the native throw
         float throwMaxAngularSpeed = 1440.0f; // deg/s
         float dropMaxSpeed = 450.0f;          // inventory/holster drop toss clamp
+        // Hand throws (HandThrow, impulse 244): the client measures the hand
+        // velocity at headset rate; projectile = hand * scale + body velocity,
+        // clamped to throwMaxSpeed. 3.0 is Pavlov's grenade ProjectileSpeedMul.
+        float throwHandVelocityScale = 3.0f;
+        int handThrowMinIntervalMs = 250;
 
         // Eye override windows, in executed commands.
         int throwAimCommands = 48;
@@ -135,6 +140,8 @@ namespace l4d2vr_server
         if (key == "throwmaxspeed" && ParseFloat(value, f)) { c.throwMaxSpeed = std::clamp(f, 0.0f, 2500.0f); return true; }
         if (key == "throwminspeed" && ParseFloat(value, f)) { c.throwMinSpeed = std::clamp(f, 0.0f, 500.0f); return true; }
         if (key == "dropmaxspeed" && ParseFloat(value, f)) { c.dropMaxSpeed = std::clamp(f, 0.0f, 1000.0f); return true; }
+        if (key == "throwhandvelocityscale" && ParseFloat(value, f)) { c.throwHandVelocityScale = std::clamp(f, 0.0f, 10.0f); return true; }
+        if (key == "handthrowminintervalms" && ParseInt(value, i)) { c.handThrowMinIntervalMs = std::clamp(i, 50, 10000); return true; }
         if (key == "throwaimcommands" && ParseInt(value, i)) { c.throwAimCommands = std::clamp(i, 0, 96); return true; }
         if (key == "shoveaimcommands" && ParseInt(value, i)) { c.shoveAimCommands = std::clamp(i, 0, 64); return true; }
         if (key == "pillaimcommands" && ParseInt(value, i)) { c.pillAimCommands = std::clamp(i, 0, 64); return true; }

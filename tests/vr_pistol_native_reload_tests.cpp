@@ -183,6 +183,10 @@ static bool ManualEmptyHandsPlaceholderOwnerIsLiveSurvivor(void* object)
 #pragma warning(pop)
 #endif
 #include "pistol_native_context.inl"
+// Hand throws (hooks_throwables.inl) run around the same command; tested separately.
+struct HandThrowExecution {};
+static HandThrowExecution HandThrowBeginCommand(void*, const CUserCmd*) { return {}; }
+static void HandThrowEndCommand(const HandThrowExecution&) {}
 #include "pistol_native_functions.inl"
 
 static void NativePlayerOriginal(void* owner, CUserCmd*, void*)

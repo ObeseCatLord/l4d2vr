@@ -247,6 +247,9 @@ public:
 	static inline Hook<tEmitSoundLevel> hkEmitSoundLevel;
 	static bool s_ServerUnderstandsVR;
 	static inline bool s_ManualThrowHooksReady = false;
+	// Listen host features: the static set plus HandThrow once its server.dll
+	// grenade fields resolved (hooks_throwables.inl).
+	static uint32_t ListenHostFeatureMask();
 	static inline bool s_ManualCarryThrowHookReady = false;
 	static inline bool s_ManualCarryThrowPropSpawnHookReady = false;
 	static inline bool s_ManualCarryImpactKnockbackReady = false;

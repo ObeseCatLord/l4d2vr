@@ -381,6 +381,7 @@ namespace l4d2vr_linux
         bool netpropShell = false;    // m_reloadState
         bool netpropDeploy = false;   // next attack netprops + curtime
         bool meleeOperands = false;   // code-derived melee offsets
+        bool netpropGrenade = false;  // CBaseCSGrenade pin/throw-time/idle + player velocity
     };
 
     struct FeatureResolution
@@ -409,6 +410,10 @@ namespace l4d2vr_linux
         if (has(kGroupDrop) && status) out.features |= kFeatureHolsterDrop;
         if (has(kGroupThrow)) out.features |= kFeatureThrowVelocity;
         if (has(kGroupDeploy) && in.netpropDeploy) out.features |= kFeatureInstantDeploy;
+        // Hand throws drive the grenade's own throw state machine (netprops,
+        // curtime) and need the projectile Create hooks for position/velocity.
+        if (has(kGroupThrow | kGroupDeploy) && in.netpropDeploy && in.netpropGrenade && status)
+            out.features |= kFeatureHandThrow;
         out.interaction = has(kGroupReloadGate | kGroupDrop | kGroupEye) && status;
         return out;
     }

@@ -51,6 +51,7 @@ void VR::ProcessInput()
     m_MagazineReleaseJustPressed = false;
     UpdateBodyInventoryPose();
     UpdateDroppedMagazines();
+    UpdateHandThrowTracking();
     if (!m_IsVREnabled)
     {
         m_LeftHandPistolActive.store(false, std::memory_order_release);

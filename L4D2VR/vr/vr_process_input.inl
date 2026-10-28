@@ -1681,8 +1681,13 @@ void VR::ProcessInput()
                     activeSlot >= 0 ? (occupiedMask & ~(1u << activeSlot)) : occupiedMask;
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
                     m_RightControllerPosAbs, drawableMask);
-                grabInput.ownZoneUnderHand = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
-                    m_RightControllerPosAbs, 0x1Fu);
+                // The held item's own holster takes it back when the hand is in
+                // its volume (chest items: anywhere in the vest, as in Pavlov).
+                const bool inOwnVolume = activeSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,
+                    m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(activeSlot), m_RightControllerPosAbs);
+                grabInput.ownZoneUnderHand = inOwnVolume
+                    ? static_cast<l4d2vr_holster::Zone>(activeSlot)
+                    : l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, 0x1Fu);
             }
 
             if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
@@ -1726,7 +1731,8 @@ void VR::ProcessInput()
                     }
                     Game::logMsg("[VR][Holster] grip pressed: ready=%d zone=%d nearest=slot%d at %.2f m (radius %.2f) active=slot%d",
                         ready ? 1 : 0, static_cast<int>(grabInput.handZone), nearestZone + 1, nearest,
-                        nearestZone >= 0 ? m_HolsterLayout.radius[nearestZone] : 0.0f, activeSlot + 1);
+                        nearestZone >= 0 ? l4d2vr_holster::ZoneReachMeters(m_HolsterLayout,
+                            static_cast<l4d2vr_holster::Zone>(nearestZone)) : 0.0f, activeSlot + 1);
                 }
                 s_PrevHolsterGripDown = gripDown;
             }

@@ -1450,6 +1450,10 @@ public:
     float m_BodyInventoryRotationOffset = 0.0f;
     Vector m_BodyInventoryOrigin{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryHeadPosAbs{0.0f, 0.0f, 0.0f};
+    Vector m_BodyInventoryHeadForward{ 1.0f, 0.0f, 0.0f };
+    Vector m_BodyInventoryHeadRight{ 0.0f, -1.0f, 0.0f };
+    Vector m_BodyInventoryHeadUp{ 0.0f, 0.0f, 1.0f };
+    float m_BodyInventoryOffHandHeight = -1.0f;
     Vector m_BodyInventoryForward{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryRight{0.0f, 0.0f, 0.0f};
     std::chrono::steady_clock::time_point m_BodyInventoryLastUpdate{};
@@ -1458,8 +1462,7 @@ public:
     bool m_HolsterPavlovLayoutEnabled = true;
     bool m_HolsterItemsVisible = true;
     bool m_HolsterInstantDraw = true;
-    float m_HolsterYawDeadbandDeg = 20.0f;
-    float m_HolsterYawSmoothingSeconds = 0.25f;
+    float m_HolsterYawFollowSpeed = 20.0f;
     float m_HolsterHeightScale = 1.0f;
     float m_HolsterHighlightBrightness = 1.6f;
     float m_HolsterHoverHapticAmplitude = 0.4f;

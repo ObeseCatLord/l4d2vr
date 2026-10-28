@@ -1322,6 +1322,10 @@ public:
 	// Reload hints that glow: 1 the gun's magazine (empty), 2 the bolt / slide /
 	// pump (needs cycling), 4 the spare magazine to grab next.
 	std::atomic<uint32_t> m_ReloadHintMask{ 0u };
+	std::atomic<bool> m_ReloadSpareNear{ false };  // empty off hand within reach of the spare (8 in the mask)
+	static constexpr float kReloadPouchHighlightMeters = 0.35f;  // Pavlov PouchHighlightThreshold
+	// Pavlov-derived per-weapon pull / chamber / insert tuning (vr_reload_tuning.h).
+	bool m_ReloadPavlovTuning = true;
 	// Ejected magazines that fall to the floor (rendered with the viewmodel's clip subtree).
 	bool m_MagazineDropEnabled = true;
 	float m_MagazineDropLifetimeSeconds = 8.0f;
@@ -2270,7 +2274,7 @@ public:
 	float m_MagazineInteractionGrabPaddingMeters = 0.12f;
 	float m_MagazineInteractionPullTriggerMeters = 0.08f;
 	float m_MagazineInteractionPullTriggerByMagazineMeters = 0.025f;
-	float m_MagazineInteractionFreshMagazineGrabRangeMeters = 0.18f;
+	float m_MagazineInteractionFreshMagazineGrabRangeMeters = 0.20f;
 	Vector m_MagazineInteractionFreshMagazinePickupOffsetMeters = { 0.45f, -0.28f, 0.25f };
 	Vector m_MagazineInteractionFreshMagazineBoxHalfExtentsMeters = { 0.055f, 0.045f, 0.12f };
 	Vector m_MagazineInteractionFreshMagazineSocketLocalOffsetMeters = { -0.12f, 0.0f, 0.0f };
@@ -2287,8 +2291,8 @@ public:
 	std::string m_MagazineInteractionMagazineBoxLocalRotationOffsetDegOverridesSpec;
 	std::unordered_map<int, Vector> m_MagazineInteractionMagazineBoxLocalRotationOffsetDegOverrides;
 	std::unordered_map<std::string, Vector> m_MagazineInteractionMagazineBoxLocalRotationOffsetDegProfileOverrides;
-	float m_MagazineInteractionSocketCaptureRadiusMeters = 0.06f;
-	float m_MagazineInteractionSocketCaptureAngleDeg = 35.0f;
+	float m_MagazineInteractionSocketCaptureRadiusMeters = 0.10f;
+	float m_MagazineInteractionSocketCaptureAngleDeg = 45.0f;
 	float m_MagazineInteractionSocketRequiredDepthMeters = 0.04f;
 	std::string m_MagazineInteractionSocketRequiredDepthMetersOverridesSpec;
 	std::unordered_map<int, float> m_MagazineInteractionSocketRequiredDepthMetersOverrides;

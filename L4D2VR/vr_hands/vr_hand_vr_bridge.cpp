@@ -1,4 +1,5 @@
 #include "vr.h"
+#include "vr_reload_tuning.h"
 
 #include "game.h"
 #include "hooks.h"
@@ -1353,6 +1354,14 @@ namespace
         return value;
     }
 
+    // Built-in Pavlov tuning for the active weapon (ReloadPavlovTuning); the
+    // player's own per-weapon overrides still win.
+    bool MagazineInteractionPavlovTuning(const VR* vr, l4d2vr_reload_tuning::Tuning& out)
+    {
+        return vr && vr->m_ReloadPavlovTuning &&
+            l4d2vr_reload_tuning::ForWeapon(MagazineInteractionResolveWeaponIdForConfig(vr), out);
+    }
+
     float MagazineInteractionResolveSocketCaptureAngleDeg(const VR* vr)
     {
         if (!vr)
@@ -1373,6 +1382,11 @@ namespace
             return 0.04f;
 
         float value = vr->m_MagazineInteractionSocketRequiredDepthMeters;
+        {
+            l4d2vr_reload_tuning::Tuning tuning{};
+            if (MagazineInteractionPavlovTuning(vr, tuning))
+                value = tuning.insertDepthMeters;
+        }
         MagazineInteractionFindProfileOrWeaponOverride(
             vr,
             vr->m_MagazineInteractionSocketRequiredDepthMetersProfileOverrides,
@@ -1514,6 +1528,11 @@ namespace
             return 0.055f;
 
         float value = vr->m_MagazineInteractionBoltPullDistanceMeters;
+        {
+            l4d2vr_reload_tuning::Tuning tuning{};
+            if (MagazineInteractionPavlovTuning(vr, tuning))
+                value = tuning.pullMeters;
+        }
         MagazineInteractionFindProfileOrWeaponOverride(
             vr,
             vr->m_MagazineInteractionBoltPullDistanceMetersProfileOverrides,
@@ -1531,6 +1550,11 @@ namespace
             return 0.018f;
 
         float value = vr->m_MagazineInteractionBoltReturnDistanceMeters;
+        {
+            l4d2vr_reload_tuning::Tuning tuning{};
+            if (MagazineInteractionPavlovTuning(vr, tuning))
+                value = tuning.returnMeters;
+        }
         MagazineInteractionFindProfileOrWeaponOverride(
             vr,
             vr->m_MagazineInteractionBoltReturnDistanceMetersProfileOverrides,
@@ -5421,7 +5445,15 @@ bool VR::UpdateMagazineInteraction(
                 m_ManualPumpBlockingFire.load(std::memory_order_acquire)))
             hint |= 2u;
         if (m_MagazineEmptyGlowEnabled && m_MagazineInteractionState == MagazineInteractionManualState::WaitingForFreshMagazine)
+        {
             hint |= 4u;
+            if (m_ReloadSpareNear.load(std::memory_order_acquire))
+                hint |= 8u;
+        }
+        else
+        {
+            m_ReloadSpareNear.store(false, std::memory_order_release);
+        }
         m_ReloadHintMask.store(hint, std::memory_order_release);
     }
     const bool supportLeft = MagazineReloadSupportIsLeft();
@@ -5875,9 +5907,21 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionBoltPullAxisWorld = axis;
 
         const Vector restOrigin = MagazineInteractionMatrixOrigin(m_MagazineInteractionBoltRestWorld);
+        // Hand travel maps onto the slide's own travel (Pavlov style): a long
+        // pull never drags the slide off the gun.
+        float visualPull = m_MagazineInteractionBoltPullDistance;
+        {
+            l4d2vr_reload_tuning::Tuning tuning{};
+            if (maxPull > 0.001f && MagazineInteractionPavlovTuning(this, tuning))
+            {
+                const float visualTravel = tuning.visualTravelMeters * m_VRScale;
+                if (visualTravel > 0.0f && visualTravel < maxPull)
+                    visualPull *= visualTravel / maxPull;
+            }
+        }
         m_MagazineInteractionBoltWorld = MagazineInteractionMatrixWithOrigin(
             m_MagazineInteractionBoltRestWorld,
-            restOrigin + axis * m_MagazineInteractionBoltPullDistance);
+            restOrigin + axis * visualPull);
     };
 
     auto getFreshBoltBoxForActiveViewmodel = [&](MagazineInteractionBoxSnapshot& box) -> bool
@@ -8064,6 +8108,14 @@ bool VR::UpdateMagazineInteraction(
                 0.012f,
                 150.0f,
                 0.22f);
+        }
+        {
+            // Pavlov's pouch highlight: within 35 cm of the empty off hand the
+            // spare glows brighter, with a tick when it lights up.
+            const bool spareInReach = hasPickupBox && freshGrabDistance <= kReloadPouchHighlightMeters * m_VRScale;
+            if (spareInReach && !m_ReloadSpareNear.load(std::memory_order_relaxed))
+                TriggerPhysicalHandHapticPulse(true, 0.03f, 140.0f, 0.3f, 1);
+            m_ReloadSpareNear.store(spareInReach, std::memory_order_release);
         }
 
         const bool quickFreshAutoGrab =

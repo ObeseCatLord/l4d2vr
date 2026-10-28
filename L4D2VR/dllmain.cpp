@@ -3031,6 +3031,10 @@ namespace
         // Holster pulses you can actually feel.
         { "2026-10-28_holster_hover_haptic", "HolsterHoverHapticAmplitude", "0.4" },
         { "2026-10-28_holster_grab_haptic", "HolsterGrabHapticAmplitude", "0.6" },
+        // Pavlov-sized reach for the spare magazine and a forgiving magazine well.
+        { "2026-10-28_pavlov_fresh_magazine_reach", "MagazineInteractionFreshMagazineGrabRangeMeters", "0.20" },
+        { "2026-10-28_pavlov_socket_capture_radius", "MagazineInteractionSocketCaptureRadiusMeters", "0.10" },
+        { "2026-10-28_pavlov_socket_capture_angle", "MagazineInteractionSocketCaptureAngleDeg", "45" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3200,6 +3204,7 @@ namespace
         sampleKeys.insert("VrHandsTwoHandedStabilizerBeta");
         sampleKeys.insert("HolsterReleaseDrop");
         sampleKeys.insert("GripToggle");
+        sampleKeys.insert("ReloadPavlovTuning");
         sampleKeys.insert("StickJumpCrouch");
         sampleKeys.insert("StickCrouchToggle");
         sampleKeys.insert("MotionOnlyMeleeAndShove");

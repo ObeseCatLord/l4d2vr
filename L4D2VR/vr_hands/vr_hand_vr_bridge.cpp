@@ -4532,12 +4532,11 @@ void VR::UpdateBodyInventoryPose()
     m_BodyInventoryLastUpdate = updateNow;
     if (m_HolsterPavlovLayoutEnabled)
     {
-        // Pavlov-style: the body follows the head yaw smoothly past a dead band,
-        // and stick/snap turns move it immediately.
-        m_BodyInventoryYaw = l4d2vr_holster::SmoothBodyYaw(m_BodyInventoryYaw, m_BodyInventoryPoseValid,
+        // Pavlov: the inventory yaw interpolates toward the head yaw every frame
+        // (speed 20, no dead band); stick/snap turns move it immediately.
+        m_BodyInventoryYaw = l4d2vr_holster::FollowBodyYaw(m_BodyInventoryYaw, m_BodyInventoryPoseValid,
             l4d2vr_holster::HeadYawDegrees(m_HmdForward, m_BodyInventoryYaw),
-            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt,
-            m_HolsterYawDeadbandDeg, m_HolsterYawSmoothingSeconds);
+            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt, m_HolsterYawFollowSpeed);
     }
     else
     {
@@ -4550,6 +4549,13 @@ void VR::UpdateBodyInventoryPose()
     m_BodyInventoryForward = Vector(std::cos(radians), std::sin(radians), 0.0f);
     m_BodyInventoryRight = Vector(m_BodyInventoryForward.y, -m_BodyInventoryForward.x, 0.0f);
     m_BodyInventoryHeadPosAbs = m_HmdPosAbs;
+    m_BodyInventoryHeadForward = m_HmdForward;
+    m_BodyInventoryHeadRight = m_HmdRight;
+    m_BodyInventoryHeadUp = m_HmdUp;
+    // Off hand height above the play-space floor (the tracking origin sits 64
+    // units below the camera anchor), for Pavlov's reach-to-the-floor push.
+    m_BodyInventoryOffHandHeight = (m_VRScale > 0.001f && l4d2vr_interaction::Finite(m_LeftControllerPosAbs))
+        ? (m_LeftControllerPosAbs.z - (m_CameraAnchor.z - 64.0f)) / m_VRScale : -1.0f;
     m_BodyInventoryOrigin = l4d2vr_interaction::BodyOrigin(m_BodyInventoryHeadPosAbs,
         m_BodyInventoryForward, m_BodyInventoryRight, m_InventoryBodyOriginOffset, m_VRScale);
     // Keep the cached head frame as the fallback. A model sample may expire or
@@ -4596,19 +4602,24 @@ bool VR::GetBodyInventoryPose(Vector& origin, Vector& forward, Vector& right) co
 bool VR::GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const
 {
     frame = {};
-    Vector head{};
-    float yaw = 0.0f;
+    Vector head{}, headForward{}, headRight{}, headUp{};
+    float yaw = 0.0f, offHandHeight = -1.0f;
     {
         std::lock_guard<std::mutex> lock(m_BodyInventoryPoseMutex);
         if (!m_BodyInventoryPoseValid)
             return false;
         head = m_BodyInventoryHeadPosAbs;
         yaw = m_BodyInventoryYaw;
+        headForward = m_BodyInventoryHeadForward;
+        headRight = m_BodyInventoryHeadRight;
+        headUp = m_BodyInventoryHeadUp;
+        offHandHeight = m_BodyInventoryOffHandHeight;
     }
     Vector renderHead{};
     if (VR::t_UseRenderFrameSnapshot && MagazineInteractionTryGetRenderSnapshotHmdPosAbs(this, renderHead))
         head = renderHead;
     frame = l4d2vr_holster::MakeFrame(head, yaw, m_LeftHanded, m_VRScale, m_HolsterHeightScale);
+    l4d2vr_holster::ApplyPavlovRoot(frame, m_HolsterLayout, headForward, headRight, headUp, m_LeftHanded, offHandHeight);
     return frame.valid;
 }
 

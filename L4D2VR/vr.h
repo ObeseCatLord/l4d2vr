@@ -41,6 +41,7 @@
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
 #include "vr_overlay_pointer.h"
+#include "vr_wrist_hud_names.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -2672,7 +2673,12 @@ public:
 	uint8_t m_RightAmmoHudPixelsFront = 0;
 	uint8_t m_SpecialInfectedIntentSenseHudPixelsFront = 0;
 	int m_LeftWristHudTexW = 256;
-	int m_LeftWristHudTexH = 128;
+	int m_LeftWristHudTexH = 128; // grows with long teammate names (see LayoutTeamPanel)
+	float m_LeftWristHudExtraHeightMeters = 0.0f;
+	// Teammate name layout, rebuilt only when the displayed names change (measuring uses GDI).
+	l4d2vr_wrist_hud::TeamPanelLayout m_LeftWristHudTeamLayout{};
+	std::string m_LeftWristHudTeamLayoutKey{};
+	bool m_LeftWristHudTeamLayoutValid = false;
 	int m_RightAmmoHudTexW = 256;
 	int m_RightAmmoHudTexH = 128;
 	int m_SpecialInfectedIntentSenseHudTexW = 512;

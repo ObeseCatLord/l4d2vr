@@ -2290,16 +2290,21 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             return rel;
         };
 
+    // Shift an overlay down its own Y axis by half of the height it gained, so its top edge stays put.
+    auto keepTopEdge = [](vr::HmdMatrix34_t& rel, float extraHeightMeters)
+        {
+            if (!(extraHeightMeters > 0.0f))
+                return;
+            const float half = extraHeightMeters * 0.5f;
+            for (int r = 0; r < 3; ++r)
+                rel.m[r][3] -= rel.m[r][1] * half;
+        };
+
     const bool canShowLeft = m_LeftWristHudEnabled && m_LeftWristHudHandle != vr::k_ulOverlayHandleInvalid && (worldQuad || m_MouseModeEnabled || offHandIndex != vr::k_unTrackedDeviceIndexInvalid);
     if (canShowLeft)
     {
         const unsigned char bgA = (unsigned char)std::round((std::max)(0.0f, (std::min)(1.0f, m_LeftWristHudBgAlpha)) * 255.0f);
 
-        if ((!worldQuad || worldQuadAttachControllers) && !m_MouseModeEnabled && offHandIndex != vr::k_unTrackedDeviceIndexInvalid)
-        {
-            vr::HmdMatrix34_t rel = buildRel(m_LeftWristHudXOffset, m_LeftWristHudYOffset, m_LeftWristHudZOffset, m_LeftWristHudAngleOffset);
-            L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, offHandIndex, &rel, __LINE__);
-        }
         vr::VROverlay()->SetOverlayWidthInMeters(m_LeftWristHudHandle, (std::max)(0.01f, m_LeftWristHudWidthMeters));
         // Texel aspect is per-texel pixel aspect, not texture aspect ratio. Our pixels are square.
         vr::VROverlay()->SetOverlayTexelAspect(m_LeftWristHudHandle, 1.0f);
@@ -2321,7 +2326,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
         int aimTargetIdx = -1;
         int aimTargetPct = 0;
-        char aimTargetName[64] = { 0 };
+        char aimTargetName[128] = { 0 };
         const bool hasAimTarget = GetAimTeammateHudInfo(aimTargetIdx, aimTargetPct, aimTargetName, sizeof(aimTargetName));
         auto getItemSlotWeaponId = [&](int slot) -> int
             {
@@ -2359,7 +2364,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             int entIndex = -1;
             int hp = 0;
             int temp = 0;
-            char name[64] = { 0 };
+            char name[128] = { 0 };
             bool nonAscii = false;
             bool incap = false;
             bool ledge = false;
@@ -2489,6 +2494,55 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         m_LastHudAimTargetNameHash = aimNameHash;
         m_LastHudTeammatesHash = matesHash;
 
+        // Teammate name layout: full names, never truncated. Names shrink to fit beside their
+        // bars first; if any still does not fit, the list moves under the main stats where each
+        // name gets the full width (own line above its bar, wrapping only as a last resort) and
+        // the panel grows taller. Measuring needs GDI, so the layout is cached per name set.
+        l4d2vr_wrist_hud::TeamPanelGeometry teamGeo{};
+        teamGeo.texWidth = m_LeftWristHudTexW;
+        std::vector<std::string> mateNames;
+        mateNames.reserve((size_t)mateCount);
+        std::string teamLayoutKey;
+        if (m_LeftWristHudShowTeammates)
+        {
+            for (int row = 0; row < mateCount; ++row)
+            {
+                std::string name = NormalizeHudTextUtf8(mates[row].name);
+                if (!mates[row].nonAscii)
+                {
+                    for (char& ch : name)
+                        if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                }
+                teamLayoutKey += name;
+                teamLayoutKey += '\n';
+                mateNames.push_back(std::move(name));
+            }
+        }
+        if (!m_LeftWristHudTeamLayoutValid || teamLayoutKey != m_LeftWristHudTeamLayoutKey)
+        {
+            m_LeftWristHudTeamLayout = l4d2vr_wrist_hud::LayoutTeamPanel(mateNames, teamGeo,
+                [](std::string_view text, int fontPx) -> int
+                {
+                    const std::string str(text);
+                    return MeasureTextUtf8GdiPx(str.c_str(), fontPx);
+                });
+            m_LeftWristHudTeamLayoutKey = teamLayoutKey;
+            m_LeftWristHudTeamLayoutValid = true;
+        }
+        const l4d2vr_wrist_hud::TeamPanelLayout& teamLayout = m_LeftWristHudTeamLayout;
+        m_LeftWristHudTexH = teamLayout.texHeight;
+        m_LeftWristHudExtraHeightMeters = l4d2vr_wrist_hud::ExtraPanelHeightMeters(
+            (std::max)(0.01f, m_LeftWristHudWidthMeters), m_LeftWristHudTexW, m_LeftWristHudTexH, teamGeo.baseTexHeight);
+
+        if ((!worldQuad || worldQuadAttachControllers) && !m_MouseModeEnabled && offHandIndex != vr::k_unTrackedDeviceIndexInvalid)
+        {
+            vr::HmdMatrix34_t rel = buildRel(m_LeftWristHudXOffset, m_LeftWristHudYOffset, m_LeftWristHudZOffset, m_LeftWristHudAngleOffset);
+            // A taller panel keeps its top edge (the side toward the hand) where it was and
+            // grows toward the forearm, so it never slides over the hand.
+            keepTopEdge(rel, m_LeftWristHudExtraHeightMeters);
+            L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, offHandIndex, &rel, __LINE__);
+        }
+
         const int w = m_LeftWristHudTexW;
         const int h = m_LeftWristHudTexH;
         const uint8_t backIdx = (uint8_t)(m_LeftWristHudPixelsFront ^ 1);
@@ -2508,6 +2562,8 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             Clear(bg, { 8, 10, 14, bgA });
             DrawCornerBrackets(bg, 2, 2, w - 4, h - 4, { 60, 220, 255, 220 });
             DrawRect(bg, 8, 8, w - 16, h - 16, { 20, 60, 70, bgA }, 1);
+            if (h > teamGeo.baseTexHeight)
+                FillRect(bg, teamGeo.expandedLeft, teamGeo.expandedTop - 6, w - 2 * teamGeo.expandedLeft, 1, { 60, 220, 255, 90 });
         }
 
         // Start from cached background
@@ -2529,62 +2585,55 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         }
         if (hasAimTarget)
         {
-            // Name fitting policy: 12 ASCII chars or 6 CJK chars at full size.
-            // Beyond that: shrink 10% per +2 chars, cap at 40% shrink, then hard-truncate.
-            const int units = Utf8HudUnits(aimTargetName);
-            const float scale = HudNameScaleForUnits(units, 12);
-            const std::string nameFit = (units > 20) ? Utf8TruncateHudUnits(aimTargetName, 20) : std::string(aimTargetName);
+            // Full name, never truncated: shrink from 16px to 10px, then wrap below.
+            // Size is picked for a 100% readout so it does not jump as the percentage changes.
+            const std::string aimName = NormalizeHudTextUtf8(aimTargetName);
+            const std::string tgtText = aimName + ":" + std::to_string(aimTargetPct) + "%";
+            auto measure = [](std::string_view text, int fontPx) -> int
+                {
+                    const std::string str(text);
+                    return MeasureTextUtf8GdiPx(str.c_str(), fontPx);
+                };
 
-            char tgtBuf[128];
-            std::snprintf(tgtBuf, sizeof(tgtBuf), "%s:%d%%", nameFit.c_str(), aimTargetPct);
+            // Stay clear of a third compact teammate row, which shares this band on the right.
+            const int aimX = 18;
+            const int aimW = (!teamLayout.expanded && teamLayout.rows.size() >= 3)
+                ? (teamGeo.compactNameX - aimX - teamGeo.nameBarGap)
+                : (w - aimX - 18);
+            const l4d2vr_wrist_hud::NameFitLimits aimLimits{ aimW, aimW, 16, 10 };
+            const l4d2vr_wrist_hud::NameFit aimFit = l4d2vr_wrist_hud::FitName(aimName + ":100%", aimLimits, measure);
+            std::vector<std::string> aimLines;
+            if (aimFit.mode == l4d2vr_wrist_hud::NameMode::Inline)
+                aimLines.push_back(tgtText);
+            else
+                aimLines = l4d2vr_wrist_hud::WrapUtf8(tgtText, aimW, aimFit.fontPx, measure);
 
-            const int basePx = 16;
-            int fontPx = (int)std::round((float)basePx * scale);
-            fontPx = (std::max)(10, (std::min)(basePx, fontPx));
-
-            // Always use the GDI path here so ASCII and Unicode names both obey the shrink/truncate policy.
-            DrawTextUtf8OutlinedGdiClippedEx(s, 18, 64, 220, tgtBuf, fontPx, { 240, 240, 240, 255 }, false);
+            for (size_t li = 0; li < aimLines.size(); ++li)
+            {
+                const int lineY = 64 + (int)li * (aimFit.fontPx + 1);
+                DrawTextUtf8OutlinedGdiClippedEx(s, aimX, lineY, aimW, aimLines[li].c_str(), aimFit.fontPx, { 240, 240, 240, 255 }, false);
+            }
         }
 
         if (m_LeftWristHudShowTeammates && mateCount > 0)
         {
-            for (int row = 0; row < mateCount; ++row)
+            const int layoutRows = (std::min)(mateCount, (int)teamLayout.rows.size());
+            for (int row = 0; row < layoutRows; ++row)
             {
                 const TeammateRow& tr = mates[row];
+                const l4d2vr_wrist_hud::TeamRowLayout& rl = teamLayout.rows[(size_t)row];
 
-                // Layout: name + bar on the same row (fix: name/bar looked misaligned).
-                const int rowStride = 24;
-                const int barY = 18 + row * rowStride;
+                // Layout comes from LayoutTeamPanel: bars share one column; names are full length.
+                const int barY = rl.barY;
+                const int barW = teamGeo.barW;
+                const int barH = teamGeo.barH;
+                const int barX = rl.barX;
 
-                const int barW = 62;
-                const int barH = 10;
-                const int barX = w - 10 - barW;
-
-                const int nameX = 124;
-                const int nameW = (std::max)(16, barX - nameX - 6);
+                // Teammate names: always use outlined GDI text (clearer than the 5x7 bitmap font).
+                for (size_t li = 0; li < rl.fit.lines.size(); ++li)
                 {
-                    // Teammate names: always use outlined GDI text (clearer than the 5x7 bitmap font).
-                    // Policy: 12 ASCII chars or 6 CJK chars at full size; longer shrinks then truncates.
-                    std::string asciiUpper;
-                    const char* nameUtf8 = tr.name;
-                    if (!tr.nonAscii)
-                    {
-                        asciiUpper.assign(tr.name);
-                        for (char& ch : asciiUpper)
-                            if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
-                        nameUtf8 = asciiUpper.c_str();
-                    }
-
-                    const int units = Utf8HudUnits(nameUtf8);
-                    const float scale = HudNameScaleForUnits(units, 12);
-                    const std::string nameFit = (units > 20) ? Utf8TruncateHudUnits(nameUtf8, 20) : std::string(nameUtf8);
-
-                    const int basePx = 12;
-                    int fontPx = (int)std::round((float)basePx * scale);
-                    fontPx = (std::max)(9, (std::min)(basePx, fontPx));
-
-                    const int nameY = barY + (barH - fontPx) / 2;
-                    DrawTextUtf8OutlinedGdiClipped(s, nameX, nameY, nameW, nameFit.c_str(), fontPx, { 240, 240, 240, 255 });
+                    DrawTextUtf8OutlinedGdiClippedEx(s, rl.nameX, rl.nameY + (int)li * rl.lineStep, rl.nameMaxW,
+                        rl.fit.lines[li].c_str(), rl.fit.fontPx, { 240, 240, 240, 255 }, false);
                 }
 
                 DrawRect(s, barX, barY, barW, barH, { 60, 60, 60, 190 }, 1);
@@ -3262,6 +3311,7 @@ after_right:
         if (leftVisible)
         {
             vr::HmdMatrix34_t rel = buildRel(xL, y, z, ang);
+            keepTopEdge(rel, m_LeftWristHudExtraHeightMeters);
             L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, parentDev, &rel, __LINE__);
         }
         if (rightVisible)

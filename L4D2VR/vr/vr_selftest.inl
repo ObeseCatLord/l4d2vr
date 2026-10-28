@@ -374,48 +374,121 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
-    if (step == "reload" || step == "shells")
+    if (step == "shells")
     {
-        const bool shells = step == "shells";
-        if (at(0, 0.0f)) { cmd(shells ? "give pumpshotgun" : "give rifle"); }
-        if (at(1, 1.0f)) { cmd(shells ? "use weapon_pumpshotgun" : "use weapon_rifle"); SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f)); }
+        if (at(0, 0.0f)) { cmd("give pumpshotgun"); }
+        if (at(1, 1.0f)) { cmd("use weapon_pumpshotgun"); SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f)); }
         if (at(2, 3.0f)) { button(m_ActionPrimaryAttack, true); }
-        if (at(3, shells ? 3.15f : 3.6f)) { button(m_ActionPrimaryAttack, false); }
+        if (at(3, 3.15f)) { button(m_ActionPrimaryAttack, false); }
         if (at(4, 4.5f))
         {
             int clip = -1, reserve = -1;
-            m_SelfTestValueA = SelfTestAmmoTransaction(player, shells ? 2 : 0, true, clip, reserve);
+            m_SelfTestValueA = SelfTestAmmoTransaction(player, 2, true, clip, reserve);
             m_SelfTestValueB = clip;
             m_SelfTestValueC = reserve;
             Game::logMsg("[VR][SelfTest] before: weapon=%d clip=%d reserve=%d", SelfTestActiveWeaponId(player), clip, reserve);
             if (m_SelfTestValueA < 0)
             {
-                SelfTestReport(shells ? "shell insert transaction" : "magazine eject transaction", false, "request not started");
+                SelfTestReport("shell insert transaction", false, "request not started");
                 return true;
             }
         }
         if (m_SelfTestStage == 5)
         {
             int clip = -1, reserve = -1;
-            const int r = SelfTestAmmoTransaction(player, shells ? 2 : 0, false, clip, reserve);
+            const int r = SelfTestAmmoTransaction(player, 2, false, clip, reserve);
             if (r != 0 || t > 9.0f)
             {
                 std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d", m_SelfTestValueB, clip,
                     m_SelfTestValueC, reserve);
-                if (shells)
-                {
-                    SelfTestReport("shell insert transaction", r == 1 && clip == m_SelfTestValueB + 1, detail);
-                    return true;
-                }
-                SelfTestReport("magazine eject transaction", r == 1 && clip <= 1, detail);
-                if (r != 1)
-                    return true;
-                m_SelfTestValueB = clip;
-                m_SelfTestValueC = reserve;
-                m_SelfTestStage = 6;
+                SelfTestReport("shell insert transaction", r == 1 && clip == m_SelfTestValueB + 1, detail);
+                return true;
             }
         }
-        if (at(6, 0.0f))
+        return false;
+    }
+
+    if (step == "reload")
+    {
+        // Pavlov-style release through the real button path: the first press
+        // ejects once (rounds back to the reserve, one stays chambered), the
+        // second press while the magazine is out does nothing. A fresh
+        // magazine then refills the clip from the reserve.
+        auto ammo = [&](int& clip, int& reserve) { SelfTestAmmoTransaction(player, 3, false, clip, reserve); };
+        if (at(0, 0.0f)) { cmd("give rifle"); button(m_ActionMagazineRelease, false); }
+        if (at(1, 1.0f)) { cmd("use weapon_rifle"); SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f)); }
+        if (at(2, 3.0f)) { button(m_ActionPrimaryAttack, true); }
+        if (at(3, 3.6f)) { button(m_ActionPrimaryAttack, false); }
+        if (at(4, 4.5f))
+        {
+            ammo(m_SelfTestValueB, m_SelfTestValueC);
+            m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
+            m_SelfTestSerialB = m_DroppedMagazineSpawnSerial.load(std::memory_order_acquire);
+            Game::logMsg("[VR][SelfTest] before: weapon=%d clip=%d reserve=%d magProto=%d", SelfTestActiveWeaponId(player),
+                m_SelfTestValueB, m_SelfTestValueC, RemoteMagazineProtocolSupported() ? 1 : 0);
+            button(m_ActionMagazineRelease, true);
+        }
+        if (at(5, 4.7f)) { button(m_ActionMagazineRelease, false); }
+        if (at(6, 5.5f)) { button(m_ActionMagazineRelease, true); }
+        if (at(7, 5.7f)) { button(m_ActionMagazineRelease, false); }
+        if (at(8, 7.0f))
+        {
+            int clip = -1, reserve = -1;
+            ammo(clip, reserve);
+            const uint32_t ejects = m_MagazineEjectSerial.load(std::memory_order_acquire) - m_SelfTestSerial;
+            const uint32_t drops = m_DroppedMagazineSpawnSerial.load(std::memory_order_acquire) - m_SelfTestSerialB;
+            std::snprintf(detail, sizeof(detail), "%u ejection(s), %u dropped magazine(s) for 2 presses; clip %d -> %d",
+                ejects, drops, m_SelfTestValueB, clip);
+            SelfTestReport("magazine release ejects once", ejects == 1u && drops <= 1u &&
+                (drops == 1u || !m_MagazineDropEnabled), detail);
+            if (ejects == 0u)
+            {
+                // No magazine box or session: check the ledger directly instead.
+                Game::logMsg("[VR][SelfTest] release button did not eject; running the eject transaction directly");
+                if (SelfTestAmmoTransaction(player, 0, true, clip, reserve) < 0)
+                {
+                    SelfTestReport("magazine eject transaction", false, "request not started");
+                    return true;
+                }
+                m_SelfTestStage = 9;
+            }
+            else
+            {
+                // Plain servers keep the stock reload, which never loses rounds.
+                if (!RemoteMagazineProtocolSupported())
+                    return true;
+                const int expectedClip = std::min(1, m_SelfTestValueB);
+                const int expectedReserve = m_SelfTestValueC + m_SelfTestValueB - expectedClip;
+                std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d (expected %d, %d)",
+                    m_SelfTestValueB, clip, m_SelfTestValueC, reserve, expectedClip, expectedReserve);
+                SelfTestReport("magazine eject returns rounds to reserve",
+                    clip == expectedClip && reserve == expectedReserve, detail);
+                m_SelfTestValueD = m_SelfTestValueB + m_SelfTestValueC;
+                m_SelfTestValueB = clip;
+                m_SelfTestValueC = reserve;
+                m_SelfTestStage = 10;
+            }
+        }
+        if (m_SelfTestStage == 9)
+        {
+            int clip = -1, reserve = -1;
+            const int r = SelfTestAmmoTransaction(player, 0, false, clip, reserve);
+            if (r != 0 || t > 11.0f)
+            {
+                const int expectedClip = std::min(1, m_SelfTestValueB);
+                std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d", m_SelfTestValueB, clip,
+                    m_SelfTestValueC, reserve);
+                SelfTestReport("magazine eject returns rounds to reserve", r == 1 && clip == expectedClip &&
+                    reserve == m_SelfTestValueC + m_SelfTestValueB - expectedClip, detail);
+                if (r != 1)
+                    return true;
+                m_SelfTestValueD = m_SelfTestValueB + m_SelfTestValueC;
+                m_SelfTestValueB = clip;
+                m_SelfTestValueC = reserve;
+                m_SelfTestStage = 10;
+            }
+        }
+        if (at(10, 0.0f))
         {
             int clip = -1, reserve = -1;
             if (SelfTestAmmoTransaction(player, 1, true, clip, reserve) < 0)
@@ -424,15 +497,18 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
                 return true;
             }
         }
-        if (m_SelfTestStage == 7)
+        if (m_SelfTestStage == 11)
         {
             int clip = -1, reserve = -1;
             const int r = SelfTestAmmoTransaction(player, 1, false, clip, reserve);
-            if (r != 0 || t > 15.0f)
+            if (r != 0 || t > 17.0f)
             {
-                std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d", m_SelfTestValueB, clip,
-                    m_SelfTestValueC, reserve);
-                SelfTestReport("magazine insert transaction", r == 1 && clip > m_SelfTestValueB && reserve < m_SelfTestValueC, detail);
+                // The rifle holds 50; the eject and insert together conserve ammo.
+                std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d, total %d -> %d",
+                    m_SelfTestValueB, clip, m_SelfTestValueC, reserve, m_SelfTestValueD, clip + reserve);
+                SelfTestReport("magazine insert transaction", r == 1 && clip > m_SelfTestValueB &&
+                    reserve < m_SelfTestValueC && (clip == 50 || reserve == 0) &&
+                    clip + reserve == m_SelfTestValueD, detail);
                 return true;
             }
         }

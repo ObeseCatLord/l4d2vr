@@ -84,15 +84,17 @@ int main()
     Request eject{10u, 1u, handle, 200u, 2, 23, 7, Action::Eject};
     int writes = 0;
     auto writer = [&](int clip, int reserve) { ++writes; state.clip = clip; state.reserve = reserve; return true; };
+    // Ejection keeps the chambered round and returns the other 22 rounds to the reserve.
     auto out = server.Apply(eject, state, 1000u, writer);
-    Check(out.status == Status::Applied && state.clip == 1 && state.reserve == 7 && writes == 1);
+    Check(out.status == Status::Applied && state.clip == 1 && state.reserve == 29 && writes == 1);
+    Check(out.clip == 1 && out.reserve == 29);
     Check(server.Apply(eject, state, 1200u, writer).clip == 1 && writes == 1);
     Request altered = eject; altered.action = Action::Insert;
     Check(server.Apply(altered, state, 1300u, writer).status == Status::Stale && writes == 1);
-    // A fresh magazine with only seven reserve rounds is partially loaded.
-    Request insert{10u, 2u, handle, 200u, 2, 1, 7, Action::Insert};
+    // A fresh magazine with only 29 reserve rounds is partially loaded.
+    Request insert{10u, 2u, handle, 200u, 2, 1, 29, Action::Insert};
     out = server.Apply(insert, state, 1400u, writer);
-    Check(out.status == Status::Applied && state.clip == 8 && state.reserve == 0 && writes == 2);
+    Check(out.status == Status::Applied && state.clip == 30 && state.reserve == 0 && writes == 2);
     Check(server.Apply(insert, state, 1600u, writer).status == Status::Applied && writes == 2);
     insert.sequence = 3; insert.clip = state.clip; insert.reserve = state.reserve;
     Check(server.Apply(insert, state, 1700u, writer).status == Status::Weapon && writes == 2);
@@ -101,13 +103,13 @@ int main()
     // are active. A shot spending the retained chamber is real native ammo.
     server.Reset(40u); state = {true, handle, 300u, 2, 20, 2, 50, false};
     eject = {40u, 1u, handle, 300u, 2, 20, 2, Action::Eject};
-    Check(server.Apply(eject, state, 1800u, writer).status == Status::Applied && state.clip == 1);
+    Check(server.Apply(eject, state, 1800u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 21);
     state.clip = 0; // native shot between ejection and insertion
-    insert = {40u, 2u, handle, 300u, 2, 1, 2, Action::Insert};
+    insert = {40u, 2u, handle, 300u, 2, 1, 21, Action::Insert};
     const int beforeShot = writes;
     Check(server.Apply(insert, state, 2000u, writer).status == Status::Stale && writes == beforeShot);
     insert.sequence = 3; insert.clip = 0;
-    Check(server.Apply(insert, state, 2200u, writer).status == Status::Applied && state.clip == 2 && state.reserve == 0);
+    Check(server.Apply(insert, state, 2200u, writer).status == Status::Applied && state.clip == 21 && state.reserve == 0);
 
     // An empty gun keeps no chambered round. Infinite ammo comes from the host,
     // not from the weapon ID or a client-controlled request flag.
@@ -123,9 +125,9 @@ int main()
     // A reloadable rifle with a custom script capacity uses its native limit.
     server.Reset(12u); state = {true, handle, 200u, 5, 120, 149, 150, false};
     eject = {12u, 1u, handle, 200u, 5, 120, 149, Action::Eject};
-    Check(server.Apply(eject, state, 3000u, writer).status == Status::Applied);
-    insert = {12u, 2u, handle, 200u, 5, 1, 149, Action::Insert};
-    Check(server.Apply(insert, state, 3200u, writer).status == Status::Applied && state.clip == 150 && state.reserve == 0);
+    Check(server.Apply(eject, state, 3000u, writer).status == Status::Applied && state.reserve == 268);
+    insert = {12u, 2u, handle, 200u, 5, 1, 268, Action::Insert};
+    Check(server.Apply(insert, state, 3200u, writer).status == Status::Applied && state.clip == 150 && state.reserve == 119);
 
     // Native changes, stale commands, recycled handles and invalid owners
     // cannot be overwritten by an insertion from an earlier physical gesture.
@@ -150,15 +152,16 @@ int main()
     insert.sequence = 8;
     Check(server.Apply(insert, state, 4900u, writer).status == Status::Applied && state.clip == 8 && state.reserve == 7);
 
-    // Leaving and redrawing an ejected weapon can repeat ejection safely.
+    // A repeated ejection (a client that lost its session) returns nothing
+    // more and never mints rounds: only the chamber remains.
     eject.sequence = 9; eject.clip = 8; eject.reserve = 7;
-    Check(server.Apply(eject, state, 5100u, writer).status == Status::Applied && state.clip == 1);
-    eject.sequence = 10; eject.clip = 1;
-    Check(server.Apply(eject, state, 5300u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 7);
-    insert.sequence = 11; insert.clip = 1; insert.reserve = 7;
+    Check(server.Apply(eject, state, 5100u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 14);
+    eject.sequence = 10; eject.clip = 1; eject.reserve = 14;
+    Check(server.Apply(eject, state, 5300u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 14);
+    insert.sequence = 11; insert.clip = 1; insert.reserve = 14;
     Check(server.Apply(insert, state, 5350u, writer).status == Status::RateLimited);
     insert.sequence = 12;
-    Check(server.Apply(insert, state, 5500u, writer).status == Status::Applied && state.clip == 8 && state.reserve == 0);
+    Check(server.Apply(insert, state, 5500u, writer).status == Status::Applied && state.clip == 8 && state.reserve == 7);
 
     // ACK delivery and Source replication can arrive in either order. Neither
     // one alone advances the physical reload to its next phase.
@@ -166,17 +169,26 @@ int main()
     client.Offer(kVersion, 20u);
     Check(client.Begin(handle, 2, 23, 7, Action::Eject, 200u, 100u, 4u, 6000u, request));
     Check(!client.Begin(handle, 2, 23, 7, Action::Eject, 200u, 100u, 4u, 6001u, request));
-    Check(client.Update(handle, 2, 100u, 4u, 6100u, reply, 1, 7) == ClientRequest::Poll::Waiting);
-    Reply ack{request, Status::Applied, 1, 7};
+    Check(client.Update(handle, 2, 100u, 4u, 6100u, reply, 1, 29) == ClientRequest::Poll::Waiting);
+    Reply ack{request, Status::Applied, 1, 29};
     auto wrong = ack; ++wrong.request.sequence; client.Receive(wrong);
-    Check(client.Update(handle, 2, 100u, 4u, 6200u, reply, 1, 7) == ClientRequest::Poll::Waiting);
+    Check(client.Update(handle, 2, 100u, 4u, 6200u, reply, 1, 29) == ClientRequest::Poll::Waiting);
+    // An ejection that loses or mints rounds cannot advance the client.
+    auto lost = ack; lost.reserve = 28; client.Receive(lost);
+    auto minted = ack; minted.clip = 2; client.Receive(minted);
+    Check(client.Update(handle, 2, 100u, 4u, 6250u, reply, 1, 28) == ClientRequest::Poll::Waiting);
     client.Receive(ack);
     Check(client.Update(handle, 2, 100u, 4u, 6300u, reply, 23, 7) == ClientRequest::Poll::Waiting);
-    Check(client.Update(handle, 2, 100u, 4u, 6400u, reply, 1, 7) == ClientRequest::Poll::Result);
-    Check(client.Begin(handle, 2, 1, 7, Action::Insert, 210u, 100u, 4u, 6500u, request));
-    ack = {request, Status::Applied, 8, 0}; client.Receive(ack);
-    Check(client.Update(handle, 2, 100u, 4u, 6600u, reply, 8, 7) == ClientRequest::Poll::Waiting);
-    Check(client.Update(handle, 2, 100u, 4u, 6700u, reply, 8, 0) == ClientRequest::Poll::Result);
+    Check(client.Update(handle, 2, 100u, 4u, 6350u, reply, 1, 7) == ClientRequest::Poll::Waiting);
+    Check(client.Update(handle, 2, 100u, 4u, 6400u, reply, 1, 29) == ClientRequest::Poll::Result);
+    Check(client.Begin(handle, 2, 1, 29, Action::Insert, 210u, 100u, 4u, 6500u, request));
+    ack = {request, Status::Applied, 30, 0}; client.Receive(ack);
+    Check(client.Update(handle, 2, 100u, 4u, 6600u, reply, 30, 29) == ClientRequest::Poll::Waiting);
+    Check(client.Update(handle, 2, 100u, 4u, 6700u, reply, 30, 0) == ClientRequest::Poll::Result);
+    // An infinite-ammo host leaves the reserve unchanged on ejection.
+    Check(client.Begin(handle, 1, 9, 0, Action::Eject, 210u, 100u, 4u, 6750u, request));
+    ack = {request, Status::Applied, 1, 0}; client.Receive(ack);
+    Check(client.Update(handle, 1, 100u, 4u, 6760u, reply, 1, 0) == ClientRequest::Poll::Result);
     // Invalid transfers cannot advance the client. Infinite reserve remains
     // unchanged only when the host's applied result confirms it.
     Check(client.Begin(handle, 1, 0, 0, Action::Insert, 211u, 100u, 4u, 6800u, request));
@@ -212,29 +224,30 @@ int main()
     Check(server.Apply(eject, state, 15200u, writer).status == Status::Applied);
     insert.sequence = 20u;
     Check(server.Apply(insert, state, 15400u, writer).status == Status::Applied && state.clip == 10 && state.reserve == 0);
-    // Catch and reinsert uses the actual removed rounds, never reserve ammo.
+    // Catch and reinsert takes the removed rounds back out of the reserve,
+    // never more than the old magazine held.
     server.Reset(50u); state = {true, handle, 400u, 2, 18, 7, 50, false};
     eject = {50u, 1u, handle, 400u, 2, 18, 7, Action::Eject};
-    Check(server.Apply(eject, state, 16000u, writer).status == Status::Applied && state.clip == 1);
-    insert = {50u, 2u, handle, 400u, 2, 1, 7, Action::Reinsert};
+    Check(server.Apply(eject, state, 16000u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 24);
+    insert = {50u, 2u, handle, 400u, 2, 1, 24, Action::Reinsert};
     const int beforeReuse = writes;
     Check(server.Apply(insert, state, 16200u, writer).status == Status::Applied && state.clip == 18 && state.reserve == 7);
     Check(server.Apply(insert, state, 16400u, writer).status == Status::Applied && writes == beforeReuse + 1);
-    insert.sequence = 3u; insert.clip = 18;
+    insert.sequence = 3u; insert.clip = 18; insert.reserve = 7;
     Check(server.Apply(insert, state, 16600u, writer).status == Status::Weapon);
     // Spending the retained chamber does not refill it from the old magazine.
     eject.sequence = 4u; eject.clip = 18;
     Check(server.Apply(eject, state, 16800u, writer).status == Status::Applied);
     state.clip = 0;
-    insert = {50u, 5u, handle, 400u, 2, 0, 7, Action::Reinsert};
+    insert = {50u, 5u, handle, 400u, 2, 0, 24, Action::Reinsert};
     Check(server.Apply(insert, state, 17000u, writer).status == Status::Applied && state.clip == 17 && state.reserve == 7);
     // A changed script cannot truncate a retained magazine or mint rounds.
     eject.sequence = 6u; eject.clip = 17;
     Check(server.Apply(eject, state, 17200u, writer).status == Status::Applied);
-    state.capacity = 8; insert.sequence = 7u; insert.clip = 1;
+    state.capacity = 8; insert.sequence = 7u; insert.clip = 1; insert.reserve = 23;
     Check(server.Apply(insert, state, 17400u, writer).status == Status::NoSpaceOrAmmo && state.clip == 1);
     state.capacity = 50; insert.sequence = 8u;
-    Check(server.Apply(insert, state, 17600u, writer).status == Status::Applied && state.clip == 17);
+    Check(server.Apply(insert, state, 17600u, writer).status == Status::Applied && state.clip == 17 && state.reserve == 7);
     // Infinite ammo does not replace a partially used retained magazine.
     server.Reset(51u); state = {true, handle, 400u, 1, 4, 0, 15, true};
     eject = {51u, 1u, handle, 400u, 1, 4, 0, Action::Eject};
@@ -259,29 +272,44 @@ int main()
     Check(client.Begin(handle, 1, 0, 0, Action::Reinsert, 401u, 100u, 10u, 19400u, request));
     ack = {request, Status::Applied, 0, 0}; client.Receive(ack);
     Check(client.Update(handle, 1, 100u, 10u, 19500u, reply, 0, 0) == ClientRequest::Poll::Result);
+    // A finite reinsertion draws exactly the rounds it adds from the reserve.
+    Check(client.Begin(handle, 2, 1, 24, Action::Reinsert, 402u, 100u, 10u, 19600u, request));
+    ack = {request, Status::Applied, 18, 8}; client.Receive(ack);
+    Check(client.Update(handle, 2, 100u, 10u, 19700u, reply, 18, 8) == ClientRequest::Poll::Waiting);
+    ack.reserve = 7; client.Receive(ack);
+    Check(client.Update(handle, 2, 100u, 10u, 19800u, reply, 18, 7) == ClientRequest::Poll::Result);
     // Fresh replacement discards the old catch; it cannot be reused afterward.
     server.Reset(53u); state = {true, handle, 400u, 2, 18, 7, 50, false};
     eject = {53u, 1u, handle, 400u, 2, 18, 7, Action::Eject};
     Check(server.Apply(eject, state, 20000u, writer).status == Status::Applied);
-    insert = {53u, 2u, handle, 400u, 2, 1, 7, Action::Insert};
-    Check(server.Apply(insert, state, 20200u, writer).status == Status::Applied && state.clip == 8);
-    insert = {53u, 3u, handle, 400u, 2, 8, 0, Action::Reinsert};
+    insert = {53u, 2u, handle, 400u, 2, 1, 24, Action::Insert};
+    Check(server.Apply(insert, state, 20200u, writer).status == Status::Applied && state.clip == 25 && state.reserve == 0);
+    insert = {53u, 3u, handle, 400u, 2, 25, 0, Action::Reinsert};
     Check(server.Apply(insert, state, 20400u, writer).status == Status::Weapon);
-    // A new ejection gesture after cancellation cannot recreate the old item.
+    // A new ejection gesture after cancellation cannot recreate the old item;
+    // its rounds are already back in the reserve.
     server.Reset(54u); state = {true, handle, 400u, 2, 18, 7, 50, false};
     eject = {54u, 1u, handle, 400u, 2, 18, 7, Action::Eject};
-    Check(server.Apply(eject, state, 20600u, writer).status == Status::Applied);
-    eject.sequence = 2u; eject.clip = 1;
-    Check(server.Apply(eject, state, 20800u, writer).status == Status::Applied);
-    insert = {54u, 3u, handle, 400u, 2, 1, 7, Action::Reinsert};
-    Check(server.Apply(insert, state, 21000u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 7);
+    Check(server.Apply(eject, state, 20600u, writer).status == Status::Applied && state.reserve == 24);
+    eject.sequence = 2u; eject.clip = 1; eject.reserve = 24;
+    Check(server.Apply(eject, state, 20800u, writer).status == Status::Applied && state.reserve == 24);
+    insert = {54u, 3u, handle, 400u, 2, 1, 24, Action::Reinsert};
+    Check(server.Apply(insert, state, 21000u, writer).status == Status::Applied && state.clip == 1 && state.reserve == 24);
     // Failed native insertion keeps the retained item available for a retry.
     server.Reset(55u); state = {true, handle, 400u, 2, 12, 3, 50, false};
     eject = {55u, 1u, handle, 400u, 2, 12, 3, Action::Eject};
-    Check(server.Apply(eject, state, 21200u, writer).status == Status::Applied);
-    insert = {55u, 2u, handle, 400u, 2, 1, 3, Action::Reinsert};
+    Check(server.Apply(eject, state, 21200u, writer).status == Status::Applied && state.reserve == 14);
+    insert = {55u, 2u, handle, 400u, 2, 1, 14, Action::Reinsert};
     Check(server.Apply(insert, state, 21400u, [](int, int) { return false; }).status == Status::Backend);
     insert.sequence = 3u;
     Check(server.Apply(insert, state, 21600u, writer).status == Status::Applied && state.clip == 12 && state.reserve == 3);
+    // The returned rounds stay within the protocol's reserve bound.
+    Check(ClipAfterEject(-1) == 0 && ClipAfterEject(0) == 0 && ClipAfterEject(30) == 1);
+    Check(ReserveAfterEject(30, 10, false) == 39 && ReserveAfterEject(30, 10, true) == 10);
+    Check(ReserveAfterEject(0, 10, false) == 10 && ReserveAfterEject(1, 10, false) == 10);
+    server.Reset(56u); state = {true, handle, 400u, 2, 50, 4990, 50, false};
+    eject = {56u, 1u, handle, 400u, 2, 50, 4990, Action::Eject};
+    Check(server.Apply(eject, state, 22000u, writer).status == Status::Applied && state.clip == 1 &&
+        state.reserve == kMaxReserve);
     std::puts("Remote magazine regression checks passed");
 }

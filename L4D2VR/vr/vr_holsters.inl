@@ -151,23 +151,27 @@ void VR::LogHolsterGripPress(bool leftHand, const l4d2vr_holster::BodyFrame* fra
     }
     const Vector local = l4d2vr_holster::ToLocal(*frame, hand);
     int nearest = -1;
-    float nearestDistance = 1.0e9f;
+    float nearestDistance = 1.0e9f, nearestMargin = 1.0e9f;
     for (int i = 0; i < l4d2vr_holster::kZoneCount; ++i)
     {
-        const float d = l4d2vr_holster::ZoneDistance(m_HolsterLayout, i, local);
-        if (d < nearestDistance)
+        const auto zoneId = static_cast<l4d2vr_holster::Zone>(i);
+        float d = 0.0f;
+        l4d2vr_holster::HandFitsZone(*frame, m_HolsterLayout, zoneId, hand, d);
+        const float margin = d - l4d2vr_holster::ZoneReachMeters(m_HolsterLayout, zoneId);
+        if (margin < nearestMargin)
         {
+            nearestMargin = margin;
             nearestDistance = d;
             nearest = i;
         }
     }
-    float gatedDistance = 0.0f;
-    const bool gated = nearest >= 0 && m_HolsterLayout.overShoulder[nearest] && nearestDistance <= m_HolsterLayout.radius[nearest] &&
-        !l4d2vr_holster::HandFitsZone(*frame, m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(nearest), hand, gatedDistance);
     const float frameYaw = std::atan2(frame->forward.y, frame->forward.x) * 180.0f / l4d2vr_holster::kPi;
     const float pitch = std::asin(std::clamp(m_HmdForward.z, -1.0f, 1.0f)) * 180.0f / l4d2vr_holster::kPi;
-    Game::logMsg("[VR][Holster] grip pressed (%s): ready=%d zone=%d hand=(fwd %+.2f, dom %+.2f, up %+.2f) m nearest=slot%d %.2f m from its zone (radius %.2f)%s frameYaw=%.0f headYaw=%.0f (off %+.0f) pitch=%.0f active=slot%d",
+    // nearest = the zone the hand came closest to reaching: distance from the
+    // hand centre to its geometry against the reach that counts.
+    Game::logMsg("[VR][Holster] grip pressed (%s): ready=%d zone=%d hand=(fwd %+.2f, dom %+.2f, up %+.2f) m from the head, nearest=slot%d %.2f m (reach %.2f) frameYaw=%.0f headYaw=%.0f (off %+.0f) pitch=%.0f active=slot%d",
         leftHand ? "left" : "right", ready ? 1 : 0, zone, local.x, local.y, local.z, nearest + 1, nearestDistance,
-        nearest >= 0 ? m_HolsterLayout.radius[nearest] : 0.0f, gated ? " shoulder-gated" : "", frameYaw,
+        nearest >= 0 ? l4d2vr_holster::ZoneReachMeters(m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(nearest)) : 0.0f,
+        frameYaw,
         m_BodyInventoryHeadYaw, l4d2vr_interaction::WrapYaw(m_BodyInventoryHeadYaw - frameYaw), pitch, activeSlot + 1);
 }

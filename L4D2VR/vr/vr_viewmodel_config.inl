@@ -2943,6 +2943,15 @@ void VR::ParseConfigFile()
         const Vector ang = getVector3("RightAmmoHudAngleOffset", def);
         m_RightAmmoHudAngleOffset = { ang.x, ang.y, ang.z };
     }
+    {
+        // WristHudStyle=native (game HUD crops) or custom (drawn panels).
+        std::string style = getString("WristHudStyle", m_WristHudNativeStyle ? "native" : "custom");
+        std::transform(style.begin(), style.end(), style.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        m_WristHudNativeStyle = style != "custom";
+    }
+    m_WristHudNativeHideOnFloatingHud = getBool("WristHudNativeHideOnFloatingHud", m_WristHudNativeHideOnFloatingHud);
+    m_LeftWristHudNativeWidthMeters = std::clamp(getFloat("LeftWristHudNativeWidthMeters", m_LeftWristHudNativeWidthMeters), 0.02f, 0.5f);
+    m_RightAmmoHudNativeWidthMeters = std::clamp(getFloat("RightAmmoHudNativeWidthMeters", m_RightAmmoHudNativeWidthMeters), 0.02f, 0.5f);
 
 
     // Hand HUD: world-quad mode (HMD-relative overlays using GPU textures)
@@ -3253,29 +3262,11 @@ void VR::ParseConfigFile()
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
-    m_HolsterYawDeadbandDeg = std::clamp(getFloat("HolsterYawDeadbandDeg", 20.0f), 0.0f, 90.0f);
-    m_HolsterYawSmoothingSeconds = std::clamp(getFloat("HolsterYawSmoothingSeconds", 0.25f), 0.0f, 3.0f);
+    // Pavlov's inventory follows the head yaw at interpolation speed 20.
+    m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 20.0f), 1.0f, 60.0f);
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
     m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
     m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);
-    {
-        static const char* kZoneKeys[l4d2vr_holster::kZoneCount] = {
-            "HolsterPrimaryOffsetMeters", "HolsterSecondaryOffsetMeters", "HolsterThrowableOffsetMeters",
-            "HolsterMedicalOffsetMeters", "HolsterConsumableOffsetMeters" };
-        static const char* kRadiusKeys[l4d2vr_holster::kZoneCount] = {
-            "HolsterPrimaryRadiusMeters", "HolsterSecondaryRadiusMeters", "HolsterThrowableRadiusMeters",
-            "HolsterMedicalRadiusMeters", "HolsterConsumableRadiusMeters" };
-        const l4d2vr_holster::Layout defaults{};
-        for (int zone = 0; zone < l4d2vr_holster::kZoneCount; ++zone)
-        {
-            m_HolsterLayout.center[zone] = getVector3(kZoneKeys[zone], defaults.center[zone]);
-            // Moving a holster moves its drawn item with it (back items keep
-            // hanging behind the zone by the default amount).
-            m_HolsterLayout.drawCenter[zone] = defaults.drawCenter[zone] +
-                (m_HolsterLayout.center[zone] - defaults.center[zone]);
-            m_HolsterLayout.radius[zone] = std::clamp(getFloat(kRadiusKeys[zone], defaults.radius[zone]), 0.04f, 0.5f);
-        }
-    }
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);
     m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", true);
     m_DualPistolsAkimboOnAnyServer = getBool("DualPistolsAkimboOnAnyServer", true);

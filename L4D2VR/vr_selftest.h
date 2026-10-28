@@ -180,6 +180,7 @@ namespace l4d2vr_selftest
         inline Vec3 OverRightShoulder() { return V(-0.10f, 0.15f, -0.05f); }
         inline Vec3 RightChest() { return V(0.10f, 0.12f, -0.35f); }
         inline Vec3 LeftChest() { return V(0.10f, -0.12f, -0.35f); }
+        inline Vec3 CentreChest() { return V(0.12f, 0.0f, -0.40f); }      // sternum / belly pouch
         inline Vec3 OverLeftShoulder() { return V(-0.10f, -0.15f, -0.05f); }
         inline Vec3 LeftHip() { return V(-0.05f, -0.22f, -0.80f); }
         inline Vec3 Push() { return V(0.70f, 0.15f, -0.30f); }               // gun bash end point

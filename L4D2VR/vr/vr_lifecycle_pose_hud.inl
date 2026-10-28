@@ -1565,6 +1565,11 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
     const bool worldQuad = m_HandHudWorldQuadEnabled;
     const bool worldQuadAttachControllers = worldQuad && m_HandHudWorldQuadAttachToControllers && !m_MouseModeEnabled;
+    // Native wrist HUD (crops of the game's HUD) needs the GPU texture path.
+    const bool nativeWristHud = m_WristHudNativeStyle && worldQuad && g_D3DVR9;
+    m_NativeWristHudWanted.store(false, std::memory_order_release);
+    m_NativeWristHudShown[0].store(false, std::memory_order_release);
+    m_NativeWristHudShown[1].store(false, std::memory_order_release);
 
     auto SafeReleaseD3D = [](auto*& p)
         {
@@ -2300,8 +2305,75 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 rel.m[r][3] -= rel.m[r][1] * half;
         };
 
+    // Native style: show the wrist's crop of the game HUD (vr_native_wrist_hud.inl). The
+    // texture is written on the D3D thread after VGUI paints the HUD; the part in use is
+    // selected with texture bounds so the quad keeps the crop's aspect.
+    auto showNativeWristHud = [&](int side) -> bool
+        {
+            const bool left = side == 0;
+            const vr::VROverlayHandle_t handle = left ? m_LeftWristHudHandle : m_RightAmmoHudHandle;
+            const vr::TrackedDeviceIndex_t device = left ? offHandIndex : gunHandIndex;
+            m_NativeWristHudWanted.store(true, std::memory_order_release);
+            if (!m_NativeWristHudTexReady[side].load(std::memory_order_acquire))
+                return false;
+            const uint64_t contentMs = m_NativeWristHudContentMs[side].load(std::memory_order_acquire);
+            if (contentMs == 0 || GetTickCount64() - contentMs > 1000u)
+                return false;
+            const uint32_t used = m_NativeWristHudUsedSize[side].load(std::memory_order_acquire);
+            const int usedW = (int)(used >> 16);
+            const int usedH = (int)(used & 0xFFFFu);
+            const int texW = left ? l4d2vr_native_wrist_hud::kLeftTexW : l4d2vr_native_wrist_hud::kRightTexW;
+            const int texH = left ? l4d2vr_native_wrist_hud::kLeftTexH : l4d2vr_native_wrist_hud::kRightTexH;
+            if (usedW <= 0 || usedH <= 0 || !pendingTextureBinds)
+                return false;
+
+            const float widthMeters = (std::max)(0.01f, left ? m_LeftWristHudNativeWidthMeters : m_RightAmmoHudNativeWidthMeters);
+            const float heightMeters = widthMeters * (float)usedH / (float)usedW;
+            // Grow away from the hand: keep the top edge where a custom panel (2:1) would have it.
+            const float extraHeight = (std::max)(0.0f, heightMeters - widthMeters * 0.5f);
+            if (left)
+                m_LeftWristHudExtraHeightMeters = extraHeight;
+
+            vr::IVROverlay* ov = vr::VROverlay();
+            if (!ov)
+                return false;
+            ov->SetOverlayWidthInMeters(handle, widthMeters);
+            ov->SetOverlayTexelAspect(handle, 1.0f);
+            ov->SetOverlayAlpha(handle, 1.0f);
+            if (left)
+                L4D2VRSetOverlayCurvature(ov, handle, worldQuadAttachControllers ? m_LeftWristHudCurvature : 0.0f);
+            if ((!worldQuad || worldQuadAttachControllers) && !m_MouseModeEnabled && device != vr::k_unTrackedDeviceIndexInvalid)
+            {
+                vr::HmdMatrix34_t rel = left
+                    ? buildRel(m_LeftWristHudXOffset, m_LeftWristHudYOffset, m_LeftWristHudZOffset, m_LeftWristHudAngleOffset)
+                    : buildRel(m_RightAmmoHudXOffset, m_RightAmmoHudYOffset, m_RightAmmoHudZOffset, m_RightAmmoHudAngleOffset);
+                keepTopEdge(rel, extraHeight);
+                L4D2VRSetOverlayTransformTrackedDeviceRelative(handle, device, &rel, __LINE__);
+            }
+            const vr::VRTextureBounds_t bounds{ 0.0f, 0.0f, (float)usedW / (float)texW, (float)usedH / (float)texH };
+            if (ov->SetOverlayTextureBounds(handle, &bounds) != vr::VROverlayError_None)
+                return false;
+            if (!pendingTextureBinds->Stage(handle, &m_VKNativeWristHud[side].m_VRTexture, m_D9NativeWristHudSurface[side], true))
+                return false;
+            const vr::EVROverlayError showErr = ov->ShowOverlay(handle);
+            if (showErr != vr::VROverlayError_None)
+            {
+                if (dbgTick)
+                    Game::logMsg("[VR][WristHUD] %s ShowOverlay failed err=%d", left ? "left" : "right", (int)showErr);
+                return false;
+            }
+            m_NativeWristHudShown[side].store(true, std::memory_order_release);
+            return true;
+        };
+
     const bool canShowLeft = m_LeftWristHudEnabled && m_LeftWristHudHandle != vr::k_ulOverlayHandleInvalid && (worldQuad || m_MouseModeEnabled || offHandIndex != vr::k_unTrackedDeviceIndexInvalid);
-    if (canShowLeft)
+    if (canShowLeft && nativeWristHud)
+    {
+        leftVisible = showNativeWristHud(0);
+        if (!leftVisible)
+            vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+    }
+    else if (canShowLeft)
     {
         const unsigned char bgA = (unsigned char)std::round((std::max)(0.0f, (std::min)(1.0f, m_LeftWristHudBgAlpha)) * 255.0f);
 
@@ -2842,7 +2914,13 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     }
 
     const bool canShowRight = m_RightAmmoHudEnabled && m_RightAmmoHudHandle != vr::k_ulOverlayHandleInvalid && (worldQuad || m_MouseModeEnabled || gunHandIndex != vr::k_unTrackedDeviceIndexInvalid);
-    if (canShowRight)
+    if (canShowRight && nativeWristHud)
+    {
+        rightVisible = showNativeWristHud(1);
+        if (!rightVisible)
+            vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+    }
+    else if (canShowRight)
     {
         const unsigned char bgA = (unsigned char)std::round((std::max)(0.0f, (std::min)(1.0f, m_RightAmmoHudBgAlpha)) * 255.0f);
 

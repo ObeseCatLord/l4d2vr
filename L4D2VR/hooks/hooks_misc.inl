@@ -26405,11 +26405,11 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
             return ctx->GetRenderTarget() == nullptr;
         };
 
-    auto PaintToHudOnce = [&](int paintMode)
+    auto PaintToHudOnce = [&](int paintMode) -> bool
         {
             bool expected = false;
             if (!m_VR->m_HudPaintedThisFrame.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
-                return;
+                return false;
 
             CRefPtr<IMatRenderContext> contextRef;
             if (m_Game && m_Game->m_MaterialSystem)
@@ -26418,7 +26418,7 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
             if (!ctx)
             {
                 m_VR->HandleMissingRenderContext("Hooks::dVGui_Paint");
-                return;
+                return false;
             }
 
             ITexture* hudTexture = nullptr;
@@ -26427,7 +26427,7 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
                 hudTexture = m_VR->m_HUDTexture;
             }
             if (!hudTexture)
-                return;
+                return false;
 
             ITexture* prevTarget = ctx->GetRenderTarget();
             int hudMapW = hudTexture->GetMappingWidth();
@@ -26462,6 +26462,15 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
 
             m_VR->m_RenderedHud.store(true, std::memory_order_release);
             m_VR->MarkQueuedHudFresh();
+
+            // Native wrist HUD: crop the freshly painted HUD for the wrists. Menus and
+            // cursor UI paint over the HUD, so keep the last crops while they are up.
+            // (The headless self-test window always reports a visible cursor.)
+            const bool selfTestCursor = cursorVisible && !isPaused &&
+                l4d2vr_selftest::Get().active.load(std::memory_order_acquire);
+            if (!focusedInGameVgui || selfTestCursor)
+                m_VR->OnNativeHudPainted(ctx);
+            return true;
         };
 
     if (inGame)
@@ -26483,6 +26492,12 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
                 hkVgui_Paint.fOriginal(ecx, fullHudMode);
                 m_VR->m_NativeDesktopHudPainted.store(true, std::memory_order_release);
             }
+        }
+        else if (m_VR->WantsNativeWristHudCapture())
+        {
+            // Native wrist HUD only: paint the HUD into the HUD texture for the wrist
+            // crops. The floating HUD panel and the desktop stay hidden.
+            PaintToHudOnce(BuildFullHudPaintMode(mode));
         }
         else
         {

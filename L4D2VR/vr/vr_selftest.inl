@@ -96,13 +96,31 @@ void VR::ApplySelfTestPoses()
     Vector head = m_HmdPose.TrackedDevicePos;
     const float yaw = m_HmdPose.TrackedDeviceAng.y;
     head.z -= m_SelfTestHeadDrop;
-    m_HmdPose.TrackedDevicePos = head;
     if (m_SelfTestLookActive)
     {
         m_HmdPose.TrackedDeviceAng.x = m_SelfTestLookPitch;
         m_HmdPose.TrackedDeviceAng.z = 0.0f;
     }
+    // Hands are placed from the unswayed head, like a body that stays put while
+    // the head looks and leans around.
     const Vec3 h = SelfTestVec(head.x, head.y, head.z);
+    if (m_SelfTestSwayDeg > 0.0f)
+    {
+        // Head looks around and leans: yaw +-A, pitch +-A/3, a few cm of sway.
+        const float st = (nowMs - m_SelfTestSwayStartMs) / 1000.0f;
+        const float tau = 6.2831853f;
+        m_HmdPose.TrackedDeviceAng.y += m_SelfTestSwayDeg * std::sin(tau * 0.35f * st);
+        m_HmdPose.TrackedDeviceAng.x += (m_SelfTestSwayDeg / 3.0f) * std::sin(tau * 0.5f * st);
+        head.x += 0.04f * std::sin(tau * 0.3f * st);
+        head.y += 0.05f * std::sin(tau * 0.45f * st + 1.0f);
+        head.z += 0.03f * std::sin(tau * 0.6f * st + 2.0f);
+    }
+    m_HmdPose.TrackedDevicePos = head;
+    if (m_SelfTestTurnRate != 0.0f)
+    {
+        m_RotationOffset += m_SelfTestTurnRate * dt;
+        m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
+    }
     // Scene hands (lefthand=/righthand=) in the holster body frame. A step's own
     // world target or scripted path still wins while it runs.
     l4d2vr_holster::BodyFrame sceneFrame{};
@@ -1030,6 +1048,97 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "wait")
         return t >= 10.0f;
 
+    // ---- Motion scenes (hold until changed) -----------------------------------
+    // walk=<forward>[,<right>] stick deflection -1..1 or walk=off; hold=<s>
+    // waits; turnrate=<deg/s> smooth-turns; turn=<deg> snap-turns; sway=<deg>
+    // moves the head (look around + lean), sway=0 stops.
+    if (step.rfind("walk=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            const std::string value = step.substr(5);
+            m_SelfTestWalkActive = value != "off";
+            m_SelfTestWalkY = 0.0f;
+            m_SelfTestWalkX = 0.0f;
+            if (m_SelfTestWalkActive)
+            {
+                m_SelfTestWalkY = std::clamp(static_cast<float>(std::atof(value.c_str())), -1.0f, 1.0f);
+                const size_t comma = value.find(',');
+                if (comma != std::string::npos)
+                    m_SelfTestWalkX = std::clamp(static_cast<float>(std::atof(value.c_str() + comma + 1)), -1.0f, 1.0f);
+            }
+            Game::logMsg("[VR][SelfTest] walk %s", value.c_str());
+        }
+        return true;
+    }
+    if (step.rfind("hold=", 0) == 0)
+        return t >= std::clamp(static_cast<float>(std::atof(step.c_str() + 5)), 0.0f, 30.0f);
+    if (step.rfind("turnrate=", 0) == 0)
+    {
+        m_SelfTestTurnRate = std::clamp(static_cast<float>(std::atof(step.c_str() + 9)), -360.0f, 360.0f);
+        Game::logMsg("[VR][SelfTest] turn rate %.0f deg/s", m_SelfTestTurnRate);
+        return true;
+    }
+    if (step.rfind("turn=", 0) == 0)
+    {
+        m_RotationOffset += static_cast<float>(std::atof(step.c_str() + 5));
+        m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
+        return true;
+    }
+    if (step.rfind("sway=", 0) == 0)
+    {
+        m_SelfTestSwayDeg = std::clamp(static_cast<float>(std::atof(step.c_str() + 5)), 0.0f, 80.0f);
+        m_SelfTestSwayStartMs = GetTickCount64();
+        Game::logMsg("[VR][SelfTest] head sway %.0f deg", m_SelfTestSwayDeg);
+        return true;
+    }
+    // track=start begins measuring holster item motion relative to the eye;
+    // track=report:<cm> passes when every item stayed within <cm> (each eye).
+    if (step == "track=start")
+    {
+        std::lock_guard<std::mutex> lock(m_SelfTestHolsterTrackMutex);
+        m_SelfTestHolsterTrack = {};
+        m_SelfTestHolsterTrack.active = true;
+        return true;
+    }
+    if (step.rfind("track=report", 0) == 0)
+    {
+        const float limitCm = step.size() > 13 ? static_cast<float>(std::atof(step.c_str() + 13)) : 2.0f;
+        SelfTestHolsterTrack track{};
+        {
+            std::lock_guard<std::mutex> lock(m_SelfTestHolsterTrackMutex);
+            track = m_SelfTestHolsterTrack;
+            m_SelfTestHolsterTrack.active = false;
+        }
+        float worst = 0.0f;
+        uint32_t samples = 0u;
+        int length = 0;
+        char perSlot[220] = {};
+        for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
+        {
+            float slotWorst = 0.0f;
+            uint32_t slotSamples = 0u;
+            for (int eye = 0; eye < 2; ++eye)
+            {
+                if (track.n[eye][slot] == 0u)
+                    continue;
+                slotSamples += track.n[eye][slot];
+                const Vector spread = track.mx[eye][slot] - track.mn[eye][slot];
+                slotWorst = (std::max)(slotWorst, (std::max)(spread.x, (std::max)(spread.y, spread.z)));
+            }
+            if (slotSamples == 0u)
+                continue;
+            samples += slotSamples;
+            worst = (std::max)(worst, slotWorst);
+            length += std::snprintf(perSlot + length, sizeof(perSlot) - length, " slot%d=%.1fcm(%u)",
+                slot + 1, slotWorst * 100.0f, slotSamples);
+        }
+        std::snprintf(detail, sizeof(detail), "worst %.1f cm (limit %.1f), %u draws:%s", worst * 100.0f, limitCm,
+            samples, perSlot);
+        SelfTestReport("holster items stay on the body while moving", samples > 0u && worst * 100.0f <= limitCm, detail);
+        return true;
+    }
+
     // ---- Render verification scenes -----------------------------------------
     // look=<pitch>: scripted head pitch in degrees (positive looks down; "off"
     // returns to the headset's own). Holds for the following steps.
@@ -1154,6 +1263,35 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             return true;
         }
         return false;
+    }
+
+    if (step.rfind("wriststyle=", 0) == 0)
+    {
+        m_WristHudNativeStyle = step.substr(11) != "custom";
+        Game::logMsg("[VR][SelfTest] wrist HUD style: %s", m_WristHudNativeStyle ? "native" : "custom");
+        return true;
+    }
+
+    // Saves the HUD texture and the exact textures submitted to the wrist overlays
+    // (l4d2vr_selftest_wrist_*.bmp in the game folder) for visual checks.
+    if (step == "wristdump")
+    {
+        if (at(0, 0.0f))
+        {
+            m_SelfTestValueA = m_NativeWristHudDumpCount.load(std::memory_order_acquire);
+            m_NativeWristHudDumpRequested.store(true, std::memory_order_release);
+        }
+        const bool dumped = m_NativeWristHudDumpCount.load(std::memory_order_acquire) != m_SelfTestValueA;
+        if (!dumped && t < 8.0f)
+            return false;
+        const uint32_t usedL = m_NativeWristHudUsedSize[0].load(std::memory_order_acquire);
+        const uint32_t usedR = m_NativeWristHudUsedSize[1].load(std::memory_order_acquire);
+        std::snprintf(detail, sizeof(detail), "style=%s left=%ux%u ready=%d shown=%d right=%ux%u ready=%d shown=%d",
+            m_WristHudNativeStyle ? "native" : "custom", usedL >> 16, usedL & 0xFFFFu,
+            m_NativeWristHudTexReady[0].load() ? 1 : 0, m_NativeWristHudShown[0].load() ? 1 : 0,
+            usedR >> 16, usedR & 0xFFFFu, m_NativeWristHudTexReady[1].load() ? 1 : 0, m_NativeWristHudShown[1].load() ? 1 : 0);
+        SelfTestReport("native wrist HUD dump", dumped && m_NativeWristHudTexReady[0].load() && m_NativeWristHudTexReady[1].load(), detail);
+        return true;
     }
 
     if (step.rfind("cmd=", 0) == 0)
@@ -1293,9 +1431,9 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             squeeze(10.6f, true, 0.15f);
             add(11.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
-                std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4), left hover pulses %d -> %u",
+                std::snprintf(detail, sizeof(detail), "active slot %d (the back holds the rifle, slot 1), left hover pulses %d -> %u",
                     SelfTestActiveSlot(player) + 1, m_SelfTestValueC, m_HolsterLeftHoverPulseCount);
-                SelfTestReport("reach: off hand swaps over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReport("reach: off hand swaps over the left shoulder", SelfTestActiveSlot(player) == 0, detail);
                 SelfTestReport("reach: off-hand shoulder hover pulse",
                     static_cast<int>(m_HolsterLeftHoverPulseCount) > m_SelfTestValueC, detail);
                 m_SelfTestValueC = static_cast<int>(m_HolsterLeftHoverPulseCount);
@@ -1368,12 +1506,12 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             m_GripReleaseDropEnabled = true;
             cmd("give rifle"); cmd("give first_aid_kit");
             add(1.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { cmd("use weapon_rifle"); return false; });
-            add(1.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::OverLeftShoulder(), level(-60.0f, 0.0f), 1.0f); return false; });
+            add(1.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::CentreChest(), level(30.0f, 40.0f), 0.8f); return false; });
             squeeze(2.8f, false, 0.15f);
             add(3.4f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4)", SelfTestActiveSlot(player) + 1);
-                SelfTestReport("pickup: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReport("pickup: right hand draws the kit from the centre chest", SelfTestActiveSlot(player) == 3, detail);
                 SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 0.8f);
                 return false; });
             add(4.3f, [this](C_BasePlayer* player, float) {
@@ -1653,4 +1791,42 @@ bool VR::SelfTestSaveEyePng(IDirect3DSurface9* source, int eyeIndex, bool device
         width, height, desc.Width, desc.Height, static_cast<int>(desc.Format), static_cast<unsigned int>(hr),
         saved ? "saved" : "failed");
     return saved;
+}
+
+bool VR::GetWalkAxisForMove(float& x, float& y)
+{
+    if (m_SelfTestEnabled && m_SelfTestWalkActive)
+    {
+        x = m_SelfTestWalkX;
+        y = m_SelfTestWalkY;
+        return true;
+    }
+    return GetWalkAxis(x, y);
+}
+
+void VR::SelfTestTrackHolsterDraw(int slot, const Vector& itemOrigin, const Vector& eyeOrigin)
+{
+    if (slot < 0 || slot >= l4d2vr_holster::kZoneCount)
+        return;
+    l4d2vr_holster::BodyFrame frame{};
+    if (!GetHolsterBodyFrame(frame) || frame.unitsPerMeter <= 0.001f)
+        return;
+    const Vector delta = itemOrigin - eyeOrigin;
+    const float s = 1.0f / frame.unitsPerMeter;
+    const Vector local(DotProduct(delta, frame.forward) * s, DotProduct(delta, frame.dominant) * s, delta.z * s);
+    const int eye = DotProduct(eyeOrigin - m_HmdPosAbs, frame.dominant) > 0.0f ? 1 : 0;
+    std::lock_guard<std::mutex> lock(m_SelfTestHolsterTrackMutex);
+    SelfTestHolsterTrack& track = m_SelfTestHolsterTrack;
+    if (!track.active)
+        return;
+    if (track.n[eye][slot]++ == 0u)
+    {
+        track.mn[eye][slot] = local;
+        track.mx[eye][slot] = local;
+        return;
+    }
+    Vector& mn = track.mn[eye][slot];
+    Vector& mx = track.mx[eye][slot];
+    mn.x = (std::min)(mn.x, local.x); mn.y = (std::min)(mn.y, local.y); mn.z = (std::min)(mn.z, local.z);
+    mx.x = (std::max)(mx.x, local.x); mx.y = (std::max)(mx.y, local.y); mx.z = (std::max)(mx.z, local.z);
 }

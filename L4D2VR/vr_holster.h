@@ -3,20 +3,24 @@
 #include <cmath>
 #include <cstdint>
 
-// Pavlov Shack style body holsters. The body frame follows the headset yaw
-// with a dead band and smoothing, so glancing around does not swing the
-// holsters, while stick/snap turns move them instantly.
+// Body holsters placed the way Pavlov VR places its inventory (decoded from
+// the game; research/pavlov/inventory/SPEC.md). An inventory root hangs 75 cm
+// below the headset, its yaw follows the head yaw continuously (interpolation
+// speed 20), looking down pulls it back a little and reaching to the floor with
+// the off hand pushes it back. Hip holsters are upright capsules beside the
+// root, the back slot is a sphere behind the head in the head's own frame, and
+// chest items sit in vest pockets. Stick/snap turns move everything instantly.
 namespace l4d2vr_holster
 {
     constexpr float kPi = 3.14159265358979323846f;
 
     enum class Zone : int
     {
-        Primary = 0,    // slot1, behind the dominant shoulder
+        Primary = 0,    // slot1, back (Pavlov's back slot holds the long gun)
         Secondary = 1,  // slot2, dominant hip (pistols and melee)
-        Throwable = 2,  // slot3, chest (off-hand side)
-        Medical = 3,    // slot4, behind the off-hand shoulder
-        Consumable = 4, // slot5, chest (dominant side)
+        Throwable = 2,  // slot3, chest pocket, off-hand side
+        Medical = 3,    // slot4, chest pocket, centre (belly)
+        Consumable = 4, // slot5, chest pocket, dominant side
         Count = 5,
         None = -1
     };
@@ -65,43 +69,46 @@ namespace l4d2vr_holster
         }
     }
 
-    // Offsets are metres in the body frame relative to the head:
-    // x forward, y toward the DOMINANT side, z up. Mirroring is implicit in
-    // the dominant-side convention.
+    // Metres, x forward, y toward the DOMINANT side, z up (mirrors for the
+    // left-handed). "Root" offsets are from the inventory root; "head" offsets
+    // are in the headset's own frame. Values are Pavlov's (UE cm / 100).
     struct Layout
     {
-        Vector center[kZoneCount] = {
-            Vector(-0.10f, 0.16f, -0.12f),
-            Vector(0.02f, 0.22f, -0.70f),
-            Vector(0.16f, -0.09f, -0.34f),
-            Vector(-0.10f, -0.16f, -0.12f),
-            Vector(0.16f, 0.09f, -0.34f),
+        float rootDropMeters = -0.75f;          // root = head + (0,0,-0.75)
+        float lookDownBackMeters = 0.08f;       // looking straight down pulls the root back
+        float reachFloorBackMeters = 0.60f;     // off hand at the floor pushes it back
+        float handRadiusMeters = 0.115f;        // the hand's grab sphere
+        // Hip holster: upright capsule beside the root.
+        Vector hipCenter{ -0.2247f, 0.352f, 0.0557f };
+        float hipRadiusMeters = 0.20f;
+        float hipHalfHeightMeters = 0.44f;
+        // Vest: tilted capsule over the chest (putting a chest item away).
+        Vector vestCenter{ -0.0581f, 0.0f, 0.2749f };
+        Vector vestAxis{ -0.2153f, 0.0f, 0.9766f }; // top tilted back 12.4 deg
+        float vestRadiusMeters = 0.22f;
+        float vestHalfHeightMeters = 0.3122f;
+        // Back: sphere behind the head, in the head's frame (follows pitch too).
+        Vector backCenterHead{ -0.4414f, 0.0f, -0.0948f };
+        float backRadiusMeters = 0.40f;
+        // Where items rest (root offsets): the vest sockets. A chest item is
+        // taken by reaching for it in its pocket.
+        Vector socket[kZoneCount] = {
+            Vector(-0.2981f, 0.0006f, 0.3043f), // back
+            Vector(-0.0615f, 0.25f, 0.2271f),   // dominant hip
+            Vector(0.0225f, -0.1646f, 0.4396f), // chest, off-hand side (upper)
+            Vector(0.0812f, 0.0002f, 0.2380f),  // chest, centre (lower)
+            Vector(0.0242f, 0.1461f, 0.4413f),  // chest, dominant side (upper)
         };
-        // Where the items are drawn (their visible centre). Hip and chest items
-        // sit in their grab zones and are seen when looking down. Back items hang
-        // where a slung item would, behind the back and below the head, out of
-        // the forward view (Pavlov's back slot sits ~0.44 m behind its inventory
-        // root); their grab zones stay at the shoulders.
-        Vector drawCenter[kZoneCount] = {
-            Vector(-0.26f, 0.02f, -0.38f),
-            Vector(0.02f, 0.22f, -0.70f),
-            Vector(0.16f, -0.09f, -0.34f),
-            Vector(-0.26f, -0.14f, -0.32f),
-            Vector(0.16f, 0.09f, -0.34f),
-        };
-        // Generous, Pavlov-sized zones (its hips are 0.20 m capsules and its back a
-        // 0.40 m sphere): a holster you have to hunt for is a holster nobody uses.
-        float radius[kZoneCount] = { 0.25f, 0.20f, 0.13f, 0.25f, 0.13f };
-        // Shoulder zones only accept a hand that reached over the shoulder:
-        // behind the head's frontal plane and above this height below the head.
-        bool overShoulder[kZoneCount] = { true, false, false, true, false };
-        float behindPlaneToleranceMeters = 0.03f;
-        float overShoulderMaxDropMeters = 0.38f;
+        float pocketReachMeters = 0.16f;        // hand to a pocketed item
     };
 
     struct BodyFrame
     {
         Vector head{ 0.0f, 0.0f, 0.0f };
+        Vector root{ 0.0f, 0.0f, 0.0f };        // inventory root (set by ApplyPavlovRoot)
+        Vector headForward{ 1.0f, 0.0f, 0.0f }; // the headset's own axes (world)
+        Vector headDominant{ 0.0f, -1.0f, 0.0f };
+        Vector headUp{ 0.0f, 0.0f, 1.0f };
         Vector forward{ 1.0f, 0.0f, 0.0f };
         Vector dominant{ 0.0f, -1.0f, 0.0f }; // unit vector toward the dominant hand side
         float unitsPerMeter = 1.0f;
@@ -125,8 +132,76 @@ namespace l4d2vr_holster
         frame.dominant = leftHanded ? right * -1.0f : right;
         frame.unitsPerMeter = unitsPerMeter;
         frame.heightScale = heightScale;
+        frame.root = head + Vector(0.0f, 0.0f, -0.75f * unitsPerMeter * heightScale);
+        frame.headForward = frame.forward;
+        frame.headDominant = frame.dominant;
         frame.valid = true;
         return frame;
+    }
+
+    // Pavlov's look-down curve: 0 above 20 deg down, easing to the full pull
+    // back at 90 deg down.
+    inline float LookDownBackFraction(float pitchDownDeg)
+    {
+        float t = (pitchDownDeg - 20.0f) / 70.0f;
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    // Pavlov's "crouch" curve, keyed by the off hand's height above the floor:
+    // 0 cm -> 60 cm back, 17.1 -> 26.5, 25 and above -> 0 (fraction of 60 cm).
+    inline float ReachFloorBackFraction(float handHeightMeters)
+    {
+        const float h = handHeightMeters * 100.0f;
+        if (!std::isfinite(h) || h >= 25.0f)
+            return 0.0f;
+        if (h <= 0.0f)
+            return 1.0f;
+        if (h <= 17.1f)
+            return (60.0f + (26.5f - 60.0f) * (h / 17.1f)) / 60.0f;
+        return (26.5f * (1.0f - (h - 17.1f) / (25.0f - 17.1f))) / 60.0f;
+    }
+
+    // Places the inventory root and records the headset's own axes.
+    // offHandHeightMeters < 0 means unknown (no floor push).
+    inline void ApplyPavlovRoot(BodyFrame& frame, const Layout& layout, const Vector& headForward,
+        const Vector& headRight, const Vector& headUp, bool leftHanded, float offHandHeightMeters)
+    {
+        if (!frame.valid)
+            return;
+        const float s = frame.unitsPerMeter;
+        if (l4d2vr_interaction::Finite(headForward) && l4d2vr_interaction::Finite(headUp) &&
+            l4d2vr_interaction::Finite(headRight))
+        {
+            frame.headForward = headForward;
+            frame.headDominant = leftHanded ? headRight * -1.0f : headRight;
+            frame.headUp = headUp;
+        }
+        Vector root = frame.head + Vector(0.0f, 0.0f, layout.rootDropMeters * s * frame.heightScale);
+        // Looking down pulls the root back along the head's horizontal forward.
+        Vector flat(frame.headForward.x, frame.headForward.y, 0.0f);
+        const float flatLength = std::sqrt(flat.x * flat.x + flat.y * flat.y);
+        const float pitchDown = std::atan2(-frame.headForward.z, flatLength > 1e-4f ? flatLength : 1e-4f) * 180.0f / kPi;
+        flat = flatLength > 1e-3f ? flat * (1.0f / flatLength) : frame.forward;
+        root = root - flat * (LookDownBackFraction(pitchDown) * layout.lookDownBackMeters * s);
+        // Reaching to the floor with the off hand pushes it back (out of the way).
+        if (offHandHeightMeters >= 0.0f)
+            root = root - frame.forward * (ReachFloorBackFraction(offHandHeightMeters) * layout.reachFloorBackMeters * s);
+        frame.root = root;
+    }
+
+    inline Vector RootToWorld(const BodyFrame& frame, const Vector& localMeters)
+    {
+        const float s = frame.unitsPerMeter;
+        return frame.root + frame.forward * (localMeters.x * s) + frame.dominant * (localMeters.y * s) +
+            Vector(0.0f, 0.0f, localMeters.z * s * frame.heightScale);
+    }
+
+    inline Vector HeadToWorld(const BodyFrame& frame, const Vector& localMeters)
+    {
+        const float s = frame.unitsPerMeter;
+        return frame.head + frame.headForward * (localMeters.x * s) + frame.headDominant * (localMeters.y * s) +
+            frame.headUp * (localMeters.z * s);
     }
 
     inline Vector ToWorld(const BodyFrame& frame, const Vector& localMeters)
@@ -144,9 +219,42 @@ namespace l4d2vr_holster
             d.z / (s * frame.heightScale));
     }
 
+    // Where a hand reaches for a zone (back sphere centre, hip capsule centre,
+    // or the pocketed item).
     inline Vector ZoneCenterWorld(const BodyFrame& frame, const Layout& layout, Zone zone)
     {
-        return ToWorld(frame, layout.center[SlotIndex(zone)]);
+        switch (zone)
+        {
+        case Zone::Primary: return HeadToWorld(frame, layout.backCenterHead);
+        case Zone::Secondary: return RootToWorld(frame, layout.hipCenter);
+        default: return RootToWorld(frame, layout.socket[SlotIndex(zone) < 0 ? 0 : SlotIndex(zone)]);
+        }
+    }
+
+    // How close (metres) the hand's centre must be to ZoneCenterWorld-based geometry.
+    inline float ZoneReachMeters(const Layout& layout, Zone zone)
+    {
+        switch (zone)
+        {
+        case Zone::Primary: return layout.backRadiusMeters + layout.handRadiusMeters;
+        case Zone::Secondary: return layout.hipRadiusMeters + layout.handRadiusMeters;
+        default: return layout.pocketReachMeters;
+        }
+    }
+
+    // Pavlov's body yaw: interpolates toward the head yaw every frame (UE
+    // RInterpTo, speed 20 per second), no dead band; turns apply instantly.
+    inline float FollowBodyYaw(float previousYaw, bool previousValid, float headYaw, float turnDelta,
+        float dt, float speed)
+    {
+        if (!std::isfinite(headYaw))
+            return previousValid ? l4d2vr_interaction::WrapYaw(previousYaw + turnDelta) : 0.0f;
+        if (!previousValid || !std::isfinite(previousYaw))
+            return l4d2vr_interaction::WrapYaw(headYaw);
+        float yaw = l4d2vr_interaction::WrapYaw(previousYaw + (std::isfinite(turnDelta) ? turnDelta : 0.0f));
+        const float error = l4d2vr_interaction::WrapYaw(headYaw - yaw);
+        const float alpha = (!std::isfinite(dt) || dt <= 0.0f) ? 0.0f : std::fmin(1.0f, dt * std::fmax(0.0f, speed));
+        return l4d2vr_interaction::WrapYaw(yaw + error * alpha);
     }
 
     // Smoothed body yaw. Inside the dead band the body keeps its yaw; beyond it
@@ -182,72 +290,112 @@ namespace l4d2vr_holster
         return std::atan2(worldHeadForward.y, worldHeadForward.x) * 180.0f / kPi;
     }
 
+    inline float DistanceToSegment(const Vector& p, const Vector& a, const Vector& b)
+    {
+        const Vector ab = b - a;
+        const float len2 = DotProduct(ab, ab);
+        float t = len2 > 1e-9f ? DotProduct(p - a, ab) / len2 : 0.0f;
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+        const Vector d = p - (a + ab * t);
+        return std::sqrt(DotProduct(d, d));
+    }
+
+    // Taking from a zone: the hand's grab sphere overlaps the back sphere or the
+    // hip capsule, or reaches the item in its chest pocket. outDistanceMeters is
+    // the hand centre's distance to the zone's geometry (0 inside).
     inline bool HandFitsZone(const BodyFrame& frame, const Layout& layout, Zone zone, const Vector& hand,
         float& outDistanceMeters)
     {
         outDistanceMeters = 1.0e9f;
         if (!frame.valid || zone == Zone::None || !l4d2vr_interaction::Finite(hand))
             return false;
-        const int index = SlotIndex(zone);
-        const Vector local = ToLocal(frame, hand);
-        if (layout.overShoulder[index])
+        const float s = frame.unitsPerMeter;
+        float distance = 1.0e9f;
+        float reach = 0.0f;
+        if (zone == Zone::Secondary)
         {
-            if (local.x > layout.behindPlaneToleranceMeters)
-                return false;
-            if (local.z < -layout.overShoulderMaxDropMeters)
-                return false;
+            const float halfSegment = (layout.hipHalfHeightMeters - layout.hipRadiusMeters) * s * frame.heightScale;
+            const Vector c = RootToWorld(frame, layout.hipCenter);
+            distance = DistanceToSegment(hand, c - Vector(0.0f, 0.0f, halfSegment), c + Vector(0.0f, 0.0f, halfSegment)) / s;
+            reach = layout.hipRadiusMeters + layout.handRadiusMeters;
         }
-        const Vector delta = local - layout.center[index];
-        const float distance = std::sqrt(DotProduct(delta, delta));
+        else
+        {
+            const Vector c = ZoneCenterWorld(frame, layout, zone);
+            const Vector d = hand - c;
+            distance = std::sqrt(DotProduct(d, d)) / s;
+            reach = ZoneReachMeters(layout, zone);
+        }
         outDistanceMeters = distance;
-        return std::isfinite(distance) && distance <= layout.radius[index];
-    }
-
-    // Distance (m) from a body-frame point to a zone's centre, ignoring the
-    // over-the-shoulder gate (diagnostics).
-    inline float ZoneDistance(const Layout& layout, int index, const Vector& local)
-    {
-        if (index < 0 || index >= kZoneCount)
-            return 1.0e9f;
-        const Vector delta = local - layout.center[index];
-        return std::sqrt(DotProduct(delta, delta));
+        return std::isfinite(distance) && distance <= reach;
     }
 
     // The hand is in, or within marginMeters of, any holster zone (occupied or
-    // not), honouring the over-the-shoulder gate. Motion gestures (gun bash)
-    // ignore hands at the holsters.
+    // not). Motion gestures (gun bash) ignore hands at the holsters.
     inline bool NearAnyZone(const BodyFrame& frame, const Layout& layout, const Vector& hand, float marginMeters)
     {
-        if (!frame.valid || !l4d2vr_interaction::Finite(hand))
-            return false;
-        const Vector local = ToLocal(frame, hand);
         for (int i = 0; i < kZoneCount; ++i)
         {
-            if (layout.overShoulder[i] && (local.x > layout.behindPlaneToleranceMeters + marginMeters ||
-                    local.z < -layout.overShoulderMaxDropMeters - marginMeters))
-                continue;
-            if (ZoneDistance(layout, i, local) <= layout.radius[i] + marginMeters)
+            const Zone zone = static_cast<Zone>(i);
+            float distance = 0.0f;
+            HandFitsZone(frame, layout, zone, hand, distance);
+            if (distance <= ZoneReachMeters(layout, zone) + marginMeters)
                 return true;
         }
         return false;
     }
 
-    // Nearest zone that accepts the hand. occupiedMask bit i = slot i holds an item;
-    // pass 0x1F to ignore occupancy.
+    // Putting the held item away: chest items go back when the hand is in the
+    // vest; the hip and back use the same volumes as taking.
+    inline bool HandInHolsterVolume(const BodyFrame& frame, const Layout& layout, Zone zone, const Vector& hand)
+    {
+        if (!frame.valid || zone == Zone::None || !l4d2vr_interaction::Finite(hand))
+            return false;
+        if (zone == Zone::Throwable || zone == Zone::Medical || zone == Zone::Consumable)
+        {
+            const float s = frame.unitsPerMeter;
+            const Vector c = RootToWorld(frame, layout.vestCenter);
+            const Vector axis = frame.forward * layout.vestAxis.x + frame.dominant * layout.vestAxis.y +
+                Vector(0.0f, 0.0f, layout.vestAxis.z);
+            const float halfSegment = (layout.vestHalfHeightMeters - layout.vestRadiusMeters) * s;
+            const float distance = DistanceToSegment(hand, c - axis * halfSegment, c + axis * halfSegment) / s;
+            return distance <= layout.vestRadiusMeters + layout.handRadiusMeters;
+        }
+        float distance = 0.0f;
+        return HandFitsZone(frame, layout, zone, hand, distance);
+    }
+
+    // The zone the hand takes from: Pavlov tests the hips and back first (first
+    // overlap wins), then the nearest pocketed chest item. occupiedMask bit i =
+    // slot i holds an item; pass 0x1F to ignore occupancy.
     inline Zone FindZone(const BodyFrame& frame, const Layout& layout, const Vector& hand,
         std::uint32_t occupiedMask, float* outDistanceMeters = nullptr)
     {
-        Zone best = Zone::None;
-        float bestDistance = 1.0e9f;
-        for (int i = 0; i < kZoneCount; ++i)
+        static const Zone kOrder[] = { Zone::Secondary, Zone::Primary };
+        for (Zone zone : kOrder)
         {
-            if ((occupiedMask & (1u << i)) == 0u)
+            if ((occupiedMask & (1u << SlotIndex(zone))) == 0u)
                 continue;
             float distance = 0.0f;
-            if (HandFitsZone(frame, layout, static_cast<Zone>(i), hand, distance) && distance < bestDistance)
+            if (HandFitsZone(frame, layout, zone, hand, distance))
+            {
+                if (outDistanceMeters)
+                    *outDistanceMeters = distance;
+                return zone;
+            }
+        }
+        Zone best = Zone::None;
+        float bestDistance = 1.0e9f;
+        static const Zone kPockets[] = { Zone::Throwable, Zone::Medical, Zone::Consumable };
+        for (Zone zone : kPockets)
+        {
+            if ((occupiedMask & (1u << SlotIndex(zone))) == 0u)
+                continue;
+            float distance = 0.0f;
+            if (HandFitsZone(frame, layout, zone, hand, distance) && distance < bestDistance)
             {
                 bestDistance = distance;
-                best = static_cast<Zone>(i);
+                best = zone;
             }
         }
         if (outDistanceMeters)
@@ -302,7 +450,7 @@ namespace l4d2vr_holster
 
     inline bool IsBackZone(Zone zone)
     {
-        return zone == Zone::Primary || zone == Zone::Medical;
+        return zone == Zone::Primary;
     }
 
     inline ItemPose BuildItemPose(const BodyFrame& frame, const Layout& layout, Zone zone, ItemShape shape)
@@ -359,7 +507,7 @@ namespace l4d2vr_holster
 
         // The item's visible centre goes to the draw centre.
         const Vector centerUnits = ReferenceToCenterUnits(shape);
-        pose.origin = ToWorld(frame, layout.drawCenter[SlotIndex(zone)]) -
+        pose.origin = RootToWorld(frame, layout.socket[SlotIndex(zone)]) -
             (axisX * centerUnits.x + axisY * centerUnits.y + axisZ * centerUnits.z);
         pose.axisX = axisX;
         pose.axisY = axisY;

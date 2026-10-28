@@ -3227,6 +3227,7 @@ void VR::ParseConfigFile()
     m_HolsterReleaseDropEnabled = getBool("HolsterReleaseDrop", true);
     m_GripToggleEnabled = getBool("GripToggle", true);
     m_StickJumpCrouchEnabled = getBool("StickJumpCrouch", true);
+    m_StickCrouchToggle = getBool("StickCrouchToggle", true);
     m_MotionOnlyMeleeAndShove = getBool("MotionOnlyMeleeAndShove", true);
     m_MeleeGripReachMeters = std::clamp(getFloat("MeleeGripReachMeters", 0.12f), 0.0f, 0.4f);
     m_ConsumableGiveEnabled = getBool("ConsumableGiveEnabled", true);

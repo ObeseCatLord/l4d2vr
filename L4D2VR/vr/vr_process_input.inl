@@ -674,7 +674,15 @@ void VR::ProcessInput()
         jumpButtonDown = true;
         jumpJustPressed = jumpJustPressed || m_StickJumpPressed;
     }
-    if (m_StickCrouchDown || m_StickCrouchPressed)
+    if (m_StickCrouchToggle)
+    {
+        // Stick back toggles crouch; jumping stands up.
+        if (m_StickCrouchPressed)
+            m_CrouchToggleActive = !m_CrouchToggleActive;
+        if (m_StickJumpPressed)
+            m_CrouchToggleActive = false;
+    }
+    else if (m_StickCrouchDown || m_StickCrouchPressed)
     {
         crouchDataValid = true;
         crouchButtonDown = true;
@@ -699,6 +707,40 @@ void VR::ProcessInput()
         originMatchesRole(offHandGripData.activeOrigin, gameplayLeftRole);
     if (!offHandGripValid)
         offHandGripDown = offHandGripJustPressed = false;
+    if (m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled)
+    {
+        // The off hand can swap holsters too: a squeeze inside a holster switches
+        // to that item (or puts the held item away inside its own holster). The
+        // press then belongs to the holster until released, so it never also
+        // grabs a magazine or the foregrip.
+        static bool s_LeftHolsterLatched = false;
+        if (s_LeftHolsterLatched)
+        {
+            if (!offHandGripDown)
+                s_LeftHolsterLatched = false;
+            offHandGripDown = offHandGripJustPressed = false;
+        }
+        else if (offHandGripJustPressed && localPlayer && !isObserverOrIdle && !m_SuppressPlayerInput &&
+            m_FirstPersonControlReady.load(std::memory_order_acquire) && !MagazineInteractionOwnsGrip(true))
+        {
+            l4d2vr_holster::BodyFrame frame{};
+            if (GetHolsterBodyFrame(frame))
+            {
+                std::uint32_t occupied = 0u;
+                for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
+                    if (localPlayer->Weapon_GetSlot(slot))
+                        occupied |= 1u << slot;
+                const l4d2vr_holster::Zone zone =
+                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied);
+                if (zone != l4d2vr_holster::Zone::None)
+                {
+                    m_LeftHolsterRequestSlot = l4d2vr_holster::SlotIndex(zone);
+                    s_LeftHolsterLatched = true;
+                    offHandGripDown = offHandGripJustPressed = false;
+                }
+            }
+        }
+    }
     pistolOffhandGripState = offHandGripValid && offHandGripData.bActive
         ? (1u | (offHandGripDown ? 2u : 0u)) : 0u;
     const bool leftPistolPickup = m_DualPistolsIndependentHandsEnabled && m_GripReleaseDropEnabled &&
@@ -1697,6 +1739,20 @@ void VR::ProcessInput()
                 // Hover pulse whenever the hand enters any holster: full strength
                 // where there is something to take (or the held item's own holster),
                 // a lighter tick over an empty one so the layout can be felt.
+                static l4d2vr_holster::Zone s_LeftHoverZone = l4d2vr_holster::Zone::None;
+                const l4d2vr_holster::Zone leftZone = (ready && frameValid)
+                    ? l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, 0x1Fu)
+                    : l4d2vr_holster::Zone::None;
+                if (leftZone != s_LeftHoverZone)
+                {
+                    s_LeftHoverZone = leftZone;
+                    if (leftZone != l4d2vr_holster::Zone::None && m_HolsterHoverHapticAmplitude > 0.0f)
+                    {
+                        const bool usable = (occupiedMask & (1u << l4d2vr_holster::SlotIndex(leftZone))) != 0u;
+                        TriggerPhysicalHandHapticPulse(true, usable ? 0.045f : 0.025f, 160.0f,
+                            usable ? m_HolsterHoverHapticAmplitude : m_HolsterHoverHapticAmplitude * 0.45f, 1);
+                    }
+                }
                 static l4d2vr_holster::Zone s_HoverZone = l4d2vr_holster::Zone::None;
                 const l4d2vr_holster::Zone anyZone = (ready && frameValid)
                     ? grabInput.ownZoneUnderHand : l4d2vr_holster::Zone::None;
@@ -1709,6 +1765,7 @@ void VR::ProcessInput()
                         const bool usable = (occupiedMask & (1u << slot)) != 0u;
                         TriggerPhysicalHandHapticPulse(false, usable ? 0.045f : 0.025f, 160.0f,
                             usable ? m_HolsterHoverHapticAmplitude : m_HolsterHoverHapticAmplitude * 0.45f, 1);
+                        ++m_HolsterHoverPulseCount;
                         Game::logMsg("[VR][Holster] hover slot%d %s pulse=%.2f", slot + 1, usable ? "occupied" : "empty",
                             usable ? m_HolsterHoverHapticAmplitude : m_HolsterHoverHapticAmplitude * 0.45f);
                     }
@@ -1735,6 +1792,27 @@ void VR::ProcessInput()
                         m_Game->ClientCmd_Unrestricted(kSlotCommands[slot]);
                     }
                 };
+            if (m_LeftHolsterRequestSlot >= 0)
+            {
+                const int slot = m_LeftHolsterRequestSlot;
+                m_LeftHolsterRequestSlot = -1;
+                const int target = (ready && slot == activeSlot)
+                    ? l4d2vr_holster::GrabFsm::NextSlotAfterHolster(slot, occupiedMask) : (ready ? slot : -1);
+                if (target >= 0 && target < l4d2vr_holster::kZoneCount && target != activeSlot)
+                {
+                    if (m_HolsterGrabHapticAmplitude > 0.0f)
+                        TriggerPhysicalHandHapticPulse(true, 0.03f, 120.0f, m_HolsterGrabHapticAmplitude, 2);
+                    if (m_HolsterInstantDraw)
+                    {
+                        m_HolsterInstantDrawSlot.store(target, std::memory_order_release);
+                        m_HolsterInstantDrawUntilMs.store(GetTickCount64() + 1500u, std::memory_order_release);
+                    }
+                    m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
+                    selectInventorySlot(target);
+                    Game::logMsg("[VR][Holster] off-hand %s slot=%d -> slot=%d",
+                        slot == activeSlot ? "holstered" : "swap", slot + 1, target + 1);
+                }
+            }
             if (grab.selectSlot >= 0 && grab.selectSlot < l4d2vr_holster::kZoneCount)
             {
                 if (m_HolsterGrabHapticAmplitude > 0.0f)

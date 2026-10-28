@@ -3201,6 +3201,7 @@ namespace
         sampleKeys.insert("HolsterReleaseDrop");
         sampleKeys.insert("GripToggle");
         sampleKeys.insert("StickJumpCrouch");
+        sampleKeys.insert("StickCrouchToggle");
         sampleKeys.insert("MotionOnlyMeleeAndShove");
         sampleKeys.insert("MeleeGripReachMeters");
         sampleKeys.insert("ConsumableGiveEnabled");

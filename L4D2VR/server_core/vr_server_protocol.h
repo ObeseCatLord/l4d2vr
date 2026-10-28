@@ -19,7 +19,8 @@
 //   l4d2vr_interaction_ack 1     physical interaction (grip pickup/release,
 //                                native reload gate) is supported.
 //   l4d2vr_shell_capability 1 <token>   (PR409 shell transactions)
-//   l4d2vr_mag_capability 2 <token>     (PR409 magazine transactions)
+//   l4d2vr_mag_capability 3 <token>     (PR409 magazine transactions; v3
+//                                returns ejected rounds to the reserve)
 //   l4d2vr_feature_ack <hexmask> 1      resolved feature bits, lowercase hex
 //                                without a 0x prefix.
 //

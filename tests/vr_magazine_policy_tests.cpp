@@ -58,6 +58,52 @@ int main()
     Check(ShouldEject(true, true, true, 0, true), "Explicit release must eject an empty magazine");
     Check(!ShouldEject(true, true, true, 8, false), "A tube-fed shotgun must not eject a detachable magazine");
     Check(ShouldEject(false, false, true, 0, true), "Legacy empty-magazine handling remains available");
+    Check(!ShouldEject(true, true, true, 15, true, true), "Release must do nothing while the magazine is already out");
+    Check(!ShouldEject(false, false, true, 0, true, true), "An ejected empty magazine must not auto-eject again");
+    {
+        // One ejection per magazine: the seat latch survives session resets
+        // and weapon switches until a magazine is seated again.
+        using l4d2vr_magazine::MagazineSeatHistory;
+        constexpr std::uintptr_t owner = 501u, rifle = 601u, smg = 602u;
+        constexpr std::uint32_t rifleHandle = 0x3005u, smgHandle = 0x3006u;
+        MagazineSeatHistory seats;
+        seats.ObserveOwner(owner);
+        seats.Observe(rifle, rifleHandle, 5, 43);
+        Check(!seats.Ejected(owner, rifle, rifleHandle, 5), "A drawn rifle starts with its magazine seated");
+        Check(ShouldEject(true, true, true, 43, true, seats.Ejected(owner, rifle, rifleHandle, 5)), "The first press ejects");
+        seats.Eject(rifle, rifleHandle, 5, 1);
+        seats.Observe(rifle, rifleHandle, 5, 1);
+        Check(seats.Ejected(owner, rifle, rifleHandle, 5), "The ejected magazine stays out");
+        Check(!ShouldEject(true, true, true, 1, true, seats.Ejected(owner, rifle, rifleHandle, 5)),
+            "A second press while the magazine is out ejects nothing");
+        seats.Observe(rifle, rifleHandle, 5, 0);
+        Check(seats.Ejected(owner, rifle, rifleHandle, 5), "Firing the chambered round is not a refill");
+        seats.Observe(smg, smgHandle, 2, 50);
+        seats.ObserveOwner(0u);
+        Check(seats.Ejected(owner, rifle, rifleHandle, 5), "Switching weapons or losing interaction keeps the rifle's magazine out");
+        Check(!seats.Ejected(owner, smg, smgHandle, 2), "Other guns keep their own magazines");
+        seats.Observe(rifle, rifleHandle, 5, 0);
+        Check(seats.Ejected(owner, rifle, rifleHandle, 5), "Redrawing the rifle still has no magazine");
+        Check(!seats.Ejected(owner, rifle, rifleHandle + 4096u, 5) && !seats.Ejected(owner + 1u, rifle, rifleHandle, 5),
+            "A recycled gun or another owner cannot inherit the ejected magazine");
+        seats.Seat(rifle, rifleHandle, 5);
+        Check(!seats.Ejected(owner, rifle, rifleHandle, 5), "Inserting a magazine re-arms the release");
+        seats.Eject(rifle, rifleHandle, 5, 43); // stock reload: the clip is untouched until it runs
+        seats.Observe(rifle, rifleHandle, 5, 43);
+        Check(seats.Ejected(owner, rifle, rifleHandle, 5), "An unfinished stock reload keeps the magazine out");
+        seats.Observe(rifle, rifleHandle, 5, 50);
+        Check(!seats.Ejected(owner, rifle, rifleHandle, 5), "A native refill means a magazine is seated");
+        seats.Eject(rifle, rifleHandle, 5, 1);
+        seats.ObserveOwner(owner + 1u);
+        Check(!seats.Ejected(owner + 1u, rifle, rifleHandle, 5), "A new player starts with seated magazines");
+        MagazineSeatHistory unserialed;
+        unserialed.ObserveOwner(owner);
+        unserialed.Observe(rifle, 0u, 5, 10);
+        unserialed.Eject(rifle, 0u, 5, 1);
+        Check(unserialed.Ejected(owner, rifle, 0u, 5), "Without a serial the current draw still keeps its magazine out");
+        unserialed.Observe(smg, smgHandle, 2, 50);
+        Check(!unserialed.Ejected(owner, rifle, 0u, 5), "Without a serial a redraw cannot be told from a new gun");
+    }
     Check(ChamberRoundsAfterEject(-1) == 0, "Unknown clip data must not create ammunition");
     Check(ChamberRoundsAfterEject(0) == 0, "An empty pistol must not gain an infinite-reserve chambered round");
     Check(ChamberRoundsAfterEject(1) == 1, "Removing a magazine must preserve the last existing chambered round");

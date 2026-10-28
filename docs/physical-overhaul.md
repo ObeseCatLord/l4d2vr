@@ -39,7 +39,7 @@ Dropping (`HolsterReleaseDrop`, on by default): letting go of an item you took w
 
 ## Reloading
 
-- **Release:** the Magazine Release button (right A by default) drops detachable magazines. The AK-47's magazine is grabbed and pulled out by hand instead (`MagazineReleaseButtonRequired`).
+- **Release:** the Magazine Release button (right A by default) drops detachable magazines. The AK-47's magazine is grabbed and pulled out by hand instead (`MagazineReleaseButtonRequired`). A magazine drops once: while it is out, pressing release again does nothing, even after switching weapons. Its rounds go back to your reserve and a loaded gun keeps the round in its chamber; the fresh magazine then fills from the reserve.
 - **Fresh magazine:** grab the spare at your off-hand waist and insert it into the magazine well.
 - **Chamber:** if the gun was empty, pull the slide, bolt, charging handle or pump to chamber the first round. Pump shotguns need a pump after each shot (`ManualPumpEnabled`).
 - **Empty guns** never reload or eject on their own; the magazine glows instead (`MagazineEmptyGlowEnabled`).

@@ -1343,6 +1343,9 @@ public:
 	Vector m_DroppedMagazinePrevHand[2]{};
 	Vector m_DroppedMagazineHandVelocity[2]{};
 	bool m_DroppedMagazinePrevHandValid = false;
+	// Counted for the self-test: magazines dropped and ejections applied.
+	std::atomic<uint32_t> m_DroppedMagazineSpawnSerial{ 0u };
+	std::atomic<uint32_t> m_MagazineEjectSerial{ 0u };
 	void SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const VrHandMatrix4& world, bool leftHand);
 	void UpdateDroppedMagazines();
 	int GetDroppedMagazineRenders(const std::string& lowerModel, DroppedMagazineRender* out, int capacity) const;
@@ -2027,6 +2030,9 @@ public:
     Vector m_VrHandsRightFreePoseRotationOffsetDeg{0.0f, 0.0f, 0.0f};
     l4d2vr_magazine::ChamberHistory m_PhysicalReloadChambers;
     bool m_PhysicalReloadObservedEmpty = false;
+    // Guns whose magazine is out; the release button ignores them until a
+    // magazine is seated again.
+    l4d2vr_magazine::MagazineSeatHistory m_MagazineSeats;
 	// Left-handed mode uses gameplay-right for the physical left/gun hand and gameplay-left
 	// for the physical right/off hand. These offsets are named by physical hand.
 	Vector m_VrHandsLeftHandedLeftPoseOffsetMeters = { 0.0f, 0.0f, 0.0f };
@@ -2362,6 +2368,11 @@ public:
 	bool m_MagazineInteractionSuppressLeftInputUntilRelease = false;
 	bool m_MagazineInteractionOldMagazinePulled = false;
     bool m_MagazineInteractionRetainedMagazineHeld = false;
+    // The pending ejection was pulled out by hand (drops from the hand).
+    bool m_MagazineInteractionEjectByHand = false;
+    // Resumed with the magazine already out: the stock reload is queued again
+    // when the fresh magazine seats (servers without physical transactions).
+    bool m_MagazineInteractionReleaseResumed = false;
     l4d2vr_magazine::RetainedInsertGate m_RetainedMagazineInsertGate;
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
 	bool m_MagazineInteractionChamberEmpty = false;
@@ -2849,6 +2860,8 @@ public:
 	int m_SelfTestValueA = 0;
 	int m_SelfTestValueB = 0;
 	int m_SelfTestValueC = 0;
+	int m_SelfTestValueD = 0;
+	uint32_t m_SelfTestSerialB = 0;
 	uint32_t m_SelfTestSerial = 0;
 	bool m_SelfTestPoseActive = false;
 	float m_SelfTestHeadDrop = 0.0f;

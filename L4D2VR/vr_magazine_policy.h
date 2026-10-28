@@ -121,6 +121,72 @@ namespace l4d2vr_magazine
         std::uint32_t m_ActiveHandle = 0u;
     };
 
+    // Pavlov-style release: a gun's magazine drops out once. Until a magazine
+    // is seated again the release button does nothing, across session resets
+    // and weapon switches. Native ammo above the rounds left in the gun after
+    // the ejection (a stock reload finished, or a host refill) means a
+    // magazine is seated again.
+    class MagazineSeatHistory
+    {
+    public:
+        void ObserveOwner(std::uintptr_t owner)
+        {
+            // Incapacitation or a brief loss of interaction keeps the history.
+            if (!owner || owner == m_Owner) return;
+            m_Entries = {}; m_Next = 0u; m_ActiveWeapon = 0u; m_ActiveHandle = 0u;
+            m_Owner = owner;
+        }
+        void Observe(std::uintptr_t weapon, std::uint32_t handle, int weaponId, int clip)
+        {
+            if (!m_Owner) return;
+            if (weapon != m_ActiveWeapon || handle != m_ActiveHandle)
+                for (auto& entry : m_Entries)
+                    if (entry.handle == 0u) entry = {}; // no serial: retain only the current draw
+            m_ActiveWeapon = weapon; m_ActiveHandle = handle;
+            Entry* const entry = Find(weapon, handle, weaponId);
+            if (!entry || clip < 0) return;
+            if (clip > entry->clip) *entry = {};
+            else entry->clip = clip; // a spent chamber round is not a refill
+        }
+        void Eject(std::uintptr_t weapon, std::uint32_t handle, int weaponId, int clipAfter)
+        {
+            if (!m_Owner || !weapon || weaponId <= 0) return;
+            Entry* entry = Find(weapon, handle, weaponId);
+            if (!entry) entry = &m_Entries[m_Next++ % m_Entries.size()];
+            *entry = {weapon, handle, weaponId, std::max(0, clipAfter)};
+        }
+        void Seat(std::uintptr_t weapon, std::uint32_t handle, int weaponId)
+        {
+            if (Entry* const entry = Find(weapon, handle, weaponId)) *entry = {};
+        }
+        bool Ejected(std::uintptr_t owner, std::uintptr_t weapon, std::uint32_t handle, int weaponId) const
+        {
+            if (!owner || owner != m_Owner || !weapon || weaponId <= 0) return false;
+            for (const auto& entry : m_Entries)
+                if (entry.weapon == weapon && entry.handle == handle && entry.weaponId == weaponId) return true;
+            return false;
+        }
+    private:
+        struct Entry
+        {
+            std::uintptr_t weapon = 0u;
+            std::uint32_t handle = 0u;
+            int weaponId = 0;
+            int clip = 0;
+        };
+        Entry* Find(std::uintptr_t weapon, std::uint32_t handle, int weaponId)
+        {
+            if (!weapon || weaponId <= 0) return nullptr;
+            for (auto& entry : m_Entries)
+                if (entry.weapon == weapon && entry.handle == handle && entry.weaponId == weaponId) return &entry;
+            return nullptr;
+        }
+        std::array<Entry, 16> m_Entries{};
+        unsigned m_Next = 0u;
+        std::uintptr_t m_Owner = 0u, m_ActiveWeapon = 0u;
+        std::uint32_t m_ActiveHandle = 0u;
+    };
+
     inline bool ShellSettlementPending(std::uint64_t now, std::uint64_t expires)
     {
         return expires != 0u && now < expires;
@@ -221,9 +287,11 @@ namespace l4d2vr_magazine
     };
 
     inline bool ShouldEject(bool buttonRequired, bool buttonPressed,
-        bool suppressEmptyAutoReload, int clip, bool detachable)
+        bool suppressEmptyAutoReload, int clip, bool detachable, bool magazineOut = false)
     {
-        if (!detachable)
+        // A magazine that is already out stays out until the next insertion;
+        // pressing release again drops nothing.
+        if (!detachable || magazineOut)
             return false;
         return buttonRequired ? buttonPressed : (suppressEmptyAutoReload && clip == 0);
     }

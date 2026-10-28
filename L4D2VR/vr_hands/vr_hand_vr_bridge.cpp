@@ -3965,8 +3965,9 @@ l4d2vr_remote_mag::ClientRequest::Poll VR::PollRemoteMagazineReply(uint32_t hand
 }
 
 // Developer self-test: run one server magazine/shell transaction on the active
-// weapon without the hand choreography. kind: 0 eject, 1 insert, 2 one shell.
-// Returns 1 applied, 0 waiting, -1 failed; clip/reserve are the replicated values.
+// weapon without the hand choreography. kind: 0 eject, 1 insert, 2 one shell,
+// 3 read only. Returns 1 applied (or read), 0 waiting, -1 failed; clip/reserve
+// are the replicated values.
 int VR::SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut)
 {
     clipOut = reserveOut = -1;
@@ -3978,6 +3979,8 @@ int VR::SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int&
     MagazineInteractionTryReadValue(weapon, kClip1Offset, clipOut);
     if (MagazineInteractionTryReadValue(weapon, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
         MagazineInteractionTryReadValue(player, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), reserveOut);
+    if (kind == 3)
+        return 1;
     const uint32_t handle = MagazineInteractionActiveWeaponHandle(m_Game, player, weapon);
     const uint32_t generation = m_MagazineInteractionSessionGeneration.load(std::memory_order_acquire);
     const uintptr_t owner = reinterpret_cast<uintptr_t>(player);
@@ -4973,6 +4976,8 @@ void VR::CancelMagazineInteractionManual()
     m_MagazineInteractionReloadCommandHoldUntil = {};
     m_MagazineInteractionOldMagazinePulled = false;
     m_MagazineInteractionRetainedMagazineHeld = false;
+    m_MagazineInteractionEjectByHand = false;
+    m_MagazineInteractionReleaseResumed = false;
     m_PistolMagazineCycleSuppressInput = false;
     m_MagazineInteractionPistolHandle = 0u;
     m_RetainedMagazineInsertGate.Reset();
@@ -5274,6 +5279,12 @@ bool VR::UpdateMagazineInteraction(
         reinterpret_cast<uintptr_t>(activeWeapon),
         activeWeaponHandle, activeWeaponIdInt,
         MagazineInteractionWeaponUsesPhysicalReload(activeWeaponId) ? activeClip : -1);
+    // An ejected magazine stays out across session resets and weapon switches;
+    // only an insertion or a native refill seats one again.
+    m_MagazineSeats.ObserveOwner(reinterpret_cast<uintptr_t>(localPlayer));
+    if (vrHandsInteractionAvailable && MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId))
+        m_MagazineSeats.Observe(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle,
+            activeWeaponIdInt, activeClip);
     // Use one native transaction path for the listen-host and joining clients.
     // Latch its availability into the session identity so a late capability or
     // timeout cannot mix a predicted local ejection with a server insertion.
@@ -6965,6 +6976,8 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionSuppressLeftInputUntilRelease = false;
         m_MagazineInteractionOldMagazinePulled = false;
         m_MagazineInteractionRetainedMagazineHeld = false;
+        m_MagazineInteractionEjectByHand = false;
+        m_MagazineInteractionReleaseResumed = false;
         m_RetainedMagazineInsertGate.Reset();
         m_MagazineInteractionOldMagazineContactActive = false;
         m_MagazineInteractionFreshMagazineContactActive = false;
@@ -7289,6 +7302,9 @@ bool VR::UpdateMagazineInteraction(
         if (reply.request.action == l4d2vr_remote_mag::Action::Eject)
         {
             m_MagazineInteractionOldMagazinePulled = true;
+            m_MagazineSeats.Eject(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle,
+                activeWeaponIdInt, reply.clip);
+            ++m_MagazineEjectSerial;
             if (!authoritativePistol)
             {
                 m_MagazineInteractionOneInChamber = l4d2vr_magazine::ChamberReadyAfterEject(
@@ -7297,10 +7313,21 @@ bool VR::UpdateMagazineInteraction(
             }
             MagazineInteractionPlayClipOutSound(this);
             triggerMagazineInteractionBothHandsHaptic(0.026f, 95.0f, 0.42f, 2);
-            catchRetainedMagazine();
+            // The magazine falls once the host has taken it out. A caught
+            // magazine falls when the hand lets go of it instead.
+            if (!catchRetainedMagazine())
+            {
+                if (!m_MagazineInteractionEjectByHand) refreshSocketFromPublishedViewmodelBox();
+                SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+                    m_MagazineInteractionEjectByHand ? m_MagazineInteractionDetachedMagazineWorld : m_MagazineInteractionSocketWorld,
+                    m_MagazineInteractionEjectByHand ? MagazineReloadSupportIsLeft() : !MagazineReloadSupportIsLeft());
+            }
+            Game::logMsg("[VR][RemoteMagazine][client] magazine out weaponId=%d clip=%d reserve=%d",
+                activeWeaponIdInt, reply.clip, reply.reserve);
         }
         else
         {
+            m_MagazineSeats.Seat(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle, activeWeaponIdInt);
             m_MagazineInteractionRetainedMagazineHeld = false;
             MagazineInteractionPlayClipInSound(this);
             triggerMagazineInteractionBothHandsHaptic(0.026f, 105.0f, 0.42f, 2);
@@ -8147,6 +8174,10 @@ bool VR::UpdateMagazineInteraction(
             !leftGripDown &&
             (m_MagazineInteractionRetainedMagazineHeld || freshGrabAgeSeconds >= 0.18f))
         {
+            // A caught old magazine falls with the hand's motion when let go.
+            if (m_MagazineInteractionRetainedMagazineHeld)
+                SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+                    m_MagazineInteractionDetachedMagazineWorld, MagazineReloadSupportIsLeft());
             m_MagazineInteractionState = MagazineInteractionManualState::WaitingForFreshMagazine;
             m_MagazineInteractionRetainedMagazineHeld = false;
             m_MagazineInteractionLeftHandHolding = false;
@@ -8191,8 +8222,16 @@ bool VR::UpdateMagazineInteraction(
                 m_MagazineInteractionFreshMagazineContactActive = false;
                 triggerMagazineInteractionBothHandsHaptic(0.026f, 105.0f, 0.42f, 2);
                 MagazineInteractionPlayClipInSound(this);
+                m_MagazineSeats.Seat(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle, activeWeaponIdInt);
                 if (m_MagazineInteractionShotgunShellMode)
                     startImmediateReloadCommand("shotgun-shell-inserted");
+                else if (m_MagazineInteractionReleaseResumed)
+                {
+                    // The stock reload queued at the release was interrupted
+                    // (weapon switch or reset); run it again for this magazine.
+                    m_MagazineInteractionReleaseResumed = false;
+                    startImmediateReloadCommand("resumed-magazine-inserted");
+                }
                 m_MagazineInteractionLeftHandHolding = false;
                 m_MagazineInteractionPostInsertStarted = now;
                 m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
@@ -8244,6 +8283,7 @@ bool VR::UpdateMagazineInteraction(
                 return false;
             }
 
+            m_MagazineSeats.Seat(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle, activeWeaponIdInt);
             CancelMagazineInteractionManual();
             return false;
         }
@@ -8311,6 +8351,7 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionOldMagazineContactActive = false;
             if (activeAuthoritativeMagazineBackend)
             {
+                m_MagazineInteractionEjectByHand = true;
                 if (!beginRemoteMagazineAction(l4d2vr_remote_mag::Action::Eject)) CancelMagazineInteractionManual();
                 return false;
             }
@@ -8320,6 +8361,9 @@ bool VR::UpdateMagazineInteraction(
                 return false;
             }
 
+            m_MagazineSeats.Eject(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle,
+                activeWeaponIdInt, activeClip);
+            ++m_MagazineEjectSerial;
             startImmediateReloadCommand("clip-out");
             MagazineInteractionPlayClipOutSound(this);
             triggerMagazineInteractionBothHandsHaptic(0.026f, 95.0f, 0.42f, 2);
@@ -8334,10 +8378,39 @@ bool VR::UpdateMagazineInteraction(
         return reloadCommandPending();
     }
 
+    // A magazine that is already out (session reset, weapon switch, or the
+    // host's pistol state) is never ejected again: wait for a fresh magazine.
+    // The release button does nothing until one is seated.
+    const bool pistolHostTracksMagazine = authoritativePistol && havePistolMagazineState &&
+        (pistolMagazineState.physical & pistolBit) != 0u;
+    const bool magazineOut = MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId) &&
+        (pistolHostTracksMagazine ? (pistolMagazineState.attached & pistolBit) == 0u :
+            m_MagazineSeats.Ejected(reinterpret_cast<uintptr_t>(localPlayer), reinterpret_cast<uintptr_t>(activeWeapon),
+                activeWeaponHandle, activeWeaponIdInt));
+    if (magazineOut)
+    {
+        MagazineInteractionBoxSnapshot box{};
+        float boxAgeSeconds = -1.0f;
+        bool usedCachedBox = false;
+        if (getMagazineBoxForAutoEject(box, boxAgeSeconds, usedCachedBox))
+        {
+            beginMagazineInteractionSession(box);
+            m_MagazineInteractionState = MagazineInteractionManualState::WaitingForFreshMagazine;
+            m_MagazineInteractionOldMagazinePulled = true;
+            m_MagazineInteractionOneInChamber =
+                l4d2vr_magazine::ChamberReadyAfterEject(m_PhysicalReloadObservedEmpty, activeClip);
+            m_MagazineInteractionChamberEmpty = !m_MagazineInteractionOneInChamber;
+            m_MagazineInteractionReleaseResumed = choreographedNativeReload;
+            Game::logMsg("[VR][MagazineInteraction] magazine still out; waiting for fresh magazine weaponId=%d clip=%d",
+                activeWeaponIdInt, activeClip);
+        }
+        return reloadCommandPending();
+    }
+
     // Running empty never ejects or reloads on its own; the magazine glows instead.
     if (l4d2vr_magazine::ShouldEject(releaseButtonRequired,
         m_MagazineReleaseJustPressed, m_MagazineInteractionAutoEjectWhenEmpty,
-        activeClip, MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId)))
+        activeClip, MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId), magazineOut))
     {
         MagazineInteractionBoxSnapshot box{};
         float boxAgeSeconds = -1.0f;
@@ -8355,14 +8428,21 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionViewmodelFreezeDeferredUntil =
                 now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                     std::chrono::duration<float>(GetMagazineInteractionEmptyClipAutoEjectFreezeDelaySeconds(activeWeaponId)));
-            // The released magazine falls out of the well.
-            SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
-                m_MagazineInteractionSocketWorld, !MagazineReloadSupportIsLeft());
             if (activeAuthoritativeMagazineBackend)
             {
+                // The magazine drops when the host confirms the ejection. A
+                // rejected request leaves it seated, so nothing falls.
+                m_MagazineInteractionEjectByHand = false;
                 if (!beginRemoteMagazineAction(l4d2vr_remote_mag::Action::Eject)) CancelMagazineInteractionManual();
                 return false;
             }
+            // No host confirms the ejection here; the magazine is out now and
+            // falls out of the well.
+            m_MagazineSeats.Eject(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle,
+                activeWeaponIdInt, activeClip);
+            ++m_MagazineEjectSerial;
+            SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+                m_MagazineInteractionSocketWorld, !MagazineReloadSupportIsLeft());
             if (choreographedNativeReload)
             {
                 startImmediateReloadCommand("release-button");

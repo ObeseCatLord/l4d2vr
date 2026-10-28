@@ -3253,8 +3253,8 @@ void VR::ParseConfigFile()
     m_HolsterYawDeadbandDeg = std::clamp(getFloat("HolsterYawDeadbandDeg", 20.0f), 0.0f, 90.0f);
     m_HolsterYawSmoothingSeconds = std::clamp(getFloat("HolsterYawSmoothingSeconds", 0.25f), 0.0f, 3.0f);
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
-    m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.15f), 0.0f, 1.0f);
-    m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.35f), 0.0f, 1.0f);
+    m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
+    m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);
     {
         static const char* kZoneKeys[l4d2vr_holster::kZoneCount] = {
             "HolsterPrimaryOffsetMeters", "HolsterSecondaryOffsetMeters", "HolsterThrowableOffsetMeters",

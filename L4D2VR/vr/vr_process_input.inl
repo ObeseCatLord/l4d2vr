@@ -1693,8 +1693,27 @@ void VR::ProcessInput()
             const l4d2vr_holster::GrabOutput grab = m_HolsterGrab.Update(grabInput);
             m_HolsterHighlightSlot.store(grabInput.handZone != l4d2vr_holster::Zone::None
                 ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1, std::memory_order_release);
-            if (grab.hoverEntered != l4d2vr_holster::Zone::None && m_HolsterHoverHapticAmplitude > 0.0f)
-                TriggerPhysicalHandHapticPulse(false, 0.012f, 160.0f, m_HolsterHoverHapticAmplitude, 1);
+            {
+                // Hover pulse whenever the hand enters any holster: full strength
+                // where there is something to take (or the held item's own holster),
+                // a lighter tick over an empty one so the layout can be felt.
+                static l4d2vr_holster::Zone s_HoverZone = l4d2vr_holster::Zone::None;
+                const l4d2vr_holster::Zone anyZone = (ready && frameValid)
+                    ? grabInput.ownZoneUnderHand : l4d2vr_holster::Zone::None;
+                if (anyZone != s_HoverZone)
+                {
+                    s_HoverZone = anyZone;
+                    if (anyZone != l4d2vr_holster::Zone::None && !gripDown && m_HolsterHoverHapticAmplitude > 0.0f)
+                    {
+                        const int slot = l4d2vr_holster::SlotIndex(anyZone);
+                        const bool usable = (occupiedMask & (1u << slot)) != 0u;
+                        TriggerPhysicalHandHapticPulse(false, usable ? 0.045f : 0.025f, 160.0f,
+                            usable ? m_HolsterHoverHapticAmplitude : m_HolsterHoverHapticAmplitude * 0.45f, 1);
+                        Game::logMsg("[VR][Holster] hover slot%d %s pulse=%.2f", slot + 1, usable ? "occupied" : "empty",
+                            usable ? m_HolsterHoverHapticAmplitude : m_HolsterHoverHapticAmplitude * 0.45f);
+                    }
+                }
+            }
 
             static const char* kSlotCommands[] = { "slot1", "slot2", "slot3", "slot4", "slot5" };
             // "use <class>" switches directly; "slotN" goes through the HUD's

@@ -217,7 +217,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
                         m_PillGiveTargetPoint = targetsWorld[i];
                 m_PillGiveImpulsePending.store(true, std::memory_order_release);
                 m_PillGiveHoldUntil = now + std::chrono::milliseconds(500);
-                TriggerPhysicalHandHapticPulse(false, 0.04f, 90.0f, 0.4f, 2);
+                TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.04f, 90.0f, 0.4f, 2);
                 Game::logMsg("[VR][Consumable] %s handed to player %d",
                     weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS ? "pills" : "adrenaline", handover.target);
             }
@@ -253,7 +253,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         {
             m_ConsumableUseWeapon = weapon;
             m_ConsumableUseHoldUntil = now + std::chrono::milliseconds(1500);
-            TriggerPhysicalHandHapticPulse(false, 0.04f, 110.0f, 0.4f, 2);
+            TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.04f, 110.0f, 0.4f, 2);
             Game::logMsg("[VR][Consumable] %s used by gesture",
                 weaponId == C_WeaponCSBase::WeaponID::PAIN_PILLS ? "pills" : "adrenaline");
         }

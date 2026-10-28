@@ -146,6 +146,7 @@ namespace l4d2vr_server
         MinIntervalLimiter pillLimiter{};
         IntentBudget intentBudget{};
         std::uint32_t reachClamps = 0u;
+        std::uintptr_t lastActiveWeapon = 0u; // active item after the last executed command
 
         void Reset() { *this = PlayerVRState{}; }
 

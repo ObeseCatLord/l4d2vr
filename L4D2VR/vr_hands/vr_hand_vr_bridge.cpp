@@ -860,7 +860,12 @@ namespace
         l4d2vr_holster::BodyFrame frame{};
         if (!vr->GetHolsterBodyFrame(frame) || !frame.valid)
             return false;
-        point = l4d2vr_holster::RootToWorld(frame, kPavlovPouchRootMeters);
+        // The pouch hangs on the free hand's hip: it changes sides when the
+        // configured off hand holds the gun (vr_item_hand.h).
+        Vector pouchLocal = kPavlovPouchRootMeters;
+        if (vr->m_ItemHandSwapped.load(std::memory_order_acquire))
+            pouchLocal.y = -pouchLocal.y;
+        point = l4d2vr_holster::RootToWorld(frame, pouchLocal);
         forward = frame.forward;
         right = VrHandMath::Normalize(Vector(frame.forward.y, -frame.forward.x, 0.0f));
         return l4d2vr_interaction::Finite(point) && right.Length() > 0.5f;
@@ -3104,7 +3109,7 @@ unsigned VR::MagazineGripPhysicalMask() const
 {
     return l4d2vr_dual::ReloadGripPhysicalMask(
         m_MagazineInteractionLeftHandPoseActive.load(std::memory_order_acquire) != 0u,
-        GetPrimaryPistolHand(), m_LeftHanded);
+        GetPrimaryPistolHand(), ItemHandIsPhysicalLeft());
 }
 
 bool VR::BuildPistolControllerWorld(bool left, VrHandMatrix4& outWorld) const
@@ -5715,7 +5720,7 @@ bool VR::GetWorldPoseAnatomicalRightHandOpenVRFingerCurls(
     // already the anatomical physical-right hand. Left-handed mode maps the
     // gameplay-right cache to the physical-left controller, so read the
     // physical-right skeleton action directly for network world-pose data.
-    if (!m_LeftHanded)
+    if (!ItemHandIsPhysicalLeft())
         return GetNativeViewmodelRightHandOpenVRFingerCurls(outCurls);
 
     if (!m_NativeViewmodelLeftHandOpenVRSkeleton || !m_Input)
@@ -8680,7 +8685,7 @@ bool VR::UpdateMagazineInteraction(
             // spare glows brighter, with a tick when it lights up.
             const bool spareInReach = hasPickupBox && freshGrabDistance <= kReloadPouchHighlightMeters * m_VRScale;
             if (spareInReach && !m_ReloadSpareNear.load(std::memory_order_relaxed))
-                TriggerPhysicalHandHapticPulse(true, 0.03f, 140.0f, 0.3f, 1);
+                TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(MagazineReloadSupportIsLeft()), 0.03f, 140.0f, 0.3f, 1);
             m_ReloadSpareNear.store(spareInReach, std::memory_order_release);
         }
         if (!allowTake || !hasPickupBox)
@@ -9985,7 +9990,7 @@ bool VR::DrawVrHandsForEyeImmediate(
         rightHandPoseOffsetMeters = m_VrHandsRightFreePoseOffsetMeters;
         rightHandPoseRotationOffsetDeg = m_VrHandsRightFreePoseRotationOffsetDeg;
     }
-    if (m_LeftHanded)
+    if (ItemHandIsPhysicalLeft())
     {
         // Gameplay-right is the physical left/gun hand after the left-handed pose swap.
         rightHandPoseOffsetMeters += m_VrHandsLeftHandedLeftPoseOffsetMeters;
@@ -10021,7 +10026,7 @@ bool VR::DrawVrHandsForEyeImmediate(
             m_VrHandsMotionRangeWithoutController,
             vrHandsRightUseViewmodelPose,
             twoHandedGripPoseActive,
-            m_LeftHanded,
+            ItemHandIsPhysicalLeft(),
             m_MouseModeEnabled,
             m_VrHandsDebugLog,
             sceneLightScale,

@@ -4107,7 +4107,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 				// Controllers + viewmodel (visual only, no gameplay auto-aim overrides here).
 				vr::TrackedDeviceIndex_t leftIdx = m_VR->m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
 				vr::TrackedDeviceIndex_t rightIdx = m_VR->m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
-				if (m_VR->m_LeftHanded)
+				if (m_VR->ItemHandIsPhysicalLeft())
 				{
 					std::swap(leftIdx, rightIdx);
 				}

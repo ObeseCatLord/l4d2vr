@@ -41,6 +41,7 @@
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
+#include "vr_item_hand.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
@@ -1964,6 +1965,40 @@ public:
 	float m_SnapTurnAngle = 45.0f;
 	bool m_LeftHanded = false;
 	bool m_LeftHandedSwapInputActions = false;
+	// Ambidextrous items (AmbidextrousItemHands, vr_item_hand.h): the hand that
+	// takes an item holds and uses it. While m_ItemHandSwapped is set the
+	// configured off hand holds the active item, and every gameplay "right hand"
+	// (poses, trigger, weapon grip, haptics, viewmodel, aim) is that controller.
+	bool m_AmbidextrousItemHands = true;
+	float m_ItemHandOffRadiusMeters = 0.14f;
+	std::atomic<bool> m_ItemHandSwapped{ false };
+	std::atomic<uint64_t> m_ItemHandSwapAtMs{ 0u };
+	std::atomic<uint32_t> m_ItemHandSwapSerial{ 0u };
+	l4d2vr_item_hand::Switch m_ItemHandSwitch;
+	bool m_ItemHandAdoptGrip = false;       // the new item hand keeps the item (no press edge, no drop)
+	bool m_ItemHandAdoptHeld = false;       // ... and the toggle grip holds it
+	bool m_ItemHandForceGripUpFrame = false; // a holster draw: the new item hand presses afresh next frame
+	// Gameplay right hand (the item hand) is the physical left controller.
+	bool ItemHandIsPhysicalLeft() const
+	{
+		return l4d2vr_item_hand::ItemHandIsPhysicalLeft(m_LeftHanded, m_ItemHandSwapped.load(std::memory_order_acquire));
+	}
+	// Which physical hand holds the active item (aim, fire, throws, viewmodel).
+	l4d2vr_dual::Hand ActiveItemHand() const
+	{
+		return ItemHandIsPhysicalLeft() ? l4d2vr_dual::Hand::Left : l4d2vr_dual::Hand::Right;
+	}
+	bool ItemHandSwappedWithinMs(uint64_t ms) const;
+	// Moves the item to the given physical hand at the next tracking update.
+	void RequestItemHand(bool physicalLeft, l4d2vr_item_hand::Reason reason);
+	void CommitItemHandSwitch();
+	vr::VRActionHandle_t ItemHandRoleAction(vr::VRActionHandle_t action) const;
+	bool ItemHandReady(C_BasePlayer* localPlayer, bool isObserverOrIdle) const;
+	void UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserverOrIdle, bool akimbo,
+		bool toggleApplies, bool gripValid, bool& gripDown, bool& gripJustPressed, uint32_t& weaponGripInputState);
+	void UpdateItemHandOff(C_BasePlayer* localPlayer, bool isObserverOrIdle, bool akimbo, bool pressEdge);
+	bool m_ItemHandOffTwoHandPrev = false;
+	int m_ItemHandOffMagazineStatePrev = 0;
 	// If false: movement (walk axis) follows HMD yaw ("head-oriented locomotion").
 	// If true:  movement follows the right-hand controller yaw ("hand-oriented locomotion").
 	bool m_MoveDirectionFromController = false;
@@ -2953,6 +2988,7 @@ public:
 	void SelfTestReachRight(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed);
 	void SelfTestReachLeft(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed);
 	bool RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer* player);
+	bool RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
 	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
 	// Slap step: the pouch's world position and the held fresh magazine's centre.
 	bool GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid);
@@ -3136,6 +3172,10 @@ public:
 	std::atomic<uint32_t> m_VmStrikeFrames{ 0u };
 	std::atomic<uint32_t> m_VmStrikeFramesHeld{ 0u };
 	std::atomic<uint32_t> m_VmStrikeFramesShown{ 0u };
+	// Weapon switches (draw / deploy / item pickup) drawn without the animation, and with it.
+	std::atomic<uint32_t> m_VmSwitchFramesHeld{ 0u };
+	std::atomic<uint32_t> m_VmSwitchFramesShown{ 0u };
+	std::atomic<bool> m_VmIdlePosesClearRequest{ false }; // self-test: forget the learned idle poses
 	std::atomic<float> m_VmStrikeMaxDeviation{ 0.0f }; // native pose vs the held idle pose after a strike (units)
 	std::atomic<uint64_t> m_VmAnimTraceUntilMs{ 0u }; // self-test: log the viewmodel sequence every frame
 	bool m_VmStrikeHoldDisabled = false; // self-test comparison: let the native strike animation play

@@ -435,7 +435,11 @@ ConsumableGiveEnabled=true
 ConsumableGesturesEnabled=true
 HolsterPavlovLayoutEnabled=true
 HolsterItemsVisible=true
+// No weapon switch plays the draw animation: the item is simply in your hand.
 HolsterInstantDraw=true
+// The hand that takes an item holds and uses it (left draw = left aim and trigger); squeeze the item with the free hand to hand it over.
+AmbidextrousItemHands=true
+ItemHandOffRadiusMeters=0.14
 // Point a controller at a menu panel to move the cursor; the trigger clicks (for runtimes such as XRizer without the SteamVR laser mouse).
 MenuLaserPointerEnabled=true
 # Holsters are placed like Pavlov VR's inventory (root 75 cm below the head,

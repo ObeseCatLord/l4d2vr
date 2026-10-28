@@ -4320,7 +4320,7 @@ bool VR::IsThirdPersonMapLoadCooldownActive() const
 
 bool VR::IsGameplayHandLeftPhysical(bool leftHand) const
 {
-    return m_LeftHanded ? !leftHand : leftHand;
+    return ItemHandIsPhysicalLeft() ? !leftHand : leftHand;
 }
 
 vr::TrackedDeviceIndex_t VR::GetPhysicalControllerIndexForHand(bool leftHand) const

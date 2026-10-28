@@ -623,7 +623,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					m_VR->IsThrowableWeapon(throwWeapon);
 				const bool attackDownForThrow = (cmd->buttons & (1 << 0)) != 0;
 				if (throwable && attackDownForThrow && !s_t0ThrowPrevAttack)
-					m_VR->TriggerPhysicalHandHapticPulse(false, 0.025f, 140.0f, 0.2f, 2); // pin pulled
+					m_VR->TriggerPhysicalHandHapticPulse(m_VR->IsGameplayHandLeftPhysical(false), 0.025f, 140.0f, 0.2f, 2); // pin pulled
 				if (throwable && !attackDownForThrow && s_t0ThrowPrevAttack && localPlayerForAutoActions)
 				{
 					const Vector handVelocity = m_VR->m_DroppedMagazineHandVelocity[1] *

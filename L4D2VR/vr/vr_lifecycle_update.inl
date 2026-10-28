@@ -1736,6 +1736,15 @@ void VR::Update()
     const bool queuedAtFrameStart = (m_Game && (m_Game->GetMatQueueMode() != 0));
 
     UpdateDesktopMirrorOverlayHideEffective(this, queuedAtFrameStart);
+    // Self-test screenshot: the single-threaded eye pair is complete here and
+    // not submitted yet (queued frames are captured when they are published).
+    if (!queuedAtFrameStart && m_SelfTestEnabled && inGameAtUpdateStart &&
+        m_RenderedNewFrame.load(std::memory_order_acquire))
+    {
+        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+        if (m_CreatedVRTextures.load(std::memory_order_acquire) && m_CreatingTextureID == Texture_None)
+            SelfTestCaptureEyes(m_D9LeftEyeSurface, m_D9RightEyeSurface, false);
+    }
     if (!queuedAtFrameStart)
         SubmitVRTextures();
 
@@ -2243,6 +2252,7 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     m_AutoFlashlightReadbackHeight = 0;
 
     DestroyHandHudWorldQuadTextures();
+    DestroyNativeWristHudTextures();
     for (size_t i = 0; i < m_D9SpecialInfectedIntentSenseHudDynTex.size(); ++i)
     {
         SafeReleaseD3D(m_D9SpecialInfectedIntentSenseHudDynSurface[i]);
@@ -3007,6 +3017,8 @@ void VR::PublishSourceQueueCompletedFrame(
                     D3DTEXF_NONE);
                 if (SUCCEEDED(leftHr) && SUCCEEDED(rightHr))
                 {
+                    if (m_SelfTestEnabled)
+                        SelfTestCaptureEyes(m_D9LeftEyeSubmitSurface, m_D9RightEyeSubmitSurface, true);
                     // Preserve the selected eye before the DXVK-only overlays below.
                     // This is one GPU copy inside the existing producer transaction; it
                     // adds no Source RenderView and no extra queue wait.

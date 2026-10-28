@@ -24336,10 +24336,14 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
 
 namespace
 {
-    bool HooksHolsterPlaceBones(const l4d2vr_holster::ItemPose& pose, vr_vm_stabilize::Mat3x4* bones, int count,
-        Vector* outRootBefore = nullptr, Vector* outRootAfter = nullptr)
+    // Moves the bones rigidly so that the reference bone lands exactly on the
+    // holster pose: placed[i] = target * inverse(source[reference]) * source[i].
+    bool HooksHolsterPlaceBones(const l4d2vr_holster::ItemPose& pose, const vr_vm_stabilize::Mat3x4* source,
+        vr_vm_stabilize::Mat3x4* placed, int count, int referenceBone,
+        Vector* outReferenceBefore = nullptr, Vector* outReferenceAfter = nullptr)
     {
-        if (!bones || count <= 0 || count > 512 || !pose.valid)
+        if (!source || !placed || count <= 0 || count > 512 || referenceBone < 0 || referenceBone >= count ||
+            !pose.valid)
             return false;
         vr_vm_stabilize::Mat3x4 target{};
         const Vector* axes[3] = { &pose.axisX, &pose.axisY, &pose.axisZ };
@@ -24349,36 +24353,74 @@ namespace
                 target.m[row][column] = (*axes[column])[row];
             target.m[row][3] = pose.origin[row];
         }
-        vr_vm_stabilize::Mat3x4 root{};
-        if (!vr_vm_stabilize::SafeRead(bones, root))
+        vr_vm_stabilize::Mat3x4 reference{};
+        if (!vr_vm_stabilize::SafeRead(source + referenceBone, reference))
             return false;
-        vr_vm_stabilize::Mat3x4 inverseRoot{}, delta{};
-        vr_vm_stabilize::InvertTR(root, inverseRoot);
-        vr_vm_stabilize::Mul(target, inverseRoot, delta);
+        vr_vm_stabilize::Mat3x4 inverseReference{}, delta{};
+        vr_vm_stabilize::InvertTR(reference, inverseReference);
+        vr_vm_stabilize::Mul(target, inverseReference, delta);
         for (int bone = 0; bone < count; ++bone)
         {
-            vr_vm_stabilize::Mat3x4 source{};
-            if (!vr_vm_stabilize::SafeRead(bones + bone, source))
+            vr_vm_stabilize::Mat3x4 bindBone{};
+            if (!vr_vm_stabilize::SafeRead(source + bone, bindBone))
                 return false;
-            vr_vm_stabilize::Mul(delta, source, bones[bone]);
+            vr_vm_stabilize::Mul(delta, bindBone, placed[bone]);
         }
-        if (outRootBefore)
-            *outRootBefore = Vector(root.m[0][3], root.m[1][3], root.m[2][3]);
-        if (outRootAfter)
-            *outRootAfter = Vector(bones[0].m[0][3], bones[0].m[1][3], bones[0].m[2][3]);
+        if (outReferenceBefore)
+            *outReferenceBefore = Vector(reference.m[0][3], reference.m[1][3], reference.m[2][3]);
+        if (outReferenceAfter)
+            *outReferenceAfter = Vector(placed[referenceBone].m[0][3], placed[referenceBone].m[1][3],
+                placed[referenceBone].m[2][3]);
         return true;
     }
-}
 
-namespace
-{
-    void HooksDrawWithForcedMaterialSafe(void* ecx, void* state, const ModelRenderInfo_t* info,
+    // The bone a holstered item is placed by: ValveBiped.weapon_bone, which every
+    // stock v_ and w_ weapon model builds its mesh around (barrel or long axis
+    // +Z, top +Y; melee blades +Y). The model root is not usable: on the v_
+    // models that the local player's carried weapons report it sits about a
+    // metre from the mesh and follows the inactive weapon's animation, which
+    // drew holstered items floating in front of the player. -1 = none.
+    int HooksHolsterReferenceBone(void* drawState)
+    {
+        std::vector<std::string> names;
+        std::vector<int> parents;
+        int numBones = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+        if (!vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, names, parents, numBones, boneIndex,
+                stride, numBonesOffset))
+            return -1;
+        for (int i = 0; i < numBones && i < static_cast<int>(names.size()); ++i)
+        {
+            const std::string lower = vr_vm_stabilize::ToLowerAscii(names[static_cast<size_t>(i)]);
+            if (lower == "valvebiped.weapon_bone" || lower == "weapon_bone")
+                return i;
+        }
+        return -1;
+    }
+
+    // Glow passes redraw the same bones with an additive material. The pass's
+    // depth is pulled a hair toward the camera (viewport depth 0..kGlowDepthMax)
+    // so it always wins against its own surface instead of z-fighting with it
+    // (the shimmer of the old glow), while anything really in front of the part,
+    // a hand or a wall, still covers it. Drawn after the part itself, so the
+    // depth range is restored to the 0..1 that every VR model draw uses.
+    constexpr float kGlowDepthMax = 0.9995f;
+
+    void HooksGlowSetDepthRange(float maxZ)
+    {
+        if (!Hooks::m_Game || !Hooks::m_Game->m_MaterialSystem)
+            return;
+        CRefPtr<IMatRenderContext> renderContext;
+        renderContext = Hooks::m_Game->m_MaterialSystem->GetRenderContext();
+        if (renderContext)
+            renderContext->DepthRange(0.0f, maxZ);
+    }
+
+    void HooksDrawGlowPassSafe(void* ecx, void* state, const ModelRenderInfo_t* info,
         void* bones, IMaterial* material, float r, float g, float b)
     {
-        if (!Hooks::m_Game || !Hooks::m_Game->m_ModelRender || !material || !info)
-            return;
         __try
         {
+            material->AlphaModulate(1.0f);
             material->ColorModulate(r, g, b);
             Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(material);
             Hooks::hkDrawModelExecute.fOriginal(ecx, state, *info, bones);
@@ -24394,6 +24436,81 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
         }
+    }
+
+    // Every glow (holster hover, empty magazine, spare magazine, bolt/pump,
+    // magazine to slap out) goes through here. r, g, b is the light added on top
+    // of the part.
+    void HooksDrawWithForcedMaterialSafe(void* ecx, void* state, const ModelRenderInfo_t* info,
+        void* bones, IMaterial* material, float r, float g, float b)
+    {
+        if (!Hooks::m_Game || !Hooks::m_Game->m_ModelRender || !material || !info || !bones)
+            return;
+        HooksGlowSetDepthRange(kGlowDepthMax);
+        HooksDrawGlowPassSafe(ecx, state, info, bones, material, r, g, b);
+        HooksGlowSetDepthRange(1.0f);
+    }
+
+    // A soft, slow breathing (about 2.5 s per cycle) between 85% and 100%.
+    float HooksGlowPulse()
+    {
+        const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
+        return 0.925f + 0.075f * std::sin(t * 6.2831853f * 0.4f);
+    }
+
+    // Glow colours (additive light, kept low so the part stays readable).
+    struct HooksGlowColor { float r, g, b; };
+    constexpr HooksGlowColor kGlowAttention{ 0.30f, 0.24f, 0.11f }; // warm: empty magazine
+    constexpr HooksGlowColor kGlowNextStep{ 0.12f, 0.19f, 0.27f };  // cool: what to do next
+    constexpr HooksGlowColor kGlowInReach{ 0.20f, 0.30f, 0.40f };   // cool, brighter: spare within reach
+    constexpr HooksGlowColor kGlowHolster{ 0.20f, 0.19f, 0.15f };   // neutral: hovered holster item
+
+    void HooksDrawGlow(void* ecx, void* state, const ModelRenderInfo_t* info, void* bones, IMaterial* material,
+        const HooksGlowColor& color)
+    {
+        const float pulse = HooksGlowPulse();
+        HooksDrawWithForcedMaterialSafe(ecx, state, info, bones, material,
+            color.r * pulse, color.g * pulse, color.b * pulse);
+    }
+
+    // Holstered item draw (DrawModel inside g_HolsterDrawScope): place the bones
+    // by the reference bone and draw the item plain, plus the hover glow. Skips
+    // the draw entirely rather than show the item at its native carried pose.
+    void HooksHolsterDrawItemExecute(void* ecx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
+    {
+        vr_vm_stabilize::ScopedStableBoneScratch stableBoneScratchScope;
+        constexpr int kStudioShadowDepthTexture = 0x40000000;
+        if ((info.flags & kStudioShadowDepthTexture) != 0)
+            return;
+        const int referenceBone = HooksHolsterReferenceBone(state);
+        int numBones = 0;
+        vr_vm_stabilize::Mat3x4* placed = nullptr;
+        if (pCustomBoneToWorld && referenceBone >= 0 &&
+            vr_vm_stabilize::TryGetNumBonesFromDrawState(state, numBones) && referenceBone < numBones)
+        {
+            placed = vr_vm_stabilize::AllocStableBones(numBones,
+                Hooks::m_VR ? Hooks::m_VR->m_RenderFrameSeq.load(std::memory_order_relaxed) : 2u);
+        }
+        Vector referenceBefore(0.0f, 0.0f, 0.0f), referenceAfter(0.0f, 0.0f, 0.0f);
+        if (!placed || !HooksHolsterPlaceBones(g_HolsterDrawScope.pose,
+                reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pCustomBoneToWorld), placed, numBones,
+                referenceBone, &referenceBefore, &referenceAfter))
+        {
+            g_HolsterDrawDiag.setupBonesFailed.fetch_add(1u, std::memory_order_relaxed);
+            return;
+        }
+        g_HolsterDrawDiag.setupBonesPlaced.fetch_add(1u, std::memory_order_relaxed);
+        if (Hooks::m_VR)
+            Hooks::m_VR->m_HolsterDrawBonesPlacedCount.fetch_add(1u, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
+            g_HolsterDrawDiagSample.rootValid = true;
+            g_HolsterDrawDiagSample.rootBefore = referenceBefore;
+            g_HolsterDrawDiagSample.rootAfter = referenceAfter;
+        }
+        Hooks::hkDrawModelExecute.fOriginal(ecx, state, info, placed);
+        if (g_HolsterDrawScope.highlight)
+            HooksDrawGlow(ecx, state, &info, placed, g_HolsterDrawScope.highlight, kGlowHolster);
     }
 }
 
@@ -24414,26 +24531,9 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
             currentTime);
     if (ecx && ecx == g_HolsterDrawScope.renderable)
     {
+        // Holstered item: its own bones, unmodified. DrawModelExecute moves
+        // them to the holster by the weapon_bone (HooksHolsterDrawItemExecute).
         g_HolsterDrawDiag.setupBonesCalls.fetch_add(1u, std::memory_order_relaxed);
-        if (!result || !boneToWorldOut)
-        {
-            g_HolsterDrawDiag.setupBonesFailed.fetch_add(1u, std::memory_order_relaxed);
-            return result;
-        }
-        // Holstered item: keep the model's own bone layout and move it rigidly so
-        // its root bone lands on the holster pose.
-        Vector rootBefore(0.0f, 0.0f, 0.0f), rootAfter(0.0f, 0.0f, 0.0f);
-        if (HooksHolsterPlaceBones(g_HolsterDrawScope.pose,
-            reinterpret_cast<vr_vm_stabilize::Mat3x4*>(boneToWorldOut), maxBones, &rootBefore, &rootAfter))
-        {
-            g_HolsterDrawDiag.setupBonesPlaced.fetch_add(1u, std::memory_order_relaxed);
-            if (m_VR)
-                m_VR->m_HolsterDrawBonesPlacedCount.fetch_add(1u, std::memory_order_relaxed);
-            std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
-            g_HolsterDrawDiagSample.rootValid = true;
-            g_HolsterDrawDiagSample.rootBefore = rootBefore;
-            g_HolsterDrawDiagSample.rootAfter = rootAfter;
-        }
         return result;
     }
     if (result && boneToWorldOut)
@@ -24452,6 +24552,13 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
 
 void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
 {
+    // A holstered item is drawn by itself at its holster: none of the viewmodel,
+    // hands, magazine or world-model processing below applies to it.
+    if (g_HolsterDrawScope.renderable && info.pRenderable == g_HolsterDrawScope.renderable)
+    {
+        HooksHolsterDrawItemExecute(ecx, state, info, pCustomBoneToWorld);
+        return;
+    }
     // Visible holsters without the first-person body: the first native
     // viewmodel color draw of a VR eye view submits the holstered items once,
     // after that viewmodel's own draw has fully completed (no engine model
@@ -25756,13 +25863,10 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     {
         if (IMaterial* const hintMaterial = HooksHolsterHighlightMaterial())
         {
-            const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
             // Brighter once the empty off hand is within reach of it (bit 8).
             const bool spareInReach = (m_VR->m_ReloadHintMask.load(std::memory_order_acquire) & 8u) != 0u;
-            const float pulse = spareInReach ? 0.8f + 0.2f * std::sin(t * 6.2831853f * 2.0f)
-                                     : 0.45f + 0.35f * std::sin(t * 6.2831853f * 1.1f);
-            HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, magazineInteractionDetachedMagazineBones, hintMaterial,
-                pulse * 0.55f, pulse * 0.85f, pulse);
+            HooksDrawGlow(ecx, state, pDrawInfo, magazineInteractionDetachedMagazineBones, hintMaterial,
+                spareInReach ? kGlowInReach : kGlowNextStep);
         }
     }
 
@@ -25806,29 +25910,14 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         IMaterial* const glowMaterial = HooksHolsterHighlightMaterial();
         if (glowMaterial && BuildMagazineEmptyGlowBones(m_VR, state, modelName, pBonesToWorldFinal, glowBones) && glowBones)
         {
-            const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
-            if ((m_VR->m_ReloadHintMask.load(std::memory_order_acquire) & 16u) != 0u)
-            {
-                // The magazine to slap out: the same cool glow as the other next-step hints.
-                const float pulse = 0.6f + 0.3f * std::sin(t * 6.2831853f * 2.0f);
-                HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
-                    pulse * 0.55f, pulse * 0.85f, pulse);
-            }
-            else
-            {
-                const float pulse = 0.55f + 0.45f * std::sin(t * 6.2831853f * 1.1f);
-                HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
-                    pulse, pulse * 0.82f, pulse * 0.35f);
-            }
+            // The magazine to slap out (bit 16) gets the cool next-step glow; an
+            // empty gun's magazine the warm one.
+            const bool slapTarget = (m_VR->m_ReloadHintMask.load(std::memory_order_acquire) & 16u) != 0u;
+            HooksDrawGlow(ecx, state, pDrawInfo, glowBones, glowMaterial, slapTarget ? kGlowNextStep : kGlowAttention);
         }
         vr_vm_stabilize::Mat3x4* boltGlowBones = nullptr;
         if (glowMaterial && BuildReloadBoltGlowBones(m_VR, state, modelName, pBonesToWorldFinal, boltGlowBones) && boltGlowBones)
-        {
-            const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
-            const float pulse = 0.45f + 0.35f * std::sin(t * 6.2831853f * 1.1f);
-            HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, boltGlowBones, glowMaterial,
-                pulse * 0.55f, pulse * 0.85f, pulse);
-        }
+            HooksDrawGlow(ecx, state, pDrawInfo, boltGlowBones, glowMaterial, kGlowNextStep);
     }
 
     if (drawMagazineInteractionCalibrationPreview &&
@@ -26111,11 +26200,11 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
             return ctx->GetRenderTarget() == nullptr;
         };
 
-    auto PaintToHudOnce = [&](int paintMode)
+    auto PaintToHudOnce = [&](int paintMode) -> bool
         {
             bool expected = false;
             if (!m_VR->m_HudPaintedThisFrame.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
-                return;
+                return false;
 
             CRefPtr<IMatRenderContext> contextRef;
             if (m_Game && m_Game->m_MaterialSystem)
@@ -26124,7 +26213,7 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
             if (!ctx)
             {
                 m_VR->HandleMissingRenderContext("Hooks::dVGui_Paint");
-                return;
+                return false;
             }
 
             ITexture* hudTexture = nullptr;
@@ -26133,7 +26222,7 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
                 hudTexture = m_VR->m_HUDTexture;
             }
             if (!hudTexture)
-                return;
+                return false;
 
             ITexture* prevTarget = ctx->GetRenderTarget();
             int hudMapW = hudTexture->GetMappingWidth();
@@ -26168,6 +26257,15 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
 
             m_VR->m_RenderedHud.store(true, std::memory_order_release);
             m_VR->MarkQueuedHudFresh();
+
+            // Native wrist HUD: crop the freshly painted HUD for the wrists. Menus and
+            // cursor UI paint over the HUD, so keep the last crops while they are up.
+            // (The headless self-test window always reports a visible cursor.)
+            const bool selfTestCursor = cursorVisible && !isPaused &&
+                l4d2vr_selftest::Get().active.load(std::memory_order_acquire);
+            if (!focusedInGameVgui || selfTestCursor)
+                m_VR->OnNativeHudPainted(ctx);
+            return true;
         };
 
     if (inGame)
@@ -26189,6 +26287,12 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
                 hkVgui_Paint.fOriginal(ecx, fullHudMode);
                 m_VR->m_NativeDesktopHudPainted.store(true, std::memory_order_release);
             }
+        }
+        else if (m_VR->WantsNativeWristHudCapture())
+        {
+            // Native wrist HUD only: paint the HUD into the HUD texture for the wrist
+            // crops. The floating HUD panel and the desktop stay hidden.
+            PaintToHudOnce(BuildFullHudPaintMode(mode));
         }
         else
         {

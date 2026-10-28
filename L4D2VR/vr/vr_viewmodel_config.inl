@@ -3261,6 +3261,8 @@ void VR::ParseConfigFile()
     m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
+    m_AmbidextrousItemHands = getBool("AmbidextrousItemHands", true);
+    m_ItemHandOffRadiusMeters = std::clamp(getFloat("ItemHandOffRadiusMeters", 0.14f), 0.05f, 0.3f);
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
     // Pavlov's inventory follows the head yaw at interpolation speed 20.
     m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 20.0f), 1.0f, 60.0f);

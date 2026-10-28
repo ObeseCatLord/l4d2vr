@@ -361,7 +361,7 @@ bool VR::ResolvePavlovTwoHandedAimBasis(
                 bodyRight = baseRight;
         }
 
-        const float dominantSide = m_LeftHanded ? -1.0f : 1.0f;
+        const float dominantSide = ItemHandIsPhysicalLeft() ? -1.0f : 1.0f;
         Vector shoulder = hmdPosAbs;
         shoulder += bodyForward * (m_VrHandsVirtualStockOffsetMeters.x * scale);
         shoulder += bodyRight * (m_VrHandsVirtualStockOffsetMeters.y * dominantSide * scale);
@@ -487,7 +487,7 @@ bool VR::ReadWorldPoseTrackingSnapshot(VRWorldPoseTrackingSnapshot& outSnapshot)
         outSnapshot.leftFingerUsesNativeAnimation = false;
         outSnapshot.rightFingerUsesNativeAnimation = false;
     }
-    else if (m_LeftHanded)
+    else if (ItemHandIsPhysicalLeft())
     {
         outSnapshot.leftFingerUsesNativeAnimation = true;
         outSnapshot.rightFingerUsesNativeAnimation =
@@ -753,6 +753,7 @@ void VR::UpdateAdaptiveNearClip(C_BasePlayer* localPlayer)
 
 void VR::UpdateTracking()
 {
+    CommitItemHandSwitch();
     GetPoses();
     // Map load / reconnect detection:
     // - Some transitions briefly report observer-like netvars on the local player (even when alive).
@@ -1791,16 +1792,16 @@ void VR::UpdateTracking()
 		snapshot.bodyYawValid = std::isfinite(snapshot.bodyYaw);
         snapshot.hmdPosition = m_HmdPosAbs;
         snapshot.hmdAngles = m_HmdAngAbs;
-        snapshot.leftHandPosition = m_LeftHanded
+        snapshot.leftHandPosition = ItemHandIsPhysicalLeft()
             ? m_RightControllerPosAbs
             : m_LeftControllerPosAbs;
-        snapshot.leftHandAngles = m_LeftHanded
+        snapshot.leftHandAngles = ItemHandIsPhysicalLeft()
             ? m_RightControllerTrackedAngAbs
             : m_LeftControllerTrackedAngAbs;
-        snapshot.rightHandPosition = m_LeftHanded
+        snapshot.rightHandPosition = ItemHandIsPhysicalLeft()
             ? m_LeftControllerPosAbs
             : m_RightControllerPosAbs;
-        snapshot.rightHandAngles = m_LeftHanded
+        snapshot.rightHandAngles = ItemHandIsPhysicalLeft()
             ? m_LeftControllerTrackedAngAbs
             : m_RightControllerTrackedAngAbs;
 
@@ -2666,7 +2667,7 @@ void VR::UpdateTracking()
     // must not combine a new velocity with an older hand pose.
     {
         VRMeleeTrackingSnapshot sample{};
-        const auto handIndex = GetPhysicalControllerIndexForHand(m_LeftHanded);
+        const auto handIndex = GetPhysicalControllerIndexForHand(ItemHandIsPhysicalLeft());
         sample.valid = handIndex < vr::k_unMaxTrackedDeviceCount &&
             m_Poses[handIndex].bPoseIsValid &&
             m_Poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid;

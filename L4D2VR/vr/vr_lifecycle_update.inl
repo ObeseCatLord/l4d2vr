@@ -4620,7 +4620,7 @@ void VR::SubmitVRTextures()
 
         vr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
         vr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
-        if (m_LeftHanded)
+        if (ItemHandIsPhysicalLeft())
             std::swap(leftControllerIndex, rightControllerIndex);
         const vr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;
 
@@ -5398,7 +5398,7 @@ void VR::RepositionOverlays()
         {
             vr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
             vr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
-            if (m_LeftHanded)
+            if (ItemHandIsPhysicalLeft())
                 std::swap(leftControllerIndex, rightControllerIndex);
 
             const vr::TrackedDeviceIndex_t gunControllerIndex = rightControllerIndex;

@@ -219,6 +219,7 @@ struct VR
     void EndTeleportTargeting(bool commit) { if (commit) ++teleportCommits; targeting = false; }
     void CancelTeleportTargeting() { targeting = false; }
     bool IsGameplayHandLeftPhysical(bool left) const { return left; }
+    vr::VRActionHandle_t ItemHandRoleAction(vr::VRActionHandle_t action) const { return action; }
     bool UpdateMagazineInteraction(C_BasePlayer* player, bool a, bool b, bool c, bool d, bool e)
     {
         Require(!a && !b && !c && !d && !e, "unavailable frame supplies neutral controls");

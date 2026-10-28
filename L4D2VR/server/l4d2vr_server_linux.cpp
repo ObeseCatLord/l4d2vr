@@ -971,6 +971,19 @@ namespace
         }
     }
 
+    // Instant deploy: the weapon (and the player) may attack now.
+    void ClearAttackDelay(void* self, void* weapon)
+    {
+        const float now = Curtime();
+        if (!self || !weapon || !(now >= 0.0f) || !std::isfinite(now))
+            return;
+        Field<float>(weapon, g_P.nextPrimary) = std::min(Field<float>(weapon, g_P.nextPrimary), now);
+        Field<float>(weapon, g_P.nextSecondary) = std::min(Field<float>(weapon, g_P.nextSecondary), now);
+        Field<float>(self, g_P.nextAttack) = std::min(Field<float>(self, g_P.nextAttack), now);
+        MarkChanged(weapon);
+        MarkChanged(self);
+    }
+
     void DetourPlayerRunCommand(void* self, CUserCmdLinux* ucmd, void* moveHelper)
     {
         const int index = (ucmd && g_N.entindex) ? g_N.entindex(self) : -1;
@@ -998,6 +1011,7 @@ namespace
         in.usingMounted = status.mounted;
         in.nowMs = SteadyMs();
         in.tickSeconds = TickSeconds();
+        in.deployBackend = (g_Features & kFeatureInstantDeploy) != 0u;
         if (pose && pose->poseValid && g_N.eyePosition)
         {
             const Vector eye = g_N.eyePosition(self);
@@ -1014,6 +1028,14 @@ namespace
         if (g_Config.verbose && frame.ctx.aim != AimReason::None)
             Log("player=%d command=%d eye override %s", index, ucmd->command_number, AimReasonName(frame.ctx.aim));
 
+        if (frame.ctx.instantDeployBefore && weaponBefore)
+        {
+            // The item was switched between commands (a holster draw's "use"
+            // command): it is in the VR hand already, so it may fire now.
+            ClearAttackDelay(self, weaponBefore);
+            if (g_Config.verbose)
+                Log("player=%d command=%d instant deploy (switched between commands)", index, ucmd->command_number);
+        }
         ExecFrame* previous = g_Exec;
         g_Exec = &frame;
         g_N.playerRunCommand(self, ucmd, moveHelper);
@@ -1051,17 +1073,7 @@ namespace
                 index, actions.dropRequest.weaponId, velocity.x, velocity.y, velocity.z);
         }
         if (actions.instantDeploy && weaponAfter)
-        {
-            const float now = Curtime();
-            if (now >= 0.0f && std::isfinite(now))
-            {
-                Field<float>(weaponAfter, g_P.nextPrimary) = std::min(Field<float>(weaponAfter, g_P.nextPrimary), now);
-                Field<float>(weaponAfter, g_P.nextSecondary) = std::min(Field<float>(weaponAfter, g_P.nextSecondary), now);
-                Field<float>(self, g_P.nextAttack) = std::min(Field<float>(self, g_P.nextAttack), now);
-                MarkChanged(weaponAfter);
-                MarkChanged(self);
-            }
-        }
+            ClearAttackDelay(self, weaponAfter);
     }
 
     // ---- Network properties -------------------------------------------------------------

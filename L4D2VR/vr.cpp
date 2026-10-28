@@ -398,7 +398,8 @@ static inline bool CopyNormalizedNameCandidate(const char* src, size_t srcMax, c
         return false;
 
     const size_t want = e - b;
-    const size_t ncopy = (want < (dstSize - 1)) ? want : (dstSize - 1);
+    // Never cut a multi-byte UTF-8 character in half when the buffer is short.
+    const size_t ncopy = l4d2vr_wrist_hud::Utf8SafePrefixLength(std::string_view(src + b, want), dstSize - 1);
     std::memcpy(dst, src + b, ncopy);
     dst[ncopy] = 0;
     return dst[0] != 0;
@@ -479,7 +480,7 @@ static inline bool GetPlayerNameUtf8Safe(IEngineClient* engine, int entIndex, ch
             if (score > bestScore)
             {
                 bestScore = score;
-                const size_t n = (std::min)(std::strlen(cand), sizeof(bestName) - 1);
+                const size_t n = l4d2vr_wrist_hud::Utf8SafePrefixLength(cand, sizeof(bestName) - 1);
                 if (n > 0)
                     std::memcpy(bestName, cand, n);
                 bestName[n] = 0;
@@ -500,7 +501,7 @@ static inline bool GetPlayerNameUtf8Safe(IEngineClient* engine, int entIndex, ch
     if (bestScore == (std::numeric_limits<int>::min)() || !bestName[0])
         return false;
 
-    const size_t n = (std::min)(std::strlen(bestName), outNameSize - 1);
+    const size_t n = l4d2vr_wrist_hud::Utf8SafePrefixLength(bestName, outNameSize - 1);
     if (n > 0)
         std::memcpy(outName, bestName, n);
     outName[n] = 0;

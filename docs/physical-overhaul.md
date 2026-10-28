@@ -31,7 +31,7 @@ A squeeze that takes nothing is ignored. With `GripToggle=false` you hold the gr
 | Chest, dominant side | Pills or adrenaline |
 | Off-hand waist | Spare magazine (or a shell for shotguns) while you have reserve ammo |
 
-The holsters follow your head's yaw past a dead band, and snap turns move them instantly. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn in both eyes whether or not the first-person body is enabled.
+The holsters follow your head's yaw past a dead band, and snap turns move them instantly. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn in both eyes whether or not the first-person body is enabled, placed by their `weapon_bone`: hip and chest items sit in their holsters and are seen when looking down; the primary weapon is slung diagonally across the back and the medkit lies flat on the back, about 0.26 m behind and 0.3–0.4 m below the head, so neither is in the forward view (their grab zones stay at the shoulders). A hovered item, the empty magazine, the spare magazine and the bolt, slide or pump glow with a soft, steady light that breathes slowly.
 
 On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
 
@@ -102,7 +102,16 @@ Both grips are used only for gripping: they draw from holsters and hold magazine
 
 ## Self-test (developers)
 
-`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server.
+
+Render checks photograph the VR eye images instead of trusting the log:
+
+- `shot=<name>` saves the left eye of the next completed frame (read back on the render thread before it is submitted) as `l4d2vr_selftest_<name>.png` in the game folder. `shot=<name>*N` takes N shots 0.3 s apart (`<name>_1` … `<name>_N`) to compare for flicker; `shotlr=<name>` saves both eyes (`<name>_l`, `<name>_r`).
+- `look=<pitch>` holds the head pitch in degrees (positive looks down; `look=off` releases it).
+- `righthand=x,y,z` and `lefthand=x,y,z` hold a hand at a point of the holster body frame in metres from the head (x forward, y toward the dominant hand, z up), e.g. `righthand=0.02,0.22,-0.7` is the hip holster; `=off` releases it. These and `look=` hold across the following steps.
+- `fire=<seconds>` holds the trigger, `magrelease` presses the magazine release once, `glowmat=<material>` draws every glow with another material (`off` restores it).
+
+For example `cmd=give rifle,cmd=give first_aid_kit,cmd=give pain_pills,cmd=use weapon_rifle,look=0,shot=fwd,look=55,shot=down,righthand=0.02,0.22,-0.7,shot=hover*3,righthand=off,fire=6,shot=empty*3,magrelease,shot=spare*3` photographs the forward view (no back items), the hip and chest holsters, the hover glow and the reload glows. Look at the images. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
 
 ## Headset test checklist
 

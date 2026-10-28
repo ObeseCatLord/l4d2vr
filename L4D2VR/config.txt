@@ -411,6 +411,8 @@ HolsterReleaseDrop=true
 GripToggle=true
 # Right stick: push forward to jump, pull back to crouch (hold). Turning pauses meanwhile.
 StickJumpCrouch=true
+# Pulling the right stick back toggles crouch (true) or crouches while held (false).
+StickCrouchToggle=true
 MotionOnlyMeleeAndShove=true
 MeleeGripReachMeters=0.12
 ConsumableGiveEnabled=true

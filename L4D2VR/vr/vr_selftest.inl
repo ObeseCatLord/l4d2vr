@@ -254,9 +254,14 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     {
         if (at(0, 0.0f)) { cmd("give rifle"); }
         if (at(1, 1.5f)) { cmd("use weapon_rifle"); }
-        if (at(2, 3.0f)) { m_SelfTestValueA = SelfTestActiveSlot(player); }
+        if (at(2, 3.0f)) { m_SelfTestValueA = SelfTestActiveSlot(player); m_SelfTestValueB = static_cast<int>(m_HolsterHoverPulseCount); }
         if (m_SelfTestStage >= 3 && m_SelfTestStage <= 4) SelfTestReachHolster(1);
-        if (at(3, 3.8f)) { button(m_ActionWeaponGrip, true); }
+        if (at(3, 3.8f))
+        {
+            std::snprintf(detail, sizeof(detail), "hover pulses %d -> %u", m_SelfTestValueB, m_HolsterHoverPulseCount);
+            SelfTestReport("holster hover pulse", static_cast<int>(m_HolsterHoverPulseCount) > m_SelfTestValueB, detail);
+            button(m_ActionWeaponGrip, true);
+        }
         if (at(4, 4.3f))
         {
             const int slot = SelfTestActiveSlot(player);

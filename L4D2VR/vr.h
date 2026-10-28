@@ -1352,6 +1352,8 @@ public:
 	bool m_GripToggleEnabled = true;
 	// Right stick forward = jump, back = crouch (StickJumpCrouch).
 	bool m_StickJumpCrouchEnabled = true;
+	bool m_StickCrouchToggle = true;        // stick back toggles crouch (StickCrouchToggle)
+	int m_LeftHolsterRequestSlot = -1;      // off-hand holster squeeze, consumed by the holster block
 	bool m_StickJumpDown = false;
 	bool m_StickCrouchDown = false;
 	bool m_StickJumpPressed = false;
@@ -1443,6 +1445,7 @@ public:
     float m_HolsterHeightScale = 1.0f;
     float m_HolsterHighlightBrightness = 1.6f;
     float m_HolsterHoverHapticAmplitude = 0.4f;
+    uint32_t m_HolsterHoverPulseCount = 0u; // self-test evidence
     float m_HolsterGrabHapticAmplitude = 0.6f;
     l4d2vr_holster::Layout m_HolsterLayout{};
     l4d2vr_holster::GrabFsm m_HolsterGrab;

@@ -334,7 +334,7 @@ namespace
         { "MagazineSlapEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Magazine slap", 0.0f, 0.0f, "true" },
         { "StickJumpCrouch", CfgOptionType::Bool, "Controls", "Right stick jump / crouch", 0.0f, 0.0f, "true" },
         { "StickCrouchToggle", CfgOptionType::Bool, "Controls", "Stick crouch toggles", 0.0f, 0.0f, "true" },
-        { "HolsterYawDeadbandDeg", CfgOptionType::Float, "Hands / Holsters", "Holster turn dead band", 0.0f, 90.0f, "20" },
+        { "HolsterYawFollowSpeed", CfgOptionType::Float, "Hands / Holsters", "Holster turn follow speed", 1.0f, 60.0f, "20" },
         { "HolsterHeightScale", CfgOptionType::Float, "Hands / Holsters", "Holster height scale", 0.5f, 1.6f, "1.0" },
         { "MagazineEmptyGlowEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Glow empty magazine", 0.0f, 0.0f, "true" },
         { "MagazineDropEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Drop released magazines", 0.0f, 0.0f, "true" },

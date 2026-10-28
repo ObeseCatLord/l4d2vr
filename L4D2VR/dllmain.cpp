@@ -3168,16 +3168,10 @@ namespace
         sampleKeys.insert("RightAmmoHudNativeWidthMeters");
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("MenuLaserPointerEnabled");
-        sampleKeys.insert("HolsterYawDeadbandDeg");
-        sampleKeys.insert("HolsterYawSmoothingSeconds");
+        sampleKeys.insert("HolsterYawFollowSpeed");
         sampleKeys.insert("HolsterHeightScale");
         sampleKeys.insert("HolsterHoverHapticAmplitude");
         sampleKeys.insert("HolsterGrabHapticAmplitude");
-        sampleKeys.insert("HolsterPrimaryOffsetMeters");
-        sampleKeys.insert("HolsterSecondaryOffsetMeters");
-        sampleKeys.insert("HolsterThrowableOffsetMeters");
-        sampleKeys.insert("HolsterMedicalOffsetMeters");
-        sampleKeys.insert("HolsterConsumableOffsetMeters");
         sampleKeys.insert("MagazineInteractionAutoEjectWhenEmpty");
         sampleKeys.insert("MagazineEmptyGlowEnabled");
         sampleKeys.insert("MagazineDropEnabled");

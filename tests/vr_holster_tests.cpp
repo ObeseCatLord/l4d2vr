@@ -22,50 +22,79 @@ static int g_failures = 0;
 
 static bool Near(float a, float b, float eps) { return std::fabs(a - b) <= eps; }
 
-static void TestYawDeadband()
+static void TestYawFollow()
 {
-    float yaw = SmoothBodyYaw(0.0f, false, 30.0f, 0.0f, 0.016f, 20.0f, 0.25f);
+    // Pavlov: the body yaw interpolates toward the head yaw (speed 20), no dead band.
+    float yaw = FollowBodyYaw(0.0f, false, 30.0f, 0.0f, 0.016f, 20.0f);
     CHECK(Near(yaw, 30.0f, 0.001f)); // first sample snaps
-    yaw = SmoothBodyYaw(30.0f, true, 45.0f, 0.0f, 0.016f, 20.0f, 0.25f);
-    CHECK(Near(yaw, 30.0f, 0.001f)); // inside the dead band
+    yaw = FollowBodyYaw(30.0f, true, 45.0f, 0.0f, 0.016f, 20.0f);
+    CHECK(yaw > 30.0f && yaw < 45.0f); // a small glance already moves it
     float y = 0.0f;
-    for (int i = 0; i < 200; ++i)
-        y = SmoothBodyYaw(y, true, 90.0f, 0.0f, 0.016f, 20.0f, 0.25f);
-    CHECK(Near(y, 70.0f, 0.5f)); // settles at the dead band edge
+    for (int i = 0; i < 60; ++i)
+        y = FollowBodyYaw(y, true, 90.0f, 0.0f, 0.016f, 20.0f);
+    CHECK(Near(y, 90.0f, 0.5f)); // settles on the head yaw within a second
     // Turning applies instantly.
-    y = SmoothBodyYaw(10.0f, true, 100.0f, 90.0f, 0.016f, 20.0f, 0.25f);
+    y = FollowBodyYaw(10.0f, true, 100.0f, 90.0f, 0.016f, 20.0f);
     CHECK(Near(y, 100.0f, 0.001f));
-    // Wraparound.
-    y = SmoothBodyYaw(170.0f, true, -175.0f, 0.0f, 0.016f, 20.0f, 0.25f);
-    CHECK(Near(y, 170.0f, 0.001f));
+    // Wraparound takes the short way.
+    y = FollowBodyYaw(170.0f, true, -170.0f, 0.0f, 0.016f, 20.0f);
+    CHECK(y > 170.0f || y < -170.0f);
 }
 
 static BodyFrame Frame(bool leftHanded = false)
 {
-    return MakeFrame(Vector(0.0f, 0.0f, 64.0f), 0.0f, leftHanded, 40.0f, 1.0f);
+    BodyFrame frame = MakeFrame(Vector(0.0f, 0.0f, 64.0f), 0.0f, leftHanded, 40.0f, 1.0f);
+    // Level head looking along +x; Source right is -y.
+    ApplyPavlovRoot(frame, Layout{}, Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, -1.0f, 0.0f),
+        Vector(0.0f, 0.0f, 1.0f), leftHanded, -1.0f);
+    return frame;
 }
 
 static void TestZones()
 {
     const BodyFrame frame = Frame();
     const Layout layout{};
-    // Right hand (dominant = -y in Source for yaw 0) at the hip.
-    const Vector hip = ToWorld(frame, layout.center[1]);
-    CHECK(hip.y < 0.0f);
-    CHECK(FindZone(frame, layout, hip, 0x1Fu) == Zone::Secondary);
-    CHECK(FindZone(frame, layout, hip, 0x1Du) == Zone::None); // secondary empty
-    // Shoulder zone needs the hand behind the head plane.
-    const Vector shoulder = ToWorld(frame, layout.center[0]);
-    CHECK(FindZone(frame, layout, shoulder, 0x1Fu) == Zone::Primary);
-    const Vector inFront = ToWorld(frame, Vector(0.12f, 0.16f, -0.12f));
-    float distance = 0.0f;
-    CHECK(!HandFitsZone(frame, layout, Zone::Primary, inFront, distance));
-    // Chest items are separate.
-    CHECK(FindZone(frame, layout, ToWorld(frame, layout.center[2]), 0x1Fu) == Zone::Throwable);
-    CHECK(FindZone(frame, layout, ToWorld(frame, layout.center[4]), 0x1Fu) == Zone::Consumable);
+    // Hands at real body positions (metres from the head: forward, toward the
+    // dominant hand, up), not at our own zone centres.
+    const Vector atHip = ToWorld(frame, Vector(-0.05f, 0.22f, -0.80f));
+    const Vector relaxedAtSide = ToWorld(frame, Vector(0.0f, 0.25f, -0.75f));
+    const Vector overShoulder = ToWorld(frame, Vector(-0.10f, 0.15f, -0.05f));
+    const Vector gunReady = ToWorld(frame, Vector(0.35f, 0.20f, -0.30f));
+    CHECK(atHip.y < 0.0f); // dominant (right) side is -y
+    CHECK(FindZone(frame, layout, atHip, 0x1Fu) == Zone::Secondary);
+    CHECK(FindZone(frame, layout, relaxedAtSide, 0x1Fu) == Zone::Secondary);
+    CHECK(FindZone(frame, layout, atHip, 0x1Du) == Zone::None); // secondary empty
+    CHECK(FindZone(frame, layout, overShoulder, 0x1Fu) == Zone::Primary);
+    CHECK(FindZone(frame, layout, gunReady, 0x1Fu) == Zone::None);
+    // Chest pockets: reach for the pocketed item.
+    CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Throwable), 0x1Fu) == Zone::Throwable);
+    CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Consumable), 0x1Fu) == Zone::Consumable);
+    CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Medical), 0x1Fu) == Zone::Medical);
+    // Putting a chest item back: anywhere in the vest.
+    CHECK(HandInHolsterVolume(frame, layout, Zone::Consumable, ToWorld(frame, Vector(0.10f, 0.0f, -0.45f))));
+    CHECK(!HandInHolsterVolume(frame, layout, Zone::Consumable, gunReady + Vector(20.0f, 0.0f, 0.0f)));
     // Left-handed mirrors the hip to +y.
     const BodyFrame left = Frame(true);
-    CHECK(ToWorld(left, layout.center[1]).y > 0.0f);
+    CHECK(ZoneCenterWorld(left, layout, Zone::Secondary).y > 0.0f);
+}
+
+static void TestPavlovRoot()
+{
+    const Layout layout{};
+    BodyFrame frame = MakeFrame(Vector(0.0f, 0.0f, 100.0f), 0.0f, false, 40.0f, 1.0f);
+    ApplyPavlovRoot(frame, layout, Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, -1.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, -1.0f);
+    CHECK(Near(frame.root.z, 100.0f - 0.75f * 40.0f, 0.01f)); // 75 cm below the head
+    CHECK(Near(frame.root.x, 0.0f, 0.01f));
+    // Looking straight down pulls it back 8 cm.
+    BodyFrame down = MakeFrame(Vector(0.0f, 0.0f, 100.0f), 0.0f, false, 40.0f, 1.0f);
+    ApplyPavlovRoot(down, layout, Vector(0.001f, 0.0f, -1.0f), Vector(0.0f, -1.0f, 0.0f), Vector(1.0f, 0.0f, 0.0f), false, -1.0f);
+    CHECK(Near(down.root.x, -0.08f * 40.0f, 0.2f));
+    // The off hand at the floor pushes it 60 cm back; above 25 cm, not at all.
+    BodyFrame reach = MakeFrame(Vector(0.0f, 0.0f, 100.0f), 0.0f, false, 40.0f, 1.0f);
+    ApplyPavlovRoot(reach, layout, Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, -1.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, 0.0f);
+    CHECK(Near(reach.root.x, -0.60f * 40.0f, 0.01f));
+    CHECK(Near(ReachFloorBackFraction(0.171f), 26.5f / 60.0f, 0.01f));
+    CHECK(ReachFloorBackFraction(0.30f) == 0.0f);
 }
 
 static void TestItemPoseOrthonormal()
@@ -174,61 +203,35 @@ static void TestControlReadyUsesCameraReport()
 
 static void TestHolsterPlacementNearHead()
 {
-    // Default layout at VRScale 43.2: every holster is within reach of the head
-    // and on the expected side, i.e. drawn on the body rather than far away.
-    const BodyFrame frame = MakeFrame(Vector(100.0f, 200.0f, 64.0f), 90.0f, false, 43.2f, 1.0f);
+    // Default layout at VRScale 43.2: every item rests on its vest socket, on the
+    // body below the head.
+    BodyFrame frame = MakeFrame(Vector(100.0f, 200.0f, 64.0f), 90.0f, false, 43.2f, 1.0f);
+    ApplyPavlovRoot(frame, Layout{}, Vector(0.0f, 1.0f, 0.0f), Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, -1.0f);
     const Layout layout{};
     for (int zone = 0; zone < kZoneCount; ++zone)
     {
-        const ItemPose pose = BuildItemPose(frame, layout, static_cast<Zone>(zone), ItemShape::LongGun);
+        const ItemShape shape = zone == 0 ? ItemShape::LongGun : (zone == 1 ? ItemShape::Pistol : ItemShape::Equipment);
+        const ItemPose pose = BuildItemPose(frame, layout, static_cast<Zone>(zone), shape);
         CHECK(pose.valid);
-        const Vector d = pose.origin - frame.head;
-        const float meters = std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
-        CHECK(meters > 0.1f && meters < 0.8f);
-        CHECK(pose.origin.z < frame.head.z); // below the head
-        // The item's visible centre (reference bone + centre offset) is on the draw centre.
-        const Vector centerUnits = ReferenceToCenterUnits(ItemShape::LongGun);
+        const Vector centerUnits = ReferenceToCenterUnits(shape);
         const Vector center = pose.origin + pose.axisX * centerUnits.x + pose.axisY * centerUnits.y +
             pose.axisZ * centerUnits.z;
-        const Vector local = ToLocal(frame, center);
-        CHECK(Near(local.x, layout.drawCenter[zone].x, 0.001f));
-        CHECK(Near(local.y, layout.drawCenter[zone].y, 0.001f));
-        CHECK(Near(local.z, layout.drawCenter[zone].z, 0.001f));
+        const Vector socket = RootToWorld(frame, layout.socket[zone]);
+        CHECK(Near(center.x, socket.x, 0.01f) && Near(center.y, socket.y, 0.01f) && Near(center.z, socket.z, 0.01f));
+        const Vector d = center - frame.head;
+        const float meters = std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
+        CHECK(meters > 0.25f && meters < 0.7f);
+        CHECK(center.z < frame.head.z);
     }
     // Hip (slot 2) sits on the dominant (right) side: yaw 90 faces +y, right is +x.
     const ItemPose hip = BuildItemPose(frame, layout, Zone::Secondary, ItemShape::Pistol);
     CHECK(hip.origin.x > frame.head.x);
-}
-
-static void TestBackItemsOutOfForwardView()
-{
-    // Back items hang behind and below the head; hip and chest items are drawn
-    // in their grab zones.
-    const BodyFrame frame = MakeFrame(Vector(0.0f, 0.0f, 64.0f), 0.0f, false, 43.2f, 1.0f);
-    const Layout layout{};
-    for (int zone = 0; zone < kZoneCount; ++zone)
-    {
-        const bool back = IsBackZone(static_cast<Zone>(zone));
-        const Vector& draw = layout.drawCenter[zone];
-        if (back)
-            CHECK(draw.x <= -0.20f && draw.z <= -0.25f && draw.z >= -0.45f);
-        else
-            CHECK(Near(draw.x, layout.center[zone].x, 1e-4f) && Near(draw.y, layout.center[zone].y, 1e-4f) &&
-                Near(draw.z, layout.center[zone].z, 1e-4f));
-    }
-    // A slung rifle (about 50 units, 15 behind the bone and 35 ahead of it)
-    // stays behind the eyes along its whole length.
-    const ItemPose rifle = BuildItemPose(frame, layout, Zone::Primary, ItemShape::LongGun);
-    for (float along = -15.0f; along <= 35.0f; along += 5.0f)
-        CHECK(ToLocal(frame, rifle.origin + rifle.axisZ * along).x < -0.15f);
-    CHECK(rifle.axisY.x < -0.99f); // sights face away from the back
-    // A kit on the back lies flat against it: its thin local X runs front to back.
-    const ItemPose kit = BuildItemPose(frame, layout, Zone::Medical, ItemShape::Equipment);
-    CHECK(std::fabs(kit.axisX.x) > 0.99f && kit.axisY.z > 0.99f);
-    CHECK(ToLocal(frame, kit.origin).x < -0.2f);
-    // Chest items stand upright.
+    // Chest items stand upright and in front of the back plane.
     const ItemPose pills = BuildItemPose(frame, layout, Zone::Consumable, ItemShape::Equipment);
     CHECK(pills.axisY.z > 0.99f);
+    CHECK(ToLocal(frame, RootToWorld(frame, layout.socket[4])).x > 0.0f);
+    // Only the long gun's slot is on the back.
+    CHECK(IsBackZone(Zone::Primary) && !IsBackZone(Zone::Medical));
 }
 
 int main()
@@ -237,8 +240,8 @@ int main()
     TestDiagPacer();
     TestControlReadyUsesCameraReport();
     TestHolsterPlacementNearHead();
-    TestBackItemsOutOfForwardView();
-    TestYawDeadband();
+    TestYawFollow();
+    TestPavlovRoot();
     TestZones();
     TestItemPoseOrthonormal();
     TestGrabFsm();

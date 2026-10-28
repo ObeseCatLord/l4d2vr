@@ -117,6 +117,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 			HooksWorldPoseEnsureWeaponSetupBonesHookMainThread(
 				m_VR,
 				m_Game);
+			HooksHolsterDrawDiagnosticsMainThread(
+				m_VR,
+				m_Game);
 		};
 
     auto synchronizeGripSession = [&]()

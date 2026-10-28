@@ -1223,6 +1223,7 @@ int __fastcall Hooks::dFirstPersonBodyRenderableDrawModel(
         ecx,
         flags,
         &bypassResult);
+    g_HolsterDrawDiag.bodyStageSubmits.fetch_add(1u, std::memory_order_relaxed);
     HooksHolsterSubmitNativeStageItems(m_VR, flags);
     s_nativeStageSubmissionActive = false;
 
@@ -2528,6 +2529,11 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	{
 		g_FirstPersonBodyActualFirstPerson.store(false, std::memory_order_release);
 		HooksFirstPersonBodyClearLocalRenderable();
+	}
+	if (!m_VR || !m_VR->m_IsVREnabled || !m_Game || !m_Game->m_EngineClient ||
+		!m_Game->m_EngineClient->IsInGame())
+	{
+		g_FirstPersonCameraActualFirstPerson.store(false, std::memory_order_release);
 	}
 
 	auto callOriginalRenderView = [&](CViewSetup& view, CViewSetup& hud, int clearFlags, int drawFlags)
@@ -4377,6 +4383,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	if (!localPlayerValid)
 	{
 		g_FirstPersonBodyActualFirstPerson.store(false, std::memory_order_release);
+		g_FirstPersonCameraActualFirstPerson.store(false, std::memory_order_release);
 	}
 
 	// Heuristic: in true third-person, the engine camera origin is noticeably away from eye position.
@@ -4708,6 +4715,9 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 		!m_VR->m_TeleportVisualScoutActive.load(std::memory_order_acquire) &&
 		!renderThirdPerson;
 	g_FirstPersonBodyActualFirstPerson.store(
+		firstPersonBodyActualFirstPerson,
+		std::memory_order_release);
+	g_FirstPersonCameraActualFirstPerson.store(
 		firstPersonBodyActualFirstPerson,
 		std::memory_order_release);
 	if (!firstPersonBodyActualFirstPerson && l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
@@ -5453,7 +5463,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			{
 				LONG previousToken = 0;
 
-				HolsterViewmodelStageEyeScope(VR* owner, bool actualFirstPerson)
+				HolsterViewmodelStageEyeScope(VR* owner, bool actualFirstPerson, const Vector& eyeOrigin)
 				{
 					const bool bodyStageOwnsHolsters =
 						InterlockedCompareExchange(
@@ -5468,6 +5478,27 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					previousToken = InterlockedExchange(
 						&g_HolsterViewmodelStageToken,
 						enable ? HooksHolsterNextViewmodelStageToken() : 0);
+					if (enable)
+					{
+						g_HolsterDrawDiag.eyeTokens.fetch_add(1u, std::memory_order_relaxed);
+					}
+					else
+					{
+						// [VR][HolsterDraw] eye block bits: 1 VR off, 2 camera not
+						// first person, 4 third-person camera, 8 body stage owns the
+						// holsters, 16 holster items disabled.
+						const std::uint32_t blockBits =
+							((!owner || !owner->m_IsVREnabled) ? 1u : 0u) |
+							(!actualFirstPerson ? 2u : 0u) |
+							((owner && owner->m_IsThirdPersonCamera) ? 4u : 0u) |
+							(bodyStageOwnsHolsters ? 8u : 0u) |
+							(!HooksHolsterItemsEnabled(owner) ? 16u : 0u);
+						g_HolsterDrawDiag.eyeBlocked.fetch_add(1u, std::memory_order_relaxed);
+						g_HolsterDrawDiag.eyeBlockBits.fetch_or(blockBits, std::memory_order_relaxed);
+					}
+					std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
+					g_HolsterDrawDiagSample.eyeValid = true;
+					g_HolsterDrawDiagSample.eyeOrigin = eyeOrigin;
 				}
 
 				~HolsterViewmodelStageEyeScope()
@@ -5494,7 +5525,8 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					!playerIncap);
 				HolsterViewmodelStageEyeScope holsterViewmodelStageScope(
 					m_VR,
-					firstPersonBodyActualFirstPerson);
+					firstPersonBodyActualFirstPerson,
+					eyeView.origin);
 				callOriginalRenderView(eyeView, eyeHud, nClearFlags, whatToDraw);
 			}
 

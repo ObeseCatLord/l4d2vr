@@ -742,9 +742,20 @@ if(MSVC)
     target_compile_options(vr_pistol_native_reload_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME vr_pistol_native_reload COMMAND vr_pistol_native_reload_tests)
+# Holsters, arm IK and WorldModelVR wait for first-person control readiness. Its
+# camera check must use RenderView's own report, not the body flag that the
+# FirstPersonBodyEnabled=false lifecycle clears right before the check.
+set(holster_control_ready_source "${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/hooks.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${holster_control_ready_source}")
+file(READ "${holster_control_ready_source}" holster_control_ready_text)
+string(REPLACE "\r\n" "\n" holster_control_ready_text "${holster_control_ready_text}")
+extract_mirrored_analog_fixture("${holster_control_ready_text}"
+    "    void HooksUpdateFirstPersonControlReadyMainThread(" "        bool expected = false;" holster_control_ready)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_holster_control_ready_source.inl"
+    "static const char kControlReadySource[] = R\"L4D2VRSRC(${holster_control_ready})L4D2VRSRC\";\n")
 add_executable(vr_holster_tests vr_holster_tests.cpp)
 target_compile_features(vr_holster_tests PRIVATE cxx_std_17)
-target_include_directories(vr_holster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/sdk)
+target_include_directories(vr_holster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/sdk "${CMAKE_CURRENT_BINARY_DIR}")
 if(MSVC)
     target_compile_options(vr_holster_tests PRIVATE /W4 /WX)
 endif()

@@ -1628,8 +1628,18 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 std::snprintf(detail, sizeof(detail),
                     "native strike pose on %d draw(s) (up to %.1f units off the idle pose): %d held at the controller pose, %d shown (see [VR][VmAnim])",
                     frames, m_VmStrikeMaxDeviation.load(std::memory_order_acquire), held, shown);
-                SelfTestReport(melee ? "swinganim: native swing animation never shown" : "bashanim: native shove animation never shown",
-                    shown == 0, detail);
+                if (m_VmStrikeHoldDisabled)
+                {
+                    // Control run: with the hold off the native animation must show,
+                    // or the held runs prove nothing.
+                    SelfTestReport(melee ? "swinganimraw: control, native swing animation plays when not held"
+                        : "bashanimraw: control, native shove animation plays when not held", frames > 0 && held == 0, detail);
+                }
+                else
+                {
+                    SelfTestReport(melee ? "swinganim: native swing animation never shown" : "bashanim: native shove animation never shown",
+                        shown == 0, detail);
+                }
                 restore();
                 return true; });
         }

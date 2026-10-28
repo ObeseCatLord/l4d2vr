@@ -537,11 +537,8 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
         return L"Segoe UI";
     }
 
-    // Name fitting policy for HUD:
-    // - Budget is 12 "units" (≈ 12 ASCII chars or 6 CJK chars).
-    // - For every extra 2 units, shrink by 10%.
-    // - Cap shrink at 40% (min scale 60%).
-    // - If still longer, hard-truncate.
+    // Rough text width in "units" (≈ 1 per ASCII char, 2 per CJK/other code point).
+    // Wrist HUD names are fitted by measured width instead (vr_wrist_hud_names.h).
     inline int Utf8HudUnits(const char* s)
     {
         if (!s) return 0;
@@ -574,55 +571,6 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
         return units;
     }
 
-    inline std::string Utf8TruncateHudUnits(const char* s, int maxUnits)
-    {
-        if (!s || maxUnits <= 0) return std::string();
-        std::string out;
-        out.reserve(strlen(s));
-
-        int units = 0;
-        const unsigned char* p = (const unsigned char*)s;
-        while (*p)
-        {
-            if (*p < 0x80)
-            {
-                if (units + 1 > maxUnits) break;
-                out.push_back((char)*p);
-                units += 1;
-                ++p;
-                continue;
-            }
-
-            unsigned char lead = *p;
-            int n = 1;
-            if ((lead & 0xE0) == 0xC0) n = 2;
-            else if ((lead & 0xF0) == 0xE0) n = 3;
-            else if ((lead & 0xF8) == 0xF0) n = 4;
-
-            if (units + 2 > maxUnits) break;
-
-            int avail = 0;
-            while (avail < n && p[avail])
-                ++avail;
-            if (avail <= 0)
-                break;
-            for (int i = 0; i < avail; ++i)
-                out.push_back((char)p[i]);
-            p += avail;
-            units += 2;
-        }
-
-        return out;
-    }
-
-    inline float HudNameScaleForUnits(int units, int baseUnits = 12)
-    {
-        if (units <= baseUnits) return 1.0f;
-        const int over = units - baseUnits;
-        const int steps = (over + 1) / 2; // ceil(over/2)
-        const float shrink = (std::min)(0.4f, 0.1f * (float)steps);
-        return 1.0f - shrink;
-    }
     struct GdiTextMask
     {
         HDC hdc = nullptr;
@@ -631,17 +579,33 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
         int w = 0;
         int h = 0;
         HFONT font = nullptr;
-        int fontPx = 0;
-        bool bold = false;
-        wchar_t face[64] = L"Segoe UI";
+
+        // Small font cache: the wrist HUD mixes several sizes per frame (auto-fit names,
+        // temp HP, kills), and recreating an HFONT on every size switch is costly.
+        struct CachedFont
+        {
+            HFONT font = nullptr;
+            int px = 0;
+            bool bold = false;
+            wchar_t face[64] = L"";
+            uint32_t lastUse = 0;
+        };
+        std::array<CachedFont, 16> fonts{};
+        uint32_t fontClock = 0;
 
         ~GdiTextMask() { destroy(); }
 
         void destroy()
         {
-            if (font) { DeleteObject(font); font = nullptr; }
             if (hdc) { DeleteDC(hdc); hdc = nullptr; }
             if (bmp) { DeleteObject(bmp); bmp = nullptr; }
+            for (CachedFont& f : fonts)
+            {
+                if (f.font)
+                    DeleteObject(f.font);
+                f = CachedFont{};
+            }
+            font = nullptr;
             bits = nullptr; w = h = 0;
         }
 
@@ -679,15 +643,37 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
             if (px <= 0) px = 12;
             if (!fontFace || !*fontFace) fontFace = L"Segoe UI";
 
-            if (font && fontPx == px && bold == isBold && wcscmp(face, fontFace) == 0)
-                return;
+            CachedFont* slot = &fonts[0];
+            for (CachedFont& f : fonts)
+            {
+                if (f.font && f.px == px && f.bold == isBold && wcscmp(f.face, fontFace) == 0)
+                {
+                    f.lastUse = ++fontClock;
+                    font = f.font;
+                    return;
+                }
+                if (!f.font)
+                    slot = &f;
+                else if (slot->font && f.lastUse < slot->lastUse)
+                    slot = &f;
+            }
 
-            if (font) { DeleteObject(font); font = nullptr; }
-            wcsncpy_s(face, fontFace, _TRUNCATE);
-            bold = isBold;
-            fontPx = px;
+            if (slot->font)
+            {
+                // Never delete a font that is still selected into the DC.
+                if (hdc)
+                    SelectObject(hdc, GetStockObject(SYSTEM_FONT));
+                if (font == slot->font)
+                    font = nullptr;
+                DeleteObject(slot->font);
+                slot->font = nullptr;
+            }
 
-            font = CreateFontW(
+            wcsncpy_s(slot->face, fontFace, _TRUNCATE);
+            slot->bold = isBold;
+            slot->px = px;
+            slot->lastUse = ++fontClock;
+            slot->font = CreateFontW(
                 -px, 0, 0, 0,
                 isBold ? FW_BOLD : FW_NORMAL,
                 FALSE, FALSE, FALSE,
@@ -695,7 +681,8 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY,
                 DEFAULT_PITCH | FF_DONTCARE,
-                face);
+                slot->face);
+            font = slot->font;
         }
 
         void clear()
@@ -704,6 +691,50 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
                 memset(bits, 0, (size_t)w * (size_t)h * 4);
         }
     };
+
+    inline GdiTextMask& HudGdiTextMask()
+    {
+        static thread_local GdiTextMask g;
+        return g;
+    }
+
+    // Re-encode a (possibly non-UTF-8) name as valid UTF-8 using the same decoding the
+    // renderer uses, so it can be measured and split per code point without breaking
+    // sequences. Characters the chosen font lacks still render through GDI font linking
+    // (or its missing-glyph box); nothing is dropped.
+    inline std::string NormalizeHudTextUtf8(const char* s)
+    {
+        if (!s || !*s)
+            return std::string();
+        const std::wstring ws = Utf8ToWideFallback(s);
+        if (ws.empty())
+            return std::string(s);
+        const int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), (int)ws.size(), nullptr, 0, nullptr, nullptr);
+        if (len <= 0)
+            return std::string(s);
+        std::string out((size_t)len, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), (int)ws.size(), out.data(), len, nullptr, nullptr);
+        return out;
+    }
+
+    // Width in pixels DrawTextUtf8OutlinedGdiClippedEx needs for this text (bold, 1px outline).
+    inline int MeasureTextUtf8GdiPx(const char* utf8, int fontPx)
+    {
+        if (!utf8 || !*utf8)
+            return 0;
+        const std::wstring ws = Utf8ToWideFallback(utf8);
+        if (ws.empty())
+            return 0;
+
+        GdiTextMask& g = HudGdiTextMask();
+        g.ensure(16, 16);
+        g.ensureFont(fontPx, true, PickHudFontFaceForText(ws));
+        SelectObject(g.hdc, g.font);
+        SIZE sz{};
+        if (!GetTextExtentPoint32W(g.hdc, ws.c_str(), (int)ws.size(), &sz))
+            return (int)ws.size() * fontPx;
+        return (int)sz.cx + 2;
+    }
 
     inline void BlendMaskToHud(const HudSurface& dst, int x, int y, const GdiTextMask& mask, int srcW, int srcH, const Rgba& col)
     {
@@ -745,7 +776,7 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
         if (!utf8 || !*utf8 || !dst.pixels || maxW <= 0)
             return;
 
-        static thread_local GdiTextMask g;
+        GdiTextMask& g = HudGdiTextMask();
         const std::wstring ws = Utf8ToWideFallback(utf8);
         if (ws.empty())
             return;

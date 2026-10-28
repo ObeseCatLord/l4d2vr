@@ -3162,6 +3162,10 @@ namespace
         sampleKeys.insert("ScopeBaseMagnification");
         sampleKeys.insert("HolsterPavlovLayoutEnabled");
         sampleKeys.insert("HolsterItemsVisible");
+        sampleKeys.insert("WristHudStyle");
+        sampleKeys.insert("WristHudNativeHideOnFloatingHud");
+        sampleKeys.insert("LeftWristHudNativeWidthMeters");
+        sampleKeys.insert("RightAmmoHudNativeWidthMeters");
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawDeadbandDeg");

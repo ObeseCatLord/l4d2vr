@@ -46,7 +46,7 @@ CHANGES = [
     "1.2.2: spare magazines and shells are held the way they sit in the gun; glows are a soft, steady tint.",
     "1.2.2: the wrist HUD uses the game's own health bars and font with full teammate names; your own bar is the large one.",
     "1.2.2: right stick down toggles crouch; guns never play the swing or bash animation.",
-    "1.2.2: the two-handed grip lets go when the support hand moves 20 cm from the foregrip; a last shot the server never fired stays chambered instead of needing a rack.",
+    "1.2.2: the two-handed grip lets go when the support hand moves 20 cm from the foregrip; a shot the server never fired (right after a draw) no longer needs a rack or pump.",
     "1.2.2: melee and shoves are motion only (no trigger bash or shove animation); the melee grip sits closer to the base of the handle.",
     "1.2.2: Pavlov magazine slap on the AK-47, SG552 and military sniper: grab a fresh magazine with the old one still in and strike the old one out (MagazineSlapEnabled).",
 ]

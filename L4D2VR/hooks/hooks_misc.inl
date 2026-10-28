@@ -25753,7 +25753,10 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         if (IMaterial* const hintMaterial = HooksHolsterHighlightMaterial())
         {
             const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
-            const float pulse = 0.45f + 0.35f * std::sin(t * 6.2831853f * 1.1f);
+            // Brighter once the empty off hand is within reach of it (bit 8).
+            const bool spareInReach = (m_VR->m_ReloadHintMask.load(std::memory_order_acquire) & 8u) != 0u;
+            const float pulse = spareInReach ? 0.8f + 0.2f * std::sin(t * 6.2831853f * 2.0f)
+                                     : 0.45f + 0.35f * std::sin(t * 6.2831853f * 1.1f);
             HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, magazineInteractionDetachedMagazineBones, hintMaterial,
                 pulse * 0.55f, pulse * 0.85f, pulse);
         }

@@ -272,13 +272,13 @@ ManualReloadMagazineBoneOverrides=
 MagazineInteractionGrabPaddingMeters=0.12
 MagazineInteractionPullTriggerMeters=0.08
 MagazineInteractionPullTriggerByMagazineMeters=0.025
-MagazineInteractionFreshMagazineGrabRangeMeters=0.18
+MagazineInteractionFreshMagazineGrabRangeMeters=0.20
 MagazineInteractionFreshMagazinePickupOffsetMeters=0.45,-0.28,0.25
 MagazineInteractionFreshMagazineBoxHalfExtentsMeters=0.055,0.045,0.12
 MagazineInteractionFreshMagazineSocketLocalOffsetMeters=-0.12,0,0
 MagazineInteractionFreshMagazineWristAnchorOffsetMeters=0,0,0
-MagazineInteractionSocketCaptureRadiusMeters=0.06
-MagazineInteractionSocketCaptureAngleDeg=35
+MagazineInteractionSocketCaptureRadiusMeters=0.10
+MagazineInteractionSocketCaptureAngleDeg=45
 MagazineInteractionSocketRequiredDepthMeters=0.04
 MagazineInteractionSocketRequiredOverlapFraction=0.45
 MagazineInteractionSocketCaptureBoxHalfExtentsMeters=0,0,0
@@ -409,6 +409,9 @@ HolsterReleaseDrop=true
 # the next squeeze lets it go (puts it away inside its holster, drops it elsewhere).
 # false = hold the grip to keep the item.
 GripToggle=true
+# Pavlov VR reload feel: per-weapon slide/bolt pull, chamber return and magazine
+# insert depth taken from Pavlov (your own per-weapon overrides still win).
+ReloadPavlovTuning=true
 # Right stick: push forward to jump, pull back to crouch (hold). Turning pauses meanwhile.
 StickJumpCrouch=true
 # Pulling the right stick back toggles crouch (true) or crouches while held (false).

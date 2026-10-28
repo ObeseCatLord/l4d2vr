@@ -16,6 +16,7 @@
 #include "vr_scope_optics.h"
 #include "vr_weapon_models.h"
 #include "vr_magazine_policy.h"
+#include "vr_reload_log.h"
 #include "vr_remote_shells.h"
 #include "vr_pistol_effects.h"
 #include "vr_flashlight_pose.h"
@@ -2406,6 +2407,23 @@ public:
     Vector m_MagazineInteractionSlapDropVelocity{0.0f, 0.0f, 0.0f};
     l4d2vr_magazine::RetainedInsertGate m_RetainedMagazineInsertGate;
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
+    // Fresh ammo seats only after leaving the well once since it was taken.
+    l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;
+    // A shell was taken while the pump waited to be cycled; the pump stage
+    // (and the fore-end's position) resumes once the shell is in or dropped.
+    bool m_ManualPumpShellTakenDuringCycle = false;
+    // The well or port the last insertion check used.
+    VrHandMatrix4 m_MagazineInteractionFitSocketWorld{};
+    MagazineInteractionBoxSnapshot m_MagazineInteractionFitSocketBox{};
+    bool m_MagazineInteractionFitValid = false;
+    float m_MagazineInteractionFitDistance = -1.0f;
+    bool MagazineInteractionPumpWaitShowsPouch() const;
+    // Always-on reload transition log (see vr_reload_log.h).
+    int m_MagazineInteractionLoggedState = 0;
+    int m_MagazineInteractionLoggedWeaponId = 0;
+    l4d2vr_reload_log::RateLimiter m_MagazineInteractionLogLimiter{ 16u, 1000u };
+    void LogMagazineInteractionEvent(const char* format, ...);
+    void LogMagazineInteractionTransition(C_BasePlayer* player, C_WeaponCSBase* weapon, int weaponId, int clip);
 	bool m_MagazineInteractionChamberEmpty = false;
 	bool m_MagazineInteractionOneInChamber = false;
 	bool m_MagazineInteractionOldMagazineContactActive = false;
@@ -2439,9 +2457,19 @@ public:
     void ReceivePistolMagazineReply(const l4d2vr_pistol_reload::Reply& reply);
     bool ConsumePistolMagazineReply(l4d2vr_pistol_reload::Reply& reply);
     bool BlockPistolNativeReload(C_WeaponCSBase* weapon);
+    bool BlockPhysicalNativeReload(C_WeaponCSBase* weapon);
     l4d2vr_remote_mag::ClientRequest m_RemoteMagazineRequest;
     std::atomic<bool> m_NativeAmmoReloadFallbackActive{false};
     std::atomic<bool> m_PhysicalReloadOwnsStockInput{false};
+    // Commands that left the host's native reload gate open (diagnostics):
+    // count, and the last reason bits | impulse << 16.
+    std::atomic<uint32_t> m_ReloadGateGapCommands{0u};
+    std::atomic<uint32_t> m_ReloadGateGapReason{0u};
+    // Native ammo refills not made by a physical reload (diagnostics).
+    uintptr_t m_NativeRefillWatchWeapon = 0u;
+    int m_NativeRefillWatchClip = -1;
+    int m_NativeRefillWatchReserve = -1;
+    uint32_t m_NativeRefillWatchGaps = 0u;
     bool UpdateNativeAmmoReloadButtonContext(C_BasePlayer* localPlayer);
     l4d2vr_magazine::SessionTracker m_NativeAmmoReloadButtonSession;
     void SendRemoteMagazineRequest(const l4d2vr_remote_mag::Request& request, bool retry);
@@ -2924,6 +2952,64 @@ public:
 	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
 	// Slap step: the pouch's world position and the held fresh magazine's centre.
 	bool GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid);
+	// Live reload geometry for the hand-driven self-tests (published boxes in
+	// world units, the reload state and the support hand's pull frame).
+	struct ReloadSelfTestGeometry
+	{
+		int state = 0;
+		int weaponId = 0;
+		int clip = -1;
+		int reserve = -1;
+		bool magazineBoxFresh = false;
+		float magazineBoxAge = -1.0f;
+		Vector magazineCenter{ 0.0f, 0.0f, 0.0f };
+		std::string modelName;
+		bool boltBoxFresh = false;
+		float boltBoxAge = -1.0f;
+		Vector boltCenter{ 0.0f, 0.0f, 0.0f };
+		bool pickupValid = false;
+		Vector pickupCenter{ 0.0f, 0.0f, 0.0f };
+		bool socketValid = false;
+		Vector socketCenter{ 0.0f, 0.0f, 0.0f };
+		Vector socketOutward{ 0.0f, 0.0f, -1.0f };
+		bool heldValid = false;
+		Vector heldCenter{ 0.0f, 0.0f, 0.0f };
+		bool boltStage = false;
+		Vector boltGrabCenter{ 0.0f, 0.0f, 0.0f };
+		float boltPull = 0.0f;
+		float boltRequiredPull = 0.0f;
+		float boltReturn = 0.0f;
+		bool boltReachedRear = false;
+		Vector gunForward{ 1.0f, 0.0f, 0.0f };
+		Vector supportHand{ 0.0f, 0.0f, 0.0f };
+		bool pumpNeedsCycle = false;
+		bool fireBlocked = false;
+		int shellsLoaded = 0;
+		bool chamberEmpty = false;
+		float pouchRange = 0.0f;
+		float boltRange = 0.0f;
+		float fitDistance = -1.0f;
+	};
+	bool GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out);
+	// Rotates the off hand (world angles) so the held magazine lines up with
+	// the well; returns the remaining misalignment in degrees.
+	bool SelfTestAlignHeldMagazine(const QAngle& handWorldAngles, QAngle& alignedWorldAngles, float& errorDeg);
+	bool m_SelfTestLeftAngWorldValid = false;
+	QAngle m_SelfTestLeftAngWorld{ 0.0f, 0.0f, 0.0f };
+	// Hand-driven reload steps: a phase machine with glides between targets.
+	int m_SelfTestPhase = 0;
+	uint64_t m_SelfTestPhaseStartMs = 0;
+	Vector m_SelfTestGlideFrom{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestGlideTo{ 0.0f, 0.0f, 0.0f };
+	uint64_t m_SelfTestGlideStartMs = 0;
+	uint64_t m_SelfTestGlideMs = 0;
+	int m_SelfTestCycle = 0;
+	int m_SelfTestClip0 = 0;
+	int m_SelfTestReserve0 = 0;
+	float m_SelfTestMeasure = 0.0f;
+	float m_SelfTestMeasureB = 0.0f;
+	Vector m_SelfTestPoint{ 0.0f, 0.0f, 0.0f };
+	bool RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player);
 	bool m_SelfTestParsed = false;
 	bool m_SelfTestEnabled = false;
 	std::vector<std::string> m_SelfTestSteps;

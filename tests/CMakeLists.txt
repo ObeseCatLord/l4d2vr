@@ -895,6 +895,13 @@ if (MSVC)
 endif()
 add_test(NAME vr_viewmodel_strike COMMAND vr_viewmodel_strike_tests)
 
+add_executable(vr_reload_log_tests vr_reload_log_tests.cpp)
+target_compile_features(vr_reload_log_tests PRIVATE cxx_std_17)
+if (MSVC)
+    target_compile_options(vr_reload_log_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME vr_reload_log COMMAND vr_reload_log_tests)
+
 add_executable(vr_native_wrist_hud_tests vr_native_wrist_hud_tests.cpp)
 target_compile_features(vr_native_wrist_hud_tests PRIVATE cxx_std_17)
 if (MSVC)

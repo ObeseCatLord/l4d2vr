@@ -19,8 +19,11 @@ namespace l4d2vr_wire
     }
     inline bool KeepNativeReloadGate(std::uint8_t impulse)
     {
-        // A temporary action occupying the impulse does not grant a reload.
-        // The next ordinary command carries the current reload policy again.
-        return IsGripAction(impulse) || IsObjectPull(impulse);
+        // Any impulse occupying the slot (grip, pull, shove, holster drop,
+        // pill give, flashlight, spray) does not grant a reload: a gun bash or
+        // flashlight toggle with an empty gun used to let the stock auto
+        // reload refill it with no magazine. The next ordinary command
+        // carries the current reload policy again.
+        return impulse != 0u && impulse != l4d2vr_grip::kBlockNativeReloadImpulse;
     }
 }

@@ -198,7 +198,16 @@ void VR::ApplySelfTestPoses()
     m_RightControllerPose.TrackedDeviceAng = QAngle(rightAng.x, yaw + rightAng.y, rightAng.z);
     m_RightControllerPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
     m_LeftControllerPose.TrackedDevicePos = leftPos;
-    m_LeftControllerPose.TrackedDeviceAng = QAngle(leftAng.x, yaw + leftAng.y, leftAng.z);
+    if (m_SelfTestLeftAngWorldValid)
+    {
+        // World angles (stick turning included) back to tracking space.
+        m_LeftControllerPose.TrackedDeviceAng = QAngle(m_SelfTestLeftAngWorld.x,
+            m_SelfTestLeftAngWorld.y - m_RotationOffset, m_SelfTestLeftAngWorld.z);
+    }
+    else
+    {
+        m_LeftControllerPose.TrackedDeviceAng = QAngle(leftAng.x, yaw + leftAng.y, leftAng.z);
+    }
     m_LeftControllerPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
 }
 
@@ -276,6 +285,10 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
     {
         m_SelfTestStepStartMs = nowMs;
         m_SelfTestStage = 0;
+        m_SelfTestPhase = 0;
+        m_SelfTestPhaseStartMs = nowMs;
+        m_SelfTestGlideMs = 0;
+        m_SelfTestCycle = 0;
         Game::logMsg("[VR][SelfTest] step %zu/%zu: %s", m_SelfTestIndex + 1, m_SelfTestSteps.size(),
             m_SelfTestSteps[m_SelfTestIndex].c_str());
     }
@@ -290,9 +303,11 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
         }
     }
     const float t = (nowMs - m_SelfTestStepStartMs) / 1000.0f;
-    if (RunSelfTestStep(m_SelfTestSteps[m_SelfTestIndex], t, localPlayer) || t > 40.0f)
+    // Hand-driven reload steps run several full reloads.
+    const float stepLimit = m_SelfTestSteps[m_SelfTestIndex].find("e2e") != std::string::npos ? 100.0f : 40.0f;
+    if (RunSelfTestStep(m_SelfTestSteps[m_SelfTestIndex], t, localPlayer) || t > stepLimit)
     {
-        if (t > 40.0f)
+        if (t > stepLimit)
             SelfTestReport(m_SelfTestSteps[m_SelfTestIndex].c_str(), false, "step timed out");
         l4d2vr_selftest::ReleaseAll();
         SelfTestHoldRight(SelfTestVec(0.35f, 0.2f, -0.3f), QAngle(0.0f, 0.0f, 0.0f));
@@ -301,6 +316,8 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
         m_SelfTestLeftLocal = SelfTestVec(0.35f, -0.2f, -0.35f);
         m_SelfTestLeftAngLocal = QAngle(0.0f, 0.0f, 0.0f);
         m_VmAnimTraceUntilMs.store(0u, std::memory_order_release);
+        m_SelfTestLeftAngWorldValid = false;
+        m_SelfTestGlideMs = 0;
         m_SelfTestHeadDrop = 0.0f;
         m_SelfTestStepStartMs = 0;
         if (++m_SelfTestIndex >= m_SelfTestSteps.size())
@@ -1045,6 +1062,9 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
+    if (step.find("e2e") != std::string::npos)
+        return RunReloadE2EStep(step, t, player);
+
     if (step == "wait")
         return t >= 10.0f;
 
@@ -1669,6 +1689,865 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
         }
     }
     return false;
+}
+
+// Hand-driven reload tests. Every stage goes through the real off-hand path:
+// the hand is moved onto the published boxes (bolt or slide, the waist pouch,
+// the magazine well or loading port, all in world units) and the grip and
+// trigger are pressed like a player would; nothing calls the server
+// transactions directly. Steps:
+//   mage2e=<give name>    detachable magazine: run dry, rack without a new
+//                         magazine (no refill), release, rack with the
+//                         magazine out (no refill), take a spare from the
+//                         waist, seat it, rack the bolt or slide, fire.
+//   shellse2e=<give name> shotgun: fire one, (pump), take a shell from the
+//                         waist, load it; three times, the second time with
+//                         the shell loaded before the pump is cycled.
+//   slape2e               AK-47: take a spare with the old magazine seated,
+//                         slap the old one out, seat the spare, fire.
+bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player)
+{
+    (void)t;
+    (void)player;
+    const uint64_t nowMs = GetTickCount64();
+    auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+    auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
+    const float scale = (std::max)(0.001f, m_VRScale);
+    char detail[320];
+    char name[96];
+
+    const bool shells = step.rfind("shellse2e=", 0) == 0;
+    // emptywatche2e=<gun>: run dry, then leave the gun alone and watch for a
+    // refill nobody made (the host's stock auto reload).
+    const bool watch = step.rfind("emptywatche2e=", 0) == 0;
+    const bool magazine = watch || step.rfind("mage2e=", 0) == 0 || step.rfind("reloadgatee2e=", 0) == 0;
+    // reloadgatee2e=<gun>: fire a few rounds, then press the stock reload; the
+    // host's reload gate must refuse it while physical reload owns the gun.
+    const bool gateProbe = step.rfind("reloadgatee2e=", 0) == 0;
+    const bool slap = step == "slape2e";
+    if (!shells && !magazine && !slap)
+    {
+        SelfTestReport(step.c_str(), false, "unknown step");
+        return true;
+    }
+    const std::string gun = slap ? std::string("rifle_ak47") : step.substr(step.find('=') + 1);
+    int expectedId = 0;
+    if (gun == "rifle") expectedId = 5;
+    else if (gun == "pistol") expectedId = 1;
+    else if (gun == "pistol_magnum") expectedId = 32;
+    else if (gun == "smg") expectedId = 2;
+    else if (gun == "rifle_ak47") expectedId = 26;
+    else if (gun == "pumpshotgun") expectedId = 3;
+    else if (gun == "shotgun_chrome") expectedId = 8;
+    else if (gun == "autoshotgun") expectedId = 4;
+    else if (gun == "shotgun_spas") expectedId = 11;
+    if (!expectedId)
+    {
+        SelfTestReport(step.c_str(), false, "unknown weapon");
+        return true;
+    }
+    const bool pump = expectedId == 3 || expectedId == 8;
+    const bool semiAuto = expectedId == 1 || expectedId == 32;
+
+    ReloadSelfTestGeometry g{};
+    GetReloadSelfTestGeometry(g);
+    const float inPhase = (nowMs - m_SelfTestPhaseStartMs) / 1000.0f;
+    auto go = [&](int next) { m_SelfTestPhase = next; m_SelfTestPhaseStartMs = nowMs; };
+    auto label = [&](const char* text)
+    {
+        std::snprintf(name, sizeof(name), "%s %s", gun.c_str(), text);
+        return name;
+    };
+    auto finish = [&]()
+    {
+        button(m_ActionOffHandGrip, false);
+        button(m_ActionPrimaryAttack, false);
+        button(m_ActionMagazineRelease, false);
+        return true;
+    };
+    auto fail = [&](const char* what, const char* why)
+    {
+        SelfTestReport(label(what), false, why);
+        return finish();
+    };
+    auto state = [&]() { return l4d2vr_reload_log::StateName(g.state); };
+    // The off hand glides between targets (world units, linear).
+    auto leftNow = [&]() { return m_SelfTestLeftWorldValid ? m_SelfTestLeftWorld : m_LeftControllerPosAbs; };
+    auto glide = [&](const Vector& to, float seconds)
+    {
+        m_SelfTestGlideFrom = leftNow();
+        m_SelfTestGlideTo = to;
+        m_SelfTestGlideStartMs = nowMs;
+        m_SelfTestGlideMs = static_cast<uint64_t>((std::max)(0.01f, seconds) * 1000.0f);
+        m_SelfTestLeftWorldValid = true;
+    };
+    if (m_SelfTestGlideMs)
+    {
+        const float u = (std::min)(1.0f, (nowMs - m_SelfTestGlideStartMs) / static_cast<float>(m_SelfTestGlideMs));
+        m_SelfTestLeftWorld = m_SelfTestGlideFrom + (m_SelfTestGlideTo - m_SelfTestGlideFrom) * u;
+        m_SelfTestLeftWorldValid = true;
+    }
+    auto glideDone = [&](float settle) { return !m_SelfTestGlideMs || nowMs >= m_SelfTestGlideStartMs + m_SelfTestGlideMs + static_cast<uint64_t>(settle * 1000.0f); };
+    auto stopGlide = [&]() { m_SelfTestGlideMs = 0; };
+    auto meters = [&](const Vector& a, const Vector& b) { return (a - b).Length() / scale; };
+    // Drives the held magazine or shell (its centre) onto `target`, turning
+    // the hand so a magazine lines up with the well. Returns the residual.
+    auto steerHeld = [&](const Vector& target, bool align, float& errorDeg)
+    {
+        stopGlide();
+        errorDeg = 0.0f;
+        if (align)
+        {
+            QAngle aligned{};
+            if (SelfTestAlignHeldMagazine(m_SelfTestLeftAngWorld, aligned, errorDeg))
+            {
+                m_SelfTestLeftAngWorld = aligned;
+                m_SelfTestLeftAngWorldValid = true;
+            }
+        }
+        if (!g.heldValid)
+            return -1.0f;
+        m_SelfTestLeftWorld = leftNow() + (target - g.heldCenter) * 0.5f;
+        m_SelfTestLeftWorldValid = true;
+        return meters(target, g.heldCenter);
+    };
+    auto pullBack = [&](float metersBack) { return leftNow() - g.gunForward * (metersBack * scale); };
+
+    // ---- Common start: draw the gun -------------------------------------------
+    if (m_SelfTestPhase == 0)
+    {
+        button(m_ActionOffHandGrip, false);
+        button(m_ActionMagazineRelease, false);
+        button(m_ActionPrimaryAttack, false);
+        m_SelfTestLeftAngWorldValid = false;
+        if (gun != "pistol")
+        {
+            std::snprintf(detail, sizeof(detail), "give %s", gun.c_str());
+            cmd(detail);
+        }
+        go(1);
+        return false;
+    }
+    if (m_SelfTestPhase == 1)
+    {
+        if (inPhase < 1.0f) return false;
+        std::snprintf(detail, sizeof(detail), "use weapon_%s", gun.c_str());
+        cmd(detail);
+        SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f));
+        go(2);
+        return false;
+    }
+    if (m_SelfTestPhase == 2)
+    {
+        // Boxes are published by the viewmodel draw: wait for fresh ones.
+        const bool ready = g.weaponId == expectedId && g.magazineBoxFresh &&
+            (!shells || g.state == static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine)) &&
+            (shells || g.state == 0);
+        if (!ready)
+        {
+            if (inPhase < 6.0f) return false;
+            std::snprintf(detail, sizeof(detail), "weapon=%d (want %d) magazine box fresh=%d age=%.2fs model=%s state=%s",
+                g.weaponId, expectedId, g.magazineBoxFresh ? 1 : 0, g.magazineBoxAge, g.modelName.c_str(), state());
+            return fail("ready", detail);
+        }
+        m_SelfTestClip0 = g.clip;
+        m_SelfTestReserve0 = g.reserve;
+        m_SelfTestCycle = 0;
+        m_SelfTestMeasureB = 0.0f;
+        m_SelfTestValueD = 0;
+        Game::logMsg("[VR][SelfTest] %s: clip=%d reserve=%d box age=%.3fs model=%s", step.c_str(), g.clip, g.reserve,
+            g.magazineBoxAge, g.modelName.c_str());
+        go(magazine ? 10 : shells ? 100 : 200);
+        return false;
+    }
+
+    // ---- Detachable magazine ----------------------------------------------------
+    if (magazine)
+    {
+        switch (m_SelfTestPhase)
+        {
+        case 50:
+            button(m_ActionPrimaryAttack, true);
+            go(51);
+            return false;
+        case 51:
+            if (inPhase < 0.4f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(52);
+            return false;
+        case 52:
+            if (inPhase < 0.5f) return false;
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            m_SelfTestSerialB = m_ReloadGateGapCommands.load(std::memory_order_acquire);
+            cmd("+reload");
+            go(53);
+            return false;
+        case 53:
+            if (inPhase < 0.3f) return false;
+            cmd("-reload");
+            go(54);
+            return false;
+        case 54:
+            if (inPhase < 4.0f && g.clip == m_SelfTestClip0) return false;
+            std::snprintf(detail, sizeof(detail), "+reload at clip %d: clip -> %d, reserve %d -> %d, %u unblocked command(s)",
+                m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve,
+                m_ReloadGateGapCommands.load(std::memory_order_acquire) - m_SelfTestSerialB);
+            SelfTestReport(label("host refuses the stock reload"), g.clip == m_SelfTestClip0, detail);
+            return finish();
+        case 10: // run dry
+            if (gateProbe)
+            {
+                go(50);
+                return false;
+            }
+            if (g.clip > 0)
+            {
+                if (inPhase > 20.0f)
+                {
+                    std::snprintf(detail, sizeof(detail), "clip still %d after 20 s of firing", g.clip);
+                    return fail("fire until empty", detail);
+                }
+                // Semi-automatic guns need a trigger press per shot.
+                const bool down = semiAuto ? (static_cast<uint64_t>(inPhase * 1000.0f) % 160u) < 70u : true;
+                button(m_ActionPrimaryAttack, down);
+                return false;
+            }
+            button(m_ActionPrimaryAttack, false);
+            std::snprintf(detail, sizeof(detail), "clip %d -> 0, reserve %d", m_SelfTestClip0, g.reserve);
+            SelfTestReport(label("fire until empty"), true, detail);
+            m_SelfTestReserve0 = g.reserve;
+            m_SelfTestSerialB = m_ReloadGateGapCommands.load(std::memory_order_acquire);
+            go(watch ? 40 : 11);
+            return false;
+        case 40: // hands off: an empty gun stays empty
+            if (inPhase < 5.0f) return false;
+            std::snprintf(detail, sizeof(detail), "after %.1f s untouched: clip 0 -> %d, reserve %d -> %d, %u command(s) without the reload block (last 0x%X)",
+                inPhase, g.clip, m_SelfTestReserve0, g.reserve,
+                m_ReloadGateGapCommands.load(std::memory_order_acquire) - m_SelfTestSerialB,
+                m_ReloadGateGapReason.load(std::memory_order_acquire));
+            SelfTestReport(label("an empty gun stays empty"), g.clip == 0 && g.reserve == m_SelfTestReserve0, detail);
+            return finish();
+        case 11: // rack with the empty magazine still seated
+            if (inPhase < 0.6f) return false;
+            if (!g.boltBoxFresh)
+            {
+                if (inPhase < 4.0f) return false;
+                std::snprintf(detail, sizeof(detail), "bolt box fresh=0 age=%.2fs", g.boltBoxAge);
+                return fail("rack without a new magazine", detail);
+            }
+            m_SelfTestPoint = g.boltCenter;
+            glide(g.boltCenter, 0.35f);
+            go(12);
+            return false;
+        case 12:
+            if (!glideDone(0.15f)) return false;
+            m_SelfTestMeasure = meters(g.supportHand, m_SelfTestPoint);
+            button(m_ActionOffHandGrip, true);
+            go(13);
+            return false;
+        case 13:
+            if (inPhase < 0.2f) return false;
+            glide(pullBack(0.12f), 0.3f);
+            go(14);
+            return false;
+        case 14:
+            if (!glideDone(0.1f)) return false;
+            button(m_ActionOffHandGrip, false);
+            glide(m_SelfTestPoint, 0.2f);
+            go(15);
+            return false;
+        case 15:
+            if (inPhase < 1.5f) return false;
+            std::snprintf(detail, sizeof(detail), "hand %.3f m from the bolt, pulled 0.12 m and let go: clip 0 -> %d, reserve %d -> %d, state %s",
+                m_SelfTestMeasure, g.clip, m_SelfTestReserve0, g.reserve, state());
+            SelfTestReport(label("rack with the empty magazine seated does not reload"),
+                g.clip == 0 && g.reserve == m_SelfTestReserve0, detail);
+            m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
+            button(m_ActionMagazineRelease, true);
+            go(16);
+            return false;
+        case 16:
+            if (inPhase < 0.15f) return false;
+            button(m_ActionMagazineRelease, false);
+            go(17);
+            return false;
+        case 17:
+            if (g.state != static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine) ||
+                RemoteMagazineRequestPending() || PistolMagazineRequestPending())
+            {
+                if (inPhase < 3.0f) return false;
+                std::snprintf(detail, sizeof(detail), "state %s clip %d", state(), g.clip);
+                return fail("release ejects the empty magazine", detail);
+            }
+            std::snprintf(detail, sizeof(detail), "%u ejection(s), clip %d, reserve %d -> %d",
+                m_MagazineEjectSerial.load(std::memory_order_acquire) - m_SelfTestSerial, g.clip, m_SelfTestReserve0, g.reserve);
+            SelfTestReport(label("release ejects the empty magazine"),
+                g.clip == 0 && m_MagazineEjectSerial.load(std::memory_order_acquire) - m_SelfTestSerial == 1u, detail);
+            m_SelfTestReserve0 = g.reserve;
+            go(18);
+            return false;
+        case 18: // rack with the magazine out
+            if (inPhase < 0.4f) return false;
+            if (g.boltBoxFresh)
+                m_SelfTestPoint = g.boltCenter;
+            glide(m_SelfTestPoint, 0.35f);
+            go(19);
+            return false;
+        case 19:
+            if (!glideDone(0.15f)) return false;
+            m_SelfTestMeasure = meters(g.supportHand, m_SelfTestPoint);
+            m_SelfTestMeasureB = g.pickupValid ? meters(g.supportHand, g.pickupCenter) : -1.0f;
+            button(m_ActionOffHandGrip, true);
+            go(20);
+            return false;
+        case 20:
+            if (inPhase < 0.2f) return false;
+            glide(pullBack(0.12f), 0.3f);
+            go(21);
+            return false;
+        case 21:
+            if (!glideDone(0.1f)) return false;
+            button(m_ActionOffHandGrip, false);
+            glide(m_SelfTestPoint, 0.2f);
+            go(22);
+            return false;
+        case 22:
+            if (inPhase < 1.5f) return false;
+            std::snprintf(detail, sizeof(detail), "hand %.3f m from the bolt (pouch %.3f m away), pulled 0.12 m: clip 0 -> %d, reserve %d -> %d, state %s",
+                m_SelfTestMeasure, m_SelfTestMeasureB, g.clip, m_SelfTestReserve0, g.reserve, state());
+            SelfTestReport(label("rack with the magazine out does not reload"),
+                g.clip == 0 && g.reserve == m_SelfTestReserve0 &&
+                g.state == static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine), detail);
+            go(23);
+            return false;
+        case 23: // a spare from the waist
+            if (!g.pickupValid)
+            {
+                if (inPhase < 2.0f) return false;
+                return fail("take a spare from the waist", "no pouch position");
+            }
+            m_SelfTestPoint = g.pickupCenter;
+            glide(g.pickupCenter, 0.5f);
+            go(24);
+            return false;
+        case 24:
+            if (!glideDone(0.2f)) return false;
+            m_SelfTestMeasure = meters(g.supportHand, g.pickupCenter);
+            button(m_ActionOffHandGrip, true);
+            go(25);
+            return false;
+        case 25:
+            if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+            {
+                if (inPhase < 1.0f) return false;
+                std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch (range %.2f m), state %s",
+                    m_SelfTestMeasure, g.pouchRange, state());
+                return fail("take a spare from the waist", detail);
+            }
+            std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch (range %.2f m)", m_SelfTestMeasure, g.pouchRange);
+            SelfTestReport(label("take a spare from the waist"), true, detail);
+            SelfTestRequestShot(gun + "_spare_in_hand", 1);
+            m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
+            m_SelfTestLeftAngWorldValid = true;
+            m_SelfTestMeasure = 1e9f;
+            m_SelfTestMeasureB = 180.0f;
+            go(26);
+            return false;
+        case 26: // into the well: line up below it, then push it home
+        {
+            if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+            {
+                if (g.fitDistance >= 0.0f) m_SelfTestMeasure = (std::min)(m_SelfTestMeasure, g.fitDistance);
+                go(27);
+                return false;
+            }
+            if (!g.socketValid || !g.heldValid)
+            {
+                if (inPhase < 1.0f) return false;
+                return fail("seat the spare", "no well or held magazine pose");
+            }
+            const float approach = (std::min)(1.0f, (std::max)(0.0f, (inPhase - 0.7f) / 0.5f));
+            const Vector target = g.socketCenter + g.socketOutward * ((1.0f - approach) * 0.10f * scale);
+            float error = 0.0f;
+            const float residual = steerHeld(target, true, error);
+            m_SelfTestMeasure = (std::min)(m_SelfTestMeasure, meters(g.socketCenter, g.heldCenter));
+            if (error > 0.0f) m_SelfTestMeasureB = error;
+            if (g.state == static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+            {
+                if (inPhase < 5.0f) return false;
+                std::snprintf(detail, sizeof(detail), "still held: magazine %.3f m from the well (residual %.3f, fit check %.3f m), misaligned %.1f deg",
+                    m_SelfTestMeasure, residual, g.fitDistance, m_SelfTestMeasureB);
+                return fail("seat the spare", detail);
+            }
+            go(27);
+            return false;
+        }
+        case 27:
+            if (g.state == static_cast<int>(MagazineInteractionManualState::WaitingForServerMagazine) ||
+                g.state == static_cast<int>(MagazineInteractionManualState::WaitingForServerPistolCycle) || g.clip <= 0)
+            {
+                if (inPhase < 3.0f) return false;
+                std::snprintf(detail, sizeof(detail), "state %s clip %d reserve %d", state(), g.clip, g.reserve);
+                return fail("seat the spare", detail);
+            }
+            button(m_ActionOffHandGrip, false);
+            m_SelfTestLeftAngWorldValid = false;
+            {
+                const bool infinite = expectedId == 1 || expectedId == 32;
+                std::snprintf(detail, sizeof(detail), "magazine %.3f m from the well, %.1f deg off when seated: clip 0 -> %d, reserve %d -> %d, state %s",
+                    m_SelfTestMeasure, m_SelfTestMeasureB, g.clip, m_SelfTestReserve0, g.reserve, state());
+                SelfTestRequestShot(gun + "_spare_seated", 1);
+                SelfTestReport(label("spare seated, refilled from the reserve"), g.clip > 0 &&
+                    (infinite || g.clip + g.reserve == m_SelfTestReserve0), detail);
+            }
+            m_SelfTestClip0 = g.clip;
+            go(28);
+            return false;
+        case 28: // empty chamber: the trigger does nothing until the rack
+            if (inPhase < 0.4f) return false;
+            button(m_ActionPrimaryAttack, true);
+            go(29);
+            return false;
+        case 29:
+            if (inPhase < 0.25f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(30);
+            return false;
+        case 30:
+            if (inPhase < 0.4f) return false;
+            std::snprintf(detail, sizeof(detail), "state %s, fire blocked=%d, clip %d -> %d", state(), g.fireBlocked ? 1 : 0,
+                m_SelfTestClip0, g.clip);
+            SelfTestReport(label("empty chamber holds fire until racked"), g.clip == m_SelfTestClip0 &&
+                g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab), detail);
+            if (!g.boltStage)
+                return fail("rack after seating", "no bolt stage armed");
+            m_SelfTestPoint = g.boltGrabCenter;
+            glide(g.boltGrabCenter, 0.35f);
+            go(31);
+            return false;
+        case 31:
+            if (!glideDone(0.1f)) return false;
+            m_SelfTestMeasure = meters(g.supportHand, g.boltGrabCenter);
+            button(m_ActionOffHandGrip, true);
+            go(32);
+            return false;
+        case 32:
+            if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingBolt))
+            {
+                if (inPhase < 0.6f) return false;
+                std::snprintf(detail, sizeof(detail), "hand %.3f m from the bolt (range %.2f m), state %s",
+                    m_SelfTestMeasure, g.boltRange, state());
+                return fail("rack after seating", detail);
+            }
+            m_SelfTestMeasureB = g.boltRequiredPull;
+            glide(pullBack(g.boltRequiredPull + 0.05f), 0.35f);
+            go(33);
+            return false;
+        case 33:
+            m_SelfTestMeasure = (std::max)(0.0f, g.boltPull);
+            if (!glideDone(0.1f)) return false;
+            button(m_ActionOffHandGrip, false);
+            go(34);
+            return false;
+        case 34:
+            if (inPhase < 0.5f) return false;
+            std::snprintf(detail, sizeof(detail), "pulled %.3f m (needs %.3f m) and let go: state %s, fire blocked=%d",
+                m_SelfTestMeasure, m_SelfTestMeasureB, state(), g.fireBlocked ? 1 : 0);
+            SelfTestReport(label("rack chambers a round"), g.state == 0 && !g.fireBlocked, detail);
+            m_SelfTestClip0 = g.clip;
+            glide(m_LeftControllerPosAbs + Vector(0.0f, 0.0f, -0.15f * scale), 0.3f);
+            button(m_ActionPrimaryAttack, true);
+            go(35);
+            return false;
+        case 35:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(36);
+            return false;
+        case 36:
+            if (inPhase < 0.6f) return false;
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d", m_SelfTestClip0, g.clip);
+            SelfTestReport(label("fires after the rack"), g.clip < m_SelfTestClip0, detail);
+            return finish();
+        default:
+            return fail("phase", "lost");
+        }
+    }
+
+    // ---- Shotguns -----------------------------------------------------------------
+    if (shells)
+    {
+        switch (m_SelfTestPhase)
+        {
+        case 100: // fire one (once the gun has finished deploying)
+            if (m_SelfTestCycle == 0 && inPhase < 1.0f) return false;
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            button(m_ActionPrimaryAttack, true);
+            go(101);
+            return false;
+        case 101:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(102);
+            return false;
+        case 102:
+        {
+            if (inPhase < 0.7f) return false;
+            const bool pumpWaits = g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab);
+            std::snprintf(detail, sizeof(detail), "cycle %d: clip %d -> %d, state %s, fire blocked=%d, waist shell shown=%d",
+                m_SelfTestCycle + 1, m_SelfTestClip0, g.clip, state(), g.fireBlocked ? 1 : 0,
+                ShouldDrawMagazineInteractionDetachedMagazine() ? 1 : 0);
+            SelfTestReport(label("fire one"), g.clip == m_SelfTestClip0 - 1 && (!pump || (pumpWaits && g.fireBlocked)), detail);
+            if (pump)
+                SelfTestReport(label("shell stays at the waist while the pump waits"),
+                    ShouldDrawMagazineInteractionDetachedMagazine(), detail);
+            if (g.clip != m_SelfTestClip0 - 1)
+                return finish();
+            // The second time the shell goes in before the pump is cycled.
+            m_SelfTestValueD = pump && m_SelfTestCycle == 1 ? 1 : 0;
+            go(pump && m_SelfTestCycle != 1 ? 110 : 120);
+            return false;
+        }
+        case 110: // pump: back the Pavlov distance, then forward
+            if (!g.boltStage)
+            {
+                if (inPhase < 1.5f) return false;
+                std::snprintf(detail, sizeof(detail), "state %s", state());
+                return fail("pump", detail);
+            }
+            m_SelfTestPoint = g.boltGrabCenter;
+            glide(g.boltGrabCenter, 0.35f);
+            go(111);
+            return false;
+        case 111:
+            if (!glideDone(0.1f)) return false;
+            m_SelfTestMeasure = meters(g.supportHand, m_SelfTestPoint);
+            button(m_ActionOffHandGrip, true);
+            go(112);
+            return false;
+        case 112:
+            if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingBolt))
+            {
+                if (inPhase < 0.6f) return false;
+                std::snprintf(detail, sizeof(detail), "hand %.3f m from the pump (range %.2f m), state %s",
+                    m_SelfTestMeasure, g.boltRange, state());
+                return fail("pump", detail);
+            }
+            m_SelfTestPoint = leftNow();
+            m_SelfTestMeasureB = g.boltRequiredPull;
+            m_SelfTestMeasure = 0.0f;
+            glide(pullBack(g.boltRequiredPull + 0.05f), 0.3f);
+            go(113);
+            return false;
+        case 113:
+            m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
+            if (!glideDone(0.1f)) return false;
+            // All the way forward (a little past where it was taken).
+            glide(m_SelfTestPoint + g.gunForward * (0.06f * scale), 0.3f);
+            go(114);
+            return false;
+        case 114:
+            m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
+            if (!glideDone(0.2f)) return false;
+            button(m_ActionOffHandGrip, false);
+            go(115);
+            return false;
+        case 115:
+        {
+            if (inPhase < 0.3f) return false;
+            const bool cycled = !g.fireBlocked && g.state != static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab) &&
+                g.state != static_cast<int>(MagazineInteractionManualState::HoldingBolt);
+            std::snprintf(detail, sizeof(detail), "cycle %d: pulled %.3f m (needs %.3f m) and pushed home: state %s, fire blocked=%d",
+                m_SelfTestCycle + 1, m_SelfTestMeasure, m_SelfTestMeasureB, state(), g.fireBlocked ? 1 : 0);
+            SelfTestReport(label("pump cycled"), cycled, detail);
+            if (!cycled)
+                return finish();
+            go(m_SelfTestValueD && m_SelfTestCycle == 1 ? 140 : 120);
+            return false;
+        }
+        case 120: // a shell from the waist
+            if (!g.pickupValid || (g.state != static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine) &&
+                g.state != static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab)))
+            {
+                if (inPhase < 2.0f) return false;
+                std::snprintf(detail, sizeof(detail), "pouch=%d state %s", g.pickupValid ? 1 : 0, state());
+                return fail("take a shell from the waist", detail);
+            }
+            glide(g.pickupCenter, 0.45f);
+            go(121);
+            return false;
+        case 121:
+            if (!glideDone(0.15f)) return false;
+            m_SelfTestMeasure = g.pickupValid ? meters(g.supportHand, g.pickupCenter) : -1.0f;
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            button(m_ActionOffHandGrip, true);
+            go(122);
+            return false;
+        case 122:
+            if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+            {
+                if (inPhase < 0.8f) return false;
+                std::snprintf(detail, sizeof(detail), "cycle %d: hand %.3f m from the pouch (range %.2f m), state %s",
+                    m_SelfTestCycle + 1, m_SelfTestMeasure, g.pouchRange, state());
+                return fail("take a shell from the waist", detail);
+            }
+            std::snprintf(detail, sizeof(detail), "cycle %d: hand %.3f m from the pouch (range %.2f m)%s",
+                m_SelfTestCycle + 1, m_SelfTestMeasure, g.pouchRange,
+                m_SelfTestValueD ? ", pump not cycled yet" : "");
+            SelfTestReport(label("take a shell from the waist"), true, detail);
+            if (m_SelfTestCycle == 0)
+                SelfTestRequestShot(gun + "_shell_in_hand", 1);
+            m_SelfTestMeasure = 1e9f;
+            go(123);
+            return false;
+        case 123: // into the loading port
+        {
+            if (!g.socketValid || !g.heldValid)
+            {
+                if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+                {
+                    go(124);
+                    return false;
+                }
+                if (inPhase < 1.0f) return false;
+                return fail("load the shell", "no port or held shell pose");
+            }
+            const float approach = (std::min)(1.0f, (std::max)(0.0f, (inPhase - 0.4f) / 0.4f));
+            const Vector target = g.socketCenter + Vector(0.0f, 0.0f, -(1.0f - approach) * 0.12f * scale);
+            float error = 0.0f;
+            const float residual = steerHeld(target, false, error);
+            m_SelfTestMeasure = (std::min)(m_SelfTestMeasure, meters(g.socketCenter, g.heldCenter));
+            if (g.state == static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+            {
+                if (inPhase < 4.0f) return false;
+                std::snprintf(detail, sizeof(detail), "shell %.3f m from the port (residual %.3f, fit check %.3f m), state %s",
+                    m_SelfTestMeasure, residual, g.fitDistance, state());
+                return fail("load the shell", detail);
+            }
+            go(124);
+            return false;
+        }
+        case 124:
+            if (g.state == static_cast<int>(MagazineInteractionManualState::WaitingForServerShell) ||
+                g.state == static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine) ||
+                g.clip == m_SelfTestClip0)
+            {
+                if (inPhase < 3.0f) return false;
+                std::snprintf(detail, sizeof(detail), "cycle %d: state %s clip %d -> %d reserve %d -> %d",
+                    m_SelfTestCycle + 1, state(), m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve);
+                return fail("load the shell", detail);
+            }
+            button(m_ActionOffHandGrip, false);
+            stopGlide();
+            std::snprintf(detail, sizeof(detail), "cycle %d: shell %.3f m from the port: clip %d -> %d, reserve %d -> %d, state %s",
+                m_SelfTestCycle + 1, m_SelfTestMeasure, m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve, state());
+            if (m_SelfTestCycle == 0)
+                SelfTestRequestShot(gun + "_shell_loaded", 1);
+            SelfTestReport(label("shell loaded: exactly one, none lost"),
+                g.clip == m_SelfTestClip0 + 1 && g.reserve == m_SelfTestReserve0 - 1, detail);
+            if (g.clip != m_SelfTestClip0 + 1)
+                return finish();
+            go(m_SelfTestValueD ? 125 : 140);
+            return false;
+        case 125: // the pump still waits after the early shell
+            if (inPhase < 0.5f) return false;
+            std::snprintf(detail, sizeof(detail), "state %s, fire blocked=%d", state(), g.fireBlocked ? 1 : 0);
+            SelfTestReport(label("pump still waits after the early shell"),
+                g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab) && g.fireBlocked, detail);
+            go(110);
+            return false;
+        case 140: // next cycle
+            if (inPhase < 0.6f) return false;
+            if (++m_SelfTestCycle >= 3)
+                return finish();
+            m_SelfTestValueD = 0;
+            go(100);
+            return false;
+        default:
+            return fail("phase", "lost");
+        }
+    }
+
+    // ---- AK-47 magazine slap -------------------------------------------------------
+    switch (m_SelfTestPhase)
+    {
+    case 200:
+        if (!g.pickupValid)
+        {
+            if (inPhase < 2.0f) return false;
+            return fail("slap", "no pouch position");
+        }
+        m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
+        m_SelfTestValueA = static_cast<int>(m_MagazineSlapSerial.load(std::memory_order_acquire));
+        glide(g.pickupCenter, 0.5f);
+        go(201);
+        return false;
+    case 201:
+        if (!glideDone(0.2f)) return false;
+        m_SelfTestMeasure = meters(g.supportHand, g.pickupCenter);
+        button(m_ActionOffHandGrip, true);
+        go(202);
+        return false;
+    case 202:
+    {
+        if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazineForSlap))
+        {
+            if (inPhase < 1.0f) return false;
+            std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch (range %.2f m), state %s",
+                m_SelfTestMeasure, g.pouchRange, state());
+            return fail("spare taken with the old magazine seated", detail);
+        }
+        std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch", m_SelfTestMeasure);
+        SelfTestReport(label("spare taken with the old magazine seated"), true, detail);
+        // Hold the spare in line with the seated magazine, as a player would.
+        m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
+        m_SelfTestLeftAngWorldValid = true;
+        go(212);
+        return false;
+    }
+    case 212:
+    {
+        // Strike 10 cm before to 4 cm past the seated magazine along its
+        // outward axis; reach the start sideways so only the strike counts.
+        MagazineInteractionBoxSnapshot box{};
+        Vector pouch{}, held{};
+        bool heldValid = false;
+        if (!GetMagazineInteractionBox(box) || !GetMagazineSlapSelfTestPoints(pouch, held, heldValid) || !heldValid)
+            return fail("slap", "no seated or held magazine pose");
+        l4d2vr_mag_slap::Box seated{};
+        seated.origin = { box.origin.x, box.origin.y, box.origin.z };
+        seated.axisX = { box.axisX.x, box.axisX.y, box.axisX.z };
+        seated.axisY = { box.axisY.x, box.axisY.y, box.axisY.z };
+        seated.axisZ = { box.axisZ.x, box.axisZ.y, box.axisZ.z };
+        seated.mins = { box.mins.x, box.mins.y, box.mins.z };
+        seated.maxs = { box.maxs.x, box.maxs.y, box.maxs.z };
+        const Vector insertion = m_MagazineInteractionMagazineInsertionAxisLocal;
+        l4d2vr_mag_slap::Vec3 outward{}, side{};
+        if (!l4d2vr_mag_slap::OutwardAxis(seated, { insertion.x, insertion.y, insertion.z }, outward))
+            return fail("slap", "no outward axis");
+        if (!l4d2vr_mag_slap::Normalize(l4d2vr_mag_slap::Sub(seated.axisX,
+                l4d2vr_mag_slap::Scale(outward, l4d2vr_mag_slap::Dot(seated.axisX, outward))), side))
+            side = { 1.0f, 0.0f, 0.0f };
+        const Vector out(outward.x, outward.y, outward.z), across(side.x, side.y, side.z);
+        const l4d2vr_mag_slap::Vec3 seatedCenter = l4d2vr_mag_slap::Center(seated);
+        const Vector center(seatedCenter.x, seatedCenter.y, seatedCenter.z);
+        if (inPhase < 1.0f)
+        {
+            float error = 0.0f;
+            steerHeld(center - out * (0.10f * scale) + across * (0.30f * scale), true, error);
+            m_SelfTestMeasureB = error;
+            return false;
+        }
+        const Vector contact = m_LeftControllerPosAbs + (center - held);
+        m_SelfTestSlapStart = contact - out * (0.10f * scale);
+        m_SelfTestSlapEnd = contact + out * (0.04f * scale);
+        m_SelfTestSlapPark = across * (0.30f * scale);
+        Game::logMsg("[VR][SelfTest] slap: spare lined up %.1f deg off the seated magazine", m_SelfTestMeasureB);
+        glide(m_SelfTestSlapStart + m_SelfTestSlapPark, 0.2f);
+        go(203);
+        return false;
+    }
+    case 203:
+        if (!glideDone(0.2f)) return false;
+        glide(m_SelfTestSlapStart, 0.5f);
+        go(204);
+        return false;
+    case 204:
+        if (!glideDone(0.4f)) return false;
+        glide(m_SelfTestSlapEnd, 0.1f); // 14 cm in 0.1 s: 1.4 m/s against a still gun hand
+        go(205);
+        return false;
+    case 205:
+        if (!glideDone(0.02f)) return false;
+        glide(m_SelfTestSlapEnd + m_SelfTestSlapPark, 0.12f);
+        go(206);
+        return false;
+    case 206:
+    {
+        if (inPhase < 1.2f) return false;
+        const uint32_t slaps = m_MagazineSlapSerial.load(std::memory_order_acquire) - static_cast<uint32_t>(m_SelfTestValueA);
+        const uint32_t ejects = m_MagazineEjectSerial.load(std::memory_order_acquire) - m_SelfTestSerial;
+        const bool kept = g.state == static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine);
+        std::snprintf(detail, sizeof(detail), "%u slap(s), %u ejection(s), spare %s: clip %d -> %d, reserve %d -> %d",
+            slaps, ejects, kept ? "in hand" : "not in hand", m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve);
+        SelfTestReport(label("slap knocks the old magazine out, spare kept"), slaps == 1u && ejects == 1u && kept, detail);
+        if (!kept)
+            return finish();
+        m_SelfTestReserve0 = g.reserve;
+        m_SelfTestClip0 = g.clip;
+        m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
+        m_SelfTestLeftAngWorldValid = true;
+        m_SelfTestMeasure = 1e9f;
+        m_SelfTestMeasureB = 180.0f;
+        go(207);
+        return false;
+    }
+    case 207:
+    {
+        if (g.state != static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+        {
+            if (g.fitDistance >= 0.0f) m_SelfTestMeasure = (std::min)(m_SelfTestMeasure, g.fitDistance);
+            go(208);
+            return false;
+        }
+        if (!g.socketValid || !g.heldValid)
+        {
+            if (inPhase < 1.0f) return false;
+            return fail("seat the spare after the slap", "no well or held magazine pose");
+        }
+        const float approach = (std::min)(1.0f, (std::max)(0.0f, (inPhase - 0.7f) / 0.5f));
+        const Vector target = g.socketCenter + g.socketOutward * ((1.0f - approach) * 0.10f * scale);
+        float error = 0.0f;
+        steerHeld(target, true, error);
+        m_SelfTestMeasure = (std::min)(m_SelfTestMeasure, meters(g.socketCenter, g.heldCenter));
+        if (error > 0.0f) m_SelfTestMeasureB = error;
+        if (g.state == static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine))
+        {
+            if (inPhase < 5.0f) return false;
+            std::snprintf(detail, sizeof(detail), "magazine %.3f m from the well, misaligned %.1f deg",
+                m_SelfTestMeasure, m_SelfTestMeasureB);
+            return fail("seat the spare after the slap", detail);
+        }
+        go(208);
+        return false;
+    }
+    case 208:
+        if (g.state == static_cast<int>(MagazineInteractionManualState::WaitingForServerMagazine))
+        {
+            if (inPhase < 3.0f) return false;
+            return fail("seat the spare after the slap", "no reply");
+        }
+        button(m_ActionOffHandGrip, false);
+        m_SelfTestLeftAngWorldValid = false;
+        std::snprintf(detail, sizeof(detail), "magazine %.3f m from the well, %.1f deg off: clip %d -> %d, reserve %d -> %d, state %s",
+            m_SelfTestMeasure, m_SelfTestMeasureB, m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve, state());
+        SelfTestReport(label("spare seated after the slap"), g.clip > m_SelfTestClip0 &&
+            g.clip + g.reserve == m_SelfTestClip0 + m_SelfTestReserve0, detail);
+        m_SelfTestClip0 = g.clip;
+        glide(m_LeftControllerPosAbs + Vector(0.0f, 0.0f, -0.15f * scale), 0.3f);
+        go(209);
+        return false;
+    case 209:
+        if (inPhase < 0.5f) return false;
+        button(m_ActionPrimaryAttack, true);
+        go(210);
+        return false;
+    case 210:
+        if (inPhase < 0.12f) return false;
+        button(m_ActionPrimaryAttack, false);
+        go(211);
+        return false;
+    case 211:
+        if (inPhase < 0.6f) return false;
+        std::snprintf(detail, sizeof(detail), "clip %d -> %d, state %s", m_SelfTestClip0, g.clip, state());
+        SelfTestReport(label("fires after the slap reload"), g.clip < m_SelfTestClip0, detail);
+        return finish();
+    default:
+        return fail("phase", "lost");
+    }
 }
 
 // ---- Self-test screenshots ---------------------------------------------------

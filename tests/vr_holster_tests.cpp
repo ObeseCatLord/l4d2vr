@@ -69,7 +69,9 @@ static void TestZones()
     // Chest pockets: reach for the pocketed item.
     CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Throwable), 0x1Fu) == Zone::Throwable);
     CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Consumable), 0x1Fu) == Zone::Consumable);
+    // The kit is on the back now, over the off shoulder: never at the belly.
     CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Medical), 0x1Fu) == Zone::Medical);
+    CHECK(FindZone(frame, layout, ToWorld(frame, Vector(0.08f, 0.0f, -0.51f)), 0x1Fu) == Zone::None);
     // Putting a chest item back: anywhere in the vest.
     CHECK(HandInHolsterVolume(frame, layout, Zone::Consumable, ToWorld(frame, Vector(0.10f, 0.0f, -0.45f))));
     CHECK(!HandInHolsterVolume(frame, layout, Zone::Consumable, gunReady + Vector(20.0f, 0.0f, 0.0f)));
@@ -101,7 +103,7 @@ static void TestItemPoseOrthonormal()
 {
     const BodyFrame frame = Frame();
     const Layout layout{};
-    for (int shape = 0; shape < 4; ++shape)
+    for (int shape = 0; shape < kItemShapeCount; ++shape)
         for (int zone = 0; zone < kZoneCount; ++zone)
         {
             const ItemPose pose = BuildItemPose(frame, layout, static_cast<Zone>(zone), static_cast<ItemShape>(shape));
@@ -116,7 +118,7 @@ static void TestItemPoseOrthonormal()
             CHECK(DotProduct(cross, pose.axisZ) > 0.99f); // right-handed
         }
     const ItemPose pistol = BuildItemPose(frame, layout, Zone::Secondary, ItemShape::Pistol);
-    CHECK(pistol.axisZ.z < -0.99f); // muzzle down
+    CHECK(pistol.axisZ.z < -0.9f); // muzzle down (canted 23 degrees forward, as in Pavlov)
 }
 
 static void TestGrabFsm()
@@ -210,7 +212,8 @@ static void TestHolsterPlacementNearHead()
     const Layout layout{};
     for (int zone = 0; zone < kZoneCount; ++zone)
     {
-        const ItemShape shape = zone == 0 ? ItemShape::LongGun : (zone == 1 ? ItemShape::Pistol : ItemShape::Equipment);
+        const ItemShape shape = zone == 0 ? ItemShape::LongGun : (zone == 1 ? ItemShape::Pistol :
+            (zone == 3 ? ItemShape::Kit : ItemShape::Equipment));
         const ItemPose pose = BuildItemPose(frame, layout, static_cast<Zone>(zone), shape);
         CHECK(pose.valid);
         const Vector centerUnits = ReferenceToCenterUnits(shape);
@@ -230,8 +233,9 @@ static void TestHolsterPlacementNearHead()
     const ItemPose pills = BuildItemPose(frame, layout, Zone::Consumable, ItemShape::Equipment);
     CHECK(pills.axisY.z > 0.99f);
     CHECK(ToLocal(frame, RootToWorld(frame, layout.socket[4])).x > 0.0f);
-    // Only the long gun's slot is on the back.
-    CHECK(IsBackZone(Zone::Primary) && !IsBackZone(Zone::Medical));
+    // The long gun and the kit are on the back; the hip and pockets are not.
+    CHECK(IsBackZone(Zone::Primary) && IsBackZone(Zone::Medical));
+    CHECK(!IsBackZone(Zone::Secondary) && !IsBackZone(Zone::Throwable) && !IsBackZone(Zone::Consumable));
 }
 
 static void TestNearAnyZone()
@@ -247,8 +251,229 @@ static void TestNearAnyZone()
     CHECK(!NearAnyZone(frame, layout, ToWorld(frame, Vector(0.65f, 0.15f, -0.30f)), 0.05f)); // end of a push
 }
 
+// ---- A realistic standing body -------------------------------------------
+// Eyes 1.65 m above the floor at VRScale 43.2, facing an arbitrary yaw; the
+// head can pitch (positive = down) and roll. Hand positions are where a real
+// adult's hands go, in metres in the head-yaw frame toward the PHYSICAL right
+// hand (the same points as the in-game self-test's body model), so they never
+// borrow the layout's own numbers.
+struct Body
+{
+    Vector head{};
+    Vector fwd{};   // horizontal, head yaw
+    Vector right{}; // horizontal, physical right
+    BodyFrame frame{};
+    float s = 43.2f;
+
+    Vector At(float x, float y, float z) const
+    {
+        return head + fwd * (x * s) + right * (y * s) + Vector(0.0f, 0.0f, z * s);
+    }
+};
+
+static Vector Rotate(const Vector& v, const Vector& axis, float degrees)
+{
+    // Rodrigues around a unit axis.
+    const float r = degrees * kPi / 180.0f;
+    const float c = std::cos(r), sn = std::sin(r);
+    Vector k = axis;
+    Vector kxv{};
+    CrossProduct(k, v, kxv);
+    return v * c + kxv * sn + k * (DotProduct(k, v) * (1.0f - c));
+}
+
+static Body MakeBody(float yawDeg, float pitchDownDeg, float rollDeg, bool leftHanded, float bodyYawOffsetDeg = 0.0f)
+{
+    Body body{};
+    body.head = Vector(310.0f, -120.0f, 1.65f * body.s);
+    const float y = yawDeg * kPi / 180.0f;
+    body.fwd = Vector(std::cos(y), std::sin(y), 0.0f);
+    body.right = Vector(body.fwd.y, -body.fwd.x, 0.0f);
+    // The headset's own axes: pitch about the right axis, then roll about forward.
+    // (Rotating about +right by a positive angle tips forward up, so negate.)
+    Vector headForward = Rotate(body.fwd, body.right, -pitchDownDeg);
+    Vector headUp = Rotate(Vector(0.0f, 0.0f, 1.0f), body.right, -pitchDownDeg);
+    Vector headRight = body.right;
+    headUp = Rotate(headUp, headForward, rollDeg);
+    headRight = Rotate(headRight, headForward, rollDeg);
+    body.frame = MakeFrame(body.head, yawDeg + bodyYawOffsetDeg, leftHanded, body.s, 1.0f);
+    ApplyPavlovRoot(body.frame, Layout{}, headForward, headRight, headUp, leftHanded, 1.0f);
+    return body;
+}
+
+// Physical hand targets (head-yaw frame, y toward the physical right hand).
+static const Vector kOverRightShoulder(-0.10f, 0.15f, -0.05f);
+static const Vector kOverLeftShoulder(-0.10f, -0.15f, -0.05f);
+static const Vector kRightHip(-0.05f, 0.22f, -0.80f);
+static const Vector kLeftHip(-0.05f, -0.22f, -0.80f);
+static const Vector kRightChest(0.10f, 0.12f, -0.35f);
+static const Vector kLeftChest(0.10f, -0.12f, -0.35f);
+static const Vector kRightReady(0.40f, 0.15f, -0.35f);
+static const Vector kLeftReady(0.32f, -0.18f, -0.42f);
+static const Vector kMagPouchReach(0.02f, -0.20f, -0.55f); // off hand at the pouch (headset log)
+
+static Vector Mirror(const Vector& v) { return Vector(v.x, -v.y, v.z); }
+
+static void TestBackHalvesRealisticBody()
+{
+    const Layout layout{};
+    for (int handed = 0; handed < 2; ++handed)
+    {
+        const bool leftHanded = handed == 1;
+        // Physical side of the dominant shoulder / hip.
+        const Vector domShoulder = leftHanded ? kOverLeftShoulder : kOverRightShoulder;
+        const Vector offShoulder = leftHanded ? kOverRightShoulder : kOverLeftShoulder;
+        const Vector domHip = leftHanded ? kLeftHip : kRightHip;
+        const Vector offHip = leftHanded ? kRightHip : kLeftHip;
+        const Vector domChest = leftHanded ? kLeftChest : kRightChest;
+        const Vector offChest = leftHanded ? kRightChest : kLeftChest;
+        const Vector pouch = leftHanded ? Mirror(kMagPouchReach) : kMagPouchReach;
+        for (float yaw : { 0.0f, 37.0f, -150.0f })
+        for (float pitch : { 0.0f, 35.0f, 60.0f, -25.0f, -40.0f })
+        for (float roll : { 0.0f, 15.0f, -15.0f })
+        {
+            const Body body = MakeBody(yaw, pitch, roll, leftHanded);
+            const BodyFrame& f = body.frame;
+            CHECK(f.valid);
+            CHECK((pitch > 0.0f) == (f.headForward.z < -0.1f)); // positive pitch looks down
+            // Over the dominant shoulder: the long gun; over the off shoulder:
+            // the kit, whichever hand reaches (the zones only see positions).
+            CHECK(FindZone(f, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu) == Zone::Primary);
+            CHECK(FindZone(f, layout, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu) == Zone::Medical);
+            // A hand held further back over each shoulder (fully reached behind).
+            const Vector deepDom = domShoulder + Vector(-0.12f, 0.0f, -0.05f);
+            const Vector deepOff = offShoulder + Vector(-0.12f, 0.0f, -0.05f);
+            CHECK(FindZone(f, layout, body.At(deepDom.x, deepDom.y, deepDom.z), 0x1Fu) == Zone::Primary);
+            CHECK(FindZone(f, layout, body.At(deepOff.x, deepOff.y, deepOff.z), 0x1Fu) == Zone::Medical);
+            // An empty half takes nothing: reaching for the missing rifle never
+            // draws the kit, and the other way round.
+            CHECK(FindZone(f, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu & ~0x01u) == Zone::None);
+            CHECK(FindZone(f, layout, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu & ~0x08u) == Zone::None);
+            // Hips and chest pockets.
+            CHECK(FindZone(f, layout, body.At(domHip.x, domHip.y, domHip.z), 0x1Fu) == Zone::Secondary);
+            CHECK(FindZone(f, layout, body.At(offChest.x, offChest.y, offChest.z), 0x1Fu) == Zone::Throwable);
+            CHECK(FindZone(f, layout, body.At(domChest.x, domChest.y, domChest.z), 0x1Fu) == Zone::Consumable);
+            // The off-hand hip is the magazine pouch: never a holster draw,
+            // even looking up, where the back sphere swings down to it.
+            CHECK(FindZone(f, layout, body.At(offHip.x, offHip.y, offHip.z), 0x1Fu) == Zone::None);
+            CHECK(FindZone(f, layout, body.At(pouch.x, pouch.y, pouch.z), 0x1Fu) == Zone::None);
+            CHECK(HandAtMagazinePouch(f, layout, body.At(pouch.x, pouch.y, pouch.z)));
+            CHECK(!HandAtMagazinePouch(f, layout, body.At(domHip.x, domHip.y, domHip.z)));
+            // Hands held out in front take nothing.
+            CHECK(FindZone(f, layout, body.At(kRightReady.x, kRightReady.y, kRightReady.z), 0x1Fu) == Zone::None);
+            CHECK(FindZone(f, layout, body.At(kLeftReady.x, kLeftReady.y, kLeftReady.z), 0x1Fu) == Zone::None);
+            // Holding the rifle (not drawable): its own half takes nothing
+            // (squeezing there puts it away), the kit half swaps to the kit.
+            CHECK(FindZone(f, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu & ~0x01u) == Zone::None);
+            CHECK(HandInHolsterVolume(f, layout, Zone::Primary, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu));
+            CHECK(!HandInHolsterVolume(f, layout, Zone::Primary, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu));
+            // ... and with no kit, the whole back takes the rifle back (no drop).
+            CHECK(HandInHolsterVolume(f, layout, Zone::Primary, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu & ~0x08u));
+            CHECK(HandInHolsterVolume(f, layout, Zone::Medical, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu));
+            CHECK(!HandInHolsterVolume(f, layout, Zone::Medical, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu));
+            CHECK(HandInHolsterVolume(f, layout, Zone::Medical, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu & ~0x01u));
+            // Every reach counts as "near a holster" for the bash filter.
+            for (const Vector& p : { domShoulder, offShoulder, domHip, domChest, offChest })
+                CHECK(NearAnyZone(f, layout, body.At(p.x, p.y, p.z), 0.05f));
+            CHECK(!NearAnyZone(f, layout, body.At(0.65f, 0.15f, -0.30f), 0.05f));
+        }
+        // A body yaw still catching up with a fast head turn (Pavlov's
+        // interpolation): the back split follows the head, so a 30 degree
+        // lag changes nothing.
+        for (float lag : { 30.0f, -30.0f })
+        {
+            const Body body = MakeBody(20.0f, 20.0f, 0.0f, leftHanded, lag);
+            CHECK(FindZone(body.frame, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu) == Zone::Primary);
+            CHECK(FindZone(body.frame, layout, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu) == Zone::Medical);
+        }
+    }
+}
+
+static void TestItemOrientationRealisticBody()
+{
+    const Layout layout{};
+    for (int handed = 0; handed < 2; ++handed)
+    {
+        const bool leftHanded = handed == 1;
+        const Body body = MakeBody(-63.0f, 0.0f, 0.0f, leftHanded);
+        const BodyFrame& f = body.frame;
+        const Vector up(0.0f, 0.0f, 1.0f);
+        const Vector domSide = leftHanded ? body.right * -1.0f : body.right; // physical dominant side
+        auto local = [&](const ItemPose& pose, ItemShape shape) {
+            const Vector c = ReferenceToCenterUnits(shape);
+            const Vector centre = pose.origin + pose.axisX * c.x + pose.axisY * c.y + pose.axisZ * c.z;
+            const Vector d = centre - body.head;
+            return Vector(DotProduct(d, body.fwd) / body.s, DotProduct(d, domSide) / body.s, d.z / body.s);
+        };
+        // First aid kit: strapped upright on the off shoulder blade, its face
+        // (the cross, +X) out of the back. Never in front, never sideways.
+        for (ItemShape shape : { ItemShape::Kit, ItemShape::Defib })
+        {
+            const ItemPose kit = BuildItemPose(f, layout, Zone::Medical, shape);
+            CHECK(kit.valid);
+            CHECK(kit.axisY.z > 0.99f);                          // upright
+            CHECK(DotProduct(kit.axisX, body.fwd) < -0.99f);     // face out of the back
+            const Vector p = local(kit, shape);
+            CHECK(p.x < -0.15f && p.x > -0.40f);                 // behind the head, on the back
+            CHECK(p.y < -0.05f);                                 // off-shoulder side
+            CHECK(p.z < -0.25f && p.z > -0.55f);                 // shoulder blade height
+        }
+        // Upgrade packs: flat side (+Z) out of the back, upright.
+        const ItemPose pack = BuildItemPose(f, layout, Zone::Medical, ItemShape::Pack);
+        CHECK(pack.axisY.z > 0.99f && DotProduct(pack.axisZ, body.fwd) < -0.99f);
+        // Long gun on the back (Pavlov's back socket): muzzle up, leaning toward
+        // the dominant shoulder, sights toward the dominant side, its flat side
+        // on the back.
+        const ItemPose rifle = BuildItemPose(f, layout, Zone::Primary, ItemShape::LongGun);
+        CHECK(rifle.axisZ.z > 0.95f);
+        CHECK(DotProduct(rifle.axisZ, domSide) > 0.1f);
+        CHECK(DotProduct(rifle.axisY, domSide) > 0.95f);
+        CHECK(std::fabs(DotProduct(rifle.axisX, body.fwd)) > 0.95f);
+        const Vector rp = local(rifle, ItemShape::LongGun);
+        CHECK(rp.x < -0.2f && rp.y > 0.0f && rp.z < -0.3f);
+        // Pistol in the dominant hip holster: muzzle down and a little forward,
+        // slide toward the front, so the grip sticks up and back.
+        const ItemPose pistol = BuildItemPose(f, layout, Zone::Secondary, ItemShape::Pistol);
+        CHECK(pistol.axisZ.z < -0.9f && DotProduct(pistol.axisZ, body.fwd) > 0.3f);
+        CHECK(DotProduct(pistol.axisY, body.fwd) > 0.9f);
+        CHECK(std::fabs(DotProduct(pistol.axisX, domSide)) > 0.99f);
+        const Vector hp = local(pistol, ItemShape::Pistol);
+        CHECK(hp.y > 0.15f && hp.z < -0.4f);
+        // Pills and grenades: upright in the upper chest pockets, face forward.
+        const ItemPose pills = BuildItemPose(f, layout, Zone::Consumable, ItemShape::Equipment);
+        const ItemPose grenade = BuildItemPose(f, layout, Zone::Throwable, ItemShape::Equipment);
+        for (const ItemPose* pose : { &pills, &grenade })
+        {
+            CHECK(pose->axisY.z > 0.99f);
+            CHECK(DotProduct(pose->axisX, body.fwd) > 0.99f);
+        }
+        const Vector pp = local(pills, ItemShape::Equipment);
+        const Vector gp = local(grenade, ItemShape::Equipment);
+        CHECK(pp.y > 0.1f && gp.y < -0.1f);                  // pills dominant side, grenade off side
+        CHECK(pp.x > -0.05f && gp.x > -0.05f);               // on the chest, not behind it
+        CHECK(pp.z < -0.25f && pp.z > -0.40f);
+        // Left-handed mirrors the world side; the poses stay proper rotations.
+        for (const ItemPose* pose : { &pills, &grenade, &pistol, &rifle, &pack })
+        {
+            Vector cross{};
+            CrossProduct(pose->axisX, pose->axisY, cross);
+            CHECK(DotProduct(cross, pose->axisZ) > 0.99f);
+        }
+    }
+    // Shapes per weapon id.
+    CHECK(ItemShapeForWeaponId(12) == ItemShape::Kit);
+    CHECK(ItemShapeForWeaponId(24) == ItemShape::Defib);
+    CHECK(ItemShapeForWeaponId(30) == ItemShape::Pack && ItemShapeForWeaponId(31) == ItemShape::Pack);
+    CHECK(ItemShapeForWeaponId(15) == ItemShape::Equipment && ItemShapeForWeaponId(13) == ItemShape::Equipment);
+    CHECK(ItemShapeForWeaponId(1) == ItemShape::Pistol && ItemShapeForWeaponId(32) == ItemShape::Pistol);
+    CHECK(ItemShapeForWeaponId(19) == ItemShape::Melee);
+    CHECK(ItemShapeForWeaponId(26) == ItemShape::LongGun);
+}
+
 int main()
 {
+    TestBackHalvesRealisticBody();
+    TestItemOrientationRealisticBody();
     TestNearAnyZone();
     TestWeaponClasses();
     TestDiagPacer();

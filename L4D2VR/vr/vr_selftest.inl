@@ -1196,6 +1196,27 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return t >= 1.0f;
     }
 
+    // backpreview=<metres>: draw the back holster items that far in front of
+    // their real place (also with the first-person body off), keeping their
+    // orientation, so shot= shows them as someone behind the player sees
+    // them. 0 turns it off. Grabbing is unaffected.
+    if (step.rfind("backpreview=", 0) == 0)
+    {
+        m_SelfTestBackPreviewMeters = std::clamp(static_cast<float>(std::atof(step.c_str() + 12)), 0.0f, 2.0f);
+        Game::logMsg("[VR][SelfTest] back holster preview %.2f m", m_SelfTestBackPreviewMeters);
+        return true;
+    }
+
+    // lefthanded=1|0: switch the left-handed layout (dominant hand = the left
+    // controller) for the following steps. The self-test drives buttons by
+    // action, so m_ActionWeaponGrip is then the left hand's grip.
+    if (step.rfind("lefthanded=", 0) == 0)
+    {
+        m_LeftHanded = step.size() > 11 && step[11] == '1';
+        Game::logMsg("[VR][SelfTest] left-handed %d", m_LeftHanded ? 1 : 0);
+        return true;
+    }
+
     // glowmat=<material>: use this material for every glow from now on ("off"
     // = the built-in one), to compare glow materials in screenshots.
     if (step.rfind("glowmat=", 0) == 0)
@@ -1344,7 +1365,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
-    if (step == "reach" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim" ||
+    if (step == "reach" || step == "reachlh" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim" ||
         step == "bashanimraw" || step == "swinganimraw")
         return RunSelfTestRealisticStep(step, t, player);
 
@@ -1368,6 +1389,7 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
     static std::vector<Action> s_Script;
     static bool s_SavedToggle = true;
     static bool s_SavedContact = false;
+    static bool s_SavedLeftHanded = false;
     static uint32_t s_ShoveBaseline = 0u;
     static float s_WorldReachStart = -1.0f;
     // Script actions run in later frames: they capture only `this` and values.
@@ -1386,6 +1408,7 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
     {
         m_GripToggleEnabled = s_SavedToggle;
         m_GripReleaseDropEnabled = s_SavedContact;
+        m_LeftHanded = s_SavedLeftHanded;
         m_SelfTestHeadDrop = 0.0f;
         m_VmStrikeHoldDisabled = false;
         s_WorldReachStart = -1.0f;
@@ -1396,6 +1419,7 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
         s_Script.clear();
         s_SavedToggle = m_GripToggleEnabled;
         s_SavedContact = m_GripReleaseDropEnabled;
+        s_SavedLeftHanded = m_LeftHanded;
         s_WorldReachStart = -1.0f;
         // A real grip action is always active: register both grips as released
         // before the first press (a press arriving with activation is ignored).
@@ -1446,33 +1470,151 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 SelfTestReport("reach: chest hover pulse", static_cast<int>(m_HolsterHoverPulseCount) > m_SelfTestValueB, detail);
                 SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.8f);
                 return false; });
-            // The off hand swaps too.
-            add(9.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::OverLeftShoulder(), level(-60.0f, 0.0f), 1.0f); return false; });
-            squeeze(10.6f, true, 0.15f);
-            add(11.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+            // The kit is on the back, over the off (left) shoulder: the right
+            // hand crosses the chest and reaches over it.
+            add(9.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                m_SelfTestValueB = static_cast<int>(m_HolsterHoverPulseCount);
+                SelfTestReachRight(body::V(0.20f, -0.22f, -0.18f), level(-20.0f, -40.0f), 1.0f);
+                return false; });
+            add(10.3f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::OverLeftShoulder(), level(-60.0f, -30.0f), 0.8f); return false; });
+            squeeze(11.2f, false, 0.15f);
+            add(11.8f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
-                std::snprintf(detail, sizeof(detail), "active slot %d (the back holds the rifle, slot 1), left hover pulses %d -> %u",
+                std::snprintf(detail, sizeof(detail), "active slot %d (the kit is slot 4), hover pulses %d -> %u",
+                    SelfTestActiveSlot(player) + 1, m_SelfTestValueB, m_HolsterHoverPulseCount);
+                SelfTestReport("reach: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReport("reach: off-shoulder hover pulse (right hand)", static_cast<int>(m_HolsterHoverPulseCount) > m_SelfTestValueB, detail);
+                SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 1.0f);
+                return false; });
+            // The off hand swaps too: over the right shoulder to the rifle, over
+            // the left shoulder to the kit, then the chest.
+            add(12.8f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                m_SelfTestValueC = static_cast<int>(m_HolsterLeftHoverPulseCount);
+                SelfTestReachLeft(body::V(0.20f, 0.22f, -0.18f), level(-20.0f, 40.0f), 1.0f);
+                return false; });
+            add(13.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::OverRightShoulder(), level(-60.0f, 30.0f), 0.8f); return false; });
+            squeeze(14.4f, true, 0.15f);
+            add(15.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (the rifle is slot 1), left hover pulses %d -> %u",
                     SelfTestActiveSlot(player) + 1, m_SelfTestValueC, m_HolsterLeftHoverPulseCount);
-                SelfTestReport("reach: off hand swaps over the left shoulder", SelfTestActiveSlot(player) == 0, detail);
-                SelfTestReport("reach: off-hand shoulder hover pulse",
+                SelfTestReport("reach: off hand swaps to the rifle over the right shoulder", SelfTestActiveSlot(player) == 0, detail);
+                SelfTestReport("reach: off-hand right-shoulder hover pulse",
                     static_cast<int>(m_HolsterLeftHoverPulseCount) > m_SelfTestValueC, detail);
                 m_SelfTestValueC = static_cast<int>(m_HolsterLeftHoverPulseCount);
                 SelfTestReachLeft(body::LeftReady(), level(0.0f, 0.0f), 1.0f);
                 return false; });
-            add(12.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::LeftChest(), level(30.0f, -40.0f), 0.5f); return false; });
-            squeeze(12.9f, true, 0.15f);
-            add(13.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+            add(16.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::OverLeftShoulder(), level(-60.0f, 0.0f), 1.0f); return false; });
+            squeeze(17.0f, true, 0.15f);
+            add(17.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (the kit is slot 4), left hover pulses %d -> %u",
+                    SelfTestActiveSlot(player) + 1, m_SelfTestValueC, m_HolsterLeftHoverPulseCount);
+                SelfTestReport("reach: off hand swaps to the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReport("reach: off-hand left-shoulder hover pulse",
+                    static_cast<int>(m_HolsterLeftHoverPulseCount) > m_SelfTestValueC, detail);
+                m_SelfTestValueC = static_cast<int>(m_HolsterLeftHoverPulseCount);
+                SelfTestReachLeft(body::LeftReady(), level(0.0f, 0.0f), 1.0f);
+                return false; });
+            add(18.4f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::LeftChest(), level(30.0f, -40.0f), 0.5f); return false; });
+            squeeze(19.3f, true, 0.15f);
+            add(19.9f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "active slot %d (pipe bomb is slot 3), left hover pulses %d -> %u",
                     SelfTestActiveSlot(player) + 1, m_SelfTestValueC, m_HolsterLeftHoverPulseCount);
                 SelfTestReport("reach: off hand swaps at the chest", SelfTestActiveSlot(player) == 2, detail);
                 SelfTestReachLeft(body::LeftReady(), level(0.0f, 0.0f), 0.8f);
                 return false; });
-            add(14.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+            // The off hand at the magazine pouch (off-hand hip) never draws from
+            // the holsters, even looking up, where the back sphere swings low.
+            add(20.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                m_SelfTestLookActive = true;
+                m_SelfTestLookPitch = -30.0f;
+                SelfTestReachLeft(body::V(0.02f, -0.20f, -0.55f), level(30.0f, 0.0f), 0.6f);
+                m_SelfTestValueA = SelfTestActiveSlot(player);
+                return false; });
+            squeeze(21.6f, true, 0.15f);
+            add(22.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d -> %d", m_SelfTestValueA + 1, SelfTestActiveSlot(player) + 1);
+                SelfTestReport("reach: off hand at the magazine pouch draws nothing", SelfTestActiveSlot(player) == m_SelfTestValueA, detail);
+                m_SelfTestLookActive = false;
+                m_SelfTestLookPitch = 0.0f;
+                SelfTestReachLeft(body::LeftReady(), level(0.0f, 0.0f), 0.8f);
+                return false; });
+            add(23.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 const uint32_t shoves = m_PhysicalShoveSerial.load(std::memory_order_acquire) - s_ShoveBaseline;
-                std::snprintf(detail, sizeof(detail), "%u gun bash(es) during 5 holster reaches (see [VR][Holster] grip pressed lines)", shoves);
+                std::snprintf(detail, sizeof(detail), "%u gun bash(es) during 8 holster reaches (see [VR][Holster] grip pressed lines)", shoves);
                 SelfTestReport("reach: no gun bash while reaching for holsters", shoves == 0u, detail);
+                restore();
+                return true; });
+        }
+        else if (step == "reachlh")
+        {
+            // Left-handed: the left controller is the dominant hand (weapon
+            // grip), every holster mirrors. Dominant reaches: left hip, over the
+            // left shoulder (rifle), left chest (pills), across to over the
+            // right shoulder (kit). Off-hand (right) reaches: over the left
+            // shoulder (rifle), over the right shoulder (kit), right chest (pipe).
+            m_LeftHanded = true;
+            m_GripToggleEnabled = true;
+            auto M = [](Vec3 v) { v.y = -v.y; return v; };
+            cmd("give rifle"); cmd("give pipe_bomb"); cmd("give first_aid_kit"); cmd("give pain_pills");
+            add(1.2f, [this, cmd](C_BasePlayer* player, float t) {
+                cmd("use weapon_rifle");
+                s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);
+                SelfTestReachLeft(body::V(0.40f, -0.15f, -0.35f), body::V(0.0f, 0.0f, 0.0f), 0.8f);
+                SelfTestReachRight(body::V(0.32f, 0.18f, -0.42f), body::V(0.0f, 0.0f, 0.0f), 0.8f);
+                return false; });
+            struct Reach { bool dominant; std::vector<Vec3> path; int slot; const char* name; };
+            const std::vector<Reach> reaches = {
+                { true, { M(body::RightHip()) }, 1, "reachlh: left (dominant) hand draws from the left hip" },
+                { true, { M(body::OverRightShoulder()) }, 0, "reachlh: left hand draws the rifle over the left shoulder" },
+                { true, { M(body::RightChest()) }, 4, "reachlh: left hand draws the pills from the left chest" },
+                { true, { body::V(0.20f, 0.22f, -0.18f), M(body::OverLeftShoulder()) }, 3, "reachlh: left hand draws the kit over the right shoulder" },
+                { false, { body::V(0.20f, -0.22f, -0.18f), body::OverLeftShoulder() }, 0, "reachlh: right (off) hand swaps to the rifle over the left shoulder" },
+                { false, { body::OverRightShoulder() }, 3, "reachlh: right hand swaps to the kit over the right shoulder" },
+                { false, { body::RightChest() }, 2, "reachlh: right hand swaps to the pipe bomb at the right chest" },
+            };
+            float at = 2.2f;
+            for (const Reach& reach : reaches)
+            {
+                const bool dominant = reach.dominant;
+                add(at, [this, dominant](C_BasePlayer*, float) {
+                    m_SelfTestValueB = static_cast<int>(dominant ? m_HolsterHoverPulseCount : m_HolsterLeftHoverPulseCount);
+                    return false; });
+                for (const Vec3& point : reach.path)
+                {
+                    add(at, [this, dominant, point](C_BasePlayer*, float) {
+                        if (dominant) SelfTestReachLeft(point, body::V(-40.0f, 0.0f, 0.0f), 0.9f);
+                        else SelfTestReachRight(point, body::V(-40.0f, 0.0f, 0.0f), 0.9f);
+                        return false; });
+                    at += 0.8f;
+                }
+                at += 0.2f;
+                // The dominant grip is the weapon grip (the left controller now).
+                squeeze(at, !dominant, 0.15f);
+                at += 0.6f;
+                const int slot = reach.slot;
+                const char* const name = reach.name;
+                add(at, [this, dominant, slot, name](C_BasePlayer* player, float) {
+                    char detail[256];
+                    const uint32_t pulses = dominant ? m_HolsterHoverPulseCount : m_HolsterLeftHoverPulseCount;
+                    std::snprintf(detail, sizeof(detail), "active slot %d (expected %d), %s hover pulses %d -> %u, left-handed %d",
+                        SelfTestActiveSlot(player) + 1, slot + 1, dominant ? "dominant" : "off-hand", m_SelfTestValueB, pulses,
+                        m_LeftHanded ? 1 : 0);
+                    SelfTestReport(name, SelfTestActiveSlot(player) == slot && static_cast<int>(pulses) > m_SelfTestValueB, detail);
+                    if (dominant) SelfTestReachLeft(body::V(0.40f, -0.15f, -0.35f), body::V(0.0f, 0.0f, 0.0f), 1.0f);
+                    else SelfTestReachRight(body::V(0.32f, 0.18f, -0.42f), body::V(0.0f, 0.0f, 0.0f), 1.0f);
+                    return false; });
+                at += 1.0f;
+            }
+            add(at, [this, restore](C_BasePlayer*, float) {
+                char detail[256];
+                const uint32_t shoves = m_PhysicalShoveSerial.load(std::memory_order_acquire) - s_ShoveBaseline;
+                std::snprintf(detail, sizeof(detail), "%u gun bash(es) during 7 left-handed holster reaches", shoves);
+                SelfTestReport("reachlh: no gun bash while reaching for holsters", shoves == 0u, detail);
                 restore();
                 return true; });
         }
@@ -1526,12 +1668,13 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             m_GripReleaseDropEnabled = true;
             cmd("give rifle"); cmd("give first_aid_kit");
             add(1.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { cmd("use weapon_rifle"); return false; });
-            add(1.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::CentreChest(), level(30.0f, 40.0f), 0.8f); return false; });
+            add(1.4f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::V(0.20f, -0.22f, -0.18f), level(-20.0f, -40.0f), 1.0f); return false; });
+            add(2.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::OverLeftShoulder(), level(-60.0f, -30.0f), 0.8f); return false; });
             squeeze(2.8f, false, 0.15f);
             add(3.4f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4)", SelfTestActiveSlot(player) + 1);
-                SelfTestReport("pickup: right hand draws the kit from the centre chest", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReport("pickup: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
                 SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 0.8f);
                 return false; });
             add(4.3f, [this](C_BasePlayer* player, float) {

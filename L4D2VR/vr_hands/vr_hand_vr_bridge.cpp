@@ -848,6 +848,34 @@ namespace
         return offset;
     }
 
+    // Pavlov's magazine pouch on the off-hand hip (Pavlov Shack layout):
+    // relative to the holster root (head - 0.75 m), toward the off side.
+    const Vector kPavlovPouchRootMeters(-0.0233f, -0.187f, 0.19f);
+    constexpr float kPavlovHandRadiusMeters = 0.115f;
+
+    bool MagazineInteractionResolvePavlovPouch(const VR* vr, Vector& point, Vector& forward, Vector& right)
+    {
+        if (!vr || !vr->m_HolsterPavlovLayoutEnabled)
+            return false;
+        l4d2vr_holster::BodyFrame frame{};
+        if (!vr->GetHolsterBodyFrame(frame) || !frame.valid)
+            return false;
+        point = l4d2vr_holster::RootToWorld(frame, kPavlovPouchRootMeters);
+        forward = frame.forward;
+        right = VrHandMath::Normalize(Vector(frame.forward.y, -frame.forward.x, 0.0f));
+        return l4d2vr_interaction::Finite(point) && right.Length() > 0.5f;
+    }
+
+    // Hand reach to the pouch: Pavlov counts the hand's own radius.
+    float MagazineInteractionPouchReachMeters(const VR* vr)
+    {
+        if (!vr)
+            return 0.0f;
+        Vector point{}, forward{}, right{};
+        const float range = std::max(0.0f, vr->m_MagazineInteractionFreshMagazineGrabRangeMeters);
+        return MagazineInteractionResolvePavlovPouch(vr, point, forward, right) ? range + kPavlovHandRadiusMeters : range;
+    }
+
     bool MagazineInteractionBuildFreshMagazinePickupBox(
         VR* vr,
         MagazineInteractionBoxSnapshot& outBox,
@@ -855,6 +883,31 @@ namespace
     {
         if (!vr)
             return false;
+
+        Vector pavlovPoint{}, pavlovForward{}, pavlovRight{};
+        if (MagazineInteractionResolvePavlovPouch(vr, pavlovPoint, pavlovForward, pavlovRight))
+        {
+            Vector viewmodelPouch = pavlovPoint;
+            Vector reprojectedPouch{};
+            if (MagazineInteractionReprojectScenePointToViewmodelLayer(vr, pavlovPoint, reprojectedPouch))
+                viewmodelPouch = reprojectedPouch;
+            const Vector half(
+                std::max(0.005f, vr->m_MagazineInteractionFreshMagazineBoxHalfExtentsMeters.x) * vr->m_VRScale,
+                std::max(0.005f, vr->m_MagazineInteractionFreshMagazineBoxHalfExtentsMeters.y) * vr->m_VRScale,
+                std::max(0.005f, vr->m_MagazineInteractionFreshMagazineBoxHalfExtentsMeters.z) * vr->m_VRScale);
+            outBox = {};
+            outBox.origin = viewmodelPouch;
+            outBox.axisX = pavlovForward;
+            outBox.axisY = pavlovRight * -1.0f;
+            outBox.axisZ = Vector(0.0f, 0.0f, 1.0f);
+            outBox.mins = Vector(-half.x, -half.y, -half.z);
+            outBox.maxs = Vector(half.x, half.y, half.z);
+            outBox.publishedAt = std::chrono::steady_clock::now();
+            QAngle::VectorAngles(pavlovForward, outAngles);
+            outAngles.x = 0.0f;
+            outAngles.z = 0.0f;
+            return true;
+        }
 
         MagazineInteractionEnsureFreshPickupBodyBasis(vr);
         Vector bodyForward{};
@@ -2142,6 +2195,19 @@ namespace
     {
         if (!vr || !VR::t_UseRenderFrameSnapshot || !vr->m_MagazineInteractionSocketValid)
             return false;
+
+        {
+            Vector pouch{}, forward{}, right{};
+            if (MagazineInteractionResolvePavlovPouch(vr, pouch, forward, right))
+            {
+                Vector reprojected{};
+                if (MagazineInteractionReprojectScenePointToViewmodelLayer(vr, pouch, reprojected))
+                    pouch = reprojected;
+                return l4d2vr_ammo_grip::BodyWorld(forward, right, pouch,
+                    MagazineInteractionBoxCenterLocal(vr->m_MagazineInteractionSocketBox), outWorld) &&
+                    MagazineInteractionMatrixLooksRenderable(outWorld);
+            }
+        }
 
         Vector hmdPosAbs{};
         if (!MagazineInteractionTryGetRenderSnapshotHmdPosAbs(vr, hmdPosAbs))
@@ -4287,7 +4353,7 @@ bool VR::GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out)
     out.pumpNeedsCycle = m_ManualPumpBlockingFire.load(std::memory_order_acquire);
     out.shellsLoaded = m_MagazineInteractionShotgunShellsLoadedThisSession;
     out.chamberEmpty = m_MagazineInteractionChamberEmpty;
-    out.pouchRange = std::max(0.0f, m_MagazineInteractionFreshMagazineGrabRangeMeters);
+    out.pouchRange = MagazineInteractionPouchReachMeters(this);
     out.boltRange = MagazineInteractionResolveBoltGrabPaddingMeters(this);
     return true;
 }
@@ -4628,11 +4694,15 @@ bool VR::GetBodyAmmoPreviewWorld(const MagazineInteractionBoxSnapshot& box, VrHa
     if (!m_BodyGripInventoryEnabled || !m_BodyAmmoAvailable.load(std::memory_order_acquire))
         return false;
     Vector origin{}, forward{}, right{};
-    if (!GetBodyInventoryPose(origin, forward, right))
-        return false;
-    const Vector offset = MagazineInteractionFreshMagazinePickupOffsetMeters(this);
-    Vector pickup = origin + forward * (offset.x * m_VRScale) +
-        right * (offset.y * m_VRScale) + Vector(0.0f, 0.0f, offset.z * m_VRScale);
+    Vector pickup{};
+    if (!MagazineInteractionResolvePavlovPouch(this, pickup, forward, right))
+    {
+        if (!GetBodyInventoryPose(origin, forward, right))
+            return false;
+        const Vector offset = MagazineInteractionFreshMagazinePickupOffsetMeters(this);
+        pickup = origin + forward * (offset.x * m_VRScale) +
+            right * (offset.y * m_VRScale) + Vector(0.0f, 0.0f, offset.z * m_VRScale);
+    }
     Vector reprojected{};
     if (MagazineInteractionReprojectScenePointToViewmodelLayer(this, pickup, reprojected))
         pickup = reprojected;
@@ -8395,8 +8465,7 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionFreshMagazineContactActive = false;
 
         float freshGrabDistance = 999999.0f;
-        const float freshGrabRange =
-            std::max(0.0f, m_MagazineInteractionFreshMagazineGrabRangeMeters) * m_VRScale;
+        const float freshGrabRange = MagazineInteractionPouchReachMeters(this) * m_VRScale;
         if (hasPickupBox)
         {
             freshGrabDistance = MagazineInteractionHandPointDistanceSourceUnits(freshGrabBox, supportPosition, this);
@@ -9212,7 +9281,7 @@ bool VR::UpdateMagazineInteraction(
                 pouchBox.origin);
             pouchDistance = MagazineInteractionHandPointDistanceSourceUnits(pouchGrabBox, supportPosition, this);
         }
-        const float pouchRange = std::max(0.0f, m_MagazineInteractionFreshMagazineGrabRangeMeters) * m_VRScale;
+        const float pouchRange = MagazineInteractionPouchReachMeters(this) * m_VRScale;
         float boltDistance = FLT_MAX;
         if (pouchValid && pouchDistance <= pouchRange)
         {

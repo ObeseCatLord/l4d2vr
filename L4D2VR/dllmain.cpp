@@ -3028,6 +3028,9 @@ namespace
         // front hand (older forced samples left 0.5, which made the front hand drift).
         { "2026-10-28_hl2vr_two_hand_strength", "VrHandsTwoHandedAimStrength", "1.0" },
         { "2026-10-28_hl2vr_two_hand_smoothing", "VrHandsTwoHandedAimSmoothingSeconds", "0.025" },
+        // Holster pulses you can actually feel.
+        { "2026-10-28_holster_hover_haptic", "HolsterHoverHapticAmplitude", "0.4" },
+        { "2026-10-28_holster_grab_haptic", "HolsterGrabHapticAmplitude", "0.6" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

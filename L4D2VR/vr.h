@@ -1442,8 +1442,8 @@ public:
     float m_HolsterYawSmoothingSeconds = 0.25f;
     float m_HolsterHeightScale = 1.0f;
     float m_HolsterHighlightBrightness = 1.6f;
-    float m_HolsterHoverHapticAmplitude = 0.15f;
-    float m_HolsterGrabHapticAmplitude = 0.35f;
+    float m_HolsterHoverHapticAmplitude = 0.4f;
+    float m_HolsterGrabHapticAmplitude = 0.6f;
     l4d2vr_holster::Layout m_HolsterLayout{};
     l4d2vr_holster::GrabFsm m_HolsterGrab;
     struct HolsterRenderItem

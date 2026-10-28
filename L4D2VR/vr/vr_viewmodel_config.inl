@@ -2943,6 +2943,15 @@ void VR::ParseConfigFile()
         const Vector ang = getVector3("RightAmmoHudAngleOffset", def);
         m_RightAmmoHudAngleOffset = { ang.x, ang.y, ang.z };
     }
+    {
+        // WristHudStyle=native (game HUD crops) or custom (drawn panels).
+        std::string style = getString("WristHudStyle", m_WristHudNativeStyle ? "native" : "custom");
+        std::transform(style.begin(), style.end(), style.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        m_WristHudNativeStyle = style != "custom";
+    }
+    m_WristHudNativeHideOnFloatingHud = getBool("WristHudNativeHideOnFloatingHud", m_WristHudNativeHideOnFloatingHud);
+    m_LeftWristHudNativeWidthMeters = std::clamp(getFloat("LeftWristHudNativeWidthMeters", m_LeftWristHudNativeWidthMeters), 0.02f, 0.5f);
+    m_RightAmmoHudNativeWidthMeters = std::clamp(getFloat("RightAmmoHudNativeWidthMeters", m_RightAmmoHudNativeWidthMeters), 0.02f, 0.5f);
 
 
     // Hand HUD: world-quad mode (HMD-relative overlays using GPU textures)

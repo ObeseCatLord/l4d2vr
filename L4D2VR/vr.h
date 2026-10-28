@@ -2529,6 +2529,10 @@ public:
 	VrHandMatrix4 m_MagazineInteractionBoltRestWorld{};
 	VrHandMatrix4 m_MagazineInteractionBoltWorld{};
 	VrHandMatrix4 m_MagazineInteractionControllerToMagazine{};
+	// Where the spare in the off hand sits in the gun, relative to the gun
+	// hand, as taken when it was picked up (the natural hold's target).
+	VrHandMatrix4 m_MagazineInteractionHoldWellInGunHand{};
+	bool m_MagazineInteractionHoldWellInGunHandValid = false;
 	VrHandMatrix4 m_MagazineInteractionDetachedMagazineWorld{};
 	bool m_MagazineInteractionFreshPickupBasisValid = false;
 	Vector m_MagazineInteractionFreshPickupForward{0.0f, 0.0f, 0.0f};
@@ -2981,6 +2985,8 @@ public:
 		float boltReturn = 0.0f;
 		bool boltReachedRear = false;
 		Vector gunForward{ 1.0f, 0.0f, 0.0f };
+		Vector gunRight{ 0.0f, -1.0f, 0.0f };
+		Vector gunUp{ 0.0f, 0.0f, 1.0f };
 		Vector supportHand{ 0.0f, 0.0f, 0.0f };
 		bool pumpNeedsCycle = false;
 		bool fireBlocked = false;
@@ -2989,11 +2995,29 @@ public:
 		float pouchRange = 0.0f;
 		float boltRange = 0.0f;
 		float fitDistance = -1.0f;
+		float spareLength = 0.0f; // the spare along its insertion axis, metres
 	};
 	bool GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out);
 	// Rotates the off hand (world angles) so the held magazine lines up with
 	// the well; returns the remaining misalignment in degrees.
 	bool SelfTestAlignHeldMagazine(const QAngle& handWorldAngles, QAngle& alignedWorldAngles, float& errorDeg);
+	// The held spare against how it sits in the gun: the whole turn between
+	// them, the angle of the insertion axis (180 = upside down) and of the
+	// longest side, plus both poses in the off hand's frame (x right, y up,
+	// z back; Calibration angles).
+	struct SelfTestHeldMagazine
+	{
+		bool shell = false;
+		float fullDeg = 180.0f;
+		float insertionDeg = 180.0f;
+		float longAxisDeg = 180.0f;
+		float liveLongAxisDeg = 180.0f; // a shell against the port's live (animated) pose
+		int longAxis = 1;
+		Vector heldInHandDeg{ 0.0f, 0.0f, 0.0f };
+		Vector seatedInHandDeg{ 0.0f, 0.0f, 0.0f };
+		Vector seatedAxesInHand[3]{};
+	};
+	bool SelfTestMeasureHeldMagazine(SelfTestHeldMagazine& out);
 	bool m_SelfTestLeftAngWorldValid = false;
 	QAngle m_SelfTestLeftAngWorld{ 0.0f, 0.0f, 0.0f };
 	// Hand-driven reload steps: a phase machine with glides between targets.

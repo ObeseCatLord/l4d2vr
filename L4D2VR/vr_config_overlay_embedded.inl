@@ -332,6 +332,7 @@ namespace
         { "GripToggle", CfgOptionType::Bool, "Hands / Holsters", "Toggle grips", 0.0f, 0.0f, "true" },
         { "ReloadPavlovTuning", CfgOptionType::Bool, "Hands / Manual Reload", "Pavlov reload tuning", 0.0f, 0.0f, "true" },
         { "MagazineSlapEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Magazine slap", 0.0f, 0.0f, "true" },
+        { "ManualReloadMagazineHandRotationOffsetDeg", CfgOptionType::Vec3, "Hands / Manual Reload", "Spare magazine turn in hand (x,y,z)", -180.0f, 180.0f, "0,0,0" },
         { "StickJumpCrouch", CfgOptionType::Bool, "Controls", "Right stick jump / crouch", 0.0f, 0.0f, "true" },
         { "StickCrouchToggle", CfgOptionType::Bool, "Controls", "Stick crouch toggles", 0.0f, 0.0f, "true" },
         { "HolsterYawFollowSpeed", CfgOptionType::Float, "Hands / Holsters", "Holster turn follow speed", 1.0f, 60.0f, "20" },
@@ -451,7 +452,6 @@ namespace
         { "VrHandsDebugLog", CfgOptionType::Bool, "", "", 0.0f, 0.0f, "false" },
         { "ManualReloadMagazineInsertionAxisLocal", CfgOptionType::Vec3, "", "", -1.0f, 1.0f, "0,-1,0" },
         { "ManualReloadMagazineHandOffsetMeters", CfgOptionType::Vec3, "", "", -1.0f, 1.0f, "0,0,0" },
-        { "ManualReloadMagazineHandRotationOffsetDeg", CfgOptionType::Vec3, "", "", -180.0f, 180.0f, "0,0,0" },
     };
 
     constexpr int kCfgHiddenValueSpecCount =
@@ -1086,6 +1086,7 @@ namespace
         { "StickJumpCrouch", "Controls", "Right Stick Jump / Crouch", "Push the right stick forward to jump and pull it back to crouch (hold). Turning pauses while the stick is pushed mostly forward or back.", "Turn this off to use the right stick only for turning." },
         { "MagazineSlapEnabled", "Hands / Manual Reload", "Magazine Slap", "On the AK-47, SG552 and military sniper you can take a fresh magazine from your off-hand waist while the old one is still in. Strike the old magazine out with it (Pavlov VR's mag slap), then insert the fresh one; let go of the grip to put it back.", "The strike must be fast (0.8 m/s on the AK-47, 0.9 m/s on the others) and roughly along the magazine, out of the well. With a release button you can also press it while holding the fresh magazine." },
         { "ReloadPavlovTuning", "Hands / Manual Reload", "Pavlov Reload Tuning", "Each gun uses Pavlov VR's numbers for how far you pull the slide, bolt or pump, where the round chambers on the way back, and how deep a magazine must go in.", "Your own per-weapon MagazineInteraction...Overrides still take priority." },
+        { "ManualReloadMagazineHandRotationOffsetDeg", "Hands / Manual Reload", "Spare Magazine Turn In Hand", "A spare magazine or shell from your waist is held the way it sits in the gun: with your off hand turned like your gun hand and raised a little nose-up (Pavlov VR's lean, 15 degrees, 5 for pistols, Uzi and MAC-10) it lines up with the well. This turns it further in your hand.", "Degrees about the controller's x (right), y (up) and z (back) axes; 0,0,0 keeps the natural hold." },
         { "GripToggle", "Hands / Holsters", "Toggle Grips", "One firm squeeze takes an item and your hand keeps it; the next squeeze lets it go: inside its own holster it is put away, anywhere else it is dropped. Turn off to hold the grip instead.", "Off-hand grips (magazines, the front of a two-handed gun) stay hold-to-grip." },
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). On SteamVR the runtime's own laser keeps working." },

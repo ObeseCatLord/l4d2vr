@@ -57,6 +57,9 @@ namespace
     // Defined in hooks_world_pose.inl: true only when this renderable's
     // SetupBones runs through the hooked weapon SetupBones detour.
     bool HooksHolsterItemBonesPlaceable(void* renderable);
+    // Defined in hooks_world_pose.inl: periodic [VR][HolsterDraw] gate/snapshot/
+    // render-path report (main thread, CreateMove).
+    void HooksHolsterDrawDiagnosticsMainThread(VR* vr, Game* game);
 
     // The local player is hidden in first person at multiple renderable stages:
     // ShouldDraw can unregister it, GetModel can return null, and the player
@@ -78,6 +81,11 @@ namespace
     // the body without repeatedly tearing down leaf registration.
     std::atomic<bool> g_FirstPersonBodyPlayerReady{ false };
     std::atomic<bool> g_FirstPersonBodyActualFirstPerson{ false };
+    // RenderView's own first-person camera decision, independent of the body
+    // feature. g_FirstPersonBodyActualFirstPerson is cleared by the body
+    // lifecycle every CreateMove while FirstPersonBodyEnabled=false, so first-person
+    // control readiness (holsters, arm IK, WorldModelVR, scope) must not read it.
+    std::atomic<bool> g_FirstPersonCameraActualFirstPerson{ false };
     std::atomic<std::uint64_t> g_FirstPersonBodyPlayerGeneration{ 1 };
     std::mutex g_FirstPersonBodyRenderableHookMutex;
 
@@ -341,6 +349,51 @@ namespace
     };
     thread_local HooksHolsterDrawScope g_HolsterDrawScope{};
 
+    // [VR][HolsterDraw] diagnostics. The counters cover the interval since the
+    // last report: the render path increments them and
+    // HooksHolsterDrawDiagnosticsMainThread drains them.
+    struct HooksHolsterDrawDiagCounters
+    {
+        std::atomic<uint32_t> eyeTokens{ 0 };        // eye views that published a viewmodel-stage token
+        std::atomic<uint32_t> eyeBlocked{ 0 };       // eye views that did not
+        std::atomic<uint32_t> eyeBlockBits{ 0 };     // why (bits, see the report)
+        std::atomic<uint32_t> viewmodelDraws{ 0 };   // native viewmodel color draws seen
+        std::atomic<uint32_t> stageGateSkips{ 0 };
+        std::atomic<uint32_t> stageGateBits{ 0 };
+        std::atomic<uint32_t> stageNoClaim{ 0 };     // no token, or this eye already submitted
+        std::atomic<uint32_t> stageSubmits{ 0 };     // viewmodel-stage submissions
+        std::atomic<uint32_t> bodyStageSubmits{ 0 }; // first-person body stage submissions
+        std::atomic<uint32_t> submitDisabled{ 0 };
+        std::atomic<uint32_t> submitEmpty{ 0 };      // snapshot had no items
+        std::atomic<uint32_t> items{ 0 };
+        std::atomic<uint32_t> itemUnplaceable{ 0 };  // SetupBones hook missing / other class
+        std::atomic<uint32_t> itemPoseFailed{ 0 };   // no body frame
+        std::atomic<uint32_t> itemNoModel{ 0 };
+        std::atomic<uint32_t> itemException{ 0 };
+        std::atomic<uint32_t> drawOk{ 0 };           // DrawModel returned nonzero
+        std::atomic<uint32_t> drawZero{ 0 };         // DrawModel returned 0
+        std::atomic<int> lastDrawResult{ 0 };
+        std::atomic<uint32_t> setupBonesCalls{ 0 };  // SetupBones for the item being drawn
+        std::atomic<uint32_t> setupBonesFailed{ 0 }; // original SetupBones failed
+        std::atomic<uint32_t> setupBonesPlaced{ 0 };
+    };
+    HooksHolsterDrawDiagCounters g_HolsterDrawDiag{};
+
+    // Last sampled positions (Source units), compared against the head.
+    struct HooksHolsterDrawDiagSample
+    {
+        bool eyeValid = false;
+        Vector eyeOrigin{ 0.0f, 0.0f, 0.0f };
+        bool drawValid = false;
+        int drawSlot = -1;
+        Vector drawOrigin{ 0.0f, 0.0f, 0.0f };
+        bool rootValid = false;
+        Vector rootBefore{ 0.0f, 0.0f, 0.0f };
+        Vector rootAfter{ 0.0f, 0.0f, 0.0f };
+    };
+    std::mutex g_HolsterDrawDiagSampleMutex;
+    HooksHolsterDrawDiagSample g_HolsterDrawDiagSample{};
+
     IMaterial* HooksHolsterHighlightMaterial()
     {
         static IMaterial* s_material = nullptr;
@@ -364,29 +417,38 @@ namespace
         return s_material;
     }
 
-    bool HooksHolsterDrawItemSafe(
+    enum class HooksHolsterDrawStatus
+    {
+        Drawn,
+        NoModel,
+        Exception
+    };
+
+    HooksHolsterDrawStatus HooksHolsterDrawItemSafe(
         const VR::HolsterRenderItem& item,
         const l4d2vr_holster::ItemPose& pose,
         int flags,
-        IMaterial* highlight)
+        IMaterial* highlight,
+        int& outDrawResult)
     {
+        outDrawResult = 0;
         if (!item.renderable || !Hooks::m_Game || !Hooks::m_Game->m_ModelRender)
-            return false;
+            return HooksHolsterDrawStatus::NoModel;
         __try
         {
             void** const vtable = *reinterpret_cast<void***>(item.renderable);
             if (!vtable || !vtable[8])
-                return false;
+                return HooksHolsterDrawStatus::NoModel;
             using GetModelFn = const void* (__thiscall*)(void*);
             const void* const model = reinterpret_cast<GetModelFn>(vtable[8])(item.renderable);
             if (!model)
-                return false;
+                return HooksHolsterDrawStatus::NoModel;
 
             QAngle angles{};
             QAngle::VectorAngles(pose.axisX, angles);
             g_HolsterDrawScope.renderable = item.renderable;
             g_HolsterDrawScope.pose = pose;
-            Hooks::m_Game->m_ModelRender->DrawModel(flags, item.renderable, 0xFFFF,
+            outDrawResult = Hooks::m_Game->m_ModelRender->DrawModel(flags, item.renderable, 0xFFFF,
                 item.entityIndex > 0 ? item.entityIndex : 0, model, pose.origin, angles, 0, 0, 0);
             if (highlight && item.highlighted)
             {
@@ -396,7 +458,7 @@ namespace
                 Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr);
             }
             g_HolsterDrawScope.renderable = nullptr;
-            return true;
+            return HooksHolsterDrawStatus::Drawn;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -406,7 +468,7 @@ namespace
                 __try { Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr); }
                 __except (EXCEPTION_EXECUTE_HANDLER) {}
             }
-            return false;
+            return HooksHolsterDrawStatus::Exception;
         }
     }
 
@@ -419,24 +481,64 @@ namespace
     void HooksHolsterSubmitNativeStageItems(VR* vr, int flags)
     {
         if (!HooksHolsterItemsEnabled(vr))
+        {
+            g_HolsterDrawDiag.submitDisabled.fetch_add(1u, std::memory_order_relaxed);
             return;
+        }
         VR::HolsterRenderSnapshot snapshot{};
         if (!vr->GetHolsterRenderSnapshot(snapshot))
+        {
+            g_HolsterDrawDiag.submitEmpty.fetch_add(1u, std::memory_order_relaxed);
             return;
+        }
         IMaterial* const highlight = HooksHolsterHighlightMaterial();
         const int highlightSlot = vr->m_HolsterHighlightSlot.load(std::memory_order_acquire);
         for (int i = 0; i < snapshot.count; ++i)
         {
             VR::HolsterRenderItem item = snapshot.items[i];
+            g_HolsterDrawDiag.items.fetch_add(1u, std::memory_order_relaxed);
             // Without the hooked SetupBones the item would be drawn with its
             // native carried bones (in the player's hand), not at the holster.
             if (!item.renderable || !HooksHolsterItemBonesPlaceable(item.renderable))
+            {
+                g_HolsterDrawDiag.itemUnplaceable.fetch_add(1u, std::memory_order_relaxed);
                 continue;
+            }
             item.highlighted = item.slot == highlightSlot;
             l4d2vr_holster::ItemPose pose{};
             if (!vr->BuildHolsterItemWorld(item, pose))
+            {
+                g_HolsterDrawDiag.itemPoseFailed.fetch_add(1u, std::memory_order_relaxed);
                 continue;
-            HooksHolsterDrawItemSafe(item, pose, flags, highlight);
+            }
+            int drawResult = 0;
+            switch (HooksHolsterDrawItemSafe(item, pose, flags, highlight, drawResult))
+            {
+            case HooksHolsterDrawStatus::Drawn:
+                g_HolsterDrawDiag.lastDrawResult.store(drawResult, std::memory_order_relaxed);
+                if (drawResult != 0)
+                {
+                    g_HolsterDrawDiag.drawOk.fetch_add(1u, std::memory_order_relaxed);
+                    vr->m_HolsterDrawSubmittedCount.fetch_add(1u, std::memory_order_relaxed);
+                }
+                else
+                {
+                    g_HolsterDrawDiag.drawZero.fetch_add(1u, std::memory_order_relaxed);
+                }
+                break;
+            case HooksHolsterDrawStatus::NoModel:
+                g_HolsterDrawDiag.itemNoModel.fetch_add(1u, std::memory_order_relaxed);
+                break;
+            case HooksHolsterDrawStatus::Exception:
+                g_HolsterDrawDiag.itemException.fetch_add(1u, std::memory_order_relaxed);
+                break;
+            }
+            {
+                std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
+                g_HolsterDrawDiagSample.drawValid = true;
+                g_HolsterDrawDiagSample.drawSlot = item.slot;
+                g_HolsterDrawDiagSample.drawOrigin = pose.origin;
+            }
         }
     }
 
@@ -477,15 +579,27 @@ namespace
     void HooksHolsterSubmitViewmodelStageItems(VR* vr)
     {
         constexpr int kStudioRender = 0x00000001;
-        if (t_HolsterViewmodelStageSubmitting || !HooksHolsterItemsEnabled(vr) ||
-            !vr->m_IsVREnabled || vr->m_IsThirdPersonCamera ||
-            vr->m_ScopeRenderingPass || vr->m_RearMirrorRenderingPass ||
-            !Hooks::m_Game || !Hooks::m_Game->m_MaterialSystem || !Hooks::m_Game->m_ModelRender)
+        g_HolsterDrawDiag.viewmodelDraws.fetch_add(1u, std::memory_order_relaxed);
+        const std::uint32_t gateBits =
+            (t_HolsterViewmodelStageSubmitting ? 1u : 0u) |
+            (!HooksHolsterItemsEnabled(vr) ? 2u : 0u) |
+            ((vr && !vr->m_IsVREnabled) ? 4u : 0u) |
+            ((vr && vr->m_IsThirdPersonCamera) ? 8u : 0u) |
+            ((vr && vr->m_ScopeRenderingPass) ? 16u : 0u) |
+            ((vr && vr->m_RearMirrorRenderingPass) ? 32u : 0u) |
+            ((!Hooks::m_Game || !Hooks::m_Game->m_MaterialSystem || !Hooks::m_Game->m_ModelRender) ? 64u : 0u);
+        if (gateBits != 0u)
         {
+            g_HolsterDrawDiag.stageGateSkips.fetch_add(1u, std::memory_order_relaxed);
+            g_HolsterDrawDiag.stageGateBits.fetch_or(gateBits, std::memory_order_relaxed);
             return;
         }
         if (!HooksHolsterClaimViewmodelStage())
+        {
+            g_HolsterDrawDiag.stageNoClaim.fetch_add(1u, std::memory_order_relaxed);
             return;
+        }
+        g_HolsterDrawDiag.stageSubmits.fetch_add(1u, std::memory_order_relaxed);
 
         // Source brackets the viewmodel list with DepthRange(0, 0.1). VR eyes
         // share one projection for world and viewmodels, so draw the holstered
@@ -783,7 +897,7 @@ namespace
                     hasRealUserCmd ? 1 : 0, vr->m_IsVREnabled ? 1 : 0,
                     (game && game->m_EngineClient && game->m_EngineClient->IsInGame()) ? 1 : 0, player ? 1 : 0,
                     vr->IsThirdPersonMapLoadCooldownActive() ? 1 : 0,
-                    g_FirstPersonBodyActualFirstPerson.load(std::memory_order_acquire) ? 1 : 0,
+                    g_FirstPersonCameraActualFirstPerson.load(std::memory_order_acquire) ? 1 : 0,
                     stateOk ? 1 : 0, diag.team, diag.lifeState, diag.observerMode,
                     HooksFirstPersonBodyHandleValid(diag.viewEntity) ? 1 : 0, diag.flags);
             }
@@ -797,7 +911,11 @@ namespace
             !game->m_EngineClient->IsInGame() ||
             !player ||
             vr->IsThirdPersonMapLoadCooldownActive() ||
-            (!g_FirstPersonBodyActualFirstPerson.load(std::memory_order_acquire) &&
+            // The camera report comes from RenderView itself, not from the
+            // body lifecycle: with FirstPersonBodyEnabled=false the body clears
+            // its own flag each CreateMove right before this check, which kept
+            // control from ever becoming ready (no holsters, no arm IK).
+            (!g_FirstPersonCameraActualFirstPerson.load(std::memory_order_acquire) &&
                 // The self-test (simulated headset) does not depend on the
                 // render path's camera report; the state checks below still apply.
                 !l4d2vr_selftest::Get().active.load(std::memory_order_acquire)))
@@ -827,7 +945,10 @@ namespace
             std::memory_order_acquire))
         {
             Game::logMsg(
-                "[VR][PoseActivation] first-person control ready; NativeViewmodelArm and WorldModelVR enabled");
+                "[VR][PoseActivation] first-person control ready; NativeViewmodelArm and WorldModelVR enabled (camera=%d body=%d selftest=%d)",
+                g_FirstPersonCameraActualFirstPerson.load(std::memory_order_acquire) ? 1 : 0,
+                vr->m_FirstPersonBodyEnabled ? 1 : 0,
+                l4d2vr_selftest::Get().active.load(std::memory_order_acquire) ? 1 : 0);
         }
     }
 

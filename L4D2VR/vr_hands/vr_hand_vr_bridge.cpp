@@ -7231,6 +7231,24 @@ bool VR::UpdateMagazineInteraction(
     {
         clearMountFriendlyGripContact();
 
+        // Pavlov's auto-ungrip: the support hand lets go of the foregrip once it
+        // is more than MaxTwoHandGripDistance (20 cm) away, so the next squeeze
+        // (at the pouch, the bolt...) does what it is aimed at instead of only
+        // toggling the two-hand grip off.
+        if (m_VrHandsTwoHandedGripActive)
+        {
+            constexpr float kTwoHandAutoUngripMeters = 0.20f;
+            float targetDistance = FLT_MAX;
+            if (!leftHandTouchesTwoHandedGripTarget(targetDistance) && targetDistance != FLT_MAX &&
+                targetDistance > kTwoHandAutoUngripMeters * m_VRScale)
+            {
+                m_VrHandsTwoHandedGripActive = false;
+                m_VrHandsTwoHandedGripWeaponId = 0;
+                LogMagazineInteractionEvent("two-hand grip released: support hand %.2f m from the foregrip",
+                    targetDistance / std::max(0.001f, m_VRScale));
+            }
+        }
+
         if ((
                 (!isSeparateInput && (m_VrHandsTwoHandedGripHeldMode ? !leftGripDown : leftGripJustPressed)) ||
                 (isSeparateInput && (m_VrHandsTwoHandedGripHeldMode ? !leftSupportHandDown : leftSupportHandJustPressed))

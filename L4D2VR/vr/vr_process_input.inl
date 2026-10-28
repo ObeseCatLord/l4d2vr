@@ -1701,8 +1701,13 @@ void VR::ProcessInput()
                     activeSlot >= 0 ? (occupiedMask & ~(1u << activeSlot)) : occupiedMask;
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
                     m_RightControllerPosAbs, drawableMask);
-                grabInput.ownZoneUnderHand = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
-                    m_RightControllerPosAbs, 0x1Fu);
+                // The held item's own holster takes it back when the hand is in
+                // its volume (chest items: anywhere in the vest, as in Pavlov).
+                const bool inOwnVolume = activeSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,
+                    m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(activeSlot), m_RightControllerPosAbs);
+                grabInput.ownZoneUnderHand = inOwnVolume
+                    ? static_cast<l4d2vr_holster::Zone>(activeSlot)
+                    : l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, 0x1Fu);
             }
 
             if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))

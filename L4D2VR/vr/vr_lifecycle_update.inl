@@ -2252,6 +2252,7 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     m_AutoFlashlightReadbackHeight = 0;
 
     DestroyHandHudWorldQuadTextures();
+    DestroyNativeWristHudTextures();
     for (size_t i = 0; i < m_D9SpecialInfectedIntentSenseHudDynTex.size(); ++i)
     {
         SafeReleaseD3D(m_D9SpecialInfectedIntentSenseHudDynSurface[i]);

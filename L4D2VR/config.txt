@@ -132,6 +132,10 @@ RightAmmoHudXOffset=-0.07
 RightAmmoHudYOffset=0.03
 RightAmmoHudZOffset=-0.09
 RightAmmoHudAngleOffset=-75,0,0
+WristHudStyle=native
+WristHudNativeHideOnFloatingHud=true
+LeftWristHudNativeWidthMeters=0.11
+RightAmmoHudNativeWidthMeters=0.065
 QueuedBulletVisualHitOffset=0.0,0.0,0.02
 BulletVisualsUseMuzzleSmoke=true
 BulletVisualsUseViewmodelPose=true
@@ -429,16 +433,12 @@ HolsterItemsVisible=true
 HolsterInstantDraw=true
 // Point a controller at a menu panel to move the cursor; the trigger clicks (for runtimes such as XRizer without the SteamVR laser mouse).
 MenuLaserPointerEnabled=true
-HolsterYawDeadbandDeg=20
-HolsterYawSmoothingSeconds=0.25
+# Holsters are placed like Pavlov VR's inventory (root 75 cm below the head,
+# hip capsules, back sphere, chest pockets); their facing follows your head at this speed.
+HolsterYawFollowSpeed=20
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4
 HolsterGrabHapticAmplitude=0.6
-HolsterPrimaryOffsetMeters=-0.10,0.16,-0.12
-HolsterSecondaryOffsetMeters=0.02,0.22,-0.70
-HolsterThrowableOffsetMeters=0.16,-0.09,-0.34
-HolsterMedicalOffsetMeters=-0.10,-0.16,-0.12
-HolsterConsumableOffsetMeters=0.16,0.09,-0.34
 ManualPumpEnabled=true
 DualPistolsIndependentHandsEnabled=true
 // True akimbo everywhere: each trigger fires its own pistol, aimed by its own hand (on servers

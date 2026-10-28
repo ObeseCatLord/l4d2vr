@@ -22,16 +22,24 @@ Grips are toggles, as in Pavlov (`GripToggle`, on by default). One firm squeeze 
 
 A squeeze that takes nothing is ignored: only an item the grip itself took (drawn from a holster or picked up with the grip) can be dropped by letting go. A gun you spawned with, picked up with Use or switched to stays in your hand however often you squeeze. With `GripToggle=false` you hold the grip to keep an item instead. The two-handed foregrip is also a toggle: squeeze once to take the front of the gun and again to let go (`VrHandsTwoHandedGripHeldMode=false`). Magazines, bolts and slides are held only while you keep squeezing.
 
-| Holster | Contents |
-|---|---|
-| Behind the dominant shoulder | Primary weapon |
-| Behind the other shoulder | Medkit, defibrillator or upgrade pack |
-| Dominant hip | Pistol(s) or melee weapon |
-| Chest, off-hand side | Grenade |
-| Chest, dominant side | Pills or adrenaline |
-| Off-hand waist | Spare magazine (or a shell for shotguns) while you have reserve ammo |
+The layout copies Pavlov VR's body inventory, read from the game's own data (`research/pavlov/inventory/SPEC.md`):
 
-Each grip press logs where your hand was in the body frame (`[VR][Holster] grip pressed`), so the layout can be checked against your own reaches. The holsters follow your head's yaw past a dead band, and snap turns move them instantly. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn in both eyes whether or not the first-person body is enabled, placed by their `weapon_bone`: hip and chest items sit in their holsters and are seen when looking down; the primary weapon is slung diagonally across the back and the medkit lies flat on the back, about 0.26 m behind and 0.3–0.4 m below the head, so neither is in the forward view (their grab zones stay at the shoulders). A hovered item, the empty magazine, the spare magazine and the bolt, slide or pump glow with a soft, steady light that breathes slowly.
+- **Root:** an inventory root hangs 75 cm below the headset. It moves back a little when you look down, and up to 60 cm back when your off hand reaches to the floor.
+- **Facing:** the root turns with your head continuously (`HolsterYawFollowSpeed`, 20 as in Pavlov), and stick or snap turns move it instantly.
+- **Hand reach:** your hand counts as an 11.5 cm sphere.
+
+| Holster | Where | Contents |
+|---|---|---|
+| Back | 40 cm sphere behind your head (follows your head) | Primary weapon |
+| Dominant hip | Upright capsule beside the root (radius 20 cm, 88 cm tall) | Pistol(s) or melee weapon |
+| Chest, off-hand side (upper pocket) | Reach for the item | Grenade |
+| Chest, centre (lower pocket) | Reach for the item | Medkit, defibrillator or upgrade pack |
+| Chest, dominant side (upper pocket) | Reach for the item | Pills or adrenaline |
+| Off-hand waist | Reach for it | Spare magazine (or a shell for shotguns) while you have reserve ammo |
+
+Chest items go back in when your hand is anywhere in the vest, a capsule over the chest. Without the first-person body the back item isn't drawn, because nothing would hide it, but it can still be grabbed. Other settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterHeightScale`, `HolsterHoverHapticAmplitude` and `HolsterGrabHapticAmplitude`.
+
+Each grip press logs where your hand was relative to the head (`[VR][Holster] grip pressed`), so the layout can be checked against your own reaches.
 
 On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
 

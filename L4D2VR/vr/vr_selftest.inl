@@ -1725,7 +1725,9 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     // host's reload gate must refuse it while physical reload owns the gun.
     const bool gateProbe = step.rfind("reloadgatee2e=", 0) == 0;
     const bool slap = step == "slape2e";
-    if (!shells && !magazine && !slap)
+    // magholde2e=<gun>: the spare in a natural insert pose (see below).
+    const bool hold = step.rfind("magholde2e=", 0) == 0;
+    if (!shells && !magazine && !slap && !hold)
     {
         SelfTestReport(step.c_str(), false, "unknown step");
         return true;
@@ -1741,12 +1743,19 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     else if (gun == "shotgun_chrome") expectedId = 8;
     else if (gun == "autoshotgun") expectedId = 4;
     else if (gun == "shotgun_spas") expectedId = 11;
+    else if (gun == "smg_silenced") expectedId = 7;
+    else if (gun == "smg_mp5") expectedId = 33;
+    else if (gun == "rifle_desert") expectedId = 9;
+    else if (gun == "rifle_sg552") expectedId = 34;
+    else if (gun == "sniper_military") expectedId = 10;
+    else if (gun == "hunting_rifle") expectedId = 6;
     if (!expectedId)
     {
         SelfTestReport(step.c_str(), false, "unknown weapon");
         return true;
     }
     const bool pump = expectedId == 3 || expectedId == 8;
+    const bool shellGun = pump || expectedId == 4 || expectedId == 11;
     const bool semiAuto = expectedId == 1 || expectedId == 32;
 
     ReloadSelfTestGeometry g{};
@@ -1847,8 +1856,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     {
         // Boxes are published by the viewmodel draw: wait for fresh ones.
         const bool ready = g.weaponId == expectedId && g.magazineBoxFresh &&
-            (!shells || g.state == static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine)) &&
-            (shells || g.state == 0);
+            (!shellGun || g.state == static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine)) &&
+            (shellGun || g.state == 0);
         if (!ready)
         {
             if (inPhase < 6.0f) return false;
@@ -1863,8 +1872,258 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         m_SelfTestValueD = 0;
         Game::logMsg("[VR][SelfTest] %s: clip=%d reserve=%d box age=%.3fs model=%s", step.c_str(), g.clip, g.reserve,
             g.magazineBoxAge, g.modelName.c_str());
-        go(magazine ? 10 : shells ? 100 : 200);
+        go(hold ? 300 : magazine ? 10 : shells ? 100 : 200);
         return false;
+    }
+
+    // ---- Natural hold ---------------------------------------------------------------
+    // magholde2e=<gun>: the off hand takes a spare and goes where a player holds
+    // it to seat it, a pose defined from the gun alone (the hand is never turned
+    // toward the well): turned as the gun hand holds the gun (pointing along the
+    // barrel, thumb up, palm toward the gun) and raised 10 degrees nose-up, as
+    // when a magazine comes up into the well from below, with the spare on the
+    // well's insertion line 15 cm clear of it (the well catches a spare a
+    // little short of it; a shell 26 cm below the port, outside its 10 cm
+    // loading reach). The spare's turn against the well is measured there
+    // (PASS within 15 degrees; a shell by its length, its roll does not
+    // matter) and photographed (<gun>_natural_hold), then the hand pushes it
+    // straight in without turning and it must seat (<gun>_natural_seated).
+    if (hold)
+    {
+        auto naturalAngles = [&]()
+        {
+            constexpr float kRaiseDeg = 10.0f;
+            // vr_tracking.inl: the off hand's pointing direction is the
+            // controller's raw pose pitched 45 degrees down.
+            constexpr float kOffHandCalibrationDeg = 45.0f;
+            const Vector right = g.gunRight;
+            const Vector forward = VectorRotate(g.gunForward, right, kRaiseDeg);
+            const Vector up = VectorRotate(g.gunUp, right, kRaiseDeg);
+            QAngle angles{};
+            QAngle::VectorAngles(VectorRotate(forward, right, kOffHandCalibrationDeg),
+                VectorRotate(up, right, kOffHandCalibrationDeg), angles);
+            return angles;
+        };
+        auto shortOfWell = [&](float fraction)
+        {
+            return shellGun ? g.socketCenter + Vector(0.0f, 0.0f, -0.14f * fraction * scale)
+                : g.socketCenter + g.socketOutward * ((g.spareLength + 0.03f) * fraction * scale);
+        };
+        auto farFromWell = [&]()
+        {
+            return shortOfWell(1.0f) + (shellGun ? Vector(0.0f, 0.0f, -0.12f * scale) : g.socketOutward * (0.12f * scale));
+        };
+        // The AK-47's magazine comes out by hand or a slap: the spare is taken
+        // with the old one still in (Pavlov's tactical reload), measured, and
+        // then swept down across the old one, still turned the natural way, to
+        // slap it out (Pavlov: along the seated magazine's axis, out of the well).
+        const bool tactical = expectedId == 26;
+        const int holdingForSlap = static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazineForSlap);
+        const int waitingForSpare = static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine);
+        const int holdingSpare = static_cast<int>(MagazineInteractionManualState::HoldingFreshMagazine);
+        switch (m_SelfTestPhase)
+        {
+        case 300: // the gun level in front
+            SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(m_WeaponAimPitchOffsetDeg, 0.0f, 0.0f));
+            m_SelfTestValueD = g.clip;
+            go(301);
+            return false;
+        case 301:
+            if (inPhase < 1.0f) return false;
+            if (tactical)
+            {
+                go(303);
+                return false;
+            }
+            // A shotgun fires one to make room for a shell; a magazine is released.
+            button(shellGun ? m_ActionPrimaryAttack : m_ActionMagazineRelease, true);
+            go(302);
+            return false;
+        case 320: // the AK-47: the slap, as slape2e strikes it but without turning the hand
+        {
+            if (!g.magazineBoxFresh || !g.heldValid)
+            {
+                if (inPhase < 1.0f) return false;
+                return fail("natural hold: slap the old magazine out", "no seated or held magazine pose");
+            }
+            if (m_SelfTestCycle == 0)
+                m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
+            const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
+            m_SelfTestSlapStart = contact - g.socketOutward * (0.10f * scale);
+            m_SelfTestSlapEnd = contact + g.socketOutward * (0.04f * scale);
+            m_SelfTestSlapPark = g.gunRight * (-0.30f * scale);
+            m_SelfTestPoint = g.magazineCenter; // the strike rides with the gun
+            glide(m_SelfTestSlapStart + m_SelfTestSlapPark, 0.25f);
+            go(323);
+            return false;
+        }
+        case 323:
+            if (!glideDone(0.2f)) return false;
+            glide(m_SelfTestSlapStart + (g.magazineCenter - m_SelfTestPoint), 0.5f);
+            go(324);
+            return false;
+        case 324:
+            if (!glideDone(0.4f)) return false;
+            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), 0.1f); // 14 cm in 0.1 s
+            go(325);
+            return false;
+        case 325:
+            if (!glideDone(0.02f)) return false;
+            glide(m_SelfTestSlapEnd + m_SelfTestSlapPark + (g.magazineCenter - m_SelfTestPoint), 0.12f);
+            go(322);
+            return false;
+        case 322:
+            if (m_MagazineEjectSerial.load(std::memory_order_acquire) == m_SelfTestSerial)
+            {
+                if (inPhase > 1.0f && g.state == holdingForSlap && m_SelfTestCycle < 2)
+                {
+                    ++m_SelfTestCycle; // strike again
+                    Game::logMsg("[VR][SelfTest] %s natural hold: strike %d missed, again", gun.c_str(), m_SelfTestCycle);
+                    go(320);
+                    return false;
+                }
+                if (inPhase < 3.0f) return false;
+                std::snprintf(detail, sizeof(detail), "state %s clip %d", state(), g.clip);
+                return fail("natural hold: slap the old magazine out", detail);
+            }
+            go(308);
+            return false;
+        case 302:
+            if (inPhase < 0.15f) return false;
+            button(m_ActionPrimaryAttack, false);
+            button(m_ActionMagazineRelease, false);
+            go(303);
+            return false;
+        case 303:
+            if (inPhase < 0.5f || !g.pickupValid || (g.state != waitingForSpare && !(tactical && g.state == 0) &&
+                !(shellGun && g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab))))
+            {
+                if (inPhase < 3.0f) return false;
+                std::snprintf(detail, sizeof(detail), "pouch=%d state %s clip %d", g.pickupValid ? 1 : 0, state(), g.clip);
+                return fail("natural hold: waiting for a spare", detail);
+            }
+            if (shellGun && g.clip >= m_SelfTestValueD && m_SelfTestCycle++ < 3)
+            {
+                go(301); // the shot did not take (still deploying): fire again
+                return false;
+            }
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            glide(g.pickupCenter, 0.5f);
+            go(304);
+            return false;
+        case 304:
+            if (!glideDone(0.2f)) return false;
+            m_SelfTestMeasure = meters(g.supportHand, g.pickupCenter);
+            button(m_ActionOffHandGrip, true);
+            go(305);
+            return false;
+        case 305:
+            if (g.state != (tactical ? holdingForSlap : holdingSpare))
+            {
+                if (inPhase < 1.0f) return false;
+                std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch (range %.2f m), state %s",
+                    m_SelfTestMeasure, g.pouchRange, state());
+                return fail("natural hold: take a spare from the waist", detail);
+            }
+            m_SelfTestLeftAngWorld = naturalAngles();
+            m_SelfTestLeftAngWorldValid = true;
+            Game::logMsg("[VR][SelfTest] %s spare taken: well (%.1f %.1f %.1f) outward (%.2f %.2f %.2f) spare %.3f m long, held at (%.1f %.1f %.1f), gun forward (%.2f %.2f %.2f)",
+                gun.c_str(), g.socketCenter.x, g.socketCenter.y, g.socketCenter.z, g.socketOutward.x, g.socketOutward.y,
+                g.socketOutward.z, g.spareLength, g.heldCenter.x, g.heldCenter.y, g.heldCenter.z,
+                g.gunForward.x, g.gunForward.y, g.gunForward.z);
+            go(306);
+            return false;
+        case 306: // natural pose short of the well
+        {
+            if (!g.socketValid || !g.heldValid)
+            {
+                if (inPhase < 1.0f) return false;
+                return fail("natural hold", "no well or held spare pose");
+            }
+            m_SelfTestLeftAngWorld = naturalAngles();
+            float unused = 0.0f;
+            steerHeld(farFromWell(), false, unused);
+            if (inPhase < 1.5f) return false;
+            SelfTestHeldMagazine m{};
+            if (!SelfTestMeasureHeldMagazine(m))
+                return fail("natural hold", "no held or seated pose to compare");
+            const float scored = m.shell ? m.longAxisDeg : m.fullDeg;
+            char live[48] = "";
+            if (m.shell)
+                std::snprintf(live, sizeof(live), "; port's live pose %.1f", m.liveLongAxisDeg);
+            std::snprintf(detail, sizeof(detail),
+                "%s %.1f deg off the %s (insertion axis %.1f, long side %.1f, whole turn %.1f%s), %.3f m from its centre",
+                m.shell ? "shell" : "magazine", scored, m.shell ? "port" : "well", m.insertionDeg, m.longAxisDeg, m.fullDeg,
+                live, meters(g.socketCenter, g.heldCenter));
+            Game::logMsg("[VR][SelfTest] %s natural hold: in the hand (x right, y up, z back) held (%.1f %.1f %.1f), seated (%.1f %.1f %.1f); "
+                "seated axes x=(%.2f %.2f %.2f) y=(%.2f %.2f %.2f) z=(%.2f %.2f %.2f) long=%d",
+                gun.c_str(), m.heldInHandDeg.x, m.heldInHandDeg.y, m.heldInHandDeg.z,
+                m.seatedInHandDeg.x, m.seatedInHandDeg.y, m.seatedInHandDeg.z,
+                m.seatedAxesInHand[0].x, m.seatedAxesInHand[0].y, m.seatedAxesInHand[0].z,
+                m.seatedAxesInHand[1].x, m.seatedAxesInHand[1].y, m.seatedAxesInHand[1].z,
+                m.seatedAxesInHand[2].x, m.seatedAxesInHand[2].y, m.seatedAxesInHand[2].z, m.longAxis);
+            SelfTestReport(label("natural insert pose lines the spare up within 15 deg"), scored <= 15.0f, detail);
+            // For the photo the hand slides (no turning) 4 cm closer, still
+            // clear of where the well (or the pump's lowered port) catches it.
+            m_SelfTestPoint = leftNow() + (shortOfWell(1.0f) - g.heldCenter) +
+                (shellGun ? Vector(0.0f, 0.0f, -0.08f * scale) : g.socketOutward * (0.08f * scale));
+            glide(m_SelfTestPoint, 0.6f);
+            go(311);
+            return false;
+        }
+        case 311:
+            if (g.state != (tactical ? holdingForSlap : holdingSpare))
+            {
+                go(309); // it went in on the way
+                return false;
+            }
+            if (!glideDone(0.3f)) return false;
+            SelfTestRequestShot(gun + "_natural_hold", 1);
+            go(312);
+            return false;
+        case 312: // hold still for the photo
+            if (inPhase < 0.4f) return false;
+            go(tactical ? 320 : 308);
+            return false;
+        case 308: // straight in, no turning
+        {
+            m_SelfTestLeftAngWorld = naturalAngles();
+            const float approach = (std::min)(1.0f, inPhase / 0.8f);
+            float unused = 0.0f;
+            steerHeld(shortOfWell(1.0f - approach), false, unused);
+            if (g.state == holdingSpare)
+            {
+                if (inPhase < 4.0f) return false;
+                std::snprintf(detail, sizeof(detail), "still held, fit check %.3f m, state %s", g.fitDistance, state());
+                return fail("natural insert pose seats the spare", detail);
+            }
+            go(309);
+            return false;
+        }
+        case 309:
+        {
+            // The AK-47 is refilled to where it was, after one ejection.
+            const bool refilled = tactical
+                ? m_MagazineEjectSerial.load(std::memory_order_acquire) == m_SelfTestSerial + 1u && g.clip > 1
+                : g.clip > m_SelfTestClip0;
+            const bool settled = shellGun ? g.clip == m_SelfTestClip0 + 1
+                : refilled && g.state != static_cast<int>(MagazineInteractionManualState::WaitingForServerMagazine) &&
+                    g.state != static_cast<int>(MagazineInteractionManualState::WaitingForServerPistolCycle);
+            if (!settled && inPhase < 3.0f) return false;
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d, state %s",
+                m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve, state());
+            SelfTestReport(label("natural insert pose seats the spare"), settled, detail);
+            SelfTestRequestShot(gun + "_natural_seated", 1);
+            go(310);
+            return false;
+        }
+        case 310:
+            if (inPhase < 0.5f) return false;
+            return finish();
+        default:
+            return fail("phase", "lost");
+        }
     }
 
     // ---- Detachable magazine ----------------------------------------------------

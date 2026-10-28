@@ -3174,6 +3174,7 @@ namespace
         sampleKeys.insert("HolsterGrabHapticAmplitude");
         sampleKeys.insert("MagazineInteractionAutoEjectWhenEmpty");
         sampleKeys.insert("MagazineEmptyGlowEnabled");
+        sampleKeys.insert("ManualReloadMagazineHandRotationOffsetDeg");
         sampleKeys.insert("MagazineDropEnabled");
         sampleKeys.insert("MagazineDropLifetimeSeconds");
         sampleKeys.insert("PhysicalReloadOnUnsupportedServers");

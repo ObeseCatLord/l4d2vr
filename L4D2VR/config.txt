@@ -273,6 +273,11 @@ MagazineInteractionThumbIndexCurlRelease=0.42
 MagazineInteractionThreeFingerCurlStart=0.62
 MagazineInteractionThreeFingerCurlRelease=0.42
 ManualReloadMagazineBoneOverrides=
+# A spare magazine or shell is held as it sits in the gun: with the off hand turned
+# like the gun hand (pointing along the barrel) and raised a little nose-up, it lines
+# up with the well (Pavlov's lean: 15 deg, 5 deg for pistols, Uzi and MAC-10).
+# This turns it further in the hand (degrees about the controller's x right, y up, z back).
+ManualReloadMagazineHandRotationOffsetDeg=0,0,0
 MagazineInteractionGrabPaddingMeters=0.12
 MagazineInteractionPullTriggerMeters=0.08
 MagazineInteractionPullTriggerByMagazineMeters=0.025

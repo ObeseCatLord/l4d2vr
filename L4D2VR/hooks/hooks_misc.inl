@@ -9223,6 +9223,7 @@ namespace
         bool weaponSwitchHidden = false;   // a draw is hidden (the arms follow)
         bool weaponSwitchCollapsed = false; // ... and no idle pose was known yet
         std::chrono::steady_clock::time_point weaponSwitchAt{};
+        std::chrono::steady_clock::time_point weaponActionAt{};
         std::unordered_map<std::string, int> settledCaptures;
         bool idlePosesLoaded = false;
         bool idlePosesDirty = false;
@@ -9632,7 +9633,15 @@ namespace
         bool collapse = false;
         if (!armsModel)
         {
-            const bool busy = kind == Kind::Strike || (kind == Kind::Other && !switching); // firing, reloading
+            // Firing (recoil is layered over idle too), reloading, a throw or a
+            // pill / adrenaline use: the weapon is doing something, not drawing.
+            if (vr->m_PrimaryAttackCmdOwned ||
+                (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & 3u) != 0u ||
+                now < vr->m_ConsumableUseHoldUntil)
+                state.weaponActionAt = now;
+            const bool acting = state.weaponActionAt.time_since_epoch().count() != 0 &&
+                std::chrono::duration<float>(now - state.weaponActionAt).count() < 0.6f;
+            const bool busy = acting || kind == Kind::Strike || (kind == Kind::Other && !switching);
             const bool fresh = modelAge < kSwitchMaxSeconds;
             hideDeploy = noSwitchAnimation && !busy &&
                 (switching || (fresh && (modelAge < kDeployMaskSeconds || !readyMatches ||
@@ -9648,8 +9657,8 @@ namespace
             // in which a weapon drawn up to 3 s ago was shown off its idle pose.
             if (hideDeploy && !hideStrike && (collapse || deviation > kSwitchDeviationUnits))
                 vr->m_VmSwitchFramesHeld.fetch_add(1u, std::memory_order_relaxed);
-            else if (!hideDeploy && !hideStrike && modelAge < 3.0f && kind == Kind::Idle &&
-                deviation > kSwitchDeviationUnits)
+            else if (!hideDeploy && !hideStrike && !busy && modelAge < kSwitchMaxSeconds + 0.5f &&
+                kind == Kind::Idle && deviation > kSwitchDeviationUnits)
                 vr->m_VmSwitchFramesShown.fetch_add(1u, std::memory_order_relaxed);
         }
         else if (std::chrono::duration<float>(now - state.weaponSwitchAt).count() < 0.25f)

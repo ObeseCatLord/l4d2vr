@@ -1469,6 +1469,10 @@ public:
     std::atomic<int> m_HolsterHighlightSlot{ -1 };
     std::atomic<int> m_HolsterInstantDrawSlot{ -1 };
     std::atomic<uint64_t> m_HolsterInstantDrawUntilMs{ 0 };
+    // Cumulative holster draw results, written by the draw path (hooks) and read
+    // by the [VR][HolsterDraw] diagnostics and the self-test.
+    std::atomic<uint32_t> m_HolsterDrawSubmittedCount{ 0 };  // DrawModel returned nonzero
+    std::atomic<uint32_t> m_HolsterDrawBonesPlacedCount{ 0 }; // SetupBones moved an item to its holster
     void* m_HolsterEntityIndexCacheKey[l4d2vr_holster::kZoneCount]{};
     int m_HolsterEntityIndexCache[l4d2vr_holster::kZoneCount]{ -1, -1, -1, -1, -1 };
     bool GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const;

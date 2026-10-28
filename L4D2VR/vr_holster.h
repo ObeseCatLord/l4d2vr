@@ -300,6 +300,28 @@ namespace l4d2vr_holster
         return pose;
     }
 
+    // Paces a diagnostic log stream: a line is due on the first call, when the
+    // state key changed (at most once per minIntervalMs), or after periodMs
+    // without a line.
+    struct DiagPacer
+    {
+        std::uint64_t lastMs = 0;
+        std::uint64_t lastKey = 0;
+        bool started = false;
+
+        bool Due(std::uint64_t nowMs, std::uint64_t key, std::uint64_t minIntervalMs, std::uint64_t periodMs)
+        {
+            const std::uint64_t elapsed = nowMs - lastMs;
+            const bool due = !started || (key != lastKey && elapsed >= minIntervalMs) || elapsed >= periodMs;
+            if (!due)
+                return false;
+            started = true;
+            lastMs = nowMs;
+            lastKey = key;
+            return true;
+        }
+    };
+
     // Grab / holster state machine for the dominant hand.
     struct GrabInput
     {

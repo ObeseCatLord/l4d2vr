@@ -3240,6 +3240,7 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 	encoding += (encoding < 0) ? -encodedAngle : encodedAngle;
 	to->viewangles.x = (float)encoding;
 
+	// 写入
 	// Source sends only the fields that differ from `from`, and the host
 	// rebuilds the unsent ones from its copy of the previous command, which
 	// its decoder has already stripped (protocol impulses, carry word). Delta
@@ -3258,7 +3259,6 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 		from->buttons = static_cast<int>(static_cast<uint32_t>(from->buttons) & ~(0x3fu << 26));
 	}
 
-	// 写入
 	hkWriteUsercmd.fOriginal(buf, to, from);
 
 	if (from)

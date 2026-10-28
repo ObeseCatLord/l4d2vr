@@ -41,7 +41,12 @@ CHANGES = [
     "1.2.2: reload hints: the spare magazine and the bolt, slide or pump glow when the reload needs them.",
     "1.2.2: point at menus with either controller and click with the trigger (MenuLaserPointerEnabled).",
     "1.2.2: right stick forward jumps and back crouches (StickJumpCrouch); grips are only for gripping.",
-    "1.2.2: larger, Pavlov-sized holster zones; no stray anchor markers; turning no longer triggers melee bashes.",
+    "1.2.2: holsters use Pavlov VR's body layout (hips, chest pockets, back) and follow your head; look down to see them; a haptic tick on hover; either hand swaps items at any holster. Turning no longer triggers melee bashes.",
+    "1.2.2: a reload takes the full process, magazine in and then the slide; the release button drops one magazine and returns its rounds to the reserve.",
+    "1.2.2: spare magazines and shells are held the way they sit in the gun; glows are a soft, steady tint.",
+    "1.2.2: the wrist HUD uses the game's own health bars and font with full teammate names; your own bar is the large one.",
+    "1.2.2: right stick down toggles crouch; guns never play the swing or bash animation.",
+    "1.2.2: the two-handed grip lets go when the support hand moves 20 cm from the foregrip; a last shot the server never fired stays chambered instead of needing a rack.",
     "1.2.2: melee and shoves are motion only (no trigger bash or shove animation); the melee grip sits closer to the base of the handle.",
     "1.2.2: Pavlov magazine slap on the AK-47, SG552 and military sniper: grab a fresh magazine with the old one still in and strike the old one out (MagazineSlapEnabled).",
 ]

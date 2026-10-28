@@ -185,4 +185,259 @@ namespace l4d2vr_mag_slap
     {
         return !(secondsSinceSlap >= 0.0f && secondsSinceSlap < reinsertSeconds);
     }
+
+    // ---- Forgiving slap (what the game uses) --------------------------------
+    // Pavlov tests the held magazine's physics velocity at the instant its
+    // collision starts overlapping the seated one. Our hand is a tracked point
+    // and one game frame can be 1-3 cm of a fast swing, so a strict
+    // same-frame test missed most real slaps (headset log 2026-10-28: the user
+    // held the spare for 31 s of strikes before one counted; every slap that
+    // counted was within 0.05 m/s or 0.04 of a threshold). Here:
+    //  - contact is the held box overlapping the seated one (grown by a few
+    //    centimetres), swept along the path since the last frame, so a fast
+    //    pass cannot skip through between frames;
+    //  - the strike is the fastest qualifying sample from up to `window`
+    //    seconds before the touch (the hand slows as it lands);
+    //  - a slap may run along the magazine out of the well (straight down on a
+    //    level gun) or knock it toward the muzzle (how an AK magazine rocks
+    //    out, and what Pavlov's magazine forward axis means), or anything in
+    //    between; moving into the well never counts, so a slow or a fast
+    //    insert can never knock the old magazine out.
+    struct ForgivingParams
+    {
+        float speedMetersPerSecond = 0.72f; // 80 % of Pavlov's 90 cm/s
+        float dot = 0.58f;                  // Pavlov's forward dot less 0.1
+        float windowSeconds = 0.15f;        // strike up to this long before the touch
+        float lateSeconds = 0.06f;          // or this long after it began (velocity lag)
+        float contactMeters = 0.05f;        // boxes this close touch
+        float maxIntoWellDot = 0.35f;       // more than this along the insert axis is an insert
+    };
+
+    inline ForgivingParams Forgiving(const Params& pavlov)
+    {
+        ForgivingParams out{};
+        out.speedMetersPerSecond = pavlov.speedMetersPerSecond * 0.8f;
+        out.dot = pavlov.forwardDot - 0.1f;
+        return out;
+    }
+
+    // How well a strike direction matches a slap: the best of out of the well,
+    // toward the muzzle (gun forward, square to the magazine) and halfway.
+    // intoWell is its component along the insert direction.
+    struct DirectionMatch
+    {
+        float dot = -1.0f;
+        float intoWell = 0.0f;
+    };
+
+    inline DirectionMatch MatchDirection(const Vec3& strike, const Vec3& outwardAxis, const Vec3& gunForward)
+    {
+        DirectionMatch m{};
+        Vec3 dir{}, out{};
+        if (!Normalize(strike, dir) || !Normalize(outwardAxis, out))
+            return m;
+        m.intoWell = -Dot(dir, out);
+        m.dot = Dot(dir, out);
+        Vec3 forward{};
+        if (Finite(gunForward) && Normalize(Sub(gunForward, Scale(out, Dot(gunForward, out))), forward))
+        {
+            Vec3 between{};
+            m.dot = std::max(m.dot, Dot(dir, forward));
+            if (Normalize(Add(out, forward), between))
+                m.dot = std::max(m.dot, Dot(dir, between));
+        }
+        return m;
+    }
+
+    inline bool StrikeQualifies(const ForgivingParams& p, float speed, const DirectionMatch& m)
+    {
+        return std::isfinite(speed) && speed >= p.speedMetersPerSecond && m.dot >= p.dot &&
+            m.intoWell <= p.maxIntoWellDot;
+    }
+
+    // Oriented box overlap (separating axis test) with `margin` added to a's
+    // half extents. Works in any unit.
+    inline bool OverlapWithMargin(const Box& a, const Box& b, float margin)
+    {
+        if (!ValidBox(a) || !ValidBox(b) || !std::isfinite(margin))
+            return false;
+        Vec3 ax[3], bx[3];
+        float ah[3], bh[3];
+        const Vec3* aAxes[3] = { &a.axisX, &a.axisY, &a.axisZ };
+        const Vec3* bAxes[3] = { &b.axisX, &b.axisY, &b.axisZ };
+        const float aMin[3] = { a.mins.x, a.mins.y, a.mins.z }, aMax[3] = { a.maxs.x, a.maxs.y, a.maxs.z };
+        const float bMin[3] = { b.mins.x, b.mins.y, b.mins.z }, bMax[3] = { b.maxs.x, b.maxs.y, b.maxs.z };
+        for (int i = 0; i < 3; ++i)
+        {
+            const float la = Length(*aAxes[i]), lb = Length(*bAxes[i]);
+            ax[i] = Scale(*aAxes[i], 1.0f / la);
+            bx[i] = Scale(*bAxes[i], 1.0f / lb);
+            ah[i] = 0.5f * (aMax[i] - aMin[i]) * la + std::max(0.0f, margin);
+            bh[i] = 0.5f * (bMax[i] - bMin[i]) * lb;
+        }
+        const Vec3 d = Sub(Center(b), Center(a));
+        float r[3][3], absR[3][3];
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+            {
+                r[i][j] = Dot(ax[i], bx[j]);
+                absR[i][j] = std::fabs(r[i][j]) + 1e-5f;
+            }
+        const float t[3] = { Dot(d, ax[0]), Dot(d, ax[1]), Dot(d, ax[2]) };
+        for (int i = 0; i < 3; ++i)
+            if (std::fabs(t[i]) > ah[i] + bh[0] * absR[i][0] + bh[1] * absR[i][1] + bh[2] * absR[i][2])
+                return false;
+        for (int j = 0; j < 3; ++j)
+            if (std::fabs(t[0] * r[0][j] + t[1] * r[1][j] + t[2] * r[2][j]) >
+                ah[0] * absR[0][j] + ah[1] * absR[1][j] + ah[2] * absR[2][j] + bh[j])
+                return false;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+            {
+                const int i1 = (i + 1) % 3, i2 = (i + 2) % 3, j1 = (j + 1) % 3, j2 = (j + 2) % 3;
+                const float ra = ah[i1] * absR[i2][j] + ah[i2] * absR[i1][j];
+                const float rb = bh[j1] * absR[i][j2] + bh[j2] * absR[i][j1];
+                if (std::fabs(t[i2] * r[i1][j] - t[i1] * r[i2][j]) > ra + rb)
+                    return false;
+            }
+        return true;
+    }
+
+    // The held box's origin in the seated box's frame, so a sweep follows the
+    // gun when both hands move.
+    inline Vec3 RelativeOrigin(const Box& seated, const Box& held)
+    {
+        const Vec3 d = Sub(held.origin, seated.origin);
+        return { Dot(d, seated.axisX), Dot(d, seated.axisY), Dot(d, seated.axisZ) };
+    }
+
+    // Touching now, or anywhere on the straight path from where the held box
+    // was last frame (relative to the seated one).
+    inline bool TouchingSwept(const Box& seated, const Box& held, const Vec3* previousRelativeOrigin,
+        float marginUnits, int steps = 6)
+    {
+        if (OverlapWithMargin(seated, held, marginUnits))
+            return true;
+        if (!previousRelativeOrigin || !Finite(*previousRelativeOrigin))
+            return false;
+        const Vec3 now = RelativeOrigin(seated, held);
+        for (int k = 0; k < steps; ++k)
+        {
+            const float u = static_cast<float>(k) / static_cast<float>(steps);
+            const Vec3 local = Add(*previousRelativeOrigin, Scale(Sub(now, *previousRelativeOrigin), u));
+            Box at = held;
+            at.origin = Add(seated.origin, Add(Scale(seated.axisX, local.x),
+                Add(Scale(seated.axisY, local.y), Scale(seated.axisZ, local.z))));
+            if (OverlapWithMargin(seated, at, marginUnits))
+                return true;
+        }
+        return false;
+    }
+
+    // Frame-by-frame slap detector: feed every frame while a fresh magazine is
+    // held for a slap.
+    class Detector
+    {
+    public:
+        struct Sample
+        {
+            float time = 0.0f;
+            float speed = 0.0f;
+            DirectionMatch direction{};
+            bool qualifies = false;
+        };
+        struct Outcome
+        {
+            bool hit = false;
+            bool touchBegan = false;   // a new touch this frame
+            bool nearMiss = false;     // a touch began with no qualifying strike
+            Sample strike{};           // the qualifying strike (hit) or the fastest recent one
+        };
+
+        void Reset()
+        {
+            m_Count = 0;
+            m_Head = 0;
+            m_WasTouching = false;
+            m_TouchBeganAt = -1e9f;
+        }
+
+        // strikes: one or more velocity estimates for this frame (m/s, world).
+        Outcome Update(const ForgivingParams& p, float time, const Vec3* strikes, int strikeCount,
+            const Vec3& outwardAxis, const Vec3& gunForward, bool touching)
+        {
+            Outcome o{};
+            Sample best{};
+            best.time = time;
+            for (int i = 0; i < strikeCount; ++i)
+            {
+                Sample s{};
+                s.time = time;
+                s.speed = Finite(strikes[i]) ? Length(strikes[i]) : 0.0f;
+                s.direction = MatchDirection(strikes[i], outwardAxis, gunForward);
+                s.qualifies = StrikeQualifies(p, s.speed, s.direction);
+                if (i == 0 || (s.qualifies && !best.qualifies) ||
+                    (s.qualifies == best.qualifies && s.speed > best.speed))
+                    best = s;
+            }
+            Push(best);
+            o.touchBegan = touching && !m_WasTouching;
+            m_WasTouching = touching;
+            if (o.touchBegan)
+                m_TouchBeganAt = time;
+            // A touch just began: any qualifying strike within the window before it.
+            // A qualifying strike now: a touch that began a moment ago.
+            const bool touchRecent = touching && time - m_TouchBeganAt <= p.lateSeconds + 1e-4f;
+            if (o.touchBegan || (touchRecent && best.qualifies))
+            {
+                const Sample* found = nullptr;
+                const Sample* fastest = nullptr;
+                for (int i = 0; i < m_Count; ++i)
+                {
+                    const Sample& s = m_Samples[(m_Head + kCapacity - 1 - i) % kCapacity];
+                    if (s.time < m_TouchBeganAt - p.windowSeconds - 1e-4f)
+                        break;
+                    if (!fastest || s.speed > fastest->speed)
+                        fastest = &s;
+                    if (s.qualifies && (!found || s.speed > found->speed))
+                        found = &s;
+                }
+                if (found)
+                {
+                    o.hit = true;
+                    o.strike = *found;
+                }
+                else if (o.touchBegan)
+                {
+                    o.nearMiss = true;
+                    if (fastest)
+                        o.strike = *fastest;
+                }
+            }
+            else
+            {
+                o.strike = best;
+            }
+            return o;
+        }
+
+    private:
+        static constexpr int kCapacity = 48;
+        void Push(const Sample& s)
+        {
+            m_Samples[m_Head] = s;
+            m_Head = (m_Head + 1) % kCapacity;
+            if (m_Count < kCapacity)
+                ++m_Count;
+        }
+        Sample m_Samples[kCapacity]{};
+        int m_Count = 0;
+        int m_Head = 0;
+        bool m_WasTouching = false;
+        float m_TouchBeganAt = -1e9f;
+    };
+
+    // Letting go must last this long before the spare goes back, so a hand that
+    // relaxes for a moment during the swing keeps it.
+    constexpr float kReleaseGraceSeconds = 0.12f;
 }

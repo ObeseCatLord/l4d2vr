@@ -1851,6 +1851,28 @@ namespace
     {
         Vector anchorLocal = MagazineInteractionBoxCenterLocal(magazineBox);
         if (vr && vr->m_VrHandsEnabled) return anchorLocal;
+        const Vector size = magazineBox.maxs - magazineBox.mins;
+        const int insertion = MagazineInteractionDominantAxis(vr ? vr->m_MagazineInteractionMagazineInsertionAxisLocal : Vector(0.0f, -1.0f, 0.0f));
+        const int longest = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+        // The pump and Chrome shotguns' shell bone box (about 0.13 m); the auto
+        // shotgun and SPAS use their clip bone, whose larger box already sits
+        // clear of the fingers with the grip offset below.
+        constexpr float kSingleShellBoxMaxMeters = 0.15f;
+        const float insertionLength = insertion == 0 ? size.x : insertion == 1 ? size.y : size.z;
+        if (vr && vr->m_MagazineInteractionShotgunShellMode && longest == insertion &&
+            insertionLength <= kSingleShellBoxMaxMeters * std::max(0.001f, vr->m_VRScale))
+        {
+            // A single shell standing along the port's insertion line is held
+            // by its base, upright out of the fist as it goes in; the
+            // magazine-sized grip offset below would hide it in the fingers.
+            const Vector& axis = vr->m_MagazineInteractionMagazineInsertionAxisLocal;
+            const float toward = insertion == 0 ? axis.x : insertion == 1 ? axis.y : axis.z;
+            const Vector& end = toward < 0.0f ? magazineBox.mins : magazineBox.maxs;
+            if (insertion == 0) anchorLocal.x = end.x;
+            else if (insertion == 1) anchorLocal.y = end.y;
+            else anchorLocal.z = end.z;
+            return anchorLocal;
+        }
         const Vector freshHalf = MagazineInteractionFreshMagazineHalfExtentsSourceUnits(vr);
         const float configuredHeight = freshHalf.z * 2.0f;
         const float fallbackHeight = std::max(0.0f, magazineBox.maxs.z - magazineBox.mins.z);
@@ -4310,6 +4332,11 @@ bool VR::GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out)
         const MagazineInteractionBoxSnapshot& socket = fit ? m_MagazineInteractionFitSocketBox :
             capture ? m_MagazineInteractionSocketCaptureBox : m_MagazineInteractionSocketBox;
         out.fitDistance = m_MagazineInteractionFitDistance;
+        {
+            const Vector size = m_MagazineInteractionSocketBox.maxs - m_MagazineInteractionSocketBox.mins;
+            const int axis = MagazineInteractionDominantAxis(m_MagazineInteractionMagazineInsertionAxisLocal);
+            out.spareLength = std::fabs(axis == 0 ? size.x : axis == 1 ? size.y : size.z) / scale;
+        }
         if (MagazineInteractionMatrixLooksRenderable(world))
         {
             out.socketValid = true;
@@ -4348,6 +4375,8 @@ bool VR::GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out)
     out.gunForward = supportLeft
         ? (m_RightControllerForwardUnforced.IsZero() ? m_RightControllerForward : m_RightControllerForwardUnforced)
         : m_LeftControllerForward;
+    out.gunRight = supportLeft ? m_RightControllerRight : m_LeftControllerRight;
+    out.gunUp = supportLeft ? m_RightControllerUp : m_LeftControllerUp;
     out.supportHand = supportLeft ? m_LeftControllerPosAbs : m_RightControllerPosAbs;
     out.fireBlocked = IsMagazineInteractionBlockingFire();
     out.pumpNeedsCycle = m_ManualPumpBlockingFire.load(std::memory_order_acquire);
@@ -4355,6 +4384,80 @@ bool VR::GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out)
     out.chamberEmpty = m_MagazineInteractionChamberEmpty;
     out.pouchRange = MagazineInteractionPouchReachMeters(this);
     out.boltRange = MagazineInteractionResolveBoltGrabPaddingMeters(this);
+    return true;
+}
+
+bool VR::SelfTestMeasureHeldMagazine(SelfTestHeldMagazine& out)
+{
+    out = {};
+    if (!m_MagazineInteractionSocketValid || !m_MagazineInteractionLeftHandHolding)
+        return false;
+    VrHandMatrix4 held{};
+    {
+        std::lock_guard<std::mutex> lock(m_MagazineInteractionPoseMutex);
+        held = m_MagazineInteractionDetachedMagazineWorld;
+    }
+    // Where the spare sits when it is in: the shell in the port, or the
+    // magazine in the well the fit check uses (both on the live viewmodel).
+    VrHandMatrix4 seated = m_MagazineInteractionSocketWorld;
+    {
+        MagazineInteractionBoxSnapshot rebasedBox{};
+        VrHandMatrix4 rebasedWorld{};
+        if (MagazineInteractionRebaseBoxToCurrentViewmodelModelBasis(this, m_MagazineInteractionSocketBox, rebasedBox, rebasedWorld))
+            seated = rebasedWorld;
+    }
+    if (!m_MagazineInteractionShotgunShellMode)
+    {
+        if (m_MagazineInteractionFitValid && MagazineInteractionMatrixLooksRenderable(m_MagazineInteractionFitSocketWorld))
+            seated = m_MagazineInteractionFitSocketWorld;
+        else if (MagazineInteractionMatrixLooksRenderable(m_MagazineInteractionSocketCaptureWorld))
+            seated = m_MagazineInteractionSocketCaptureWorld;
+    }
+    VrHandMatrix4 heldRotation{}, seatedRotation{}, hand{};
+    const bool supportLeft = MagazineReloadSupportIsLeft();
+    const VrHandMatrix4 controller = MagazineInteractionBuildControllerWorldFromAxes(
+        supportLeft ? m_LeftControllerPosAbs : m_RightControllerPosAbs,
+        supportLeft ? m_LeftControllerForward : m_RightControllerForward,
+        supportLeft ? m_LeftControllerRight : m_RightControllerRight,
+        supportLeft ? m_LeftControllerUp : m_RightControllerUp);
+    if (!MagazineInteractionMatrixLooksRenderable(held) || !MagazineInteractionMatrixLooksRenderable(seated) ||
+        !l4d2vr_ammo_grip::RotationOf(held, heldRotation) || !l4d2vr_ammo_grip::RotationOf(seated, seatedRotation) ||
+        !l4d2vr_ammo_grip::RotationOf(controller, hand))
+        return false;
+    constexpr float kDeg = 180.0f / 3.14159265358979323846f;
+    auto axisAngle = [&](const Vector& local)
+    {
+        const Vector a = VrHandMath::Normalize(l4d2vr_ammo_grip::Rotate(heldRotation, local));
+        const Vector b = VrHandMath::Normalize(l4d2vr_ammo_grip::Rotate(seatedRotation, local));
+        return std::acos(std::clamp(VrHandMath::Dot(a, b), -1.0f, 1.0f)) * kDeg;
+    };
+    out.shell = m_MagazineInteractionShotgunShellMode;
+    // The box's longest side: a magazine's height, a shell's length.
+    const Vector size = m_MagazineInteractionSocketBox.maxs - m_MagazineInteractionSocketBox.mins;
+    const int longAxis = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+    const Vector longLocal(longAxis == 0 ? 1.0f : 0.0f, longAxis == 1 ? 1.0f : 0.0f, longAxis == 2 ? 1.0f : 0.0f);
+    out.liveLongAxisDeg = axisAngle(longLocal);
+    // The port's shell bone moves with the viewmodel's animations, so a shell
+    // is compared with where it sat in the gun, relative to the gun hand,
+    // when it was taken (a magazine well is rigid: compared live).
+    VrHandMatrix4 gun{};
+    if (out.shell && m_MagazineInteractionHoldWellInGunHandValid &&
+        l4d2vr_ammo_grip::RotationOf(MagazineInteractionBuildControllerWorldFromAxes(
+            supportLeft ? m_RightControllerPosAbs : m_LeftControllerPosAbs,
+            supportLeft ? m_RightControllerForward : m_LeftControllerForward,
+            supportLeft ? m_RightControllerRight : m_LeftControllerRight,
+            supportLeft ? m_RightControllerUp : m_LeftControllerUp), gun))
+        seatedRotation = VrHandMath::Multiply(gun, m_MagazineInteractionHoldWellInGunHand);
+    out.fullDeg = l4d2vr_ammo_grip::AngleBetweenDeg(heldRotation, seatedRotation);
+    out.insertionDeg = axisAngle(VrHandMath::Normalize(m_MagazineInteractionMagazineInsertionAxisLocal));
+    out.longAxisDeg = axisAngle(longLocal);
+    out.longAxis = longAxis;
+    out.heldInHandDeg = l4d2vr_ammo_grip::CalibrationDegrees(l4d2vr_ammo_grip::Relative(hand, heldRotation));
+    out.seatedInHandDeg = l4d2vr_ammo_grip::CalibrationDegrees(l4d2vr_ammo_grip::Relative(hand, seatedRotation));
+    // The seated magazine's axes in the hand frame (x right, y up, z back).
+    const VrHandMatrix4 seatedInHand = l4d2vr_ammo_grip::Relative(hand, seatedRotation);
+    for (int axis = 0; axis < 3; ++axis)
+        out.seatedAxesInHand[axis] = l4d2vr_ammo_grip::Axis(seatedInHand, axis);
     return true;
 }
 
@@ -6215,8 +6318,38 @@ bool VR::UpdateMagazineInteraction(
             return false;
         }
 
+        // Hold the spare as it sits in the gun relative to the gun hand (the
+        // well, or for a shell the shell in the port, rebased to the live
+        // viewmodel), leaned like Pavlov's magazines; the configured rotation
+        // turns it further in the hand. Without a usable well pose the
+        // configured rotation alone sets it, as before.
+        rebuildInputSocketFromSessionBox();
+        const VrHandMatrix4& well = inputSocketValid
+            ? (m_MagazineInteractionShotgunShellMode ? inputSocketWorld : inputSocketCaptureWorld)
+            : (!m_MagazineInteractionShotgunShellMode &&
+                MagazineInteractionMatrixLooksRenderable(m_MagazineInteractionSocketCaptureWorld))
+            ? m_MagazineInteractionSocketCaptureWorld : m_MagazineInteractionSocketWorld;
+        const VrHandMatrix4 gunController = MagazineInteractionBuildControllerWorldFromAxes(
+            gunPosition, gunForward, gunRight, gunUp);
+        VrHandMatrix4 hold{}, gunRotation{}, wellRotation{};
+        const bool natural = m_MagazineInteractionSocketValid && MagazineInteractionMatrixLooksRenderable(well) &&
+            l4d2vr_ammo_grip::NaturalHold(gunController, well,
+                l4d2vr_reload_tuning::MagazineHoldTiltDeg(activeWeaponIdInt),
+                m_MagazineInteractionMagazineHandRotationOffsetDeg, hold);
+        if (!natural)
+            hold = l4d2vr_ammo_grip::Calibration(m_MagazineInteractionMagazineHandRotationOffsetDeg);
+        m_MagazineInteractionHoldWellInGunHandValid = natural &&
+            l4d2vr_ammo_grip::RotationOf(gunController, gunRotation) && l4d2vr_ammo_grip::RotationOf(well, wellRotation);
+        if (m_MagazineInteractionHoldWellInGunHandValid)
+            m_MagazineInteractionHoldWellInGunHand = l4d2vr_ammo_grip::Relative(gunRotation, wellRotation);
+        {
+            const Vector euler = l4d2vr_ammo_grip::CalibrationDegrees(hold);
+            Game::logMsg("[VR][MagazineInteraction][Event] spare held %s: weaponId=%d tilt=%.0f hand rotation=(%.1f %.1f %.1f)",
+                natural ? "as in the gun" : "by the configured rotation", activeWeaponIdInt,
+                l4d2vr_reload_tuning::MagazineHoldTiltDeg(activeWeaponIdInt), euler.x, euler.y, euler.z);
+        }
         l4d2vr_ammo_grip::Pose pose{};
-        if (!l4d2vr_ammo_grip::Capture(controllerWorld, m_MagazineInteractionMagazineHandRotationOffsetDeg,
+        if (!l4d2vr_ammo_grip::Capture(controllerWorld, hold,
             outTargetHandAnchorWorld, outFreshCenterLocal, outFreshHandAnchorLocal, pose)) return false;
         m_MagazineInteractionControllerToMagazine = pose.orientationLocal;
         m_MagazineInteractionHeldMagazineCenterOffsetLocal = pose.centerOffsetLocal;
@@ -6786,12 +6919,6 @@ bool VR::UpdateMagazineInteraction(
             }
             return touching;
         }
-        const Vector detachedAxes[3] =
-        {
-            MagazineInteractionMatrixAxis(detachedWorld, 0),
-            MagazineInteractionMatrixAxis(detachedWorld, 1),
-            MagazineInteractionMatrixAxis(detachedWorld, 2)
-        };
         const Vector socketAxes[3] =
         {
             MagazineInteractionMatrixAxis(socketWorld, 0),
@@ -6871,13 +6998,12 @@ bool VR::UpdateMagazineInteraction(
             std::max(0.001f, m_VRScale);
         if (!m_MagazineInteractionShotgunShellMode)
         {
+            // The spare is held as it sits in the gun, so it must also face
+            // the way it goes in: backwards or upside down does not seat.
             const float minDot = std::cos(MagazineInteractionResolveSocketCaptureAngleDeg(this) *
                 3.14159265358979323846f / 180.0f);
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                if (std::fabs(VrHandMath::Dot(detachedAxes[axis], socketAxes[axis])) < minDot)
-                    return false;
-            }
+            if (!l4d2vr_ammo_grip::AxesAgree(detachedWorld, socketWorld, minDot))
+                return false;
         }
 
         const int insertionAxis = std::clamp(
@@ -8938,6 +9064,16 @@ bool VR::UpdateMagazineInteraction(
         if (fitsSocket)
         {
             if (RemoteShellRequestPending() || RemoteMagazineRequestPending()) return false;
+            {
+                // Where the spare was when it went in, for the self-test and diagnostics.
+                const Vector held = MagazineInteractionMatrixPointWorld(m_MagazineInteractionDetachedMagazineWorld,
+                    MagazineInteractionBoxCenterLocal(m_MagazineInteractionSocketBox));
+                const Vector hand = supportPosition;
+                LogMagazineInteractionEvent("fresh %s fits: %.3f m from the %s centre, held centre (%.1f %.1f %.1f) hand (%.1f %.1f %.1f) %.2fs after taking it",
+                    m_MagazineInteractionShotgunShellMode ? "shell" : "magazine", m_MagazineInteractionFitDistance,
+                    m_MagazineInteractionShotgunShellMode ? "port" : "well", held.x, held.y, held.z, hand.x, hand.y, hand.z,
+                    freshGrabAgeSeconds);
+            }
             if (choreographedNativeReload)
             {
                 m_MagazineInteractionFreshMagazineContactActive = false;

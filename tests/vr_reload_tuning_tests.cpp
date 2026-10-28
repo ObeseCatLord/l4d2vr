@@ -80,8 +80,24 @@ static void TestMagazineSlapGuns()
     }
 }
 
+static void TestMagazineHoldTilt()
+{
+    // Pavlov PickRotationOffset pitch: magazine -75 against its gun.
+    CHECK(Near(MagazineHoldTiltDeg(5), 15.0f));   // M16: -75 vs Gun_Base -60
+    CHECK(Near(MagazineHoldTiltDeg(26), 15.0f));  // AK-47
+    CHECK(Near(MagazineHoldTiltDeg(33), 15.0f));  // MP5
+    CHECK(Near(MagazineHoldTiltDeg(3), 15.0f));   // pump shotgun shell
+    CHECK(Near(MagazineHoldTiltDeg(1), 5.0f));    // pistol: -75 vs M9 -70
+    CHECK(Near(MagazineHoldTiltDeg(32), 5.0f));   // magnum
+    CHECK(Near(MagazineHoldTiltDeg(2), 5.0f));    // Uzi
+    CHECK(Near(MagazineHoldTiltDeg(7), 5.0f));    // MAC-10
+    for (int id = 0; id < 64; ++id)
+        CHECK(MagazineHoldTiltDeg(id) >= 0.0f && MagazineHoldTiltDeg(id) <= 15.0f);
+}
+
 int main()
 {
+    TestMagazineHoldTilt();
     TestPavlovNumbersCarryOver();
     TestClampsKeepRatios();
     TestEveryEntryIsUsable();

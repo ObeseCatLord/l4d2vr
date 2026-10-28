@@ -56,6 +56,105 @@ namespace l4d2vr_ammo_grip
         VrHandMath::Set(matrix, 2, 2, cy * cx);
         return matrix;
     }
+    // The rotation part of a pose with its axes made unit length and square
+    // (Gram-Schmidt on x then y); false when it is degenerate or mirrored.
+    inline bool RotationOf(const VrHandMatrix4& matrix, VrHandMatrix4& result)
+    {
+        for (int column = 0; column < 3; ++column)
+            if (!Finite(Axis(matrix, column))) return false;
+        Vector x = Axis(matrix, 0), y = Axis(matrix, 1);
+        const Vector z0 = Axis(matrix, 2);
+        if (x.Length() < 0.0001f || y.Length() < 0.0001f || z0.Length() < 0.0001f) return false;
+        x = x * (1.0f / x.Length());
+        y = y - x * VrHandMath::Dot(x, y);
+        if (y.Length() < 0.0001f) return false;
+        y = y * (1.0f / y.Length());
+        Vector z; CrossProduct(x, y, z);
+        if (VrHandMath::Dot(z, z0) <= 0.0f) return false;
+        result = VrHandMath::Identity();
+        for (int row = 0; row < 3; ++row)
+        {
+            VrHandMath::Set(result, row, 0, x[row]);
+            VrHandMath::Set(result, row, 1, y[row]);
+            VrHandMath::Set(result, row, 2, z[row]);
+        }
+        return Rigid(result);
+    }
+    // a^T * b for rotations: b expressed in a's frame.
+    inline VrHandMatrix4 Relative(const VrHandMatrix4& a, const VrHandMatrix4& b)
+    {
+        VrHandMatrix4 result = VrHandMath::Identity();
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                VrHandMath::Set(result, row, column, VrHandMath::Dot(Axis(a, row), Axis(b, column)));
+        return result;
+    }
+    // Angle of the rotation that turns a into b, in degrees.
+    inline float AngleBetweenDeg(const VrHandMatrix4& a, const VrHandMatrix4& b)
+    {
+        const float trace = VrHandMath::Dot(Axis(a, 0), Axis(b, 0)) +
+            VrHandMath::Dot(Axis(a, 1), Axis(b, 1)) + VrHandMath::Dot(Axis(a, 2), Axis(b, 2));
+        const float c = std::fmin(1.0f, std::fmax(-1.0f, (trace - 1.0f) * 0.5f));
+        return std::acos(c) * 180.0f / 3.14159265358979323846f;
+    }
+    // Calibration() angles of a rotation (x, then y, then z, as Calibration
+    // composes them).
+    inline Vector CalibrationDegrees(const VrHandMatrix4& rotation)
+    {
+        constexpr float degrees = 180.0f / 3.14159265358979323846f;
+        const float sy = std::fmin(1.0f, std::fmax(-1.0f, -VrHandMath::Get(rotation, 2, 0)));
+        return Vector(std::atan2(VrHandMath::Get(rotation, 2, 1), VrHandMath::Get(rotation, 2, 2)) * degrees,
+            std::asin(sy) * degrees,
+            std::atan2(VrHandMath::Get(rotation, 1, 0), VrHandMath::Get(rotation, 0, 0)) * degrees);
+    }
+    // How the off hand holds a spare magazine or shell (controller frame:
+    // x right, y up, z back). The natural hold is the hand turned as the gun
+    // hand holds the gun, then raised `tiltDeg` nose-up (Pavlov's magazine
+    // lean): there the spare sits exactly as it sits in the gun, the same
+    // relation to the gun hand as `socketWorld` has now. `offsetDeg` turns it
+    // further in the hand (ManualReloadMagazineHandRotationOffsetDeg).
+    inline bool NaturalHold(const VrHandMatrix4& gunController, const VrHandMatrix4& socketWorld,
+        float tiltDeg, const Vector& offsetDeg, VrHandMatrix4& result)
+    {
+        VrHandMatrix4 gun{}, socket{};
+        if (!std::isfinite(tiltDeg) || !Finite(offsetDeg) ||
+            !RotationOf(gunController, gun) || !RotationOf(socketWorld, socket)) return false;
+        // Natural hand = gun hand * Rx(tilt); the spare in that hand = socket.
+        const VrHandMatrix4 inGunHand = Relative(gun, socket);
+        const VrHandMatrix4 inNaturalHand = VrHandMath::Multiply(Calibration(Vector(-tiltDeg, 0.0f, 0.0f)), inGunHand);
+        VrHandMatrix4 hold = VrHandMath::Multiply(Calibration(offsetDeg), inNaturalHand);
+        if (!RotationOf(hold, hold)) return false;
+        result = hold; return true;
+    }
+    // A held magazine fits its well only facing the way it goes in: every
+    // axis within the capture angle, with its sign (a magazine turned 180
+    // degrees, backwards or upside down, does not seat).
+    inline bool AxesAgree(const VrHandMatrix4& held, const VrHandMatrix4& socket, float minDot)
+    {
+        for (int column = 0; column < 3; ++column)
+        {
+            Vector a = Axis(held, column), b = Axis(socket, column);
+            const float la = a.Length(), lb = b.Length();
+            if (!(la > 0.0001f) || !(lb > 0.0001f)) return false;
+            if (VrHandMath::Dot(a, b) / (la * lb) < minDot) return false;
+        }
+        return true;
+    }
+    inline bool Capture(const VrHandMatrix4& controller, const VrHandMatrix4& orientationLocal,
+        const Vector& palmWorld, const Vector& boxCenterLocal, const Vector& gripPointLocal, Pose& result)
+    {
+        if (!Rigid(controller) || !Rigid(orientationLocal) || !Finite(palmWorld) ||
+            !Finite(boxCenterLocal) || !Finite(gripPointLocal)) return false;
+        Pose pose{};
+        if (!RotationOf(orientationLocal, pose.orientationLocal)) return false;
+        const auto orientation = VrHandMath::Multiply(controller, pose.orientationLocal);
+        const Vector center = palmWorld + Rotate(orientation, boxCenterLocal - gripPointLocal);
+        const Vector delta = center - Origin(controller);
+        pose.centerOffsetLocal = Vector(VrHandMath::Dot(delta, Axis(controller, 0)),
+            VrHandMath::Dot(delta, Axis(controller, 1)), VrHandMath::Dot(delta, Axis(controller, 2)));
+        if (!Rigid(pose.orientationLocal) || !Finite(pose.centerOffsetLocal)) return false;
+        result = pose; return true;
+    }
     inline bool Capture(const VrHandMatrix4& controller, const Vector& rotationDegrees,
         const Vector& palmWorld, const Vector& boxCenterLocal, const Vector& gripPointLocal, Pose& result)
     {

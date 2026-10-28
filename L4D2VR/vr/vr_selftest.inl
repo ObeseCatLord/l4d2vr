@@ -2517,6 +2517,14 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 111:
             if (!glideDone(0.1f)) return false;
+            // Glide targets are world points; the player can be pushed while
+            // the hand travels. Follow the pump if it moved (up to 1.5 s).
+            if (meters(g.supportHand, g.boltGrabCenter) > 0.04f && inPhase < 1.5f)
+            {
+                m_SelfTestPoint = g.boltGrabCenter;
+                glide(g.boltGrabCenter, 0.1f);
+                return false;
+            }
             m_SelfTestMeasure = meters(g.supportHand, m_SelfTestPoint);
             button(m_ActionOffHandGrip, true);
             go(112);
@@ -2538,8 +2546,17 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 113:
             m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
             if (!glideDone(0.1f)) return false;
-            // All the way forward (a little past where it was taken).
-            glide(m_SelfTestPoint + g.gunForward * (0.06f * scale), 0.3f);
+            // A push on the player during the stroke shortens it against the
+            // gun; keep pulling until the pump is all the way back.
+            if (m_SelfTestMeasure < m_SelfTestMeasureB && inPhase < 1.5f &&
+                g.state == static_cast<int>(MagazineInteractionManualState::HoldingBolt))
+            {
+                glide(pullBack(m_SelfTestMeasureB - g.boltPull + 0.03f), 0.15f);
+                return false;
+            }
+            // All the way forward (a little past where it was taken), measured
+            // from where the pump is now.
+            glide(leftNow() + g.gunForward * ((g.boltPull + 0.06f) * scale), 0.3f);
             go(114);
             return false;
         case 114:
@@ -2574,6 +2591,12 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 121:
             if (!glideDone(0.15f)) return false;
+            // As for the pump: follow the pouch if the player was pushed.
+            if (g.pickupValid && meters(g.supportHand, g.pickupCenter) > 0.06f && inPhase < 1.5f)
+            {
+                glide(g.pickupCenter, 0.1f);
+                return false;
+            }
             m_SelfTestMeasure = g.pickupValid ? meters(g.supportHand, g.pickupCenter) : -1.0f;
             m_SelfTestClip0 = g.clip;
             m_SelfTestReserve0 = g.reserve;

@@ -201,12 +201,39 @@ namespace l4d2vr_magazine
     { return supported && !activeSession && retainedEmpty && clip > 0; }
     inline bool MayFinishShotgunLoading(bool shotgun, bool chamberEmpty, int clip, int shellsLoaded, bool gripDown)
     { return shotgun && chamberEmpty && gripDown && (clip > 0 || shellsLoaded > 0); }
-    inline bool PumpShouldStartAfterShot(bool needsCycle, int clip, int shellsLoaded)
+    inline bool PumpShouldStartAfterShot(bool needsCycle, int clip)
     {
-        // Empty tubes must accept shells first. A shell-loading session lets
-        // the user choose when to finish loading and grab the pump.
-        return needsCycle && clip > 0 && shellsLoaded == 0;
+        // Empty tubes must accept shells first. Once the tube holds a shell
+        // the pump waits to be cycled; shells can still be loaded meanwhile
+        // (the waiting pump never takes the shells away from the off hand).
+        return needsCycle && clip > 0;
     }
+    // Fresh ammo comes from the pouch only while the hand is at the pouch and
+    // not on the gun's bolt, slide or pump: racking next to the pouch is a rack.
+    inline bool MayTakeFreshAmmo(float pouchDistance, float pouchRange, float boltDistance, float boltRange)
+    {
+        if (!std::isfinite(pouchDistance) || !std::isfinite(pouchRange) || pouchDistance < 0.0f ||
+            pouchRange < 0.0f || pouchDistance > pouchRange)
+            return false;
+        const bool onBolt = std::isfinite(boltDistance) && std::isfinite(boltRange) && boltDistance >= 0.0f &&
+            boltDistance <= boltRange && boltDistance <= pouchDistance;
+        return !onBolt;
+    }
+    // A fresh magazine or shell seats only after it has been outside the well
+    // since it was taken, so ammo taken with the hand already at the gun never
+    // loads in the same motion.
+    class FreshInsertGate
+    {
+    public:
+        void Reset() { m_SeenOutside = false; }
+        bool Update(bool fitsSocket)
+        {
+            if (!fitsSocket) m_SeenOutside = true;
+            return fitsSocket && m_SeenOutside;
+        }
+    private:
+        bool m_SeenOutside = false;
+    };
 
     class NativeReloadLedger
     {

@@ -18,9 +18,11 @@ int main()
         Check(IsObjectPull(impulse)==pull);
         Check(!UseObjectPullPayload(false,impulse));
         Check(UseObjectPullPayload(true,impulse)==!grip);
-        Check(KeepNativeReloadGate(impulse)==(grip||pull));
+        // Only an ordinary command (impulse 0) can open the native reload gate.
+        Check(KeepNativeReloadGate(impulse)==(value!=0u && value!=236u));
     }
     Check(!UseObjectPullPayload(true,l4d2vr_grip::kReleaseImpulse));
     Check(!UseObjectPullPayload(true,l4d2vr_grip::kPickupImpulse));
     Check(UseObjectPullPayload(true,l4d2vr_grip::kBlockNativeReloadImpulse));
+    Check(KeepNativeReloadGate(238u) && KeepNativeReloadGate(100u) && !KeepNativeReloadGate(0u));
 }

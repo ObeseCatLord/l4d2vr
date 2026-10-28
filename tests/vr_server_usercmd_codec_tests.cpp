@@ -147,10 +147,17 @@ namespace
             EncodeVRUsercmd(c, Vec3(), Angles(), false);
             Check(DecodeVRUsercmd(c).reload == l4d2vr_server_pistol::ReloadPolicy::Preserve);
             c = SampleCommand(10, 20, 0.0f, 0.0f);
-            c.impulse = 101;   // an ordinary impulse survives
+            c.impulse = 101;   // an ordinary impulse survives and keeps the reload gate
             EncodeVRUsercmd(c, Vec3(), Angles(), false);
             const DecodedUsercmd d = DecodeVRUsercmd(c);
-            Check(d.reload == l4d2vr_server_pistol::ReloadPolicy::Native && c.impulse == 101 && d.intent == Intent::None);
+            Check(d.reload == l4d2vr_server_pistol::ReloadPolicy::Preserve && c.impulse == 101 && d.intent == Intent::None);
+            c = SampleCommand(10, 20, 0.0f, 0.0f);
+            c.impulse = 238;   // a gun bash with an empty gun must not start the stock reload
+            EncodeVRUsercmd(c, Vec3(), Angles(), false);
+            Check(DecodeVRUsercmd(c).reload == l4d2vr_server_pistol::ReloadPolicy::Preserve);
+            c = SampleCommand(10, 20, 0.0f, 0.0f);
+            EncodeVRUsercmd(c, Vec3(), Angles(), false);
+            Check(DecodeVRUsercmd(c).reload == l4d2vr_server_pistol::ReloadPolicy::Native);
         }
         // Object pull: entity index and hint leave weaponselect/weaponsubtype.
         {

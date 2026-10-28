@@ -1147,9 +1147,13 @@ void Game::logMsg(const char* fmt, ...)
         return;
     if (fmt && std::strncmp(fmt, "[VR][UseAim]", 12) == 0)
         return;
+    // Verbose reload diagnostics need VrHandsDebugLog; the always-on reload
+    // state and event lines (rate-limited at the source) do not.
     if (fmt &&
         (std::strncmp(fmt, "[VR][MagazineInteraction]", 25) == 0 ||
             std::strncmp(fmt, "[VR][MagazineInteractionFresh]", 30) == 0) &&
+        std::strncmp(fmt, "[VR][MagazineInteraction][State]", 32) != 0 &&
+        std::strncmp(fmt, "[VR][MagazineInteraction][Event]", 32) != 0 &&
         (!Hooks::m_VR || !Hooks::m_VR->m_VrHandsDebugLog))
         return;
 

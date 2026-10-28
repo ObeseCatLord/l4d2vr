@@ -43,6 +43,7 @@
 #include "vr_dual_pistols.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
+#include "vr_native_wrist_hud.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -2666,6 +2667,43 @@ public:
 	bool  m_LeftWristHudShowBattery = true;
 	bool  m_LeftWristHudShowTeammates = true;
 
+	// Wrist HUD style. Native (default): the wrists show crops of the game's own HUD
+	// (left: your health bar large, teammates' bars and names; right: the weapon and
+	// item panel), so fonts and graphics match the game. Custom: the drawn panels above.
+	bool  m_WristHudNativeStyle = true;
+	// Native style: clear the elements shown on a wrist from the floating HUD panel.
+	bool  m_WristHudNativeHideOnFloatingHud = true;
+	float m_LeftWristHudNativeWidthMeters = 0.11f;
+	float m_RightAmmoHudNativeWidthMeters = 0.065f;
+	// Native style render targets (index 0 = left wrist, 1 = right wrist). Created and
+	// written on the D3D thread under m_TextureMutex; published by m_NativeWristHudTexReady.
+	std::array<IDirect3DTexture9*, 2> m_D9NativeWristHudTex{};
+	std::array<IDirect3DSurface9*, 2> m_D9NativeWristHudSurface{};
+	std::array<SharedTextureHolder, 2> m_VKNativeWristHud{};
+	std::array<std::atomic<bool>, 2> m_NativeWristHudTexReady{};
+	// Used part of each texture, packed (width << 16) | height, and when it was last written.
+	std::array<std::atomic<uint32_t>, 2> m_NativeWristHudUsedSize{};
+	std::array<std::atomic<uint64_t>, 2> m_NativeWristHudContentMs{};
+	// Whether each wrist overlay was shown last frame (gates clearing the floating HUD).
+	std::array<std::atomic<bool>, 2> m_NativeWristHudShown{};
+	std::atomic<bool> m_NativeWristHudWanted{ false };
+	// Self-test: dump the HUD and both wrist textures on the next copy.
+	std::atomic<bool> m_NativeWristHudDumpRequested{ false };
+	std::atomic<int> m_NativeWristHudDumpCount{ 0 };
+	// Right wrist: the weapon panel's painted content is found from its alpha (read back a
+	// few frames after the copy, so it never stalls) and the crop is trimmed to it.
+	IDirect3DSurface9* m_D9NativeWristTrimRT = nullptr;
+	IDirect3DSurface9* m_D9NativeWristTrimSys = nullptr;
+	int m_NativeWristTrimW = 0;
+	int m_NativeWristTrimH = 0;
+	int m_NativeWristTrimPendingFrames = -1; // >= 0 while a readback is in flight
+	uint64_t m_NativeWristTrimLastMs = 0;
+	std::mutex m_NativeWristTrimMutex;
+	float m_NativeWristTrim[4] = { 0.0f, 0.0f, 1.0f, 1.0f }; // u0, v0, u1, v1 of the weapon panel
+	void* m_NativeHudPanelApi = nullptr;  // vgui2 VGUI_Panel009
+	void* m_NativeHudEngineVgui = nullptr; // engine VEngineVGui001
+	uint64_t m_NativeWristHudLastLayoutLogMs = 0;
+
 	// ----------------------------
 	// Hand HUD: world-quad mode (HMD-relative overlays using GPU textures)
 	//
@@ -2974,6 +3012,25 @@ public:
 	uint32_t m_SelfTestSerial = 0;
 	bool m_SelfTestPoseActive = false;
 	float m_SelfTestHeadDrop = 0.0f;
+	// Motion scenes: walk=, turnrate=, turn=, sway= hold until changed.
+	bool m_SelfTestWalkActive = false;
+	float m_SelfTestWalkX = 0.0f, m_SelfTestWalkY = 0.0f;
+	float m_SelfTestTurnRate = 0.0f;            // degrees per second of smooth turn
+	float m_SelfTestSwayDeg = 0.0f;             // head sway yaw amplitude (0 = still)
+	uint64_t m_SelfTestSwayStartMs = 0;
+	// track=: how far each drawn holster item moves relative to the eye drawing
+	// it, in the body frame, per eye (lag between the holster frame and the view).
+	struct SelfTestHolsterTrack
+	{
+		bool active = false;
+		Vector mn[2][l4d2vr_holster::kZoneCount];
+		Vector mx[2][l4d2vr_holster::kZoneCount];
+		uint32_t n[2][l4d2vr_holster::kZoneCount]{};
+	};
+	std::mutex m_SelfTestHolsterTrackMutex;
+	SelfTestHolsterTrack m_SelfTestHolsterTrack;
+	void SelfTestTrackHolsterDraw(int slot, const Vector& itemOrigin, const Vector& eyeOrigin);
+	bool GetWalkAxisForMove(float& x, float& y);
 	l4d2vr_selftest::Vec3 m_SelfTestRightLocal{ 0.35f, 0.2f, -0.3f };
 	l4d2vr_selftest::Vec3 m_SelfTestLeftLocal{ 0.35f, -0.2f, -0.35f };
 	QAngle m_SelfTestRightAngLocal{ 0.0f, 0.0f, 0.0f };
@@ -2994,6 +3051,27 @@ public:
 	Vector m_SelfTestPrevHmd{ 0.0f, 0.0f, 0.0f };
 	uint64_t m_SelfTestPrevPoseMs = 0;
 	bool m_SelfTestPrevValid = false;
+	// Scene steps (look=, lefthand=, righthand=) hold until changed or "=off",
+	// across later steps, so a following shot= photographs that scene.
+	bool m_SelfTestLookActive = false;
+	float m_SelfTestLookPitch = 0.0f;           // degrees, positive looks down
+	bool m_SelfTestSceneRightValid = false;
+	bool m_SelfTestSceneLeftValid = false;
+	l4d2vr_selftest::Vec3 m_SelfTestSceneRight{}; // holster body frame metres: x forward, y dominant side, z up
+	l4d2vr_selftest::Vec3 m_SelfTestSceneLeft{};
+	// Screenshots (shot=<name>): the next completed eye pair is read back on the
+	// render thread before submit and saved as l4d2vr_selftest_<name>.png.
+	std::mutex m_SelfTestShotMutex;
+	std::string m_SelfTestShotName;
+	int m_SelfTestShotEyes = 1;                 // bit 0 left eye, bit 1 right eye
+	std::atomic<uint32_t> m_SelfTestShotRequest{ 0u };
+	std::atomic<uint32_t> m_SelfTestShotDone{ 0u };
+	std::atomic<bool> m_SelfTestShotOk{ false };
+	// glowmat=<material>: draw every glow with this material instead (A/B tests).
+	std::atomic<IMaterial*> m_SelfTestGlowMaterial{ nullptr };
+	void SelfTestRequestShot(const std::string& name, int eyes);
+	void SelfTestCaptureEyes(IDirect3DSurface9* left, IDirect3DSurface9* right, bool deviceLocked);
+	bool SelfTestSaveEyePng(IDirect3DSurface9* source, int eyeIndex, bool deviceLocked, const std::string& path);
 	// One-shot request to tag the next usercmd with the server shove intent (impulse 238).
 	std::atomic<bool> m_PhysicalShoveImpulsePending{ false };
 	// Shoves and melee come from motion only; the triggers do not shove or swing.
@@ -4560,6 +4638,11 @@ public:
 	void UpdateScopeOverlayTransform();
 	void UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBinds = nullptr);
 	void DestroyHandHudWorldQuadTextures();
+	// Native wrist HUD (WristHudStyle=native, vr_native_wrist_hud.inl).
+	bool WantsNativeWristHudCapture() const;
+	void OnNativeHudPainted(IMatRenderContext* renderContext);
+	void RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job);
+	void DestroyNativeWristHudTextures();
 	void GetPoses();
 	bool UpdatePosesAndActions();
 	void UpdateInputActionState(const l4d2vr_input::ActionFrame::Attempt& attempt);

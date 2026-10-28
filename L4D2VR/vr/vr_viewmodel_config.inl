@@ -2943,6 +2943,15 @@ void VR::ParseConfigFile()
         const Vector ang = getVector3("RightAmmoHudAngleOffset", def);
         m_RightAmmoHudAngleOffset = { ang.x, ang.y, ang.z };
     }
+    {
+        // WristHudStyle=native (game HUD crops) or custom (drawn panels).
+        std::string style = getString("WristHudStyle", m_WristHudNativeStyle ? "native" : "custom");
+        std::transform(style.begin(), style.end(), style.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        m_WristHudNativeStyle = style != "custom";
+    }
+    m_WristHudNativeHideOnFloatingHud = getBool("WristHudNativeHideOnFloatingHud", m_WristHudNativeHideOnFloatingHud);
+    m_LeftWristHudNativeWidthMeters = std::clamp(getFloat("LeftWristHudNativeWidthMeters", m_LeftWristHudNativeWidthMeters), 0.02f, 0.5f);
+    m_RightAmmoHudNativeWidthMeters = std::clamp(getFloat("RightAmmoHudNativeWidthMeters", m_RightAmmoHudNativeWidthMeters), 0.02f, 0.5f);
 
 
     // Hand HUD: world-quad mode (HMD-relative overlays using GPU textures)
@@ -3269,6 +3278,10 @@ void VR::ParseConfigFile()
         for (int zone = 0; zone < l4d2vr_holster::kZoneCount; ++zone)
         {
             m_HolsterLayout.center[zone] = getVector3(kZoneKeys[zone], defaults.center[zone]);
+            // Moving a holster moves its drawn item with it (back items keep
+            // hanging behind the zone by the default amount).
+            m_HolsterLayout.drawCenter[zone] = defaults.drawCenter[zone] +
+                (m_HolsterLayout.center[zone] - defaults.center[zone]);
             m_HolsterLayout.radius[zone] = std::clamp(getFloat(kRadiusKeys[zone], defaults.radius[zone]), 0.04f, 0.5f);
         }
     }

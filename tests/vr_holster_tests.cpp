@@ -186,14 +186,49 @@ static void TestHolsterPlacementNearHead()
         const float meters = std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
         CHECK(meters > 0.1f && meters < 0.8f);
         CHECK(pose.origin.z < frame.head.z); // below the head
-        const Vector local = ToLocal(frame, pose.origin);
-        CHECK(Near(local.x, layout.center[zone].x, 0.001f));
-        CHECK(Near(local.y, layout.center[zone].y, 0.001f));
-        CHECK(Near(local.z, layout.center[zone].z, 0.001f));
+        // The item's visible centre (reference bone + centre offset) is on the draw centre.
+        const Vector centerUnits = ReferenceToCenterUnits(ItemShape::LongGun);
+        const Vector center = pose.origin + pose.axisX * centerUnits.x + pose.axisY * centerUnits.y +
+            pose.axisZ * centerUnits.z;
+        const Vector local = ToLocal(frame, center);
+        CHECK(Near(local.x, layout.drawCenter[zone].x, 0.001f));
+        CHECK(Near(local.y, layout.drawCenter[zone].y, 0.001f));
+        CHECK(Near(local.z, layout.drawCenter[zone].z, 0.001f));
     }
     // Hip (slot 2) sits on the dominant (right) side: yaw 90 faces +y, right is +x.
     const ItemPose hip = BuildItemPose(frame, layout, Zone::Secondary, ItemShape::Pistol);
     CHECK(hip.origin.x > frame.head.x);
+}
+
+static void TestBackItemsOutOfForwardView()
+{
+    // Back items hang behind and below the head; hip and chest items are drawn
+    // in their grab zones.
+    const BodyFrame frame = MakeFrame(Vector(0.0f, 0.0f, 64.0f), 0.0f, false, 43.2f, 1.0f);
+    const Layout layout{};
+    for (int zone = 0; zone < kZoneCount; ++zone)
+    {
+        const bool back = IsBackZone(static_cast<Zone>(zone));
+        const Vector& draw = layout.drawCenter[zone];
+        if (back)
+            CHECK(draw.x <= -0.20f && draw.z <= -0.25f && draw.z >= -0.45f);
+        else
+            CHECK(Near(draw.x, layout.center[zone].x, 1e-4f) && Near(draw.y, layout.center[zone].y, 1e-4f) &&
+                Near(draw.z, layout.center[zone].z, 1e-4f));
+    }
+    // A slung rifle (about 50 units, 15 behind the bone and 35 ahead of it)
+    // stays behind the eyes along its whole length.
+    const ItemPose rifle = BuildItemPose(frame, layout, Zone::Primary, ItemShape::LongGun);
+    for (float along = -15.0f; along <= 35.0f; along += 5.0f)
+        CHECK(ToLocal(frame, rifle.origin + rifle.axisZ * along).x < -0.15f);
+    CHECK(rifle.axisY.x < -0.99f); // sights face away from the back
+    // A kit on the back lies flat against it: its thin local X runs front to back.
+    const ItemPose kit = BuildItemPose(frame, layout, Zone::Medical, ItemShape::Equipment);
+    CHECK(std::fabs(kit.axisX.x) > 0.99f && kit.axisY.z > 0.99f);
+    CHECK(ToLocal(frame, kit.origin).x < -0.2f);
+    // Chest items stand upright.
+    const ItemPose pills = BuildItemPose(frame, layout, Zone::Consumable, ItemShape::Equipment);
+    CHECK(pills.axisY.z > 0.99f);
 }
 
 int main()
@@ -202,6 +237,7 @@ int main()
     TestDiagPacer();
     TestControlReadyUsesCameraReport();
     TestHolsterPlacementNearHead();
+    TestBackItemsOutOfForwardView();
     TestYawDeadband();
     TestZones();
     TestItemPoseOrthonormal();

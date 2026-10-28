@@ -424,6 +424,11 @@ ReloadPavlovTuning=true
 # Pavlov magazine slap (AK-47, SG552, military sniper): take a fresh magazine from
 # the pouch with the old one still in, then strike the old one out with it.
 MagazineSlapEnabled=true
+# Pavlov split of grips and triggers: the off-hand grip grabs (holsters, the front of
+# the gun, pickups); its trigger takes magazines and shells from the pouch, seats them,
+# pulls the seated magazine out and works slides, bolts and pumps (hold the trigger to
+# hold). The free hand's trigger never fires or shoves. false = the grip does both.
+MagazineInteractionTriggerInteractions=true
 # Right stick: push forward to jump, pull back to crouch (hold). Turning pauses meanwhile.
 StickJumpCrouch=true
 # Pulling the right stick back toggles crouch (true) or crouches while held (false).

@@ -5807,8 +5807,15 @@ bool VR::UpdateMagazineInteraction(
     bool leftGripJustPressed,
     bool leftSupportHandDown,
     bool leftSupportHandJustPressed,
-    bool allowGameplayInputOnTwoHandedGripRelease)
+    bool allowGameplayInputOnTwoHandedGripRelease,
+    bool foregripSplit,
+    bool foregripInputDown,
+    bool foregripInputJustPressed)
 {
+    // The foregrip's own input: the grip when the trigger does the reload
+    // interactions (Pavlov), else the same input as everything else.
+    const bool foregripDown = foregripSplit ? foregripInputDown : leftGripDown;
+    const bool foregripJustPressed = foregripSplit ? foregripInputJustPressed : leftGripJustPressed;
     m_NativeAmmoReloadFallbackActive.store(false, std::memory_order_release);
     m_PhysicalReloadOwnsStockInput.store(false, std::memory_order_release);
     C_WeaponCSBase* activeWeapon = nullptr;
@@ -6171,11 +6178,6 @@ bool VR::UpdateMagazineInteraction(
     {
         triggerMagazineInteractionHapticForHand(true, durationSeconds, frequency, amplitude, priority);
         triggerMagazineInteractionHapticForHand(false, durationSeconds, frequency, amplitude, priority);
-    };
-
-    auto leftControllerPosRelativeToHmd = [&]() -> Vector
-    {
-        return supportPosition - m_HmdPosAbs;
     };
 
     auto leftControllerPosRelativeToWeapon = [&]() -> Vector
@@ -7313,7 +7315,7 @@ bool VR::UpdateMagazineInteraction(
     };
 
     const bool continuousPumpSupport = m_ManualPumpEnabled && activeWeaponUsesShotgunShells &&
-        m_VrHandsTwoHandedGripHeldMode && leftGripDown &&
+        m_VrHandsTwoHandedGripHeldMode && foregripDown &&
         (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForFreshMagazine ||
             m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab ||
             m_MagazineInteractionState == MagazineInteractionManualState::HoldingBolt);
@@ -7348,9 +7350,9 @@ bool VR::UpdateMagazineInteraction(
     {
         if (m_VrHandsTwoHandedGripActive)
         {
-            if (leftGripJustPressed)
+            if (foregripJustPressed)
             {
-                if (leftGripDown && !allowGameplayInputOnTwoHandedGripRelease)
+                if (!foregripSplit && leftGripDown && !allowGameplayInputOnTwoHandedGripRelease)
                     m_MagazineInteractionSuppressLeftInputUntilRelease = true;
                 releaseMountFriendlyGrip("grip", true);
                 return false;
@@ -7431,14 +7433,14 @@ bool VR::UpdateMagazineInteraction(
         }
 
         if ((
-                (!isSeparateInput && (m_VrHandsTwoHandedGripHeldMode ? !leftGripDown : leftGripJustPressed)) ||
+                (!isSeparateInput && (m_VrHandsTwoHandedGripHeldMode ? !foregripDown : foregripJustPressed)) ||
                 (isSeparateInput && (m_VrHandsTwoHandedGripHeldMode ? !leftSupportHandDown : leftSupportHandJustPressed))
             ) &&
             m_VrHandsTwoHandedGripActive)
         {
             m_VrHandsTwoHandedGripActive = false;
             m_VrHandsTwoHandedGripWeaponId = 0;
-            if (leftGripDown && !allowGameplayInputOnTwoHandedGripRelease)
+            if (!foregripSplit && leftGripDown && !allowGameplayInputOnTwoHandedGripRelease)
                 m_MagazineInteractionSuppressLeftInputUntilRelease = true;
             triggerMagazineInteractionHaptic(0.018f, 85.0f, 0.28f, 2);
             if (m_VrHandsDebugLog)
@@ -7450,13 +7452,15 @@ bool VR::UpdateMagazineInteraction(
             return false;
         }
 
+        // With trigger interactions the grip never takes a magazine, so a
+        // grip near the magazine well is free to take the foregrip.
         if ((
-                (!isSeparateInput && leftGripJustPressed) ||
+                (!isSeparateInput && foregripJustPressed) ||
                 (isSeparateInput && leftSupportHandJustPressed)
             ) &&
             (!IsMagazineInteractionManualActive() || activeWeaponUsesShotgunShells) &&
             !m_MagazineInteractionLeftHandHolding &&
-            (!leftHandTouchesMagazineForGripExclusion() || isSeparateInput ||
+            (foregripSplit || !leftHandTouchesMagazineForGripExclusion() || isSeparateInput ||
              releaseButtonRequired))
         {
             float twoHandTargetDistance = FLT_MAX;
@@ -7466,7 +7470,7 @@ bool VR::UpdateMagazineInteraction(
                 m_VrHandsTwoHandedGripActive = true;
                 m_VrHandsTwoHandedGripWeaponId = activeWeaponIdInt;
                 m_VrHandsTwoHandedGripWeaponTag = reinterpret_cast<uintptr_t>(activeWeapon);
-                if (leftGripDown && !m_VrHandsTwoHandedGripHeldMode)
+                if (!foregripSplit && leftGripDown && !m_VrHandsTwoHandedGripHeldMode)
                     m_MagazineInteractionSuppressLeftInputUntilRelease = true;
                 triggerMagazineInteractionHaptic(0.020f, 95.0f, 0.32f, 2);
                 if (m_VrHandsDebugLog)
@@ -7755,7 +7759,11 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionFreshPickupBasisValid = false;
         m_MagazineInteractionFreshPickupForward = {};
         m_MagazineInteractionFreshPickupRight = {};
-        m_MagazineInteractionGrabStartLeftControllerPosAbs = leftControllerPosRelativeToHmd();
+        // The hand pull measures the hand in the gun's frame
+        // (leftControllerPosRelativeToWeapon), so it starts in that frame too;
+        // a head-relative start made every grab of the AK-47's magazine count
+        // as a full pull at once.
+        m_MagazineInteractionGrabStartLeftControllerPosAbs = leftControllerPosRelativeToWeapon();
         m_MagazineInteractionStarted = now;
         m_MagazineInteractionFreshGrabbedAt = {};
         m_MagazineInteractionPostInsertStarted = {};
@@ -7910,11 +7918,15 @@ bool VR::UpdateMagazineInteraction(
         return true;
     };
 
-    auto catchRetainedMagazine = [&]() -> bool
+    // anywhere: the hand pulled the magazine out itself and still holds it, so
+    // it stays in the hand however far it was pulled.
+    auto catchRetainedMagazine = [&](bool anywhere = false) -> bool
     {
+        // (The self-test's unfocused window reports a visible cursor.)
         if (!leftGripDown || m_MagazineInteractionShotgunShellMode || m_MouseModeEnabled || m_SuppressPlayerInput ||
             !m_FirstPersonControlReady.load(std::memory_order_acquire) || m_Game->m_EngineClient->IsPaused() ||
-            (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible())) return false;
+            (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible() &&
+                !l4d2vr_selftest::Get().active.load(std::memory_order_acquire))) return false;
         const bool tracked = HasFreshMagazineInteractionTracking();
         refreshSocketFromPublishedViewmodelBox();
         rebuildInputSocketFromSessionBox();
@@ -7926,7 +7938,7 @@ bool VR::UpdateMagazineInteraction(
         const auto& socket = inputSocketValid ? inputSocketBox : m_MagazineInteractionSocketBox;
         const float distance = MagazineInteractionDistanceToBoxSourceUnits(socket, palm);
         const float padding = std::clamp(m_MagazineInteractionGrabPaddingMeters, 0.0f, 0.05f) * m_VRScale;
-        if (!l4d2vr_magazine::MayCatchEjectedMagazine(leftGripDown, tracked, distance, padding)) return false;
+        if (!(anywhere && tracked) && !l4d2vr_magazine::MayCatchEjectedMagazine(leftGripDown, tracked, distance, padding)) return false;
         Vector gripPoint(0.0f, 0.0f, 0.0f), center(0.0f, 0.0f, 0.0f);
         if (!snapFreshMagazineCenterOffsetToLeftHandAnchor(controller, wrist, palm, gripPoint, center)) return false;
         m_MagazineInteractionRetainedMagazineHeld = true;
@@ -7937,7 +7949,8 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionFreshGrabbedAt = now;
         m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
         setDetachedMagazineWorld(buildFreshHeldMagazineWorldFromLeftHand());
-        Game::logMsg("[VR][RetainedMagazine] caught weaponId=%d distance=%.2f", activeWeaponIdInt, distance);
+        Game::logMsg("[VR][RetainedMagazine] %s weaponId=%d distance=%.2f", anywhere ? "pulled out and held" : "caught",
+            activeWeaponIdInt, distance);
         return true;
     };
 
@@ -8149,7 +8162,7 @@ bool VR::UpdateMagazineInteraction(
                     m_MagazineInteractionSocketWorld, !MagazineReloadSupportIsLeft(), &m_MagazineInteractionSlapDropVelocity);
                 keepFreshMagazineAfterSlap();
             }
-            else if (!catchRetainedMagazine())
+            else if (!catchRetainedMagazine(m_MagazineInteractionEjectByHand))
             {
                 if (!m_MagazineInteractionEjectByHand) refreshSocketFromPublishedViewmodelBox();
                 SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
@@ -9210,9 +9223,19 @@ bool VR::UpdateMagazineInteraction(
         if (!leftGripDown)
         {
             // Letting go puts the fresh magazine back in the pouch; nothing changed.
-            Game::logMsg("[VR][MagazineSlap] fresh magazine returned to the pouch; old magazine still seated");
-            CancelMagazineInteractionManual();
-            return false;
+            // A hand that relaxes for a moment mid-swing keeps it (and may still slap).
+            if (m_MagazineSlapReleasedAt.time_since_epoch().count() == 0)
+                m_MagazineSlapReleasedAt = now;
+            if (std::chrono::duration<float>(now - m_MagazineSlapReleasedAt).count() >= l4d2vr_mag_slap::kReleaseGraceSeconds)
+            {
+                Game::logMsg("[VR][MagazineSlap] fresh magazine returned to the pouch; old magazine still seated");
+                CancelMagazineInteractionManual();
+                return false;
+            }
+        }
+        else
+        {
+            m_MagazineSlapReleasedAt = {};
         }
         l4d2vr_mag_slap::Params slap{};
         if (!MagazineInteractionSlapParams(this, activeWeaponIdInt, slap) ||
@@ -9238,29 +9261,75 @@ bool VR::UpdateMagazineInteraction(
         if (!MagazineInteractionMatrixLooksRenderable(heldWorld))
             return false;
         const l4d2vr_mag_slap::Box seated = MagazineSlapBox(seatedBox);
+        const l4d2vr_mag_slap::Box held = MagazineSlapBoxAt(heldWorld, m_MagazineInteractionSocketBox);
         l4d2vr_mag_slap::Vec3 outward{};
         if (!l4d2vr_mag_slap::OutwardAxis(seated, MagazineSlapVec(m_MagazineInteractionMagazineInsertionAxisLocal), outward))
             return false;
-        const float gapMeters = l4d2vr_mag_slap::Gap(seated, MagazineSlapBoxAt(heldWorld, m_MagazineInteractionSocketBox)) /
-            std::max(0.001f, m_VRScale);
+        const float gapMeters = l4d2vr_mag_slap::Gap(seated, held) / std::max(0.001f, m_VRScale);
+        const l4d2vr_mag_slap::ForgivingParams forgiving = l4d2vr_mag_slap::Forgiving(slap);
+        const bool touching = l4d2vr_mag_slap::TouchingSwept(seated, held,
+            m_MagazineSlapPrevHeldValid ? &m_MagazineSlapPrevHeldRel : nullptr,
+            forgiving.contactMeters * std::max(0.001f, m_VRScale));
+        m_MagazineSlapPrevHeldRel = l4d2vr_mag_slap::RelativeOrigin(seated, held);
+        m_MagazineSlapPrevHeldValid = l4d2vr_mag_slap::Finite(m_MagazineSlapPrevHeldRel);
+
+        // Two strike estimates, both the spare's hand relative to the gun's in
+        // tracking space (walking and stick turns never count): the runtime's
+        // velocity, and the change in position since the last frame.
         const bool supportIsLeft = MagazineReloadSupportIsLeft();
-        const l4d2vr_mag_slap::Vec3 strike = l4d2vr_mag_slap::RelativeVelocity(
-            MagazineSlapVec(supportIsLeft ? m_LeftControllerPose.TrackedDeviceVel : m_RightControllerPose.TrackedDeviceVel),
-            MagazineSlapVec(supportIsLeft ? m_RightControllerPose.TrackedDeviceVel : m_LeftControllerPose.TrackedDeviceVel),
-            m_RotationOffset);
-        const l4d2vr_mag_slap::Result result = l4d2vr_mag_slap::Evaluate(slap, strike, outward, gapMeters);
+        const TrackedDevicePoseData& supportPose = supportIsLeft ? m_LeftControllerPose : m_RightControllerPose;
+        const TrackedDevicePoseData& gunPose = supportIsLeft ? m_RightControllerPose : m_LeftControllerPose;
+        l4d2vr_mag_slap::Vec3 strikes[2];
+        int strikeCount = 0;
+        strikes[strikeCount++] = l4d2vr_mag_slap::RelativeVelocity(
+            MagazineSlapVec(supportPose.TrackedDeviceVel), MagazineSlapVec(gunPose.TrackedDeviceVel), m_RotationOffset);
+        {
+            const float dt = m_MagazineSlapPrevAt.time_since_epoch().count() != 0
+                ? std::chrono::duration<float>(now - m_MagazineSlapPrevAt).count() : 0.0f;
+            if (m_MagazineSlapPrevTrackingValid && dt >= 0.002f && dt <= 0.1f)
+            {
+                const Vector moved = (supportPose.TrackedDevicePos - m_MagazineSlapPrevSupportTracking) -
+                    (gunPose.TrackedDevicePos - m_MagazineSlapPrevGunTracking);
+                strikes[strikeCount++] = l4d2vr_mag_slap::RotateYaw(MagazineSlapVec(moved * (1.0f / dt)), m_RotationOffset);
+            }
+            if (!m_MagazineSlapPrevTrackingValid || dt >= 0.002f)
+            {
+                m_MagazineSlapPrevSupportTracking = supportPose.TrackedDevicePos;
+                m_MagazineSlapPrevGunTracking = gunPose.TrackedDevicePos;
+                m_MagazineSlapPrevAt = now;
+                m_MagazineSlapPrevTrackingValid = true;
+            }
+        }
+        const float slapClock = std::chrono::duration<float>(now - m_MagazineInteractionFreshGrabbedAt).count();
+        const l4d2vr_mag_slap::Detector::Outcome result = m_MagazineSlapDetector.Update(forgiving, slapClock,
+            strikes, strikeCount, outward, MagazineSlapVec(gunForward), touching);
         updateMagazineInteractionContactHaptic(
             m_MagazineInteractionOldMagazineContactActive,
-            result.contact,
+            touching,
             0.012f,
             150.0f,
             0.22f);
+        if (result.nearMiss)
+        {
+            m_MagazineSlapNearMissSerial.fetch_add(1u, std::memory_order_acq_rel);
+            if (m_MagazineSlapNearMissLogAt.time_since_epoch().count() == 0 ||
+                std::chrono::duration<float>(now - m_MagazineSlapNearMissLogAt).count() >= 0.5f)
+            {
+                m_MagazineSlapNearMissLogAt = now;
+                Game::logMsg(
+                    "[VR][MagazineSlap] touched the old magazine without a slap: fastest %.2f m/s (min %.2f) direction %.2f (min %.2f) into-well %.2f (max %.2f) gap=%.3f m",
+                    result.strike.speed, forgiving.speedMetersPerSecond, result.strike.direction.dot, forgiving.dot,
+                    result.strike.direction.intoWell, forgiving.maxIntoWellDot, gapMeters);
+            }
+        }
         if (!result.hit)
             return false;
         Game::logMsg(
-            "[VR][MagazineSlap] slap weaponId=%d speed=%.2f m/s (min %.2f) dot=%.2f (min %.2f) gap=%.3f m outward=(%.2f %.2f %.2f)",
-            activeWeaponIdInt, result.speed, slap.speedMetersPerSecond, result.dot, slap.forwardDot, gapMeters,
+            "[VR][MagazineSlap] slap weaponId=%d speed=%.2f m/s (min %.2f) direction=%.2f (min %.2f) into-well=%.2f gap=%.3f m %.0f ms before the touch outward=(%.2f %.2f %.2f)",
+            activeWeaponIdInt, result.strike.speed, forgiving.speedMetersPerSecond, result.strike.direction.dot, forgiving.dot,
+            result.strike.direction.intoWell, gapMeters, (slapClock - result.strike.time) * 1000.0f,
             outward.x, outward.y, outward.z);
+        const l4d2vr_mag_slap::Vec3 strike = strikes[0];
         return performMagazineSlap("slap",
             gunHandVelocity + MagazineSlapVector(strike) * (0.5f * m_VRScale), slap);
     }
@@ -9456,6 +9525,14 @@ bool VR::UpdateMagazineInteraction(
         }
     }
 
+    // Pulling the seated magazine out by hand (Pavlov's hand pull): always on
+    // the AK-47; with trigger interactions also on the other slap guns (SG552,
+    // military sniper), whose magazine otherwise needs the release button.
+    l4d2vr_mag_slap::Params slapProbe{};
+    const bool slapGun = MagazineInteractionSlapParams(this, activeWeaponIdInt, slapProbe);
+    const bool handPullAllowed = !releaseButtonRequired || (foregripSplit && slapGun);
+    const float oldMagazineGrabPadding = std::max(0.0f, m_MagazineInteractionGrabPaddingMeters) * m_VRScale;
+
     // Pavlov tactical reload (MagazineSlapEnabled): on guns whose magazine can be
     // slapped out, the off hand takes a fresh magazine from the pouch while the
     // old one is still seated. Other guns offer it only once the old one is out.
@@ -9502,7 +9579,25 @@ bool VR::UpdateMagazineInteraction(
         const bool pouchInReach = pouchValid && l4d2vr_magazine::MayTakeFreshAmmo(pouchDistance, pouchRange, boltDistance,
             std::max(0.0f, MagazineInteractionResolveBoltGrabPaddingMeters(this)) * m_VRScale);
         updateMagazineInteractionContactHaptic(m_MagazineSlapPouchContactActive, pouchInReach, 0.012f, 150.0f, 0.22f);
-        if (pouchInReach && leftGripJustPressed && HasFreshMagazineInteractionTracking())
+        // A hand on the seated magazine pulls it out (below) rather than taking
+        // a spare from a pouch that is also in reach.
+        bool handOnSeatedMagazine = false;
+        if (pouchInReach && leftGripJustPressed && handPullAllowed)
+        {
+            MagazineInteractionBoxSnapshot touchBox = seatedBox;
+            MagazineInteractionBoxSnapshot rebasedBox{};
+            VrHandMatrix4 rebasedWorld{};
+            if (MagazineInteractionRebaseBoxToCurrentViewmodelModelBasis(this, seatedBox, rebasedBox, rebasedWorld))
+                touchBox = rebasedBox;
+            const float seatedDistance = MagazineInteractionNearestLeftHandProbeDistanceSourceUnits(
+                touchBox, supportPosition, supportAngles, m_VRScale, this);
+            // Whichever the hand is closer to: the seated magazine or the pouch.
+            handOnSeatedMagazine = seatedDistance <= oldMagazineGrabPadding && seatedDistance <= pouchDistance;
+            if (handOnSeatedMagazine)
+                LogMagazineInteractionEvent("hand on the seated magazine (%.3f m): pulling it out, not taking a spare (pouch %.3f m)",
+                    seatedDistance / std::max(0.001f, m_VRScale), pouchDistance / std::max(0.001f, m_VRScale));
+        }
+        if (pouchInReach && leftGripJustPressed && !handOnSeatedMagazine && HasFreshMagazineInteractionTracking())
         {
             beginMagazineInteractionSession(seatedBox);
             const VrHandMatrix4 controllerWorld = MagazineInteractionBuildViewmodelReprojectedControllerWorld(
@@ -9532,6 +9627,11 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazineForSlap;
             m_MagazineInteractionLeftHandHolding = true;
             m_MagazineInteractionFreshGrabbedAt = now;
+            m_MagazineSlapDetector.Reset();
+            m_MagazineSlapPrevHeldValid = false;
+            m_MagazineSlapPrevTrackingValid = false;
+            m_MagazineSlapPrevAt = {};
+            m_MagazineSlapReleasedAt = {};
             m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
             setDetachedMagazineWorld(buildFreshHeldMagazineWorldFromLeftHand());
             Game::logMsg(
@@ -9546,8 +9646,9 @@ bool VR::UpdateMagazineInteraction(
     m_MagazineInteractionBoltContactActive = false;
 
     // Attached magazines require the release button in physical-controls mode.
-    // An off-hand grip near the magazine well must not start an ejection.
-    if (releaseButtonRequired)
+    // An off-hand grip near the magazine well must not start an ejection (slap
+    // guns with trigger interactions may be pulled by hand, see above).
+    if (!handPullAllowed)
         return reloadCommandPending();
 
     if (!MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId))
@@ -9563,8 +9664,10 @@ bool VR::UpdateMagazineInteraction(
         return false;
     }
 
+    // A full magazine stays put for a grip that brushes it; the trigger is a
+    // deliberate pull, so with trigger interactions a full one comes out too.
     const int maxClip = MagazineInteractionDefaultMaxClip(activeWeaponId, box.modelName);
-    if (maxClip > 0 && activeClip >= maxClip)
+    if (maxClip > 0 && activeClip >= maxClip && !foregripSplit)
     {
         m_MagazineInteractionOldMagazineContactActive = false;
         if (leftGripJustPressed)
@@ -9585,7 +9688,7 @@ bool VR::UpdateMagazineInteraction(
         return false;
     }
 
-    const float grabPadding = std::max(0.0f, m_MagazineInteractionGrabPaddingMeters) * m_VRScale;
+    const float grabPadding = oldMagazineGrabPadding;
     MagazineInteractionBoxSnapshot oldMagazineTouchBox = box;
     VrHandMatrix4 oldMagazineTouchWorld = MagazineInteractionBuildBoxWorld(box);
     if (!activeWeaponUsesShotgunShells)
@@ -9616,7 +9719,9 @@ bool VR::UpdateMagazineInteraction(
         150.0f,
         0.22f);
 
-    if (!leftGripJustPressed)
+    // A hand holding the foregrip holds nothing else (its trigger may still
+    // work a pump or bolt above).
+    if (!leftGripJustPressed || (foregripSplit && m_VrHandsTwoHandedGripActive))
         return false;
 
     if (!touchingOldMagazine)

@@ -43,20 +43,42 @@ class InputProfileTests(unittest.TestCase):
         for name in ('WeaponGrip', 'OffHandGrip', 'MagazineRelease'):
             self.assertEqual(actions['/actions/main/in/' + name]['requirement'], 'optional')
 
-    def test_reload_controls_have_distinct_gameplay_buttons(self):
-        sources = self.profile['bindings']['/actions/main']['sources']
-        gameplay = ('MagazineRelease', 'OffHandGrip', 'Flashlight', 'Jump')
+    def _paths_by_action(self, profile):
         paths = {}
-        for source in sources:
+        for source in profile['bindings']['/actions/main']['sources']:
             for value in source.get('inputs', {}).values():
-                action = value['output'].split('/')[-1]
-                if action in gameplay:
-                    paths[action] = source['path']
-        self.assertEqual(paths['MagazineRelease'], '/user/hand/right/input/a')
-        self.assertEqual(paths['OffHandGrip'], '/user/hand/left/input/grip')
-        self.assertEqual(paths['Flashlight'], '/user/hand/left/input/x')
-        self.assertEqual(paths['Jump'], '/user/hand/right/input/joystick')
-        self.assertEqual(len(set(paths.values())), len(gameplay))
+                paths.setdefault(value['output'].split('/')[-1], set()).add(source['path'])
+        return paths
+
+    def test_reload_controls_have_distinct_gameplay_buttons(self):
+        paths = self._paths_by_action(self.profile)
+        self.assertEqual(paths['MagazineRelease'], {'/user/hand/right/input/a'})
+        self.assertEqual(paths['OffHandGrip'], {'/user/hand/left/input/grip'})
+        # The free hand's trigger does the reload interactions (SecondaryAttack
+        # from the left hand), its grip grabs.
+        self.assertEqual(paths['SecondaryAttack'], {'/user/hand/left/input/trigger'})
+        self.assertIn('/user/hand/right/input/joystick', paths['Flashlight'])
+        self.assertNotIn('Jump', paths)  # right stick forward jumps (StickJumpCrouch)
+        used = [paths[a] for a in ('MagazineRelease', 'OffHandGrip', 'SecondaryAttack')]
+        self.assertEqual(len(set().union(*used)), 3)
+
+    def test_right_stick_click_toggles_the_flashlight(self):
+        for entry in self.manifest['default_bindings']:
+            name = entry['binding_url']
+            with self.subTest(profile=name):
+                sources = self.profiles[name]['bindings']['/actions/main']['sources']
+                clicks = [source.get('inputs', {}).get('click', {}).get('output') for source in sources
+                          if source['path'] in ('/user/hand/right/input/joystick', '/user/hand/right/input/thumbstick')
+                          and source['mode'] == 'joystick']
+                self.assertEqual(clicks, ['/actions/main/in/Flashlight'])
+
+    def test_free_hand_grip_and_trigger_are_separate_actions(self):
+        for name, profile in self.profiles.items():
+            with self.subTest(profile=name):
+                paths = self._paths_by_action(profile)
+                self.assertEqual(paths.get('OffHandGrip'), {'/user/hand/left/input/grip'})
+                self.assertEqual(paths.get('SecondaryAttack'), {'/user/hand/left/input/trigger'})
+                self.assertEqual(paths.get('PrimaryAttack'), {'/user/hand/right/input/trigger'})
 
 
 if __name__ == '__main__':

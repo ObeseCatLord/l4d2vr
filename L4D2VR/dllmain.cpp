@@ -3035,6 +3035,8 @@ namespace
         { "2026-10-28_pavlov_fresh_magazine_reach", "MagazineInteractionFreshMagazineGrabRangeMeters", "0.20" },
         { "2026-10-28_pavlov_socket_capture_radius", "MagazineInteractionSocketCaptureRadiusMeters", "0.10" },
         { "2026-10-28_pavlov_socket_capture_angle", "MagazineInteractionSocketCaptureAngleDeg", "45" },
+        // Pavlov grips grab, the off-hand trigger reloads.
+        { "2026-10-28_pavlov_trigger_interactions", "MagazineInteractionTriggerInteractions", "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3205,6 +3207,7 @@ namespace
         sampleKeys.insert("GripToggle");
         sampleKeys.insert("ReloadPavlovTuning");
         sampleKeys.insert("MagazineSlapEnabled");
+        sampleKeys.insert("MagazineInteractionTriggerInteractions");
         sampleKeys.insert("StickJumpCrouch");
         sampleKeys.insert("StickCrouchToggle");
         sampleKeys.insert("MotionOnlyMeleeAndShove");

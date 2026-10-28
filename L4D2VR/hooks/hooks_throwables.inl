@@ -526,6 +526,12 @@ namespace
 #endif
 	}
 
+	static void HandThrowNoteSpawn(const Vector& origin, const Vector& velocity, int command)
+	{
+		if (Hooks::m_VR)
+			Hooks::m_VR->NoteHandThrowServerSpawn(origin, velocity, command);
+	}
+
 	static void* ManualThrowProjectileCreate(
 		ManualThrowableKind kind,
 		tThrowableProjectileCreate original,
@@ -561,7 +567,26 @@ namespace
 		const Vector finalPosition = pending.origin;
 		const QAngle finalAngles = pending.angles;
 		const Vector finalVelocity = pending.velocity;
-		const Vector finalAngularVelocity = pending.angularVelocity;
+		// A hand throw keeps ThrowGrenade's own tumble.
+		const Vector finalAngularVelocity = pending.hand ? angularVelocity : pending.angularVelocity;
+		if (pending.hand)
+		{
+			player.handThrowSpawnedCommand = pending.handCommand;
+			HandThrowNoteSpawn(finalPosition, finalVelocity, pending.handCommand);
+			const unsigned long long nowMs = GetTickCount64();
+			Game::logMsg(
+				"[VR][HandThrow] spawn type=%s player=%d command=%d origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f) speed=%.1f nativeVel=(%.1f %.1f %.1f) receiveToSpawnMs=%llu ticksAfterRelease=0",
+				ManualThrowKindName(kind),
+				playerIndex,
+				pending.handCommand,
+				finalPosition.x, finalPosition.y, finalPosition.z,
+				finalVelocity.x, finalVelocity.y, finalVelocity.z,
+				std::sqrt(finalVelocity.x * finalVelocity.x + finalVelocity.y * finalVelocity.y + finalVelocity.z * finalVelocity.z),
+				velocity.x, velocity.y, velocity.z,
+				pending.handDecodedAtMs ? nowMs - static_cast<unsigned long long>(pending.handDecodedAtMs) : 0ull);
+			pending = {};
+			return original(finalPosition, finalAngles, finalVelocity, finalAngularVelocity, owner);
+		}
 		pending = {};
 
 		Game::logMsg(
@@ -4496,4 +4521,350 @@ void* __cdecl Hooks::dVomitJarProjectileCreate(
 		velocity,
 		angularVelocity,
 		owner);
+}
+
+// ---- Hand throws on the mod's listen host (HandThrow, impulse 244) ----------
+// The release command carries the client-measured hand velocity. When that
+// command executes (CBasePlayer::PlayerRunCommand), the grenade's own throw
+// state machine is told the throw time has passed and the pin is not held, so
+// ItemPostFrame throws inside the same command (RemoveAmmo, ThrowGrenade ->
+// EmitGrenade -> Create), with no pin-pull or throw animation wait; the Create
+// hook above puts the projectile at the hand with the hand's velocity.
+namespace
+{
+    struct HandThrowServerFields
+    {
+        bool resolved = false;
+        bool ok = false;
+        int pinPulled = -1;      // CBaseCSGrenade::m_bPinPulled
+        int throwTime = -1;      // CBaseCSGrenade::m_fThrowTime
+        int weaponIdle = -1;     // CBaseCombatWeapon::m_flTimeWeaponIdle
+        int nextAttack = -1;     // CBaseCombatCharacter::m_flNextAttack
+    };
+    static HandThrowServerFields s_HandThrowFields;
+
+    // SendProp offsets straight from server.dll's table construction code
+    // ("push offset; push name"), so a game update cannot leave stale numbers.
+    static int HandThrowFindServerProp(const unsigned char* base, const IMAGE_SECTION_HEADER* sections, int count,
+        const unsigned char* text, size_t textSize, const char* name)
+    {
+        const size_t length = std::strlen(name) + 1u;   // with the terminator
+        int result = -1;
+        for (int s = 0; s < count; ++s)
+        {
+            const IMAGE_SECTION_HEADER& section = sections[s];
+            if ((section.Characteristics & IMAGE_SCN_MEM_READ) == 0u || (section.Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0u)
+                continue;
+            const unsigned char* data = base + section.VirtualAddress;
+            const size_t size = section.Misc.VirtualSize;
+            if (size < length || !IsReadableMemoryRange(data, size))
+                continue;
+            for (size_t i = 0; i + length <= size; ++i)
+            {
+                if (data[i] != static_cast<unsigned char>(name[0]) || std::memcmp(data + i, name, length) != 0)
+                    continue;
+                const uint32_t va = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(data + i));
+                const int offset = l4d2vr_hand_throw::FindSendPropPushOffset(text, textSize, va);
+                if (offset < 0)
+                    continue;
+                if (result >= 0 && result != offset)
+                    return -1;
+                result = offset;
+            }
+        }
+        return result;
+    }
+
+    static const HandThrowServerFields& HandThrowResolveServerFields()
+    {
+        HandThrowServerFields& f = s_HandThrowFields;
+        if (f.resolved)
+            return f;
+        f.resolved = true;
+        HMODULE server = GetModuleHandleA("server.dll");
+        if (!server)
+            return f;
+#ifdef _MSC_VER
+        __try
+#endif
+        {
+            const auto* base = reinterpret_cast<const unsigned char*>(server);
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+            if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+                return f;
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(base + dos->e_lfanew);
+            if (nt->Signature != IMAGE_NT_SIGNATURE)
+                return f;
+            const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
+            const int count = nt->FileHeader.NumberOfSections;
+            const unsigned char* text = nullptr;
+            size_t textSize = 0u;
+            for (int s = 0; s < count; ++s)
+                if ((sections[s].Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0u && !text)
+                {
+                    text = base + sections[s].VirtualAddress;
+                    textSize = sections[s].Misc.VirtualSize;
+                }
+            if (!text || !IsReadableMemoryRange(text, textSize))
+                return f;
+            const int redraw = HandThrowFindServerProp(base, sections, count, text, textSize, "m_bRedraw");
+            f.pinPulled = HandThrowFindServerProp(base, sections, count, text, textSize, "m_bPinPulled");
+            f.throwTime = HandThrowFindServerProp(base, sections, count, text, textSize, "m_fThrowTime");
+            f.weaponIdle = HandThrowFindServerProp(base, sections, count, text, textSize, "m_flTimeWeaponIdle");
+            f.nextAttack = HandThrowFindServerProp(base, sections, count, text, textSize, "m_flNextAttack");
+            // DT_BaseCSGrenade keeps m_bRedraw, m_bPinPulled and m_fThrowTime together.
+            f.ok = redraw > 0 && f.pinPulled == redraw + 1 && f.throwTime == redraw + 4 && f.weaponIdle > 0 &&
+                f.nextAttack > 0;
+        }
+#ifdef _MSC_VER
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            f.ok = false;
+        }
+#endif
+        Game::logMsg("[VR][HandThrow] listen host grenade fields %s: pin=0x%X throwTime=0x%X idle=0x%X nextAttack=0x%X",
+            f.ok ? "resolved" : "unavailable", f.pinPulled, f.throwTime, f.weaponIdle, f.nextAttack);
+        return f;
+    }
+
+    static bool HandThrowListenBackendReady()
+    {
+        return Hooks::s_ManualThrowHooksReady && Hooks::hkPistolPlayerRunCommand.isEnabled && Hooks::m_Game &&
+            Hooks::m_Game->m_Offsets && Hooks::m_Game->m_Offsets->GetActiveWeapon.valid &&
+            ManualThrowIdentityBindingsReady() && HandThrowResolveServerFields().ok;
+    }
+
+    template <class T> static bool HandThrowWrite(void* object, int offset, T value)
+    {
+        if (!object || offset <= 0)
+            return false;
+        unsigned char* field = static_cast<unsigned char*>(object) + offset;
+        if (!IsReadableMemoryRange(field, sizeof(T)))
+            return false;
+#ifdef _MSC_VER
+        __try { *reinterpret_cast<T*>(field) = value; return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+#else
+        *reinterpret_cast<T*>(field) = value;
+        return true;
+#endif
+    }
+
+    template <class T> static bool HandThrowRead(const void* object, int offset, T& value)
+    {
+        if (!object || offset <= 0)
+            return false;
+        const unsigned char* field = static_cast<const unsigned char*>(object) + offset;
+        if (!IsReadableMemoryRange(field, sizeof(T)))
+            return false;
+#ifdef _MSC_VER
+        __try { value = *reinterpret_cast<const T*>(field); return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+#else
+        value = *reinterpret_cast<const T*>(field);
+        return true;
+#endif
+    }
+
+    static void* HandThrowServerActiveWeapon(void* owner, int& weaponId)
+    {
+        weaponId = 0;
+        if (!owner || !Hooks::m_Game || !Hooks::m_Game->m_Offsets || !Hooks::m_Game->m_Offsets->GetActiveWeapon.valid)
+            return nullptr;
+#ifdef _MSC_VER
+        __try
+#endif
+        {
+            using Active = void* (__thiscall*)(void*);
+            auto* weapon = reinterpret_cast<Server_WeaponCSBase*>(
+                reinterpret_cast<Active>(Hooks::m_Game->m_Offsets->GetActiveWeapon.address)(owner));
+            if (weapon)
+                weaponId = weapon->GetWeaponID();
+            return weapon;
+        }
+#ifdef _MSC_VER
+        __except (EXCEPTION_EXECUTE_HANDLER) { weaponId = 0; return nullptr; }
+#endif
+    }
+
+    // The body's own velocity from the decoded pose history (origin = hand - hand relative to the body).
+    static Vector HandThrowBodyVelocity(const Player& player)
+    {
+        int picked[4]{};
+        int count = 0;
+        for (int i = player.manualThrowPoseCount - 1; i >= 0 && count < 4; --i)
+        {
+            const ManualThrowPoseSample& s = player.manualThrowPoseSamples[static_cast<size_t>(i)];
+            if (s.valid && s.hasPlayerRelativePosition)
+                picked[count++] = i;
+        }
+        if (count < 2)
+            return {};
+        std::array<float, 4> t{};
+        std::array<l4d2vr_hand_throw::V3, 4> p{};
+        for (int k = 0; k < count; ++k)
+        {
+            const ManualThrowPoseSample& s = player.manualThrowPoseSamples[static_cast<size_t>(picked[count - 1 - k])];
+            const Vector o = s.position - s.playerRelativePosition;
+            t[static_cast<size_t>(k)] = static_cast<float>(s.tick) / 30.0f;
+            p[static_cast<size_t>(k)] = l4d2vr_hand_throw::V3(o.x, o.y, o.z);
+        }
+        l4d2vr_hand_throw::V3 v{};
+        if (!l4d2vr_hand_throw::OriginVelocity(t, p, count, v))
+            return {};
+        // A respawn or teleport inside the window is not a velocity.
+        if (v.Length() > 2000.0f)
+            return {};
+        return Vector(v.x, v.y, v.z);
+    }
+
+    struct HandThrowExecution
+    {
+        bool active = false;
+        int index = -1;
+        int command = 0;
+        void* owner = nullptr;
+        void* weapon = nullptr;
+        l4d2vr_throw::EntityIdentity weaponIdentity{};
+        float savedNextAttack = 0.0f;
+    };
+
+    // Before the release command runs: arm the native throw for this command.
+    static HandThrowExecution HandThrowBeginCommand(void* owner, const CUserCmd* command)
+    {
+        HandThrowExecution e{};
+        if (!owner || !command || !Hooks::m_VR || !Hooks::m_VR->m_ManualThrowEnabled || !Hooks::m_Game)
+            return e;
+        const int index = ManualThrowResolveOwnerPlayerIndex(owner);
+        if (!Hooks::m_Game->IsValidPlayerIndex(index))
+            return e;
+        Player& player = Hooks::m_Game->m_PlayersVRInfo[static_cast<size_t>(index)];
+        HandThrowRequest& request = player.handThrowRequest;
+        if (!request.valid || request.command != command->command_number)
+        {
+            if (request.valid && command->command_number > request.command + 64)
+                request = {};
+            return e;
+        }
+        const HandThrowRequest r = request;
+        request = {};
+        const char* reason = nullptr;
+        int weaponId = 0;
+        void* const weapon = HandThrowServerActiveWeapon(owner, weaponId);
+        l4d2vr_throw::EntityIdentity ownerIdentity{}, weaponIdentity{};
+        void* weaponOwner = nullptr;
+        if (!HandThrowListenBackendReady()) reason = "backend";
+        else if (!player.isUsingVR || !ManualEmptyHandsPlaceholderOwnerIsLiveSurvivor(owner)) reason = "owner";
+        else if (!weapon || weaponId != r.weaponId || !ManualThrowWeaponIdIsThrowable(weaponId)) reason = "item";
+        else if (!ManualThrowCaptureIdentity(owner, ownerIdentity) || !ManualThrowCaptureIdentity(weapon, weaponIdentity) ||
+            !ManualThrowReadWeaponOwner(weaponIdentity, weaponOwner) || weaponOwner != owner) reason = "identity";
+        if (reason)
+        {
+            Game::logMsg("[VR][HandThrow] release ignored player=%d command=%d weaponId=%d active=%d reason=%s",
+                index, r.command, r.weaponId, weaponId, reason);
+            return e;
+        }
+        const HandThrowServerFields& f = HandThrowResolveServerFields();
+
+        // The hand stays within arm's reach of the body.
+        Vector origin = r.position;
+        Vector body{};
+        if (ManualThrowGetPlayerOrigin(owner, body))
+        {
+            const Vector chest = body + Vector(0.0f, 0.0f, 48.0f);
+            Vector reach = origin - chest;
+            const float distance = reach.Length();
+            const float maxReach = 1.2f * (Hooks::m_VR->m_VRScale > 1.0f ? Hooks::m_VR->m_VRScale : 43.2f) + 24.0f;
+            if (std::isfinite(distance) && distance > maxReach)
+                origin = chest + reach * (maxReach / distance);
+            else if (!std::isfinite(distance))
+                origin = chest;
+        }
+        const Vector bodyVelocity = HandThrowBodyVelocity(player);
+        const l4d2vr_hand_throw::V3 v = l4d2vr_hand_throw::ComposeVelocity(
+            l4d2vr_hand_throw::V3(r.handVelocity.x, r.handVelocity.y, r.handVelocity.z),
+            l4d2vr_hand_throw::V3(bodyVelocity.x, bodyVelocity.y, bodyVelocity.z),
+            Hooks::m_VR->m_ManualThrowHandVelocityScale, Hooks::m_VR->m_ManualThrowMaxVelocity);
+
+        ManualThrowPending pending{};
+        pending.valid = true;
+        pending.hand = true;
+        pending.handCommand = r.command;
+        pending.handDecodedAtMs = r.decodedAtMs;
+        pending.weaponId = weaponId;
+        pending.releaseTick = player.manualThrowLastTick;
+        pending.owner = owner;
+        pending.sourceWeapon = weapon;
+        pending.sourceWeaponVtable = ManualThrowReadEntityVtable(weapon);
+        pending.ownerIdentity = ownerIdentity;
+        pending.sourceIdentity = weaponIdentity;
+        pending.origin = origin;
+        pending.angles = r.angles;
+        pending.velocity = Vector(v.x, v.y, v.z);
+        player.manualThrowPending = pending;
+        player.handThrowSpawnedCommand = 0;
+
+        float savedNextAttack = 0.0f;
+        HandThrowRead<float>(owner, f.nextAttack, savedNextAttack);
+        const bool armed = HandThrowWrite<unsigned char>(weapon, f.pinPulled, 0u) &&
+            HandThrowWrite<float>(weapon, f.throwTime, 0.001f) && HandThrowWrite<float>(owner, f.nextAttack, 0.0f);
+        if (!armed)
+        {
+            HandThrowWrite<float>(weapon, f.throwTime, 0.0f);
+            HandThrowWrite<float>(owner, f.nextAttack, savedNextAttack);
+            player.manualThrowPending = {};
+            Game::logMsg("[VR][HandThrow] release ignored player=%d command=%d reason=fields", index, r.command);
+            return e;
+        }
+        Game::logMsg("[VR][HandThrow] release player=%d command=%d weaponId=%d hand=(%.1f %.1f %.1f) body=(%.1f %.1f %.1f) "
+            "receiveToRunMs=%llu", index, r.command, weaponId, r.handVelocity.x, r.handVelocity.y, r.handVelocity.z,
+            bodyVelocity.x, bodyVelocity.y, bodyVelocity.z,
+            static_cast<unsigned long long>(GetTickCount64() - r.decodedAtMs));
+        e.active = true;
+        e.index = index;
+        e.command = r.command;
+        e.owner = owner;
+        e.weapon = weapon;
+        e.weaponIdentity = weaponIdentity;
+        e.savedNextAttack = savedNextAttack;
+        return e;
+    }
+
+    // After the release command ran: the empty hand switches right away, or
+    // a throw the game refused is undone so it cannot fire later by itself.
+    static void HandThrowEndCommand(const HandThrowExecution& e)
+    {
+        if (!e.active || !Hooks::m_Game || !Hooks::m_Game->IsValidPlayerIndex(e.index))
+            return;
+        Player& player = Hooks::m_Game->m_PlayersVRInfo[static_cast<size_t>(e.index)];
+        const HandThrowServerFields& f = HandThrowResolveServerFields();
+        const bool spawned = player.handThrowSpawnedCommand == e.command;
+        const bool weaponAlive = ManualThrowIdentityMatches(e.weaponIdentity);
+        if (spawned)
+        {
+            if (weaponAlive)
+                HandThrowWrite<float>(e.weapon, f.weaponIdle, 0.0f);
+        }
+        else
+        {
+            if (weaponAlive)
+                HandThrowWrite<float>(e.weapon, f.throwTime, 0.0f);
+            float nextAttack = 0.0f;
+            if (HandThrowRead<float>(e.owner, f.nextAttack, nextAttack) && nextAttack < e.savedNextAttack)
+                HandThrowWrite<float>(e.owner, f.nextAttack, e.savedNextAttack);
+            Game::logMsg("[VR][HandThrow] not executed player=%d command=%d (the game refused the throw this command)",
+                e.index, e.command);
+        }
+        if (player.manualThrowPending.valid && player.manualThrowPending.hand)
+            player.manualThrowPending = {};
+        player.handThrowSpawnedCommand = 0;
+    }
+}
+
+uint32_t Hooks::ListenHostFeatureMask()
+{
+    uint32_t mask = l4d2vr_features::kListenHostMask;
+    if (HandThrowListenBackendReady())
+        mask |= l4d2vr_features::HandThrow;
+    return mask;
 }

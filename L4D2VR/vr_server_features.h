@@ -18,9 +18,13 @@ namespace l4d2vr_features
     constexpr std::uint32_t PillGive = 0x080u;
     constexpr std::uint32_t PoseV3 = 0x100u;
     constexpr std::uint32_t InstantDeploy = 0x200u;
-    constexpr std::uint32_t kKnownMask = 0x3FFu;
+    constexpr std::uint32_t HandThrow = 0x400u;      // grenades leave the hand in the release command
+    constexpr std::uint32_t kKnownMask = 0x7FFu;
+    // Everything a dedicated plugin built before HandThrow advertises.
+    constexpr std::uint32_t kPreHandThrowMask = kKnownMask & ~HandThrow;
 
-    // What the mod's own listen-server hooks implement.
+    // What the mod's own listen-server hooks implement (HandThrow is added at
+    // run time when its server.dll fields resolved: Hooks::ListenHostFeatureMask).
     constexpr std::uint32_t kListenHostMask =
         MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | PoseV3;
 

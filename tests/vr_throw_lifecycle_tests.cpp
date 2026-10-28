@@ -47,6 +47,7 @@ struct Player
     Vector controllerPos{10.0f,20.0f,30.0f};
     QAngle controllerAngle{0.0f,0.0f,0.0f};
     ManualThrowPending manualThrowPending{};
+    int handThrowSpawnedCommand=0;
 };
 struct Offset { uintptr_t address=0u; bool valid=true; };
 struct Offsets { Offset PhysicalGunOwner,ManualInventoryWeaponDrop,GetActiveWeapon,CBaseEntity_entindex; };
@@ -112,6 +113,8 @@ static bool ManualEmptyHandsPlaceholderOwnerIsLiveSurvivor(void* owner)
 { return owner && static_cast<Entity*>(owner)->edict->live; }
 static bool ManualThrowGetPlayerOrigin(void*,Vector& origin) { origin=Vector(0.0f,0.0f,0.0f); return true; }
 static int ManualPistolExecuteSplit(int,void*,const ManualThrowPending&) { return 0; }
+static int handSpawnNotes=0;
+static void HandThrowNoteSpawn(const Vector&,const Vector&,int) { ++handSpawnNotes; }
 static bool ManualThrowEstimateReleaseVelocity(Player&,int,int,float,Vector& velocity,Vector& angular)
 { velocity=Vector(1.0f,2.0f,3.0f); angular=Vector(4.0f,5.0f,6.0f); return true; }
 static bool ManualCarryThrowTeleportDroppedEntity(void* entity,const ManualThrowPending&,bool)
@@ -181,6 +184,19 @@ int main()
         s.Create(kind);
         Require(creates==1 && Same(receivedPosition,physical) && !s.PlayerState().manualThrowPending.valid,
             "Native projectile Create consumes exactly its projectile pending");
+    }
+    {
+        // A hand throw (listen host): the release command's pending is applied
+        // as is, and the spawn is reported back for that command.
+        Scene s(14); Require(s.Prepare(),"A hand throw binds owner and source like a native release");
+        auto& pending=s.PlayerState().manualThrowPending;
+        pending.hand=true; pending.handCommand=4321; pending.origin=Vector(1.0f,2.0f,3.0f);
+        pending.velocity=Vector(300.0f,0.0f,100.0f);
+        s.Create();
+        Require(creates==1 && Same(receivedPosition,Vector(1.0f,2.0f,3.0f)) && !pending.valid &&
+            s.PlayerState().handThrowSpawnedCommand==4321 && handSpawnNotes==1,"A hand throw spawns at the hand and reports its command");
+        s.Create();
+        Require(creates==2 && Same(receivedPosition,nativePosition),"A consumed hand throw never repositions a later projectile");
     }
     {
         Scene s(14); Require(s.Prepare(),"A grenade release prepares before a slot switch");

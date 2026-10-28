@@ -37,6 +37,7 @@ namespace l4d2vr_server
         bool attackDown = false;
         bool useDown = false;
         bool inventoryRelease = false;
+        l4d2vr_hand_throw::Payload handThrow{};
         std::uint64_t decodedAtMs = 0u;
     };
 
@@ -98,6 +99,10 @@ namespace l4d2vr_server
     struct PendingThrow
     {
         bool valid = false;
+        bool hand = false;            // HandThrow: spawn in the release command itself
+        std::uint64_t decodedAtMs = 0u;
+        Vec3 handVelocity{};          // client-measured, before scaling
+        Vec3 playerVelocity{};
         int weaponId = 0;
         int releaseCommand = 0;
         int executedSinceRelease = 0;
@@ -144,6 +149,7 @@ namespace l4d2vr_server
         MinIntervalLimiter holsterLimiter{};
         MinIntervalLimiter shoveLimiter{};
         MinIntervalLimiter pillLimiter{};
+        MinIntervalLimiter handThrowLimiter{};
         IntentBudget intentBudget{};
         std::uint32_t reachClamps = 0u;
 
@@ -210,6 +216,7 @@ namespace l4d2vr_server
         pose.attackDown = d.attackDown;
         pose.useDown = d.useDown;
         pose.inventoryRelease = IsInventoryRelease(d);
+        pose.handThrow = d.intent == Intent::HandThrow ? d.handThrow : l4d2vr_hand_throw::Payload{};
         pose.decodedAtMs = nowMs;
         p.commands.Store(pose);
     }

@@ -31,6 +31,9 @@ namespace l4d2vr_server
         Vec3 eye{};                        // native EyePosition (not overridden)
         std::uint64_t nowMs = 0u;
         float tickSeconds = 1.0f / 30.0f;
+        bool handThrowBackend = false;     // grenade netprops + Create hooks resolved
+        bool havePlayerVelocity = false;
+        Vec3 playerVelocity{};             // the body's own velocity (units/s)
     };
 
     struct ExecContext
@@ -44,6 +47,7 @@ namespace l4d2vr_server
         int addButtons = 0;
         bool reachClamped = false;
         bool throwPrepared = false;
+        bool handThrow = false;            // throw the grenade inside this command
         bool shoveStarted = false;
         bool pillGiveStarted = false;
     };
@@ -93,6 +97,36 @@ namespace l4d2vr_server
                 ctx.throwPrepared = pending.valid;
             }
             p.throwAimRemaining = c.throwAimCommands;
+        }
+
+        // Hand throw: the projectile leaves the hand inside this very command,
+        // at the (reach-clamped) hand, with the client-measured hand velocity.
+        if (pose->intent == Intent::HandThrow && pose->handThrow.valid && in.handThrowBackend &&
+            (in.features & kFeatureHandThrow) != 0u && in.liveSurvivor && !in.incapacitated && !in.controlled &&
+            !in.usingMounted && weapon::IsThrowable(in.weaponId) &&
+            in.weaponId == l4d2vr_hand_throw::WeaponIdFromKind(pose->handThrow.kind) &&
+            p.handThrowLimiter.Allow(in.nowMs, c.handThrowMinIntervalMs))
+        {
+            const l4d2vr_hand_throw::V3& h = pose->handThrow.velocity;
+            const Vec3 player = in.havePlayerVelocity && in.playerVelocity.Finite() ? in.playerVelocity : Vec3{};
+            const l4d2vr_hand_throw::V3 v = l4d2vr_hand_throw::ComposeVelocity(h,
+                l4d2vr_hand_throw::V3(player.x, player.y, player.z), c.throwHandVelocityScale, c.throwMaxSpeed);
+            PendingThrow pending{};
+            pending.valid = true;
+            pending.hand = true;
+            pending.decodedAtMs = pose->decodedAtMs;
+            pending.handVelocity = Vec3(h.x, h.y, h.z);
+            pending.playerVelocity = player;
+            pending.weaponId = in.weaponId;
+            pending.releaseCommand = command;
+            pending.owner = in.owner;
+            pending.release.valid = true;
+            pending.release.origin = ctx.position;
+            pending.release.angles = ctx.aimAngles;
+            pending.release.velocity = Vec3(v.x, v.y, v.z);
+            p.pendingThrow = pending;
+            p.throwAimRemaining = 0;
+            ctx.handThrow = true;
         }
 
         // Intents 237..239 share one per-second budget plus per-intent intervals.

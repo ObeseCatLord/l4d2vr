@@ -293,6 +293,104 @@ namespace
         PreExecute(noVelocity, &release, 6, 0, Input(weapon::kMolotov, kFeatureAllMask & ~kFeatureThrowVelocity), c);
         Check(!noVelocity.pendingThrow.valid && noVelocity.throwAimRemaining == c.throwAimCommands);
 
+        // Hand throw (impulse 244): the projectile leaves in the release command
+        // itself, at the reach-clamped hand, hand velocity * scale + body velocity.
+        {
+            auto handPose = [](int command, l4d2vr_hand_throw::Kind kind, float vx, float vz)
+            {
+                CommandPose h = Pose(command, Intent::HandThrow);
+                h.handThrow.valid = true;
+                h.handThrow.kind = kind;
+                h.handThrow.velocity = l4d2vr_hand_throw::V3(vx, 0.0f, vz);
+                h.decodedAtMs = 9990u;
+                return h;
+            };
+            auto handInput = [](int weaponId, std::uint32_t features)
+            {
+                ExecInput in = Input(weaponId, features);
+                in.handThrowBackend = true;
+                in.havePlayerVelocity = true;
+                in.playerVelocity = Vec3(100.0f, 0.0f, 0.0f);
+                return in;
+            };
+            PlayerVRState hand{};
+            hand.isUsingVR = true;
+            CommandPose toss = handPose(500, l4d2vr_hand_throw::Kind::PipeBomb, 150.0f, 60.0f);
+            ctx = PreExecute(hand, &toss, 500, 0, handInput(weapon::kPipeBomb, kFeatureAllMask), c);
+            Check(ctx.handThrow && hand.pendingThrow.valid && hand.pendingThrow.hand && hand.pendingThrow.releaseCommand == 500);
+            Check(Near(hand.pendingThrow.release.velocity.x, 150.0f * c.throwHandVelocityScale + 100.0f, 0.01f));
+            Check(Near(hand.pendingThrow.release.velocity.z, 60.0f * c.throwHandVelocityScale, 0.01f));
+            Check(hand.pendingThrow.release.origin.x == ctx.position.x && hand.pendingThrow.decodedAtMs == 9990u);
+            Check(ctx.aim == AimReason::None && hand.throwAimRemaining == 0);   // no eye override needed
+
+            // A drop: no hand motion keeps only the body's velocity.
+            PlayerVRState drop{};
+            drop.isUsingVR = true;
+            CommandPose still = handPose(510, l4d2vr_hand_throw::Kind::Molotov, 0.0f, 0.0f);
+            ExecInput standing = handInput(weapon::kMolotov, kFeatureAllMask);
+            standing.playerVelocity = Vec3();
+            ctx = PreExecute(drop, &still, 510, 0, standing, c);
+            Check(ctx.handThrow && drop.pendingThrow.release.velocity.Length() == 0.0f);
+
+            // Anti-abuse: the speed clamp, a far hand, the wrong item, missing
+            // feature/backend, incapacitated or pinned players, rate limit.
+            PlayerVRState abuse{};
+            abuse.isUsingVR = true;
+            CommandPose fast = handPose(520, l4d2vr_hand_throw::Kind::VomitJar, 2047.0f, 1023.0f);
+            fast.position = Vec3(1000.0f, 0.0f, 64.0f);
+            ctx = PreExecute(abuse, &fast, 520, 0, handInput(weapon::kVomitJar, kFeatureAllMask), c);
+            Check(ctx.handThrow && abuse.pendingThrow.release.velocity.Length() <= c.throwMaxSpeed + 0.01f);
+            Check(Near((abuse.pendingThrow.release.origin - Vec3(0, 0, 64)).Length(), c.MaxHandReachUnits(), 0.01f));
+            CommandPose again = handPose(521, l4d2vr_hand_throw::Kind::VomitJar, 10.0f, 0.0f);
+            abuse.pendingThrow = {};
+            ctx = PreExecute(abuse, &again, 521, 0, handInput(weapon::kVomitJar, kFeatureAllMask), c);
+            Check(!ctx.handThrow && !abuse.pendingThrow.valid);                  // 250 ms interval
+
+            PlayerVRState gate{};
+            gate.isUsingVR = true;
+            CommandPose pipe = handPose(530, l4d2vr_hand_throw::Kind::PipeBomb, 10.0f, 0.0f);
+            ctx = PreExecute(gate, &pipe, 530, 0, handInput(weapon::kMolotov, kFeatureAllMask), c);
+            Check(!ctx.handThrow && !gate.pendingThrow.valid);                   // item mismatch
+            ctx = PreExecute(gate, &pipe, 531, 0, handInput(weapon::kPistol, kFeatureAllMask), c);
+            Check(!ctx.handThrow);
+            ctx = PreExecute(gate, &pipe, 532, 0, handInput(weapon::kPipeBomb, kFeatureAllMask & ~kFeatureHandThrow), c);
+            Check(!ctx.handThrow);
+            ExecInput noBackend = handInput(weapon::kPipeBomb, kFeatureAllMask);
+            noBackend.handThrowBackend = false;
+            ctx = PreExecute(gate, &pipe, 533, 0, noBackend, c);
+            Check(!ctx.handThrow);
+            ExecInput incap = handInput(weapon::kPipeBomb, kFeatureAllMask);
+            incap.incapacitated = true;
+            ctx = PreExecute(gate, &pipe, 534, 0, incap, c);
+            Check(!ctx.handThrow);
+            ExecInput pinned = handInput(weapon::kPipeBomb, kFeatureAllMask);
+            pinned.controlled = true;
+            ctx = PreExecute(gate, &pipe, 535, 0, pinned, c);
+            Check(!ctx.handThrow);
+            ExecInput dead = handInput(weapon::kPipeBomb, kFeatureAllMask);
+            dead.liveSurvivor = false;
+            ctx = PreExecute(gate, &pipe, 536, 0, dead, c);
+            Check(!ctx.handThrow && !gate.pendingThrow.valid);
+            CommandPose invalid = pipe;
+            invalid.handThrow.valid = false;
+            ctx = PreExecute(gate, &invalid, 537, 0, handInput(weapon::kPipeBomb, kFeatureAllMask), c);
+            Check(!ctx.handThrow);
+            ctx = PreExecute(gate, &pipe, 538, 0, handInput(weapon::kPipeBomb, kFeatureAllMask), c);
+            Check(ctx.handThrow && gate.pendingThrow.valid);
+
+            // A hand-throw command never starts the old trigger-release path.
+            PlayerVRState legacy{};
+            legacy.isUsingVR = true;
+            CommandPose ht = handPose(540, l4d2vr_hand_throw::Kind::PipeBomb, 50.0f, 0.0f);
+            ctx = PreExecute(legacy, &ht, 540, 0, handInput(weapon::kPipeBomb, kFeatureAllMask), c);
+            Check(!ctx.throwPrepared && ctx.handThrow);
+
+            Check(ApplyConfigLine(c, "ThrowHandVelocityScale=2.5") && Near(c.throwHandVelocityScale, 2.5f, 1e-6f));
+            Check(ApplyConfigLine(c, "ThrowHandVelocityScale=50") && c.throwHandVelocityScale == 10.0f);
+            Check(ApplyConfigLine(c, "HandThrowMinIntervalMs=10") && c.handThrowMinIntervalMs == 50);
+            c = ServerConfig{};
+        }
+
         // Reload gate: impulse 236 blocks the native reload of that firearm.
         PlayerVRState reload{};
         reload.isUsingVR = true;

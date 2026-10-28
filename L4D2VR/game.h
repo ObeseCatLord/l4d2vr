@@ -65,9 +65,25 @@ struct ManualThrowPoseSample
     QAngle angles = { 0.f, 0.f, 0.f };
 };
 
+// A decoded hand throw (impulse 244) waiting for its own command to execute.
+struct HandThrowRequest
+{
+    bool valid = false;
+    int command = 0;
+    int weaponId = 0;
+    bool leftHand = false;
+    Vector handVelocity = { 0.f, 0.f, 0.f };   // client-measured, relative to the body, unscaled
+    Vector position = { 0.f, 0.f, 0.f };
+    QAngle angles = { 0.f, 0.f, 0.f };
+    std::uint64_t decodedAtMs = 0u;
+};
+
 struct ManualThrowPending
 {
     bool valid = false;
+    bool hand = false;               // hand throw: spawn inside its release command
+    int handCommand = 0;
+    std::uint64_t handDecodedAtMs = 0u;
     bool inventoryDrop = false;
     bool inventoryDropExecuted = false;
     unsigned pistolDropHand = 0u;
@@ -172,6 +188,8 @@ struct Player
     void* manualEmptyHandsDummyPistol = nullptr;
     void* manualEmptyHandsDummyPistolVtable = nullptr;
     ManualThrowPending manualThrowPending{};
+    HandThrowRequest handThrowRequest{};
+    int handThrowSpawnedCommand = 0;
     ObjectPullServerState objectPull{};
     // Source re-decodes backup CUserCmds on later packets. Keep this wire
     // sequence watermark outside ObjectPullServerState so Cancel cannot erase

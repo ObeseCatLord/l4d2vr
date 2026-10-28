@@ -1837,7 +1837,7 @@ void Game::ObserveBuiltinVRPoseRelayClient(
         {
             char featureAck[64]{};
             std::snprintf(featureAck, sizeof(featureAck), "l4d2vr_feature_ack %X %u\n",
-                l4d2vr_features::kListenHostMask, l4d2vr_features::kVersion);
+                Hooks::ListenHostFeatureMask(), l4d2vr_features::kVersion);
             VRPoseRelaySendClientCommand(m_ServerPluginHelpers, entity, featureAck);
         }
     if (poseAckSent) OfferRemoteShellProtocol(entity);

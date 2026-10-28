@@ -342,12 +342,16 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "features")
     {
         const uint32_t mask = m_ServerFeatureMask.load(std::memory_order_acquire);
-        std::snprintf(detail, sizeof(detail), "serverAck=%d interaction=%u features=0x%03X magProto=%d shellProto=%d",
+        std::snprintf(detail, sizeof(detail), "serverAck=%d interaction=%u features=0x%03X handThrow=%d magProto=%d shellProto=%d",
             Hooks::s_ServerUnderstandsVR ? 1 : 0, m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire),
-            mask, RemoteMagazineProtocolSupported() ? 1 : 0, RemoteShellProtocolSupported() ? 1 : 0);
+            mask, HandThrowServerReady() ? 1 : 0, RemoteMagazineProtocolSupported() ? 1 : 0, RemoteShellProtocolSupported() ? 1 : 0);
         // Dedicated plugin: every bit. Modded listen host: its own set.
+        // Dedicated plugin: every bit (an older plugin: all but HandThrow).
+        // Modded listen host: its own set, with HandThrow when its fields resolved.
         SelfTestReport("server capabilities", Hooks::s_ServerUnderstandsVR &&
-            (mask == l4d2vr_features::kKnownMask || mask == l4d2vr_features::kListenHostMask), detail);
+            (mask == l4d2vr_features::kKnownMask || mask == l4d2vr_features::kPreHandThrowMask ||
+                mask == l4d2vr_features::kListenHostMask ||
+                mask == (l4d2vr_features::kListenHostMask | l4d2vr_features::HandThrow)), detail);
         return true;
     }
 
@@ -427,7 +431,29 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
                 cmd(pipe ? "use weapon_pipe_bomb" : "use weapon_vomitjar");
         }
         if (at(5, 4.0f)) { SelfTestHoldRight(SelfTestVec(-0.12f, 0.25f, 0.08f), QAngle(-20.0f, 0.0f, 0.0f)); }
-        if (at(6, 5.0f)) { button(m_ActionPrimaryAttack, true); }
+        if (at(6, 5.0f))
+        {
+            button(m_ActionPrimaryAttack, true);
+            std::vector<std::pair<int, Vector>> now;
+            SelfTestListProjectiles(now);
+            m_SelfTestValueC = now.empty() ? 0 : now.back().first;   // newest projectile before the throw
+            m_SelfTestValueD = 0;
+        }
+        if (m_SelfTestStage >= 9 && m_SelfTestStage <= 9 && m_SelfTestValueD == 0)
+        {
+            // Release -> first sight of the new projectile on this client.
+            std::vector<std::pair<int, Vector>> now;
+            SelfTestListProjectiles(now);
+            for (const auto& p : now)
+                if (p.first != m_SelfTestValueC)
+                {
+                    m_SelfTestValueD = static_cast<int>(static_cast<uint32_t>(GetTickCount64()) - m_SelfTestSerialB);
+                    Game::logMsg("[VR][SelfTest] INFO %s: trigger release -> projectile seen %d ms, %.1f units from the hand, hand throws %s",
+                        step.c_str(), m_SelfTestValueD, (p.second - GetRightControllerViewmodelAbsPos()).Length(),
+                        HandThrowServerReady() ? "on" : "off (native throw)");
+                    break;
+                }
+        }
         if (at(7, 5.8f))
         {
             // Overhand throw: about 3.5 m/s forward and up, released at the end.
@@ -435,7 +461,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
                 { Key{ 0.0f, SelfTestVec(-0.12f, 0.25f, 0.08f) }, Key{ 0.2f, SelfTestVec(0.55f, 0.15f, 0.3f), false } },
                 { Key{ 0.0f, SelfTestVec(-20.0f, 0.0f, 0.0f) }, Key{ 0.2f, SelfTestVec(-35.0f, 0.0f, 0.0f), false } });
         }
-        if (at(8, 6.0f)) { button(m_ActionPrimaryAttack, false); }
+        if (at(8, 6.0f)) { button(m_ActionPrimaryAttack, false); m_SelfTestSerialB = static_cast<uint32_t>(GetTickCount64()); }
         if (at(9, 8.0f))
         {
             void* const grenade = player->Weapon_GetSlot(2);
@@ -1061,6 +1087,9 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         }
         return false;
     }
+
+    if (step.rfind("handthrow=", 0) == 0)
+        return RunHandThrowStep(step, t, player);
 
     if (step.find("e2e") != std::string::npos)
         return RunReloadE2EStep(step, t, player);
@@ -2927,6 +2956,301 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     default:
         return fail("phase", "lost");
     }
+}
+
+// Live grenade projectiles in the client entity list (entity index, origin).
+void VR::SelfTestListProjectiles(std::vector<std::pair<int, Vector>>& out)
+{
+    out.clear();
+    if (!m_Game || !m_Game->m_ClientEntityList)
+        return;
+    const int highest = (std::min)(2048, m_Game->m_ClientEntityList->GetHighestEntityIndex());
+    for (int i = 1; i <= highest; ++i)
+    {
+        C_BaseEntity* const entity = m_Game->GetClientEntity(i);
+        if (!entity)
+            continue;
+        const char* const name = m_Game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(entity));
+        if (!name || (!std::strstr(name, "PipeBombProjectile") && !std::strstr(name, "MolotovProjectile") &&
+            !std::strstr(name, "VomitJarProjectile")))
+            continue;
+        Vector origin{};
+        if (VR_TryGetEntityAbsOrigin(entity, origin))
+            out.emplace_back(i, origin);
+    }
+}
+
+// ---- Hand throws: handthrow=pipe|molotov|bile --------------------------------
+// Draws the grenade from the chest holster with the grip (hold-to-grip), taps
+// the trigger (pin), then throws it three times with fresh grenades: an
+// overhand swing, an underhand toss and a plain drop, letting go of the grip
+// while the hand still moves. Checks, per throw:
+//   * HandThrow servers: the client sent the release with a measured hand
+//     velocity; the projectile is created at the hand inside the release
+//     command (listen host: the server-side spawn record, release -> spawn
+//     time; dedicated: the projectile seen near the hand); its velocity points
+//     along the swing (drop: no hand speed); the hand is empty right after.
+//   * Servers without hand throws: reports the native throw's delay (INFO).
+// A screenshot is taken ~70 ms after each release (l4d2vr_selftest_ht_*.png).
+bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player)
+{
+    using l4d2vr_selftest::Key;
+    auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+    auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
+    char detail[320];
+
+    const std::string item = step.substr(10);
+    const bool pipe = item == "pipe", molotov = item == "molotov", bile = item == "bile";
+    if (!pipe && !molotov && !bile)
+    {
+        SelfTestReport("hand throw", false, "unknown item (use pipe, molotov or bile)");
+        return true;
+    }
+    const int expectedId = pipe ? C_WeaponCSBase::PIPE_BOMB : molotov ? C_WeaponCSBase::MOLOTOV : C_WeaponCSBase::VOMITJAR;
+    const char* const give = pipe ? "give pipe_bomb" : molotov ? "give molotov" : "give vomitjar";
+    const char* const use = pipe ? "use weapon_pipe_bomb" : molotov ? "use weapon_molotov" : "use weapon_vomitjar";
+    static const char* const kStyles[3] = { "overhand", "underhand", "drop" };
+
+    struct Throw
+    {
+        bool released = false;
+        uint64_t releaseMs = 0u;
+        Vector releaseHand{};
+        Vector swingStart{};
+        uint32_t serverSpawns = 0u;
+        uint32_t clientThrows = 0u;
+        bool seen = false;
+        uint64_t seenMs = 0u;
+        Vector seenPos{};
+        Vector seenPos2{};
+        uint64_t seenMs2 = 0u;
+        bool shot = false;
+        bool watching = false;
+        uint64_t pinMs = 0u;
+        std::unordered_set<int> before;
+    };
+    static Throw s{};
+    static bool s_savedToggle = true;
+    static bool s_handMode = false;
+
+    const int throwIndex = m_SelfTestStage / 100;
+    const int stage = m_SelfTestStage % 100;
+    if (throwIndex >= 3)
+    {
+        m_GripToggleEnabled = s_savedToggle;
+        return true;
+    }
+    const float t0 = throwIndex * 8.0f;
+    const float tt = t - t0;
+    auto next = [&](float when) -> bool
+    {
+        if (tt < when)
+            return false;
+        ++m_SelfTestStage;
+        return true;
+    };
+    auto projectiles = [&](std::vector<std::pair<int, Vector>>& out) { SelfTestListProjectiles(out); };
+    const char* const style = kStyles[throwIndex];
+    const bool drop = throwIndex == 2;
+
+    // Watch for the projectile from the swing on (every frame).
+    if (s.watching)
+    {
+        std::vector<std::pair<int, Vector>> now;
+        projectiles(now);
+        const uint64_t ms = GetTickCount64();
+        for (const auto& p : now)
+        {
+            if (s.before.count(p.first))
+                continue;
+            if (!s.seen)
+            {
+                s.seen = true;
+                s.seenMs = ms;
+                s.seenPos = p.second;
+            }
+            else if (!s.seenMs2 && ms - s.seenMs >= 60u)
+            {
+                s.seenMs2 = ms;
+                s.seenPos2 = p.second;
+            }
+        }
+        if (s.released && !s.shot && ms - s.releaseMs >= 70u)
+        {
+            s.shot = true;
+            SelfTestRequestShot(std::string("ht_") + item + "_" + style, 1);
+        }
+    }
+
+    switch (stage)
+    {
+    case 0:
+        if (throwIndex == 0)
+        {
+            s_savedToggle = m_GripToggleEnabled;
+            m_GripToggleEnabled = false;   // hold-to-grip: letting go of the grip is the release
+        }
+        s = Throw{};
+        button(m_ActionWeaponGrip, false);
+        button(m_ActionPrimaryAttack, false);
+        cmd(give);
+        ++m_SelfTestStage;
+        return false;
+    case 1:
+        if (next(1.0f)) {}
+        return false;
+    case 2:
+        SelfTestReachHolster(2);
+        if (next(2.0f)) button(m_ActionWeaponGrip, true);
+        return false;
+    case 3:
+        SelfTestReachHolster(2);
+        if (next(2.5f))
+        {
+            const int id = SelfTestActiveWeaponId(player);
+            std::snprintf(detail, sizeof(detail), "%s: active weapon id=%d (grip draw from the chest)", style, id);
+            SelfTestReport("hand throw: grip draws the grenade", id == expectedId, detail);
+            if (id != expectedId)
+                cmd(use);
+            // Wind-up pose for the swing.
+            if (throwIndex == 0) SelfTestHoldRight(SelfTestVec(-0.15f, 0.25f, 0.10f), QAngle(-20.0f, 0.0f, 0.0f));
+            else if (throwIndex == 1) SelfTestHoldRight(SelfTestVec(-0.05f, 0.22f, -0.62f), QAngle(30.0f, 0.0f, 0.0f));
+            else SelfTestHoldRight(SelfTestVec(0.35f, 0.20f, -0.30f), QAngle(0.0f, 0.0f, 0.0f));
+        }
+        return false;
+    case 4:
+        if (next(3.2f)) { button(m_ActionPrimaryAttack, true); s.pinMs = GetTickCount64(); }   // pull the pin
+        return false;
+    case 5:
+        if (next(3.3f)) button(m_ActionPrimaryAttack, false);
+        return false;
+    case 6:
+        if (next(3.8f))
+        {
+            s_handMode = HandThrowServerReady();
+            s.swingStart = GetRightControllerViewmodelAbsPos();
+            std::vector<std::pair<int, Vector>> now;
+            projectiles(now);
+            for (const auto& p : now)
+                s.before.insert(p.first);
+            s.watching = true;
+            s.serverSpawns = m_HandThrowServerSpawnCount.load(std::memory_order_acquire);
+            s.clientThrows = m_HandThrowCount.load(std::memory_order_acquire);
+            if (throwIndex == 0)
+                SelfTestStartPath(
+                    { Key{ 0.0f, SelfTestVec(-0.15f, 0.25f, 0.10f) }, Key{ 0.22f, SelfTestVec(0.60f, 0.15f, 0.25f), false },
+                      Key{ 0.40f, SelfTestVec(0.72f, 0.10f, 0.0f) } },
+                    { Key{ 0.0f, SelfTestVec(-20.0f, 0.0f, 0.0f) }, Key{ 0.22f, SelfTestVec(-35.0f, 0.0f, 0.0f), false } });
+            else if (throwIndex == 1)
+                SelfTestStartPath(
+                    { Key{ 0.0f, SelfTestVec(-0.05f, 0.22f, -0.62f) }, Key{ 0.30f, SelfTestVec(0.45f, 0.18f, -0.20f), false },
+                      Key{ 0.50f, SelfTestVec(0.55f, 0.15f, 0.0f) } },
+                    { Key{ 0.0f, SelfTestVec(30.0f, 0.0f, 0.0f) }, Key{ 0.30f, SelfTestVec(-10.0f, 0.0f, 0.0f), false } });
+        }
+        return false;
+    case 7:
+    {
+        // Let go while the hand still moves (drop: the hand is still).
+        const float releaseAt = throwIndex == 0 ? 3.8f + 0.15f : throwIndex == 1 ? 3.8f + 0.22f : 3.8f + 0.3f;
+        if (next(releaseAt))
+        {
+            button(m_ActionWeaponGrip, false);
+            s.released = true;
+            s.releaseMs = GetTickCount64();
+            s.releaseHand = GetRightControllerViewmodelAbsPos();
+        }
+        return false;
+    }
+    case 8:
+        if (!next(6.5f))
+            return false;
+        break;
+    default:
+        return false;
+    }
+
+    // ---- Report this throw ----
+    const bool slotEmpty = player->Weapon_GetSlot(2) == nullptr;
+    const int activeId = SelfTestActiveWeaponId(player);
+    const double seenAfter = s.seen ? static_cast<double>(s.seenMs - s.releaseMs) : -1.0;
+    const float seenFromHand = s.seen ? (s.seenPos - s.releaseHand).Length() : -1.0f;
+    Vector seenVelocity{};
+    if (s.seen && s.seenMs2 > s.seenMs)
+        seenVelocity = (s.seenPos2 - s.seenPos) * (1000.0f / static_cast<float>(s.seenMs2 - s.seenMs));
+    if (!s_handMode)
+    {
+        // No hand throws on this server: the trigger tap started the native
+        // throw (pin-pull animation + throw timer); report its timing only.
+        Game::logMsg("[VR][SelfTest] INFO hand throw %s %s without the HandThrow feature: trigger tap -> projectile seen %.0f ms "
+            "(grip let go %.0f ms after the tap), %.0f units from the hand at the release, slot %s", item.c_str(), style,
+            s.seen ? static_cast<double>(s.seenMs - s.pinMs) : -1.0, static_cast<double>(s.releaseMs - s.pinMs), seenFromHand,
+            slotEmpty ? "empty" : "occupied");
+    }
+    else
+    {
+        Vector releaseVelocity{};
+        Vector spawnOrigin{}, spawnVelocity{};
+        int spawnCommand = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_HandThrowMutex);
+            releaseVelocity = m_HandThrowLastReleaseVelocity;
+            spawnOrigin = m_HandThrowServerSpawnOrigin;
+            spawnVelocity = m_HandThrowServerSpawnVelocity;
+            spawnCommand = m_HandThrowServerSpawnCommand;
+        }
+        const bool released = m_HandThrowCount.load(std::memory_order_acquire) == s.clientThrows + 1u;
+        const bool serverSeen = m_HandThrowServerSpawnCount.load(std::memory_order_acquire) == s.serverSpawns + 1u;
+        const uint64_t releaseMs = m_HandThrowLastReleaseMs.load(std::memory_order_acquire);
+        const double releaseToSpawn = serverSeen
+            ? static_cast<double>(m_HandThrowServerSpawnMs.load(std::memory_order_acquire)) - static_cast<double>(releaseMs)
+            : -1.0;
+        const float releaseSpeedMps = releaseVelocity.Length() / (std::max)(1.0f, m_VRScale);
+        std::snprintf(detail, sizeof(detail), "%s: release sent=%d hand speed %.2f m/s", style, released ? 1 : 0, releaseSpeedMps);
+        SelfTestReport("hand throw: release with the measured hand velocity", released &&
+            (drop ? releaseSpeedMps < 0.3f : releaseSpeedMps > 1.0f), detail);
+
+        Vector swing = s.releaseHand - s.swingStart;
+        const float swingLength = VectorNormalize(swing);
+        const Vector velocity = serverSeen ? spawnVelocity : seenVelocity;
+        const Vector origin = serverSeen ? spawnOrigin : s.seenPos;
+        const float speed = velocity.Length();
+        const float along = swingLength > 1.0f ? DotProduct(velocity, swing) : 0.0f;
+        if (serverSeen)
+        {
+            std::snprintf(detail, sizeof(detail),
+                "%s: server spawn %.0f ms after the release (command %d), %.1f units from the release hand, velocity (%.0f %.0f %.0f) speed %.0f",
+                style, releaseToSpawn, spawnCommand, (origin - s.releaseHand).Length(), velocity.x, velocity.y, velocity.z, speed);
+            // One frame to send, the host's next tick, and the command itself.
+            SelfTestReport("hand throw: spawned from the hand without delay", releaseToSpawn >= 0.0 &&
+                releaseToSpawn <= 50.0 + 34.0 && (origin - s.releaseHand).Length() < 12.0f, detail);
+        }
+        else
+        {
+            std::snprintf(detail, sizeof(detail),
+                "%s: dedicated server, projectile seen %.0f ms after the release %.1f units from the release hand (server log: 'hand throw spawn')",
+                style, seenAfter, seenFromHand);
+            SelfTestReport("hand throw: spawned from the hand without delay", s.seen && seenAfter <= 400.0 &&
+                seenFromHand >= 0.0f && seenFromHand < 60.0f, detail);
+        }
+        std::snprintf(detail, sizeof(detail), "%s: velocity (%.0f %.0f %.0f) speed %.0f, %.0f along the swing (seen %.0f %.0f %.0f)",
+            style, velocity.x, velocity.y, velocity.z, speed, along, seenVelocity.x, seenVelocity.y, seenVelocity.z);
+        if (drop)
+            SelfTestReport("hand throw: a drop falls from the hand", (serverSeen || s.seen) && speed < 80.0f, detail);
+        else
+            SelfTestReport(throwIndex == 0 ? "hand throw: overhand follows the swing" : "hand throw: underhand follows the swing",
+                (serverSeen || s.seen) && along > 0.8f * speed && speed > (throwIndex == 0 ? 250.0f : 120.0f), detail);
+        std::snprintf(detail, sizeof(detail), "%s: grenade slot %s, active weapon id %d", style,
+            slotEmpty ? "empty" : "occupied", activeId);
+        SelfTestReport("hand throw: the hand is empty after the throw", slotEmpty && activeId != expectedId, detail);
+    }
+    s = Throw{};
+    m_SelfTestStage = (throwIndex + 1) * 100;
+    if (throwIndex + 1 >= 3)
+    {
+        m_GripToggleEnabled = s_savedToggle;
+        return true;
+    }
+    return false;
 }
 
 // ---- Self-test screenshots ---------------------------------------------------

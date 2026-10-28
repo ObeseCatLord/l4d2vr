@@ -1376,29 +1376,27 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 SelfTestReport("pickup: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
                 SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 0.8f);
                 return false; });
+            add(4.3f, [this](C_BasePlayer* player, float) {
+                m_SelfTestKitEntity = player->Weapon_GetSlot(3);
+                return false; });
             squeeze(4.4f, false, 0.15f);
             add(5.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "kit slot %s after letting go of the kit the grip took",
                     (player->Weapon_GetSlot(3) != nullptr) ? "still occupied" : "empty");
                 SelfTestReport("pickup: an item the grip took drops when let go", !(player->Weapon_GetSlot(3) != nullptr), detail);
-                // Find the dropped kit near the hand and crouch toward it.
+                // Find the dropped kit (the entity the grip let go of) and crouch toward it.
                 float best = 1.0e9f;
                 Vector kit{};
                 const int highest = (std::min)(2048, m_Game->m_ClientEntityList->GetHighestEntityIndex());
-                for (int i = 1; i <= highest; ++i)
+                for (int i = 1; i <= highest && m_SelfTestKitEntity; ++i)
                 {
                     C_BaseEntity* const entity = m_Game->GetClientEntity(i);
-                    const char* const name = entity ? m_Game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(entity)) : nullptr;
-                    Vector origin{};
-                    if (!name || !VR_TryGetEntityAbsOrigin(entity, origin))
+                    if (!entity || reinterpret_cast<void*>(entity) != m_SelfTestKitEntity || !VR_TryGetEntityAbsOrigin(entity, kit))
                         continue;
-                    const float d = (origin - m_RightControllerPosAbs).Length();
-                    if ((d < 4.0f * m_VRScale && entity != reinterpret_cast<C_BaseEntity*>(player)) || std::strstr(name, "FirstAid"))
-                        Game::logMsg("[VR][SelfTest] pickup: entity %d %s %.2f m from the hand", i, name, d / (std::max)(1.0f, m_VRScale));
-                    if (std::strstr(name, "FirstAid") == nullptr)
-                        continue;
-                    if (d < best) { best = d; kit = origin; }
+                    best = (kit - m_RightControllerPosAbs).Length();
+                    Game::logMsg("[VR][SelfTest] pickup: dropped kit is entity %d, %.2f m from the hand", i,
+                        best / (std::max)(1.0f, m_VRScale));
                 }
                 if (best > 3.0f * m_VRScale)
                 {
@@ -1434,10 +1432,11 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             const bool raw = step == "bashanimraw" || step == "swinganimraw";
             const std::string shotName = step;
             m_VmStrikeHoldDisabled = raw;
-            // Left-eye pictures before and during the strike (strike at 3.5 s).
-            add(3.3f, [this, shotName](C_BasePlayer*, float) { SelfTestRequestShot(shotName + "_0before", 1); return false; });
+            // Left-eye pictures before and after the strike (at 3.5 s). A picture
+            // stalls the game a moment, so none is taken during the push itself.
+            add(2.8f, [this, shotName](C_BasePlayer*, float) { SelfTestRequestShot(shotName + "_0before", 1); return false; });
             for (int i = 1; i <= 4; ++i)
-                add(3.5f + 0.2f * i, [this, shotName, i](C_BasePlayer*, float) {
+                add(3.7f + 0.2f * i, [this, shotName, i](C_BasePlayer*, float) {
                     SelfTestRequestShot(shotName + "_" + std::to_string(i), 1); return false; });
             if (melee)
             {
@@ -1496,6 +1495,9 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 restore();
                 return true; });
         }
+        // Actions run in time order, whatever order they were added in.
+        std::stable_sort(s_Script.begin(), s_Script.end(),
+            [](const Action& a, const Action& b) { return a.at < b.at; });
         m_SelfTestStage = 1;
     }
 

@@ -434,11 +434,11 @@ HolsterYawSmoothingSeconds=0.25
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4
 HolsterGrabHapticAmplitude=0.6
-HolsterPrimaryOffsetMeters=-0.10,0.15,-0.08
-HolsterSecondaryOffsetMeters=-0.04,0.22,-0.78
-HolsterThrowableOffsetMeters=0.12,-0.10,-0.36
-HolsterMedicalOffsetMeters=-0.10,-0.15,-0.08
-HolsterConsumableOffsetMeters=0.12,0.10,-0.36
+HolsterPrimaryOffsetMeters=-0.10,0.16,-0.12
+HolsterSecondaryOffsetMeters=0.02,0.22,-0.70
+HolsterThrowableOffsetMeters=0.16,-0.09,-0.34
+HolsterMedicalOffsetMeters=-0.10,-0.16,-0.12
+HolsterConsumableOffsetMeters=0.16,0.09,-0.34
 ManualPumpEnabled=true
 DualPistolsIndependentHandsEnabled=true
 // True akimbo everywhere: each trigger fires its own pistol, aimed by its own hand (on servers

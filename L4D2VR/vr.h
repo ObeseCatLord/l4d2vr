@@ -1450,9 +1450,6 @@ public:
     float m_BodyInventoryRotationOffset = 0.0f;
     Vector m_BodyInventoryOrigin{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryHeadPosAbs{0.0f, 0.0f, 0.0f};
-    // Tracked eyes -> level-head eyes (world units): looking down at a holster
-    // must not move the holsters (l4d2vr_holster::NeutralHeadOffset).
-    Vector m_BodyInventoryNeutralHeadOffset{0.0f, 0.0f, 0.0f};
     float m_BodyInventoryHeadYaw = 0.0f; // diagnostics: head yaw the body frame follows
     Vector m_BodyInventoryForward{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryRight{0.0f, 0.0f, 0.0f};
@@ -2928,6 +2925,7 @@ public:
 	l4d2vr_selftest::Vec3 m_SelfTestLeftNow{ 0.35f, -0.2f, -0.35f };
 	l4d2vr_selftest::Vec3 m_SelfTestLeftAngNow{};
 	unsigned m_SelfTestJitterSeed = 1u;
+	void* m_SelfTestKitEntity = nullptr;
 	Vector m_SelfTestPrevRight{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestPrevLeft{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestPrevHmd{ 0.0f, 0.0f, 0.0f };

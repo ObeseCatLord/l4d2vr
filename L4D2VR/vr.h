@@ -42,6 +42,7 @@
 #include "vr_dual_pistols.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
+#include "vr_native_wrist_hud.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -2638,6 +2639,43 @@ public:
 	bool  m_LeftWristHudShowBattery = true;
 	bool  m_LeftWristHudShowTeammates = true;
 
+	// Wrist HUD style. Native (default): the wrists show crops of the game's own HUD
+	// (left: your health bar large, teammates' bars and names; right: the weapon and
+	// item panel), so fonts and graphics match the game. Custom: the drawn panels above.
+	bool  m_WristHudNativeStyle = true;
+	// Native style: clear the elements shown on a wrist from the floating HUD panel.
+	bool  m_WristHudNativeHideOnFloatingHud = true;
+	float m_LeftWristHudNativeWidthMeters = 0.11f;
+	float m_RightAmmoHudNativeWidthMeters = 0.065f;
+	// Native style render targets (index 0 = left wrist, 1 = right wrist). Created and
+	// written on the D3D thread under m_TextureMutex; published by m_NativeWristHudTexReady.
+	std::array<IDirect3DTexture9*, 2> m_D9NativeWristHudTex{};
+	std::array<IDirect3DSurface9*, 2> m_D9NativeWristHudSurface{};
+	std::array<SharedTextureHolder, 2> m_VKNativeWristHud{};
+	std::array<std::atomic<bool>, 2> m_NativeWristHudTexReady{};
+	// Used part of each texture, packed (width << 16) | height, and when it was last written.
+	std::array<std::atomic<uint32_t>, 2> m_NativeWristHudUsedSize{};
+	std::array<std::atomic<uint64_t>, 2> m_NativeWristHudContentMs{};
+	// Whether each wrist overlay was shown last frame (gates clearing the floating HUD).
+	std::array<std::atomic<bool>, 2> m_NativeWristHudShown{};
+	std::atomic<bool> m_NativeWristHudWanted{ false };
+	// Self-test: dump the HUD and both wrist textures on the next copy.
+	std::atomic<bool> m_NativeWristHudDumpRequested{ false };
+	std::atomic<int> m_NativeWristHudDumpCount{ 0 };
+	// Right wrist: the weapon panel's painted content is found from its alpha (read back a
+	// few frames after the copy, so it never stalls) and the crop is trimmed to it.
+	IDirect3DSurface9* m_D9NativeWristTrimRT = nullptr;
+	IDirect3DSurface9* m_D9NativeWristTrimSys = nullptr;
+	int m_NativeWristTrimW = 0;
+	int m_NativeWristTrimH = 0;
+	int m_NativeWristTrimPendingFrames = -1; // >= 0 while a readback is in flight
+	uint64_t m_NativeWristTrimLastMs = 0;
+	std::mutex m_NativeWristTrimMutex;
+	float m_NativeWristTrim[4] = { 0.0f, 0.0f, 1.0f, 1.0f }; // u0, v0, u1, v1 of the weapon panel
+	void* m_NativeHudPanelApi = nullptr;  // vgui2 VGUI_Panel009
+	void* m_NativeHudEngineVgui = nullptr; // engine VEngineVGui001
+	uint64_t m_NativeWristHudLastLayoutLogMs = 0;
+
 	// ----------------------------
 	// Hand HUD: world-quad mode (HMD-relative overlays using GPU textures)
 	//
@@ -4514,6 +4552,11 @@ public:
 	void UpdateScopeOverlayTransform();
 	void UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBinds = nullptr);
 	void DestroyHandHudWorldQuadTextures();
+	// Native wrist HUD (WristHudStyle=native, vr_native_wrist_hud.inl).
+	bool WantsNativeWristHudCapture() const;
+	void OnNativeHudPainted(IMatRenderContext* renderContext);
+	void RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job);
+	void DestroyNativeWristHudTextures();
 	void GetPoses();
 	bool UpdatePosesAndActions();
 	void UpdateInputActionState(const l4d2vr_input::ActionFrame::Attempt& attempt);

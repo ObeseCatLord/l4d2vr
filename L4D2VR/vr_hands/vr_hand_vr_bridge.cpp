@@ -4570,9 +4570,13 @@ void VR::RecordManualPumpShot()
         return;
     if (!IsMagazineInteractionShotgunServerHookActive(static_cast<int>(id))) return;
     const uint32_t handle = MagazineInteractionActiveWeaponHandle(m_Game, player, weapon);
+    int reserve = -1, ammoType = -1;
+    if (MagazineInteractionTryReadValue(weapon, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
+        MagazineInteractionTryReadValue(player, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), reserve);
     std::lock_guard<std::mutex> lock(m_ManualPumpMutex);
     m_ManualPumpCycles.ObserveOwner(true, reinterpret_cast<uintptr_t>(player));
-    m_ManualPumpCycles.NotifyShot(reinterpret_cast<uintptr_t>(weapon), static_cast<int>(id), clip, handle);
+    m_ManualPumpCycles.NotifyShot(reinterpret_cast<uintptr_t>(weapon), static_cast<int>(id), clip, handle,
+        reserve, GetTickCount64());
     Game::logMsg("[VR][ManualPump] shot observed weaponId=%d clip=%d", static_cast<int>(id), clip);
 }
 
@@ -7083,12 +7087,38 @@ bool VR::UpdateMagazineInteraction(
     };
 
     bool activePumpNeedsCycle = false;
+    bool pumpShotOverturned = false;
     {
+        int pumpReserve = -1;
+        if (hasActiveWeapon && m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId))
+        {
+            int ammoType = -1;
+            if (MagazineInteractionTryReadValue(activeWeapon, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
+                MagazineInteractionTryReadValue(localPlayer, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), pumpReserve);
+        }
         std::lock_guard<std::mutex> lock(m_ManualPumpMutex);
         if (!m_ManualPumpEnabled)
             m_ManualPumpCycles.Reset();
         else if (hasActiveWeapon && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId))
-            activePumpNeedsCycle = m_ManualPumpCycles.Observe(reinterpret_cast<uintptr_t>(activeWeapon), static_cast<int>(activeWeaponId), activeClip, activeWeaponHandle);
+            activePumpNeedsCycle = m_ManualPumpCycles.Observe(reinterpret_cast<uintptr_t>(activeWeapon), static_cast<int>(activeWeaponId), activeClip, activeWeaponHandle,
+                pumpReserve, GetTickCount64());
+        pumpShotOverturned = m_ManualPumpCycles.TakeOverturned();
+    }
+    // A shot the host never fired leaves the pump closed: stop waiting for a
+    // stroke that would cycle nothing.
+    if (pumpShotOverturned && m_MagazineInteractionWeapon == activeWeapon &&
+        m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab)
+    {
+        setBoltPullDistance(0.0f);
+        m_MagazineInteractionBoltReachedRear = false;
+        m_MagazineInteractionState = MagazineInteractionManualState::WaitingForFreshMagazine;
+        m_MagazineInteractionChamberEmpty = false;
+        m_MagazineInteractionOneInChamber = false;
+        m_MagazineInteractionLeftHandHolding = false;
+        m_MagazineInteractionBoltContactActive = false;
+        m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
+        LogMagazineInteractionEvent("host overturned the predicted pump shot weaponId=%d clip=%d: no pump needed",
+            activeWeaponIdInt, activeClip);
     }
     if (m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId) &&
         !activePumpNeedsCycle && activeClip > 0 &&

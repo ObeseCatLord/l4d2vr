@@ -1874,6 +1874,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         m_SelfTestReserve0 = g.reserve;
         m_SelfTestCycle = 0;
         m_SelfTestMeasureB = 0.0f;
+        m_SelfTestValueC = 0; // shells: shots the host did not fire
         m_SelfTestValueD = 0;
         Game::logMsg("[VR][SelfTest] %s: clip=%d reserve=%d box age=%.3fs model=%s", step.c_str(), g.clip, g.reserve,
             g.magazineBoxAge, g.modelName.c_str());
@@ -2489,6 +2490,16 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 102:
         {
             if (inPhase < 0.7f) return false;
+            // A shot the host never fired (it had not finished the draw) comes
+            // back; that is not a failure, so fire again (twice at most).
+            if (g.clip == m_SelfTestClip0 && g.reserve == m_SelfTestReserve0 && m_SelfTestValueC < 2 &&
+                g.state != static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab))
+            {
+                ++m_SelfTestValueC;
+                Game::logMsg("[VR][SelfTest] %s: the host did not fire the shot (clip %d); firing again", gun.c_str(), g.clip);
+                go(100);
+                return false;
+            }
             const bool pumpWaits = g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab);
             std::snprintf(detail, sizeof(detail), "cycle %d: clip %d -> %d, state %s, fire blocked=%d, waist shell shown=%d",
                 m_SelfTestCycle + 1, m_SelfTestClip0, g.clip, state(), g.fireBlocked ? 1 : 0,
@@ -2554,14 +2565,21 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 glide(pullBack(m_SelfTestMeasureB - g.boltPull + 0.03f), 0.15f);
                 return false;
             }
-            // All the way forward (a little past where it was taken), measured
-            // from where the pump is now.
-            glide(leftNow() + g.gunForward * ((g.boltPull + 0.06f) * scale), 0.3f);
+            // All the way forward: the stroke the hand made (the pull plus the
+            // overshoot behind the stop) and a little past where it was taken.
+            glide(leftNow() + g.gunForward * (((std::max)(g.boltPull, m_SelfTestMeasureB) + 0.05f + 0.06f) * scale), 0.3f);
             go(114);
             return false;
         case 114:
             m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
             if (!glideDone(0.2f)) return false;
+            // Not home yet (the player was pushed): keep pushing.
+            if (g.boltPull > 0.01f && inPhase < 1.5f &&
+                g.state == static_cast<int>(MagazineInteractionManualState::HoldingBolt))
+            {
+                glide(leftNow() + g.gunForward * ((g.boltPull + 0.04f) * scale), 0.15f);
+                return false;
+            }
             button(m_ActionOffHandGrip, false);
             go(115);
             return false;

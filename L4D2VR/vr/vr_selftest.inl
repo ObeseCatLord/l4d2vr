@@ -1996,11 +1996,19 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 403:
             if (!glideDone(0.3f)) return false;
             button(m_ActionOffHandGrip, false);
-            std::snprintf(detail, sizeof(detail), "hand %.3f m from the magazine, gripped and pulled 0.15 m: %u ejection(s), clip %d -> %d, state %s",
-                m_SelfTestMeasure, ejects(), m_SelfTestClip0, g.clip, state());
+            std::snprintf(detail, sizeof(detail), "hand %.3f m from the magazine, gripped and pulled 0.15 m: %u ejection(s), clip %d -> %d, state %s, foregrip=%d",
+                m_SelfTestMeasure, ejects(), m_SelfTestClip0, g.clip, state(), m_VrHandsTwoHandedGripActive ? 1 : 0);
             SelfTestReport(label("the grip does not take the seated magazine (trigger interactions)"),
-                ejects() == 0u && g.clip == m_SelfTestClip0 && g.state == idleState, detail);
-            // Off to the side (past the foregrip's 20 cm auto release), then back.
+                ejects() == 0u && g.clip == m_SelfTestClip0 && g.state == idleState && !m_VrHandsTwoHandedGripActive, detail);
+            m_SelfTestValueD = m_VrHandsTwoHandedGripActive ? 1 : 0;
+            if (m_SelfTestValueD)
+                button(m_ActionOffHandGrip, true); // toggle the foregrip off again
+            go(410);
+            return false;
+        case 410:
+            if (inPhase < 0.2f) return false;
+            button(m_ActionOffHandGrip, false);
+            // Off to the side, then back.
             glide(leftNow() + g.gunRight * (-0.30f * scale), 0.3f);
             go(404);
             return false;

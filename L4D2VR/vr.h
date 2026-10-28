@@ -2421,6 +2421,9 @@ public:
     // spare was last frame relative to the seated magazine, both hands'
     // tracking positions for a second velocity estimate, and when the hand let go.
     l4d2vr_mag_slap::Detector m_MagazineSlapDetector;
+    // Where the held old magazine sat against the well when the hand took it.
+    Vector m_MagazineInteractionOldPullBaseline{0.0f, 0.0f, 0.0f};
+    bool m_MagazineInteractionOldPullBaselineValid = false;
     bool m_MagazineSlapPrevHeldValid = false;
     l4d2vr_mag_slap::Vec3 m_MagazineSlapPrevHeldRel{};
     bool m_MagazineSlapPrevTrackingValid = false;

@@ -5843,10 +5843,35 @@ bool VR::UpdateMagazineInteraction(
     m_PhysicalReloadChambers.ObserveOwner(vrHandsInteractionAvailable && m_MagazineInteractionEnabled &&
         m_MagazineInteractionSuppressEmptyClipAutoReload,
         reinterpret_cast<uintptr_t>(localPlayer));
-    m_PhysicalReloadObservedEmpty = m_PhysicalReloadChambers.Observe(
-        reinterpret_cast<uintptr_t>(activeWeapon),
-        activeWeaponHandle, activeWeaponIdInt,
-        MagazineInteractionWeaponUsesPhysicalReload(activeWeaponId) ? activeClip : -1);
+    {
+        // A predicted last shot the host overturns (rounds back, reserve
+        // untouched, nothing reloading) leaves the chamber loaded.
+        int chamberReserve = -1, ammoType = -1;
+        unsigned char inReload = 0u;
+        constexpr int kClientBaseWeaponInReloadOffset = 0x9BD; // DT_BaseCombatWeapon::m_bInReload
+        if (vrHandsInteractionAvailable &&
+            MagazineInteractionTryReadValue(activeWeapon, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
+            MagazineInteractionTryReadValue(localPlayer, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), chamberReserve);
+        if (vrHandsInteractionAvailable)
+            MagazineInteractionTryReadValue(activeWeapon, kClientBaseWeaponInReloadOffset, inReload);
+        const bool refillPossible = !vrHandsInteractionAvailable || inReload != 0u ||
+            IsMagazineInteractionManualActive() || m_MagazineInteractionLeftHandHolding ||
+            m_MagazineInteractionReloadTriggered || IsMagazineInteractionReloadCommandActive() ||
+            RemoteMagazineRequestPending() || RemoteShellRequestPending() || PistolMagazineRequestPending() ||
+            m_MagazineSeats.Ejected(reinterpret_cast<uintptr_t>(localPlayer), reinterpret_cast<uintptr_t>(activeWeapon),
+                activeWeaponHandle, activeWeaponIdInt);
+        const bool wasEmpty = l4d2vr_shell::ValidHandle(activeWeaponHandle) &&
+            m_PhysicalReloadChambers.HasEmptyChamber(reinterpret_cast<uintptr_t>(localPlayer),
+                reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle, activeWeaponIdInt);
+        m_PhysicalReloadObservedEmpty = m_PhysicalReloadChambers.Observe(
+            reinterpret_cast<uintptr_t>(activeWeapon),
+            activeWeaponHandle, activeWeaponIdInt,
+            MagazineInteractionWeaponUsesPhysicalReload(activeWeaponId) ? activeClip : -1,
+            chamberReserve, refillPossible, GetTickCount64());
+        if (wasEmpty && !m_PhysicalReloadObservedEmpty && activeClip > 0)
+            LogMagazineInteractionEvent("host overturned the predicted last shot weaponId=%d clip=%d reserve=%d: "
+                "the round is still chambered, no rack needed", activeWeaponIdInt, activeClip, chamberReserve);
+    }
     // An ejected magazine stays out across session resets and weapon switches;
     // only an insertion or a native refill seats one again.
     m_MagazineSeats.ObserveOwner(reinterpret_cast<uintptr_t>(localPlayer));

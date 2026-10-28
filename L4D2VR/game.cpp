@@ -2671,31 +2671,90 @@ char* Game::getNetworkName(uintptr_t* entity)
     }
 }
 
+namespace
+{
+    // Client class names are short identifiers ("CTerrorPlayer", "CWeaponRifle").
+    bool LooksLikeClientClassName(const char* name)
+    {
+        if (!name || name[0] != 'C')
+            return false;
+        for (int i = 0; i < 64; ++i)
+        {
+            const char c = name[i];
+            if (c == '\0')
+                return i >= 2;
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+                return false;
+        }
+        return false;
+    }
+
+    const char* NetworkClassNameViaNetworkable(uintptr_t* entity)
+    {
+        // Reads only, no calls (the pointer may not be an entity at all): the
+        // IClientNetworkable subobject sits 8 bytes into C_BaseEntity; its
+        // GetClientClass is "mov eax, imm32; ret", so the
+        // ClientClass is the immediate; its network name is 8 bytes in.
+        __try
+        {
+            const auto* bytes = reinterpret_cast<const unsigned char*>(entity);
+            const auto* const* vtable = *reinterpret_cast<const unsigned char* const* const*>(bytes + 8);
+            if (!vtable)
+                return nullptr;
+            // L4D2 has GetClientClass in slot 1; accept slot 2 too (older SDKs).
+            const unsigned char* getClientClass = vtable[1];
+            if (!getClientClass || getClientClass[0] != 0xB8 || getClientClass[5] != 0xC3)
+                getClientClass = vtable[2];
+            if (!getClientClass || getClientClass[0] != 0xB8 || getClientClass[5] != 0xC3)
+                return nullptr;
+            const auto* clientClass = *reinterpret_cast<const unsigned char* const*>(getClientClass + 1);
+            if (!clientClass)
+                return nullptr;
+            const char* const name = *reinterpret_cast<const char* const*>(clientClass + 8);
+            return LooksLikeClientClassName(name) ? name : nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return nullptr;
+        }
+    }
+
+    // The original lookup, kept as a fallback.
+    const char* NetworkClassNameLegacy(uintptr_t* entity)
+    {
+        __try
+        {
+            uintptr_t* vtable = reinterpret_cast<uintptr_t*>(*(entity + 0x8));
+            if (!vtable)
+                return nullptr;
+            uintptr_t* getClientClassFn = reinterpret_cast<uintptr_t*>(*(vtable + 0x8));
+            if (!getClientClassFn)
+                return nullptr;
+            uintptr_t* clientClass = reinterpret_cast<uintptr_t*>(*(getClientClassFn + 0x1));
+            if (!clientClass)
+                return nullptr;
+            const char* const name = reinterpret_cast<const char*>(*(clientClass + 0x8));
+            return LooksLikeClientClassName(name) ? name : nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return nullptr;
+        }
+    }
+}
+
 const char* Game::GetNetworkClassName(uintptr_t* entity) const
 {
-    __try
-    {
-        if (!entity)
-            return nullptr;
-
-        uintptr_t* vtable = reinterpret_cast<uintptr_t*>(*(entity + 0x8));
-        if (!vtable)
-            return nullptr;
-
-        uintptr_t* getClientClassFn = reinterpret_cast<uintptr_t*>(*(vtable + 0x8));
-        if (!getClientClassFn)
-            return nullptr;
-
-        uintptr_t* clientClass = reinterpret_cast<uintptr_t*>(*(getClientClassFn + 0x1));
-        if (!clientClass)
-            return nullptr;
-
-        return reinterpret_cast<const char*>(*(clientClass + 0x8));
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    if (!entity)
         return nullptr;
-    }
+    const char* name = NetworkClassNameViaNetworkable(entity);
+    const bool viaNetworkable = name != nullptr;
+    if (!name)
+        name = NetworkClassNameLegacy(entity);
+    static std::atomic<int> s_Logged{ 0 };
+    if (name && s_Logged.fetch_add(1) < 3)
+        Game::logMsg("[VR][NetClass] %s via %s", name, viaNetworkable ? "networkable" : "legacy offsets");
+    return name;
 }
 
 bool Game::ReadServerEdictIdentity(const edict_t* entity, int& index, unsigned& serial,

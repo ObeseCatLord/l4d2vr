@@ -974,6 +974,35 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "wait")
         return t >= 10.0f;
 
+    if (step.rfind("wriststyle=", 0) == 0)
+    {
+        m_WristHudNativeStyle = step.substr(11) != "custom";
+        Game::logMsg("[VR][SelfTest] wrist HUD style: %s", m_WristHudNativeStyle ? "native" : "custom");
+        return true;
+    }
+
+    // Saves the HUD texture and the exact textures submitted to the wrist overlays
+    // (l4d2vr_selftest_wrist_*.bmp in the game folder) for visual checks.
+    if (step == "wristdump")
+    {
+        if (at(0, 0.0f))
+        {
+            m_SelfTestValueA = m_NativeWristHudDumpCount.load(std::memory_order_acquire);
+            m_NativeWristHudDumpRequested.store(true, std::memory_order_release);
+        }
+        const bool dumped = m_NativeWristHudDumpCount.load(std::memory_order_acquire) != m_SelfTestValueA;
+        if (!dumped && t < 8.0f)
+            return false;
+        const uint32_t usedL = m_NativeWristHudUsedSize[0].load(std::memory_order_acquire);
+        const uint32_t usedR = m_NativeWristHudUsedSize[1].load(std::memory_order_acquire);
+        std::snprintf(detail, sizeof(detail), "style=%s left=%ux%u ready=%d shown=%d right=%ux%u ready=%d shown=%d",
+            m_WristHudNativeStyle ? "native" : "custom", usedL >> 16, usedL & 0xFFFFu,
+            m_NativeWristHudTexReady[0].load() ? 1 : 0, m_NativeWristHudShown[0].load() ? 1 : 0,
+            usedR >> 16, usedR & 0xFFFFu, m_NativeWristHudTexReady[1].load() ? 1 : 0, m_NativeWristHudShown[1].load() ? 1 : 0);
+        SelfTestReport("native wrist HUD dump", dumped && m_NativeWristHudTexReady[0].load() && m_NativeWristHudTexReady[1].load(), detail);
+        return true;
+    }
+
     if (step.rfind("cmd=", 0) == 0)
     {
         Game::logMsg("[VR][SelfTest] console command: %s", step.c_str() + 4);

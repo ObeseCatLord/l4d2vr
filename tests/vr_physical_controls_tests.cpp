@@ -155,6 +155,29 @@ int main()
     pumps.Reset();
     Check(!pumps.Observe(10u, 3, 0));
 
+    // A predicted shot the host never fires: the shells come back with the
+    // reserve untouched, so no pump is needed.
+    PumpCycles overturn;
+    overturn.NotifyShot(10u, 3, 7, 0u, 72, 1000u);
+    Check(overturn.Observe(10u, 3, 7, 0u, 72, 1100u));
+    Check(!overturn.TakeOverturned());
+    Check(!overturn.Observe(10u, 3, 8, 0u, 72, 1300u));
+    Check(overturn.TakeOverturned());
+    Check(!overturn.TakeOverturned());
+    // A shell loaded (reserve down) while the pump waits keeps the cycle.
+    overturn.NotifyShot(10u, 3, 7, 0u, 72, 2000u);
+    Check(overturn.Observe(10u, 3, 8, 0u, 71, 2200u));
+    Check(overturn.Observe(10u, 3, 8, 0u, 71, 2300u));
+    Check(!overturn.TakeOverturned());
+    // Shells coming back after the window keep it too.
+    overturn.NotifyShot(20u, 3, 5, 0u, 60, 3000u);
+    Check(overturn.Observe(20u, 3, 5, 0u, 60, 4200u));
+    Check(overturn.Observe(20u, 3, 6, 0u, 60, 4300u));
+    Check(!overturn.TakeOverturned());
+    // Without a reserve reading the shot is never treated as overturned.
+    overturn.NotifyShot(30u, 3, 5);
+    Check(overturn.Observe(30u, 3, 6, 0u, 60, 100u));
+
     pumps.ObserveOwner(true, 100u);
     pumps.NotifyShot(10u, 3, 7);
     pumps.ObserveOwner(true, 100u); // normal interaction reset on a weapon swap

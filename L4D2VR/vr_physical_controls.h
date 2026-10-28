@@ -264,14 +264,58 @@ namespace l4d2vr_physical
             return entry->needsCycle;
         }
 
-        void NotifyShot(std::uintptr_t weapon, int weaponId, int clip, std::uint32_t handle = 0u)
+        // The client predicts each shot. A shot the host never fires (the
+        // trigger right after a draw the host has not finished) comes back:
+        // the shells return above the predicted count with the reserve
+        // untouched. Nothing was fired, so nothing needs pumping. A reserve
+        // change (a shell loaded) or the window running out keeps the cycle.
+        static constexpr std::uint64_t kHostOverturnWindowMs = 1000u;
+        bool Observe(std::uintptr_t weapon, int weaponId, int clip, std::uint32_t handle,
+            int reserve, std::uint64_t nowMs)
+        {
+            const bool needsCycle = Observe(weapon, weaponId, clip, handle);
+            for (auto& entry : m_Entries)
+            {
+                if (entry.weapon != weapon || entry.weaponId != weaponId || entry.handle != handle || !entry.provisional)
+                    continue;
+                if (!entry.needsCycle || reserve != entry.shotReserve || nowMs < entry.shotAt ||
+                    nowMs - entry.shotAt > kHostOverturnWindowMs)
+                {
+                    entry.provisional = false;
+                }
+                else if (clip > entry.shotClip)
+                {
+                    entry.needsCycle = entry.provisional = false;
+                    m_Overturned = true;
+                    return false;
+                }
+            }
+            return needsCycle;
+        }
+
+        // True once after Observe dropped a cycle for an overturned shot.
+        bool TakeOverturned()
+        {
+            const bool overturned = m_Overturned;
+            m_Overturned = false;
+            return overturned;
+        }
+
+        void NotifyShot(std::uintptr_t weapon, int weaponId, int clip, std::uint32_t handle = 0u,
+            int reserve = -1, std::uint64_t nowMs = 0u)
         {
             if (!weapon || (weaponId != 3 && weaponId != 8) || clip < 0)
                 return;
             Observe(weapon, weaponId, clip, handle);
             for (auto& entry : m_Entries)
                 if (entry.weapon == weapon && entry.weaponId == weaponId && entry.handle == handle)
+                {
                     entry.needsCycle = true;
+                    entry.provisional = reserve >= 0 && nowMs != 0u;
+                    entry.shotClip = clip;
+                    entry.shotReserve = reserve;
+                    entry.shotAt = nowMs;
+                }
         }
 
         bool Complete(std::uintptr_t weapon, std::uint32_t handle = 0u)
@@ -287,7 +331,7 @@ namespace l4d2vr_physical
             return false;
         }
 
-        void Reset() { m_Entries = {}; m_Next = 0u; m_Owner = 0u; }
+        void Reset() { m_Entries = {}; m_Next = 0u; m_Owner = 0u; m_Overturned = false; }
 
         static bool StrokeComplete(bool reachedRear, float distance, float returnDistance)
         {
@@ -303,9 +347,14 @@ namespace l4d2vr_physical
             int clip = -1;
             bool needsCycle = false;
             std::uint32_t handle = 0u;
+            bool provisional = false; // the host may still overturn the shot
+            int shotClip = -1;
+            int shotReserve = -1;
+            std::uint64_t shotAt = 0u;
         };
         std::array<Entry, 16> m_Entries{};
         std::uintptr_t m_Owner = 0u;
         std::size_t m_Next = 0u;
+        bool m_Overturned = false;
     };
 }

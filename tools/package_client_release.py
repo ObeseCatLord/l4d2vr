@@ -39,6 +39,7 @@ CHANGES = [
     "1.2.2: toggle grips (GripToggle): a firm squeeze takes an item, the next squeeze holsters, swaps or drops it.",
     "1.2.2: reload hints: the spare magazine and the bolt, slide or pump glow when the reload needs them.",
     "1.2.2: point at menus with either controller and click with the trigger (MenuLaserPointerEnabled).",
+    "1.2.2: right stick forward jumps and back crouches (StickJumpCrouch); grips are only for gripping.",
     "1.2.2: larger, Pavlov-sized holster zones; no stray anchor markers; turning no longer triggers melee bashes.",
     "1.2.2: melee and shoves are motion only (no trigger bash or shove animation); the melee grip sits closer to the base of the handle.",
 ]

@@ -176,10 +176,11 @@ static StrikeRun RunStrike(const Box& seated, const Vec3& outward, const Vec3& g
         const float v = decelerate && travelled > startCm * 0.01f * 0.8f ? speed * 0.4f : speed;
         const Box held = Translated(seated, Add(start, Scale(dir, travelled * unitsPerMeter)));
         const bool touching = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, p.contactMeters * unitsPerMeter);
+        const bool overlapping = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, p.overlapMeters * unitsPerMeter);
         previous = RelativeOrigin(seated, held);
         havePrevious = true;
         const Vec3 strike = Scale(dir, v);
-        const Detector::Outcome o = detector.Update(p, t, &strike, 1, outward, gunForward, touching);
+        const Detector::Outcome o = detector.Update(p, t, &strike, 1, outward, gunForward, touching, overlapping);
         if (o.hit && !run.hit)
         {
             run.hit = true;
@@ -296,6 +297,37 @@ static void TestDetectorRealisticSlaps()
     CHECK(!RunStrike(seated, out, forward, down, 0.6f, 12.0f, 20.0f, 90.0f, galil).hit);
     // A touch with a slow hand is reported as a near miss (for the log).
     CHECK(RunStrike(seated, out, forward, down, 0.4f, 12.0f, 20.0f, 90.0f, ak).nearMiss);
+    // A short wind-up: the spare starts inside the touch distance (3 cm from the
+    // old magazine) and strikes; the overlap starting still counts.
+    {
+        const float unitsPerMeter = 40.0f;
+        const float length = seated.maxs.z - seated.mins.z; // along the barrel
+        Detector d;
+        d.Reset();
+        Vec3 previous{};
+        bool havePrevious = false;
+        bool hit = false;
+        float offset = -(length + 0.03f * unitsPerMeter); // 3 cm behind it
+        for (int frame = 0; frame < 90 && !hit; ++frame)
+        {
+            const bool striking = frame >= 45;
+            const float speed = striking ? 1.0f : 0.0f;
+            offset += speed * unitsPerMeter / 90.0f;
+            const Box held = Translated(seated, Scale(forward, offset));
+            const bool touching = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, ak.contactMeters * unitsPerMeter);
+            const bool overlapping = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, ak.overlapMeters * unitsPerMeter);
+            previous = RelativeOrigin(seated, held);
+            havePrevious = true;
+            const Vec3 strike = Scale(forward, speed);
+            const Detector::Outcome o = d.Update(ak, frame / 90.0f, &strike, 1, out, forward, touching, overlapping);
+            CHECK(!(o.hit && !striking));
+            CHECK(!(frame == 0 && !touching)); // the wind-up starts inside the touch distance
+            hit = hit || o.hit;
+        }
+        CHECK(hit);
+    }
+    // Tracking jumps faster than a hand never slap.
+    CHECK(!RunStrike(seated, out, forward, down, 9.0f, 12.0f, 20.0f, 90.0f, ak).hit);
 }
 
 static void TestDetectorCantedGunFromHeadsetLog()
@@ -355,6 +387,12 @@ static void TestDetectorRestingContact()
     const Vec3 jerk = Scale(out, 2.0f);
     for (int i = 60; i < 70; ++i)
         CHECK(!d.Update(ak, i / 90.0f, &jerk, 1, out, { 1.0f, 0.0f, 0.0f }, true).hit);
+    // The same resting overlap (inner contact too) jerked: still no new touch.
+    d.Reset();
+    for (int i = 0; i < 60; ++i)
+        CHECK(!d.Update(ak, i / 90.0f, &still, 1, out, { 1.0f, 0.0f, 0.0f }, true, true).hit);
+    for (int i = 60; i < 70; ++i)
+        CHECK(!d.Update(ak, i / 90.0f, &jerk, 1, out, { 1.0f, 0.0f, 0.0f }, true, true).hit);
     // Either of two velocity estimates may carry the strike.
     d.Reset();
     const Vec3 two[2] = { { 0.0f, 0.0f, 0.0f }, Scale(out, 1.0f) };

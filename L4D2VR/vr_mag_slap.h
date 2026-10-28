@@ -193,11 +193,14 @@ namespace l4d2vr_mag_slap
     // same-frame test missed most real slaps (headset log 2026-10-28: the user
     // held the spare for 31 s of strikes before one counted; every slap that
     // counted was within 0.05 m/s or 0.04 of a threshold). Here:
-    //  - contact is the held box overlapping the seated one (grown by a few
-    //    centimetres), swept along the path since the last frame, so a fast
-    //    pass cannot skip through between frames;
+    //  - contact is the held box overlapping the seated one, swept along the
+    //    path since the last frame, so a fast pass cannot skip through between
+    //    frames. A touch counts when the boxes come within a few centimetres
+    //    or when they start to overlap, so a spare held close for a short
+    //    wind-up still slaps;
     //  - the strike is the fastest qualifying sample from up to `window`
-    //    seconds before the touch (the hand slows as it lands);
+    //    seconds before the touch (the hand slows as it lands); samples faster
+    //    than any hand (tracking jumps) never count;
     //  - a slap may run along the magazine out of the well (straight down on a
     //    level gun) or knock it toward the muzzle (how an AK magazine rocks
     //    out, and what Pavlov's magazine forward axis means), or anything in
@@ -209,8 +212,10 @@ namespace l4d2vr_mag_slap
         float dot = 0.58f;                  // Pavlov's forward dot less 0.1
         float windowSeconds = 0.15f;        // strike up to this long before the touch
         float lateSeconds = 0.06f;          // or this long after it began (velocity lag)
-        float contactMeters = 0.05f;        // boxes this close touch
+        float contactMeters = 0.04f;        // boxes this close touch
+        float overlapMeters = 0.005f;       // ... and this close overlap
         float maxIntoWellDot = 0.35f;       // more than this along the insert axis is an insert
+        float maxSpeedMetersPerSecond = 6.0f; // faster is a tracking jump, not a hand
     };
 
     inline ForgivingParams Forgiving(const Params& pavlov)
@@ -251,8 +256,8 @@ namespace l4d2vr_mag_slap
 
     inline bool StrikeQualifies(const ForgivingParams& p, float speed, const DirectionMatch& m)
     {
-        return std::isfinite(speed) && speed >= p.speedMetersPerSecond && m.dot >= p.dot &&
-            m.intoWell <= p.maxIntoWellDot;
+        return std::isfinite(speed) && speed >= p.speedMetersPerSecond && speed <= p.maxSpeedMetersPerSecond &&
+            m.dot >= p.dot && m.intoWell <= p.maxIntoWellDot;
     }
 
     // Oriented box overlap (separating axis test) with `margin` added to a's
@@ -359,12 +364,14 @@ namespace l4d2vr_mag_slap
             m_Count = 0;
             m_Head = 0;
             m_WasTouching = false;
+            m_WasOverlapping = false;
             m_TouchBeganAt = -1e9f;
         }
 
         // strikes: one or more velocity estimates for this frame (m/s, world).
+        // touching: within contactMeters; overlapping: within overlapMeters.
         Outcome Update(const ForgivingParams& p, float time, const Vec3* strikes, int strikeCount,
-            const Vec3& outwardAxis, const Vec3& gunForward, bool touching)
+            const Vec3& outwardAxis, const Vec3& gunForward, bool touching, bool overlapping = false)
         {
             Outcome o{};
             Sample best{};
@@ -381,14 +388,18 @@ namespace l4d2vr_mag_slap
                     best = s;
             }
             Push(best);
+            overlapping = overlapping && touching;
             o.touchBegan = touching && !m_WasTouching;
+            const bool overlapBegan = overlapping && !m_WasOverlapping;
             m_WasTouching = touching;
-            if (o.touchBegan)
+            m_WasOverlapping = overlapping;
+            const bool began = o.touchBegan || overlapBegan;
+            if (began)
                 m_TouchBeganAt = time;
             // A touch just began: any qualifying strike within the window before it.
             // A qualifying strike now: a touch that began a moment ago.
             const bool touchRecent = touching && time - m_TouchBeganAt <= p.lateSeconds + 1e-4f;
-            if (o.touchBegan || (touchRecent && best.qualifies))
+            if (began || (touchRecent && best.qualifies))
             {
                 const Sample* found = nullptr;
                 const Sample* fastest = nullptr;
@@ -407,7 +418,7 @@ namespace l4d2vr_mag_slap
                     o.hit = true;
                     o.strike = *found;
                 }
-                else if (o.touchBegan)
+                else if (began)
                 {
                     o.nearMiss = true;
                     if (fastest)
@@ -434,6 +445,7 @@ namespace l4d2vr_mag_slap
         int m_Count = 0;
         int m_Head = 0;
         bool m_WasTouching = false;
+        bool m_WasOverlapping = false;
         float m_TouchBeganAt = -1e9f;
     };
 

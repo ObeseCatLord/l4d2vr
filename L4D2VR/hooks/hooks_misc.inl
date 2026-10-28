@@ -9204,19 +9204,90 @@ namespace
     }
 
     // Holster draws put the item straight into the hand: while the native deploy
-    // animation plays, show the weapon's last settled idle pose instead.
+    // animation plays, show the weapon's last settled idle pose instead. The same
+    // held pose replaces the native strike animations (gun shove, melee swings):
+    // in VR the hand stays where the controller put it.
     struct HolsterInstantDrawPoseState
     {
         VR* owner = nullptr;
         std::string currentModel;
         std::chrono::steady_clock::time_point modelSince{};
+        // Idle poses (captured only while the weapon plays an idle sequence).
         std::unordered_map<std::string, MagazineInteractionFrozenViewmodelPoseEntry> readyPoses;
+        // Last pose that was not a strike: the fallback before an idle was seen.
+        std::unordered_map<std::string, MagazineInteractionFrozenViewmodelPoseEntry> steadyPoses;
+        std::unordered_map<std::string, std::chrono::steady_clock::time_point> capturedAt;
+        // The weapon's last classification; the bone-merged arms follow it.
+        l4d2vr_vm_anim::Kind weaponKind = l4d2vr_vm_anim::Kind::Unknown;
+        bool weaponStrikeHidden = false;
+        std::chrono::steady_clock::time_point weaponKindAt{};
+        uint64_t lastTraceMs = 0u;
+        uint64_t lastDeviationTraceMs = 0u;
+        int lastTraceSequence = -2;
     };
 
     inline HolsterInstantDrawPoseState& GetHolsterInstantDrawPoseState()
     {
         static HolsterInstantDrawPoseState state;
         return state;
+    }
+
+    // The draw belongs to a viewmodel entity (CBaseViewModel, CTerrorViewModel...).
+    inline bool HooksEntityIsViewmodel(VR* vr, int entityIndex)
+    {
+        if (!vr || !vr->m_Game || entityIndex <= 0)
+            return false;
+        __try
+        {
+            C_BaseEntity* const entity = vr->m_Game->GetClientEntity(entityIndex);
+            const char* const name = entity ? vr->m_Game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(entity)) : nullptr;
+            return name && std::strstr(name, "ViewModel") != nullptr;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // Current sequence of a viewmodel entity and its classification.
+    inline l4d2vr_vm_anim::Kind ClassifyViewmodelSequence(VR* vr, int entityIndex, const uint8_t* studioHdr,
+        bool meleeWeapon, int& outSequence, float& outCycle, const char*& outActivity)
+    {
+        outSequence = -1;
+        outCycle = -1.0f;
+        outActivity = "";
+        if (!vr || !vr->m_Game || entityIndex <= 0 || !studioHdr)
+            return l4d2vr_vm_anim::Kind::Unknown;
+        static int s_SequenceOffset = -2;
+        static int s_CycleOffset = -2;
+        if (s_SequenceOffset == -2)
+        {
+            s_SequenceOffset = vr->m_Game->FindRecvPropOffset("DT_BaseViewModel", "m_nSequence");
+            s_CycleOffset = vr->m_Game->FindRecvPropOffset("DT_BaseAnimating", "m_flCycle");
+            Game::logMsg("[VR][VmAnim] viewmodel m_nSequence offset=%d m_flCycle offset=%d", s_SequenceOffset, s_CycleOffset);
+        }
+        if (s_SequenceOffset <= 0)
+            return l4d2vr_vm_anim::Kind::Unknown;
+        const char* label = nullptr;
+        const char* activity = nullptr;
+        __try
+        {
+            const unsigned char* const entity =
+                reinterpret_cast<const unsigned char*>(vr->m_Game->GetClientEntity(entityIndex));
+            if (!entity)
+                return l4d2vr_vm_anim::Kind::Unknown;
+            outSequence = *reinterpret_cast<const int*>(entity + s_SequenceOffset);
+            if (s_CycleOffset > 0)
+                outCycle = *reinterpret_cast<const float*>(entity + s_CycleOffset);
+            if (!l4d2vr_vm_anim::SequenceNames(studioHdr, outSequence, label, activity))
+                return l4d2vr_vm_anim::Kind::Unknown;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return l4d2vr_vm_anim::Kind::Unknown;
+        }
+        outActivity = activity && *activity ? activity : (label ? label : "");
+        return l4d2vr_vm_anim::Classify(activity, label, meleeWeapon);
     }
 
     inline void ApplyHolsterInstantDrawViewmodelPose(
@@ -9227,16 +9298,17 @@ namespace
         const ModelRenderInfo_t& info,
         void*& pCustomBoneToWorld)
     {
-        const uint64_t nowMsEarly = GetTickCount64();
-        const bool animSuppressWindow =
-            vr && nowMsEarly < vr->m_ViewmodelAnimSuppressUntilMs.load(std::memory_order_acquire);
-        if (!vr || !vr->m_IsVREnabled ||
-            (!(vr->m_BodyGripInventoryEnabled && vr->m_HolsterInstantDraw) && !animSuppressWindow) ||
-            !drawState || !pCustomBoneToWorld || modelName.empty())
+        const uint64_t nowMs = GetTickCount64();
+        if (!vr || !vr->m_IsVREnabled || !drawState || !pCustomBoneToWorld || modelName.empty())
             return;
         const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
         const bool armsModel = HooksModelNameIsArmsOrHands(lowerModel);
         if (!armsModel && !drawEntityIsViewmodelClass && !HooksModelNameIsViewmodel(lowerModel))
+            return;
+
+        // Only the hand's viewmodel: holstered items and other weapon entities
+        // drawn with v_ models are placed elsewhere and keep their own bones.
+        if (!armsModel && !drawEntityIsViewmodelClass && !HooksEntityIsViewmodel(vr, info.entity_index))
             return;
 
         HolsterInstantDrawPoseState& state = GetHolsterInstantDrawPoseState();
@@ -9266,46 +9338,167 @@ namespace
             return;
         const auto* sourceBones = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pCustomBoneToWorld);
 
-        const uint64_t nowMs = nowMsEarly;
+        // What the viewmodel is playing. The arms follow the weapon's last state.
+        using l4d2vr_vm_anim::Kind;
+        Kind kind = Kind::Unknown;
+        bool strike = false;
+        if (!armsModel)
+        {
+            const bool melee = l4d2vr_vm_anim::IsSwungMeleeModel(lowerModel.c_str());
+            const uint8_t* studioHdr = nullptr;
+            int sequence = -1;
+            float cycle = -1.0f;
+            const char* activity = "";
+            if (vr_vm_stabilize::TryGetStudioHdrFromDrawState(drawState, studioHdr))
+                kind = ClassifyViewmodelSequence(vr, info.entity_index, studioHdr, melee, sequence, cycle, activity);
+            // Gun shoves are always motion-driven in VR; melee swings are when
+            // motion melee owns them.
+            strike = kind == Kind::Strike && (!melee || vr->m_MotionOnlyMeleeAndShove);
+            state.weaponKind = kind;
+            state.weaponStrikeHidden = strike;
+            state.weaponKindAt = now;
+            if (nowMs < vr->m_VmAnimTraceUntilMs.load(std::memory_order_acquire))
+            {
+                // Self-test trace: one line per rendered frame (both eyes share a
+                // frame within a few milliseconds).
+                if (nowMs - state.lastTraceMs >= 8u || sequence != state.lastTraceSequence)
+                {
+                    state.lastTraceMs = nowMs;
+                    state.lastTraceSequence = sequence;
+                    Game::logMsg("[VR][VmAnim] model=%s seq=%d act=%s cycle=%.2f kind=%d window=%d",
+                        lowerModel.c_str(), sequence, activity, cycle, static_cast<int>(kind),
+                        nowMs < vr->m_ViewmodelAnimSuppressUntilMs.load(std::memory_order_acquire) ? 1 : 0);
+                }
+            }
+        }
+        else if (std::chrono::duration<float>(now - state.weaponKindAt).count() < 0.25f)
+        {
+            kind = state.weaponKind;
+            strike = state.weaponStrikeHidden;
+        }
+
         const bool instantWindow = vr->m_BodyGripInventoryEnabled && vr->m_HolsterInstantDraw &&
             nowMs < vr->m_HolsterInstantDrawUntilMs.load(std::memory_order_acquire);
         constexpr float kDeployMaskSeconds = 0.9f;
-        constexpr float kSettledSeconds = 1.6f;
+        const bool hideDeploy = instantWindow && modelAge < kDeployMaskSeconds;
 
         MagazineInteractionFrozenViewmodelPoseEntry& ready = state.readyPoses[poseKey];
         const bool readyMatches = ready.valid && ready.numBones == numBones &&
             static_cast<int>(ready.frozenLocalBones.size()) == numBones;
+        MagazineInteractionFrozenViewmodelPoseEntry& steady = state.steadyPoses[poseKey];
+        const bool steadyMatches = steady.valid && steady.numBones == numBones &&
+            static_cast<int>(steady.frozenLocalBones.size()) == numBones;
 
-        // Hold the ready pose through a deploy after an instant draw, and through
-        // motion shoves / melee swings (no native shove or swing animation).
-        if ((instantWindow && modelAge < kDeployMaskSeconds) || (animSuppressWindow && modelAge >= kSettledSeconds))
+        // The native pose, relative to the model (i.e. to the controller), and
+        // how far it strays from the held idle pose. L4D2 plays the gun shove as
+        // a layered gesture over an idle base sequence, so the bones, not only
+        // the sequence, tell whether a strike animation is moving the hand.
+        std::vector<vr_vm_stabilize::Mat3x4> currentLocal;
+        const bool currentValid = BuildMagazineInteractionLocalBones(modelAnchor, sourceBones, numBones, currentLocal);
+        auto maxDeviation = [&](const MagazineInteractionFrozenViewmodelPoseEntry& pose)
         {
-            if (!readyMatches)
-                return;
-            uint32_t seqEven = vr->m_RenderFrameSeq.load(std::memory_order_acquire) & ~1u;
-            if (seqEven == 0u)
-                seqEven = (static_cast<uint32_t>(GetTickCount()) << 1u) | 2u;
-            vr_vm_stabilize::Mat3x4* readyBones = vr_vm_stabilize::AllocStableBones(numBones, seqEven);
+            float worst = 0.0f;
+            for (int bone = 0; bone < numBones; ++bone)
+            {
+                const auto& c = currentLocal[static_cast<size_t>(bone)].m;
+                const auto& p = pose.frozenLocalBones[static_cast<size_t>(bone)].m;
+                const float dx = c[0][3] - p[0][3], dy = c[1][3] - p[1][3], dz = c[2][3] - p[2][3];
+                worst = (std::max)(worst, std::sqrt(dx * dx + dy * dy + dz * dz));
+            }
+            return worst;
+        };
+        const float deviation = currentValid && readyMatches ? maxDeviation(ready) : -1.0f;
+        constexpr float kStrikeDeviationUnits = 0.6f; // ~1.4 cm: beyond the idle sway
+        const bool nativeStrikePose = deviation > kStrikeDeviationUnits;
+
+        // A motion shove / swing opens a window (it covers the network delay
+        // before the server's animation arrives); afterwards the hand is held
+        // for as long as the native pose is still off the idle pose.
+        const uint64_t strikeUntil = vr->m_ViewmodelAnimSuppressUntilMs.load(std::memory_order_acquire);
+        const bool inWindow = nowMs < strikeUntil;
+        const bool inExtension = nowMs < strikeUntil + 1500u;
+        bool hideStrike = false;
+        if (!armsModel)
+        {
+            hideStrike = strike || (inWindow && (kind != Kind::Idle || nativeStrikePose)) ||
+                (inExtension && nativeStrikePose && kind != Kind::Other);
+            state.weaponStrikeHidden = hideStrike;
+        }
+        else
+        {
+            hideStrike = strike;
+        }
+        const bool strikeFrame = !armsModel && (strike || (inExtension && nativeStrikePose && kind != Kind::Other));
+        if (!armsModel && inExtension && deviation >= 0.0f)
+        {
+            float previous = vr->m_VmStrikeMaxDeviation.load(std::memory_order_relaxed);
+            while (deviation > previous &&
+                !vr->m_VmStrikeMaxDeviation.compare_exchange_weak(previous, deviation, std::memory_order_relaxed))
+            {
+            }
+        }
+        if (!armsModel && nowMs < vr->m_VmAnimTraceUntilMs.load(std::memory_order_acquire) && nowMs - state.lastDeviationTraceMs >= 8u)
+        {
+            state.lastDeviationTraceMs = nowMs;
+            Game::logMsg("[VR][VmAnim] pose model=%s deviation=%.2f window=%d extension=%d held=%d",
+                lowerModel.c_str(), deviation, inWindow ? 1 : 0, inExtension ? 1 : 0, (hideStrike || hideDeploy) ? 1 : 0);
+        }
+
+        if (strikeFrame)
+            vr->m_VmStrikeFrames.fetch_add(1u, std::memory_order_relaxed);
+        if (hideDeploy || hideStrike)
+        {
+            // Prefer the idle pose; before one was seen, the last pose that was
+            // not a strike (captured before the shove started).
+            const MagazineInteractionFrozenViewmodelPoseEntry* const held =
+                readyMatches ? &ready : ((hideStrike && steadyMatches) ? &steady : nullptr);
+            vr_vm_stabilize::Mat3x4* readyBones = nullptr;
+            if (held)
+            {
+                uint32_t seqEven = vr->m_RenderFrameSeq.load(std::memory_order_acquire) & ~1u;
+                if (seqEven == 0u)
+                    seqEven = (static_cast<uint32_t>(GetTickCount()) << 1u) | 2u;
+                readyBones = vr_vm_stabilize::AllocStableBones(numBones, seqEven);
+            }
             if (!readyBones)
+            {
+                if (strikeFrame)
+                    vr->m_VmStrikeFramesShown.fetch_add(1u, std::memory_order_relaxed);
                 return;
-            ApplyMagazineInteractionLocalPose(modelAnchor, ready.frozenLocalBones, readyBones, numBones);
+            }
+            ApplyMagazineInteractionLocalPose(modelAnchor, held->frozenLocalBones, readyBones, numBones);
             pCustomBoneToWorld = readyBones;
+            if (strikeFrame)
+                vr->m_VmStrikeFramesHeld.fetch_add(1u, std::memory_order_relaxed);
             return;
         }
+        if (strikeFrame)
+            vr->m_VmStrikeFramesShown.fetch_add(1u, std::memory_order_relaxed);
 
-        // Refresh the settled pose while the weapon has been out for a while and
-        // nothing else is animating it.
-        if (modelAge >= kSettledSeconds && !animSuppressWindow && !vr->IsMagazineInteractionManualActive() &&
-            (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & (1u << 1)) == 0u)
+        // Refresh the held poses while nothing else is animating the hand.
+        if (!currentValid || inExtension || kind == Kind::Strike || vr->IsMagazineInteractionManualActive() ||
+            (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & (1u << 1)) != 0u)
+            return;
+        auto& capturedAt = state.capturedAt[poseKey];
+        if (std::chrono::duration<float>(now - capturedAt).count() < 0.05f)
+            return;
+        capturedAt = now;
+        // The idle pose: an idle sequence whose pose has settled (a recoil or
+        // other gesture layered over the idle base moves between captures), or,
+        // where the header cannot say, a weapon that has been out for a while.
+        const bool settled = steadyMatches && maxDeviation(steady) < 0.15f;
+        constexpr float kSettledSeconds = 1.6f;
+        if ((kind == Kind::Idle && settled) || (kind == Kind::Unknown && modelAge >= kSettledSeconds && !readyMatches))
         {
-            MagazineInteractionFrozenViewmodelPoseEntry captured{};
-            captured.modelName = modelName;
-            captured.numBones = numBones;
-            captured.valid = BuildMagazineInteractionLocalBones(modelAnchor, sourceBones, numBones,
-                captured.frozenLocalBones);
-            if (captured.valid && !readyMatches)
-                ready = std::move(captured);
+            ready.modelName = modelName;
+            ready.numBones = numBones;
+            ready.frozenLocalBones = currentLocal;
+            ready.valid = true;
         }
+        steady.modelName = modelName;
+        steady.numBones = numBones;
+        steady.frozenLocalBones = std::move(currentLocal);
+        steady.valid = true;
     }
 
     inline void ApplyMagazineInteractionBoltPose(

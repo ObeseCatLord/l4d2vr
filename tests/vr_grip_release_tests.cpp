@@ -24,14 +24,19 @@ int main()
     missed.Update(true,true,false,7u,l4d2vr_input::GripSample::Generation(samples.load()));
     l4d2vr_input::GripSample::Publish(samples,3u);
     missed.Update(true,true,true,7u,l4d2vr_input::GripSample::Generation(samples.load()));
+    missed.AdoptWeapon(7u);
     l4d2vr_input::GripSample::Publish(samples,0u); // native command generation misses this sample
     l4d2vr_input::GripSample::Publish(samples,1u);
     const auto discontinuity=l4d2vr_input::GripSample::Generation(samples.load());
     Check(!missed.Update(true,true,false,7u,discontinuity),"Skipped unavailable grip cannot become drop");
+    Check(!missed.Owns(),"An input discontinuity ends the grip's ownership");
     Check(!missed.Update(true,true,true,7u,discontinuity),"Recovered held grip cannot rearm drop");
     Check(!missed.Update(true,true,false,7u,discontinuity),"Healthy neutral grip is only a new baseline");
-    Check(!missed.Update(true,true,true,7u,discontinuity),"Fresh grip press arms normally");
-    Check(missed.Update(true,true,false,7u,discontinuity),"Fresh grip release still drops normally");
+    Check(!missed.Update(true,true,true,7u,discontinuity),"A fresh press that takes nothing does not arm");
+    Check(!missed.Update(true,true,false,7u,discontinuity),"An empty squeeze never drops the held weapon");
+    Check(!missed.Update(true,true,true,7u,discontinuity),"Fresh grip press");
+    missed.AdoptWeapon(7u);
+    Check(missed.Update(true,true,false,7u,discontinuity),"Releasing an item the grip took drops it");
     Check(MayCommitDrop(true, true, true, true, 0), "A current live owned weapon may be released");
     Check(MayCommitDrop(true, true, true, true, 48), "A bounded delayed command may still commit");
     Check(!MayCommitDrop(true, true, true, true, 49), "An expired release must not mutate inventory");
@@ -45,43 +50,79 @@ int main()
     Check(!CanReleaseInventoryItem(false, true, true, false, false), "A primed grenade must not execute an inventory drop");
     Check(!CanReleaseInventoryItem(false, false, true, false, false), "Grenade trigger release must not also drop its inventory weapon");
     Check(CanReleaseInventoryItem(false, false, false, false, false), "An idle inventory item can be dropped");
+
+    // The headset bug: a weapon the grip never took (spawned with it, Use pickup,
+    // switched to) is never dropped by squeezing the grip in the air, however often.
+    ReleaseLatch empty;
+    Check(!empty.Update(true, true, false, 1), "Idle input must not drop a weapon");
+    for (int squeeze = 0; squeeze < 5; ++squeeze)
+    {
+        Check(!empty.Update(true, true, true, 1), "Squeezing empty air must not arm a drop");
+        Check(!empty.Update(true, true, true, 1), "Holding an empty squeeze must not arm a drop");
+        Check(!empty.Update(true, true, false, 1), "Releasing an empty squeeze must not drop the held weapon");
+    }
+
     ReleaseLatch grip;
     Check(!grip.Update(true, true, false, 1), "Idle input must not drop a weapon");
     Check(!grip.Update(true, true, true, 1), "Pressing grip must not drop a weapon");
+    grip.AdoptWeapon(1); // the press drew this weapon from a holster
+    Check(grip.Owns(), "A confirmed draw makes the grip own the item");
     Check(!grip.Update(true, true, true, 1), "Holding grip must not repeat a drop");
     Check(grip.Update(true, true, false, 1), "A deliberate release must drop once");
+    Check(!grip.Owns(), "The drop ends the ownership");
     Check(!grip.Update(true, true, false, 1), "Repeated release samples must be ignored");
+    Check(!grip.Update(true, true, true, 1), "A later press with nothing taken");
+    Check(!grip.Update(true, true, false, 1), "does not drop the weapon again");
 
     grip.Update(true, true, true, 1);
+    grip.AdoptWeapon(1);
+    Check(!grip.Update(true, true, true, 1, 0u, false), "Holding through a holster zone keeps the grip");
+    Check(grip.Owns(), "Passing a holster on the way keeps the ownership");
+    Check(!grip.Update(true, true, false, 1, 0u, false), "Letting go over a holster does not drop");
+    Check(!grip.Owns(), "Letting go over a holster ends the ownership");
+    Check(!grip.Update(true, true, true, 1), "Squeezing again away from the holster");
+    Check(!grip.Update(true, true, false, 1), "takes nothing, so nothing drops");
+
+    grip.Update(true, true, true, 1);
+    grip.AdoptWeapon(1);
     Check(!grip.Update(true, false, false, 1), "Losing tracking must not synthesize a release");
     Check(!grip.Update(true, true, false, 1), "Recovering tracking must not replay a release");
 
     grip.Update(true, true, true, 1);
+    grip.AdoptWeapon(1);
     Check(!grip.Update(false, true, false, 1), "A menu or incapacitation must cancel the grip");
     Check(!grip.Update(true, true, false, 1), "Returning to gameplay must not drop the weapon");
 
     grip.Update(true, true, true, 1);
+    grip.AdoptWeapon(1);
     Check(!grip.Update(true, true, true, 2), "Switching weapons while gripping must not arm the new weapon");
+    Check(!grip.Owns(), "A switch the grip did not make is not owned");
     Check(!grip.Update(true, true, false, 2), "Releasing an inherited grip must be ignored");
     grip.Update(true, true, true, 2);
-    Check(grip.Update(true, true, false, 2), "The new weapon must accept a fresh press and release");
+    Check(!grip.Update(true, true, false, 2), "An empty squeeze on the switched weapon does not drop it");
+    grip.Update(true, true, true, 2);
+    grip.AdoptWeapon(2);
+    Check(grip.Update(true, true, false, 2), "The new weapon drops after the grip takes it");
 
     grip.Reset();
     Check(!grip.Update(true, true, true, 3), "An initially held grip must wait for release");
     Check(!grip.Update(true, true, false, 3), "The initial release must not drop the weapon");
     grip.Update(true, true, true, 3);
+    grip.AdoptWeapon(3);
     Check(!grip.Update(true, true, false, 0), "An absent weapon must cancel a pending drop");
     Check(!grip.Update(true, true, false, 3), "Reappearing weapons must not replay the cancelled drop");
 
     grip.Reset();
     grip.Update(true, true, false, 4);
     grip.Update(true, true, true, 4);
+    grip.AdoptWeapon(4);
     // Reproduce extra camera input samples between two actual user commands.
     for (int sample = 0; sample < 12; ++sample) grip.ObserveSession(true, 4);
     Check(grip.IsArmed(), "Camera-only samples must preserve the held grip");
     Check(grip.Update(true, true, false, 4), "Release after extra samples must drop exactly once");
     Check(!grip.Update(true, true, false, 4), "Camera samples must not produce duplicate releases");
     grip.Update(true, true, true, 4);
+    grip.AdoptWeapon(4);
     grip.ObserveSession(false, 4); // pause, death, or disconnect
     Check(!grip.IsArmed(), "Actual lifecycle loss must cancel the held grip");
     Check(!grip.Update(true, true, false, 4), "Menu-time release must not replay after return");

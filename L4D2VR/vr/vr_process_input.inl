@@ -632,13 +632,27 @@ void VR::ProcessInput()
             !m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
             !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
         toggleInput.nowMs = GetTickCount64();
-        toggleInput.takeSerial = m_BodyGripSelectionSerial.load(std::memory_order_acquire) +
+        toggleInput.takeSerial = m_GripDrawSerial.load(std::memory_order_acquire) +
             m_GripToggleAdoptSerial.load(std::memory_order_acquire);
         toggleInput.pickupSerial = m_GripTogglePickupSerial.load(std::memory_order_acquire);
         toggleInput.heldItemTag = localPlayer
             ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(localPlayer->GetActiveWeapon())) : 0u;
         toggleInput.inOwnHolster = m_HolsterHandInOwnZone.load(std::memory_order_acquire);
         toggleInput.inOtherHolster = m_HolsterHandOverOtherZone.load(std::memory_order_acquire);
+        {
+            // The physical squeeze (not the toggled grip) pauses gun bashes: a
+            // reach, squeeze and draw is not a bash.
+            static bool s_PrevRawGrip = false;
+            const bool raw = rightGripValid && rightGripDown;
+            m_WeaponGripPhysicalDown = raw;
+            if (raw != s_PrevRawGrip)
+            {
+                const uint64_t until = GetTickCount64() + (raw ? 700u : 300u);
+                if (until > m_GunBashGripBlockUntilMs.load(std::memory_order_acquire))
+                    m_GunBashGripBlockUntilMs.store(until, std::memory_order_release);
+            }
+            s_PrevRawGrip = raw;
+        }
         const bool wasHeld = m_GripToggle.Held();
         const bool virtualDown = m_GripToggle.Update(toggleInput);
         if (toggleApplies && rightGripValid)
@@ -734,6 +748,12 @@ void VR::ProcessInput()
                         occupied |= 1u << slot;
                 const l4d2vr_holster::Zone zone =
                     l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied);
+                int activeSlot = -1;
+                C_BaseCombatWeapon* const active = localPlayer->GetActiveWeapon();
+                for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
+                    if (active && localPlayer->Weapon_GetSlot(slot) == active)
+                        activeSlot = slot;
+                LogHolsterGripPress(true, &frame, m_LeftControllerPosAbs, true, static_cast<int>(zone), activeSlot);
                 if (zone != l4d2vr_holster::Zone::None)
                 {
                     m_LeftHolsterRequestSlot = l4d2vr_holster::SlotIndex(zone);
@@ -1707,27 +1727,12 @@ void VR::ProcessInput()
                 }
             }
             {
-                // One line per grip press: what the holsters saw (helps tune zones).
+                // One line per grip press: where the hand was in the body frame
+                // and what the holsters saw (helps tune zones from real reaches).
                 static bool s_PrevHolsterGripDown = false;
                 if (gripDown && !s_PrevHolsterGripDown)
-                {
-                    float nearest = 99.0f;
-                    int nearestZone = -1;
-                    for (int zone = 0; frameValid && zone < l4d2vr_holster::kZoneCount; ++zone)
-                    {
-                        const float d = (l4d2vr_holster::ZoneCenterWorld(frame, m_HolsterLayout,
-                            static_cast<l4d2vr_holster::Zone>(zone)) - m_RightControllerPosAbs).Length() /
-                            (std::max)(1.0f, m_VRScale);
-                        if (d < nearest)
-                        {
-                            nearest = d;
-                            nearestZone = zone;
-                        }
-                    }
-                    Game::logMsg("[VR][Holster] grip pressed: ready=%d zone=%d nearest=slot%d at %.2f m (radius %.2f) active=slot%d",
-                        ready ? 1 : 0, static_cast<int>(grabInput.handZone), nearestZone + 1, nearest,
-                        nearestZone >= 0 ? m_HolsterLayout.radius[nearestZone] : 0.0f, activeSlot + 1);
-                }
+                    LogHolsterGripPress(false, frameValid ? &frame : nullptr, m_RightControllerPosAbs, ready,
+                        static_cast<int>(grabInput.handZone), activeSlot);
                 s_PrevHolsterGripDown = gripDown;
             }
             m_HolsterHandOverOtherZone.store(frameValid && grabInput.handZone != l4d2vr_holster::Zone::None,
@@ -1753,6 +1758,9 @@ void VR::ProcessInput()
                         const bool usable = (occupiedMask & (1u << l4d2vr_holster::SlotIndex(leftZone))) != 0u;
                         TriggerPhysicalHandHapticPulse(true, usable ? 0.045f : 0.025f, 160.0f,
                             usable ? m_HolsterHoverHapticAmplitude : m_HolsterHoverHapticAmplitude * 0.45f, 1);
+                        ++m_HolsterLeftHoverPulseCount;
+                        Game::logMsg("[VR][Holster] left hover slot%d %s", l4d2vr_holster::SlotIndex(leftZone) + 1,
+                            usable ? "occupied" : "empty");
                     }
                 }
                 static l4d2vr_holster::Zone s_HoverZone = l4d2vr_holster::Zone::None;
@@ -1761,7 +1769,10 @@ void VR::ProcessInput()
                 if (anyZone != s_HoverZone)
                 {
                     s_HoverZone = anyZone;
-                    if (anyZone != l4d2vr_holster::Zone::None && !gripDown && m_HolsterHoverHapticAmplitude > 0.0f)
+                    // The physical squeeze, not the toggled grip: a hand that keeps
+                    // an item (toggle grips) still feels the holsters it passes.
+                    if (anyZone != l4d2vr_holster::Zone::None && !m_WeaponGripPhysicalDown &&
+                        m_HolsterHoverHapticAmplitude > 0.0f)
                     {
                         const int slot = l4d2vr_holster::SlotIndex(anyZone);
                         const bool usable = (occupiedMask & (1u << slot)) != 0u;
@@ -1825,6 +1836,7 @@ void VR::ProcessInput()
                     m_HolsterInstantDrawUntilMs.store(GetTickCount64() + 1500u, std::memory_order_release);
                 }
                 m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
+                m_GripDrawSerial.fetch_add(1u, std::memory_order_release);
                 selectInventorySlot(grab.selectSlot);
                 Game::logMsg("[VR][Holster] grip draw slot=%d", grab.selectSlot + 1);
             }

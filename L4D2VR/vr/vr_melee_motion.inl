@@ -283,7 +283,15 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     }
     else if (!meleeActive && l4d2vr_calibration::IsFirearm(weaponId))
     {
-        const l4d2vr_gesture::GunBashEvent bash = m_GunBash.Update(sample);
+        // Reaching for or drawing from a holster is not a bash: no bash while
+        // the gun hand is at a holster or just squeezed / let go of the grip.
+        bool bashAllowed = GetTickCount64() >= m_GunBashGripBlockUntilMs.load(std::memory_order_acquire);
+        l4d2vr_holster::BodyFrame holsterFrame{};
+        if (bashAllowed && m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled &&
+            GetHolsterBodyFrame(holsterFrame) &&
+            l4d2vr_holster::NearAnyZone(holsterFrame, m_HolsterLayout, m_RightControllerPosAbs, 0.05f))
+            bashAllowed = false;
+        const l4d2vr_gesture::GunBashEvent bash = m_GunBash.Update(sample, bashAllowed);
         if (bash.fired && !IsMagazineInteractionManualActive())
         {
             shove = true;
@@ -303,6 +311,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
             m_PhysicalShoveAimValid = true;
         }
         m_PhysicalShoveImpulsePending.store(true, std::memory_order_release);
+        m_PhysicalShoveSerial.fetch_add(1u, std::memory_order_acq_rel);
         if (m_MotionOnlyMeleeAndShove)
             m_ViewmodelAnimSuppressUntilMs.store(GetTickCount64() + 800u, std::memory_order_release);
         TriggerShoveHaptics(false);

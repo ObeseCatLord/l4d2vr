@@ -79,14 +79,17 @@ namespace l4d2vr_pistol
             (hand == Hand::Left ? m_Left : m_Right).AdoptWeapon(m_Weapon);
             m_Pickup = Hand::None;
         }
+        // A hand drops its pistol only if its grip took it (a confirmed pickup or
+        // holster draw, see ReleaseLatch). rightDropHere=false lets go without a
+        // drop (the right hand is over a holster).
         Hand Release(bool rightActive, bool rightDown, bool leftActive, bool leftDown, std::uint32_t now,
-            std::uint32_t rightDiscontinuity = 0u, std::uint32_t leftDiscontinuity = 0u)
+            std::uint32_t rightDiscontinuity = 0u, std::uint32_t leftDiscontinuity = 0u, bool rightDropHere = true)
         {
             if (rightDiscontinuity != m_RightDiscontinuity) m_Queued &= ~1u;
             if (leftDiscontinuity != m_LeftDiscontinuity) m_Queued &= ~2u;
             m_RightDiscontinuity = rightDiscontinuity;
             m_LeftDiscontinuity = leftDiscontinuity;
-            if (m_Right.Update((m_Mask & 1u) != 0u, rightActive, rightDown, m_Weapon, rightDiscontinuity)) m_Queued |= 1u;
+            if (m_Right.Update((m_Mask & 1u) != 0u, rightActive, rightDown, m_Weapon, rightDiscontinuity, rightDropHere)) m_Queued |= 1u;
             if (m_Left.Update((m_Mask & 2u) != 0u, leftActive, leftDown, m_Weapon, leftDiscontinuity)) m_Queued |= 2u;
             if (!m_Weapon || m_Awaiting) return Hand::None;
             const unsigned available = m_Queued & m_Mask;
@@ -99,6 +102,7 @@ namespace l4d2vr_pistol
             return hand;
         }
         unsigned Mask() const { return m_Mask; }
+        bool Owns(Hand hand) const { return hand == Hand::Left ? m_Left.Owns() : hand == Hand::Right && m_Right.Owns(); }
         bool Awaiting() const { return m_Awaiting; }
         void CancelInteractions()
         {

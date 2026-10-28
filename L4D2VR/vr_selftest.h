@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -162,6 +163,58 @@ namespace l4d2vr_selftest
             return 0.0f;
         const float span = std::max(1e-4f, keys[i].time - keys[i - 1].time);
         return Distance(keys[i - 1].position, keys[i].position) / span;
+    }
+
+    // ---- Human body model ----------------------------------------------------
+    // Where a standing adult's hands actually go (eyes ~1.65 m; metres from the
+    // eyes in the head-yaw frame: x forward, y toward the right hand, z up).
+    // Deliberately independent of the holster layout under test, so a self-test
+    // reach succeeds only if the layout matches real bodies.
+    namespace body
+    {
+        inline Vec3 V(float x, float y, float z) { Vec3 v; v.x = x; v.y = y; v.z = z; return v; }
+        inline Vec3 RightReady() { return V(0.40f, 0.15f, -0.35f); }       // gun held out, ready
+        inline Vec3 LeftReady() { return V(0.32f, -0.18f, -0.42f); }        // off hand relaxed in front
+        inline Vec3 RightHip() { return V(-0.05f, 0.22f, -0.80f); }
+        inline Vec3 OverRightShoulder() { return V(-0.10f, 0.15f, -0.05f); }
+        inline Vec3 RightChest() { return V(0.10f, 0.12f, -0.35f); }
+        inline Vec3 LeftChest() { return V(0.10f, -0.12f, -0.35f); }
+        inline Vec3 OverLeftShoulder() { return V(-0.10f, -0.15f, -0.05f); }
+        inline Vec3 LeftHip() { return V(-0.05f, -0.22f, -0.80f); }
+        inline Vec3 Push() { return V(0.70f, 0.15f, -0.30f); }               // gun bash end point
+    }
+
+    inline float MinimumJerk(float u)
+    {
+        u = std::clamp(u, 0.0f, 1.0f);
+        return u * u * u * (10.0f + u * (-15.0f + 6.0f * u));
+    }
+
+    // A human reach: minimum-jerk profile at averageSpeed m/s with ~2 mm of
+    // tracking jitter, as keys starting at time 0. Angles (pitch, yaw, roll
+    // relative to the head) turn along the same profile.
+    inline void BuildReach(const Vec3& from, const Vec3& to, const Vec3& fromAngles, const Vec3& toAngles,
+        float averageSpeed, unsigned seed, std::vector<Key>& position, std::vector<Key>& angles)
+    {
+        position.clear();
+        angles.clear();
+        const float duration = std::max(0.15f, Distance(from, to) / std::max(0.05f, averageSpeed));
+        constexpr int kSteps = 16;
+        for (int i = 0; i <= kSteps; ++i)
+        {
+            const float u = static_cast<float>(i) / kSteps;
+            const float m = MinimumJerk(u);
+            Vec3 p = Lerp(from, to, m);
+            if (i > 0 && i < kSteps)
+            {
+                seed = seed * 1664525u + 1013904223u;
+                p.x += ((seed >> 8 & 0xFF) / 255.0f - 0.5f) * 0.004f;
+                p.y += ((seed >> 16 & 0xFF) / 255.0f - 0.5f) * 0.004f;
+                p.z += ((seed >> 24 & 0xFF) / 255.0f - 0.5f) * 0.004f;
+            }
+            position.push_back(Key{ u * duration, p, false });
+            angles.push_back(Key{ u * duration, Lerp(fromAngles, toAngles, m), false });
+        }
     }
 
     // Head-frame offset to tracking space (Source axes: x forward, y left, z up).

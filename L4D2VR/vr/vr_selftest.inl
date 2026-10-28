@@ -67,6 +67,23 @@ void VR::SelfTestReachHolster(int zone)
     m_SelfTestRightWorldValid = true;
 }
 
+void VR::SelfTestReachRight(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed)
+{
+    std::vector<l4d2vr_selftest::Key> position, rotation;
+    l4d2vr_selftest::BuildReach(m_SelfTestRightNow, target, m_SelfTestRightAngNow, angles, averageSpeed,
+        m_SelfTestJitterSeed++ * 7919u, position, rotation);
+    SelfTestStartPath(position, rotation);
+}
+
+void VR::SelfTestReachLeft(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed)
+{
+    l4d2vr_selftest::BuildReach(m_SelfTestLeftNow, target, m_SelfTestLeftAngNow, angles, averageSpeed,
+        m_SelfTestJitterSeed++ * 7919u, m_SelfTestLeftPath, m_SelfTestLeftAngPath);
+    m_SelfTestLeftWorldValid = false;
+    m_SelfTestLeftPathStartMs = GetTickCount64();
+    m_SelfTestLeftPathActive = true;
+}
+
 void VR::ApplySelfTestPoses()
 {
     if (!m_SelfTestEnabled || !m_SelfTestPoseActive)
@@ -91,6 +108,19 @@ void VR::ApplySelfTestPoses()
         if (!m_SelfTestAngPath.empty())
             rightAng = Evaluate(m_SelfTestAngPath, t);
     }
+    m_SelfTestRightNow = rightLocal;
+    m_SelfTestRightAngNow = rightAng;
+    Vec3 leftLocal = m_SelfTestLeftLocal;
+    Vec3 leftAng = SelfTestVec(m_SelfTestLeftAngLocal.x, m_SelfTestLeftAngLocal.y, m_SelfTestLeftAngLocal.z);
+    if (m_SelfTestLeftPathActive)
+    {
+        const float t = (nowMs - m_SelfTestLeftPathStartMs) / 1000.0f;
+        leftLocal = Evaluate(m_SelfTestLeftPath, t);
+        if (!m_SelfTestLeftAngPath.empty())
+            leftAng = Evaluate(m_SelfTestLeftAngPath, t);
+    }
+    m_SelfTestLeftNow = leftLocal;
+    m_SelfTestLeftAngNow = leftAng;
     Vec3 right{};
     if (m_SelfTestRightWorldValid)
     {
@@ -109,7 +139,7 @@ void VR::ApplySelfTestPoses()
     }
     else
     {
-        left = HeadLocalToTracking(h, yaw, m_SelfTestLeftLocal);
+        left = HeadLocalToTracking(h, yaw, leftLocal);
     }
 
     const Vector rightPos(right.x, right.y, right.z), leftPos(left.x, left.y, left.z);
@@ -128,7 +158,7 @@ void VR::ApplySelfTestPoses()
     m_RightControllerPose.TrackedDeviceAng = QAngle(rightAng.x, yaw + rightAng.y, rightAng.z);
     m_RightControllerPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
     m_LeftControllerPose.TrackedDevicePos = leftPos;
-    m_LeftControllerPose.TrackedDeviceAng = QAngle(m_SelfTestLeftAngLocal.x, yaw + m_SelfTestLeftAngLocal.y, m_SelfTestLeftAngLocal.z);
+    m_LeftControllerPose.TrackedDeviceAng = QAngle(leftAng.x, yaw + leftAng.y, leftAng.z);
     m_LeftControllerPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
 }
 
@@ -227,6 +257,10 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
         l4d2vr_selftest::ReleaseAll();
         SelfTestHoldRight(SelfTestVec(0.35f, 0.2f, -0.3f), QAngle(0.0f, 0.0f, 0.0f));
         m_SelfTestLeftWorldValid = false;
+        m_SelfTestLeftPathActive = false;
+        m_SelfTestLeftLocal = SelfTestVec(0.35f, -0.2f, -0.35f);
+        m_SelfTestLeftAngLocal = QAngle(0.0f, 0.0f, 0.0f);
+        m_VmAnimTraceUntilMs.store(0u, std::memory_order_release);
         m_SelfTestHeadDrop = 0.0f;
         m_SelfTestStepStartMs = 0;
         if (++m_SelfTestIndex >= m_SelfTestSteps.size())
@@ -1004,6 +1038,326 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
+    if (step == "reach" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim")
+        return RunSelfTestRealisticStep(step, t, player);
+
     SelfTestReport(step.c_str(), false, "unknown step");
     return true;
+}
+
+// Realistic-motion steps: both hands move along minimum-jerk paths between
+// points of a standing body (l4d2vr_selftest::body), never toward the holster
+// layout's own coordinates, at human speeds with tracking jitter. They check
+// what a player feels: draws happen, hovers pulse, nothing is bashed on the
+// way, and squeezing the grip without taking anything never drops a weapon.
+bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer* player)
+{
+    using namespace l4d2vr_selftest;
+    struct Action
+    {
+        float at;
+        std::function<bool(C_BasePlayer*, float)> run; // true ends the step
+    };
+    static std::vector<Action> s_Script;
+    static bool s_SavedToggle = true;
+    static bool s_SavedContact = false;
+    static uint32_t s_ShoveBaseline = 0u;
+    static float s_WorldReachStart = -1.0f;
+    // Script actions run in later frames: they capture only `this` and values.
+    auto cmd = [this](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+    auto button = [](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
+    auto level = [](float pitch, float yaw) { return body::V(pitch, yaw, 0.0f); };
+    auto add = [](float at, std::function<bool(C_BasePlayer*, float)> run) { s_Script.push_back(Action{ at, std::move(run) }); };
+    // A squeeze of the given hand: press now, let go after `hold` seconds.
+    auto squeeze = [&](float at, bool left, float hold)
+    {
+        const vr::VRActionHandle_t action = left ? m_ActionOffHandGrip : m_ActionWeaponGrip;
+        add(at, [action](C_BasePlayer*, float) { l4d2vr_selftest::SetButton(action, true); return false; });
+        add(at + hold, [action](C_BasePlayer*, float) { l4d2vr_selftest::SetButton(action, false); return false; });
+    };
+    auto restore = [this]()
+    {
+        m_GripToggleEnabled = s_SavedToggle;
+        m_GripReleaseDropEnabled = s_SavedContact;
+        m_SelfTestHeadDrop = 0.0f;
+        s_WorldReachStart = -1.0f;
+    };
+
+    if (m_SelfTestStage == 0)
+    {
+        s_Script.clear();
+        s_SavedToggle = m_GripToggleEnabled;
+        s_SavedContact = m_GripReleaseDropEnabled;
+        s_WorldReachStart = -1.0f;
+        // A real grip action is always active: register both grips as released
+        // before the first press (a press arriving with activation is ignored).
+        button(m_ActionWeaponGrip, false);
+        button(m_ActionOffHandGrip, false);
+
+        if (step == "reach")
+        {
+            // Pavlov toggle grips, both hands, every holster reached the way a
+            // person reaches for it.
+            m_GripToggleEnabled = true;
+            cmd("give rifle"); cmd("give pipe_bomb"); cmd("give first_aid_kit"); cmd("give pain_pills");
+            add(1.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                cmd("use weapon_rifle");
+                s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);
+                m_SelfTestValueB = static_cast<int>(m_HolsterHoverPulseCount);
+                m_SelfTestValueC = static_cast<int>(m_HolsterLeftHoverPulseCount);
+                return false; });
+            add(1.8f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::RightHip(), level(60.0f, 0.0f), 0.8f); return false; });
+            squeeze(3.0f, false, 0.15f);
+            add(3.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (pistol is slot 2), hover pulses %d -> %u",
+                    SelfTestActiveSlot(player) + 1, m_SelfTestValueB, m_HolsterHoverPulseCount);
+                SelfTestReport("reach: right hand draws from the right hip", SelfTestActiveSlot(player) == 1, detail);
+                SelfTestReport("reach: hip hover pulse", static_cast<int>(m_HolsterHoverPulseCount) > m_SelfTestValueB, detail);
+                m_SelfTestValueB = static_cast<int>(m_HolsterHoverPulseCount);
+                SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 1.0f);
+                return false; });
+            add(4.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::OverRightShoulder(), level(-60.0f, 0.0f), 1.2f); return false; });
+            squeeze(5.6f, false, 0.15f);
+            add(6.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d, hover pulses %d -> %u", SelfTestActiveSlot(player) + 1,
+                    m_SelfTestValueB, m_HolsterHoverPulseCount);
+                SelfTestReport("reach: right hand draws over the right shoulder", SelfTestActiveSlot(player) == 0, detail);
+                SelfTestReport("reach: shoulder hover pulse", static_cast<int>(m_HolsterHoverPulseCount) > m_SelfTestValueB, detail);
+                m_SelfTestValueB = static_cast<int>(m_HolsterHoverPulseCount);
+                SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 1.2f);
+                return false; });
+            add(7.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::RightChest(), level(30.0f, 60.0f), 0.6f); return false; });
+            squeeze(8.2f, false, 0.15f);
+            add(8.8f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (pills are slot 5), hover pulses %d -> %u",
+                    SelfTestActiveSlot(player) + 1, m_SelfTestValueB, m_HolsterHoverPulseCount);
+                SelfTestReport("reach: right hand draws from the chest", SelfTestActiveSlot(player) == 4, detail);
+                SelfTestReport("reach: chest hover pulse", static_cast<int>(m_HolsterHoverPulseCount) > m_SelfTestValueB, detail);
+                SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.8f);
+                return false; });
+            // The off hand swaps too.
+            add(9.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::OverLeftShoulder(), level(-60.0f, 0.0f), 1.0f); return false; });
+            squeeze(10.6f, true, 0.15f);
+            add(11.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4), left hover pulses %d -> %u",
+                    SelfTestActiveSlot(player) + 1, m_SelfTestValueC, m_HolsterLeftHoverPulseCount);
+                SelfTestReport("reach: off hand swaps over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReport("reach: off-hand shoulder hover pulse",
+                    static_cast<int>(m_HolsterLeftHoverPulseCount) > m_SelfTestValueC, detail);
+                m_SelfTestValueC = static_cast<int>(m_HolsterLeftHoverPulseCount);
+                SelfTestReachLeft(body::LeftReady(), level(0.0f, 0.0f), 1.0f);
+                return false; });
+            add(12.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachLeft(body::LeftChest(), level(30.0f, -40.0f), 0.5f); return false; });
+            squeeze(12.9f, true, 0.15f);
+            add(13.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (pipe bomb is slot 3), left hover pulses %d -> %u",
+                    SelfTestActiveSlot(player) + 1, m_SelfTestValueC, m_HolsterLeftHoverPulseCount);
+                SelfTestReport("reach: off hand swaps at the chest", SelfTestActiveSlot(player) == 2, detail);
+                SelfTestReachLeft(body::LeftReady(), level(0.0f, 0.0f), 0.8f);
+                return false; });
+            add(14.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                const uint32_t shoves = m_PhysicalShoveSerial.load(std::memory_order_acquire) - s_ShoveBaseline;
+                std::snprintf(detail, sizeof(detail), "%u gun bash(es) during 5 holster reaches (see [VR][Holster] grip pressed lines)", shoves);
+                SelfTestReport("reach: no gun bash while reaching for holsters", shoves == 0u, detail);
+                restore();
+                return true; });
+        }
+        else if (step == "emptysqueeze")
+        {
+            // The headset bug: squeezing the grip in the air with a gun the grip
+            // never took (switched to with a command) dropped it.
+            m_GripToggleEnabled = true;
+            cmd("give rifle");
+            add(1.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { cmd("use weapon_rifle"); return false; });
+            add(2.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.6f); return false; });
+            for (int i = 0; i < 3; ++i)
+            {
+                // Small hand movements while squeezing, like a real hand.
+                add(2.8f + i * 1.0f, [this, i, level](C_BasePlayer* player, float t) {
+                    SelfTestReachRight(body::V(0.40f + 0.03f * i, 0.15f - 0.02f * i, -0.35f + 0.02f * i), level(0.0f, 0.0f), 0.3f);
+                    return false; });
+                squeeze(3.0f + i * 1.0f, false, 0.15f);
+            }
+            add(6.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "rifle %s, active slot %d, toggle %s", (player->Weapon_GetSlot(0) != nullptr) ? "kept" : "DROPPED",
+                    SelfTestActiveSlot(player) + 1, m_GripToggle.Held() ? "held" : "released");
+                SelfTestReport("empty squeeze (toggle grips) never drops the weapon in hand", (player->Weapon_GetSlot(0) != nullptr) && SelfTestActiveSlot(player) == 0, detail);
+                m_GripToggleEnabled = false;
+                return false; });
+            for (int i = 0; i < 3; ++i)
+                squeeze(6.5f + i * 1.0f, false, 0.4f);
+            add(9.8f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "rifle %s, active slot %d", (player->Weapon_GetSlot(0) != nullptr) ? "kept" : "DROPPED", SelfTestActiveSlot(player) + 1);
+                SelfTestReport("empty squeeze (hold grips) never drops the weapon in hand", (player->Weapon_GetSlot(0) != nullptr) && SelfTestActiveSlot(player) == 0, detail);
+                m_GripToggleEnabled = true;
+                cmd("use weapon_pistol");
+                return false; });
+            for (int i = 0; i < 2; ++i)
+                squeeze(11.0f + i * 1.0f, false, 0.15f);
+            add(13.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "pistol %s, active slot %d", (player->Weapon_GetSlot(1) != nullptr) ? "kept" : "DROPPED", SelfTestActiveSlot(player) + 1);
+                SelfTestReport("empty squeeze never drops the pistol", (player->Weapon_GetSlot(1) != nullptr) && SelfTestActiveSlot(player) == 1, detail);
+                restore();
+                return true; });
+        }
+        else if (step == "pickup")
+        {
+            // Grip contact pickups: a first aid kit taken from the body and
+            // dropped by letting go (the grip took it), then picked up from the
+            // floor by reaching and squeezing. The gun in hand is never dropped.
+            m_GripToggleEnabled = true;
+            m_GripReleaseDropEnabled = true;
+            cmd("give rifle"); cmd("give first_aid_kit");
+            add(1.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) { cmd("use weapon_rifle"); return false; });
+            add(1.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) { SelfTestReachRight(body::OverLeftShoulder(), level(-60.0f, 0.0f), 1.0f); return false; });
+            squeeze(2.8f, false, 0.15f);
+            add(3.4f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4)", SelfTestActiveSlot(player) + 1);
+                SelfTestReport("pickup: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
+                SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 0.8f);
+                return false; });
+            squeeze(4.4f, false, 0.15f);
+            add(5.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "kit slot %s after letting go of the kit the grip took",
+                    (player->Weapon_GetSlot(3) != nullptr) ? "still occupied" : "empty");
+                SelfTestReport("pickup: an item the grip took drops when let go", !(player->Weapon_GetSlot(3) != nullptr), detail);
+                // Find the dropped kit near the hand and crouch toward it.
+                float best = 1.0e9f;
+                Vector kit{};
+                const int highest = (std::min)(2048, m_Game->m_ClientEntityList->GetHighestEntityIndex());
+                for (int i = 1; i <= highest; ++i)
+                {
+                    C_BaseEntity* const entity = m_Game->GetClientEntity(i);
+                    const char* const name = entity ? m_Game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(entity)) : nullptr;
+                    Vector origin{};
+                    if (!name || !VR_TryGetEntityAbsOrigin(entity, origin))
+                        continue;
+                    const float d = (origin - m_RightControllerPosAbs).Length();
+                    if ((d < 4.0f * m_VRScale && entity != reinterpret_cast<C_BaseEntity*>(player)) || std::strstr(name, "FirstAid"))
+                        Game::logMsg("[VR][SelfTest] pickup: entity %d %s %.2f m from the hand", i, name, d / (std::max)(1.0f, m_VRScale));
+                    if (std::strstr(name, "FirstAid") == nullptr)
+                        continue;
+                    if (d < best) { best = d; kit = origin; }
+                }
+                if (best > 3.0f * m_VRScale)
+                {
+                    Game::logMsg("[VR][SelfTest] pickup: scanned %d entities, hand at (%.0f %.0f %.0f)",
+                        highest, m_RightControllerPosAbs.x, m_RightControllerPosAbs.y, m_RightControllerPosAbs.z);
+                    SelfTestReport("pickup: grip contact picks up the kit", false, "dropped kit not found near the hand");
+                    restore();
+                    return true;
+                }
+                m_SelfTestHeadDrop = 0.55f;
+                m_SelfTestSlapStart = m_RightControllerPosAbs;
+                m_SelfTestSlapEnd = kit + Vector(0.0f, 0.0f, 0.04f * m_VRScale);
+                s_WorldReachStart = t + 0.6f;
+                m_SelfTestValueA = static_cast<int>(best / (std::max)(1.0f, m_VRScale) * 100.0f);
+                return false; });
+            squeeze(7.4f, false, 0.15f);
+            add(9.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), "kit %s (was %.2f m from the hand), rifle %s, active slot %d",
+                    (player->Weapon_GetSlot(3) != nullptr) ? "in slot 4" : "not picked up", m_SelfTestValueA / 100.0f, (player->Weapon_GetSlot(0) != nullptr) ? "kept" : "DROPPED",
+                    SelfTestActiveSlot(player) + 1);
+                SelfTestReport("pickup: grip contact picks up the kit", (player->Weapon_GetSlot(3) != nullptr), detail);
+                SelfTestReport("pickup: the gun in hand is not dropped by the pickup squeeze", (player->Weapon_GetSlot(0) != nullptr), detail);
+                restore();
+                return true; });
+        }
+        else if (step == "bashanim" || step == "swinganim")
+        {
+            // Native strike animations never play on the controller-driven
+            // viewmodel; the strike itself still happens.
+            const bool melee = step == "swinganim";
+            if (melee)
+            {
+                for (const char* item : { "give machete", "give fireaxe", "give crowbar", "give baseball_bat", "give katana" })
+                    cmd(item);
+            }
+            else
+            {
+                cmd("give rifle");
+            }
+            add(1.2f, [this, melee, cmd, level, restore](C_BasePlayer* player, float t) {
+                cmd(melee ? "use weapon_melee" : "use weapon_rifle");
+                SelfTestHoldRight(melee ? body::V(0.2f, 0.35f, 0.2f) : body::RightReady(),
+                    melee ? QAngle(-60.0f, 30.0f, 0.0f) : QAngle(0.0f, 0.0f, 0.0f));
+                return false; });
+            add(3.5f, [this, melee, cmd, level, restore](C_BasePlayer* player, float t) {
+                s_ShoveBaseline = melee ? m_MeleeSwingStartSerial.load(std::memory_order_acquire)
+                    : m_PhysicalShoveSerial.load(std::memory_order_acquire);
+                m_SelfTestValueA = static_cast<int>(m_VmStrikeFrames.load(std::memory_order_acquire));
+                m_SelfTestValueB = static_cast<int>(m_VmStrikeFramesHeld.load(std::memory_order_acquire));
+                m_SelfTestValueC = static_cast<int>(m_VmStrikeFramesShown.load(std::memory_order_acquire));
+                m_VmStrikeMaxDeviation.store(0.0f, std::memory_order_release);
+                m_VmAnimTraceUntilMs.store(GetTickCount64() + 2800u, std::memory_order_release);
+                if (melee)
+                {
+                    // Diagonal downward slash at about 5 m/s.
+                    SelfTestStartPath(
+                        { Key{ 0.0f, body::V(0.2f, 0.35f, 0.2f) }, Key{ 0.16f, body::V(0.55f, -0.15f, -0.35f), false } },
+                        { Key{ 0.0f, body::V(-60.0f, 30.0f, 0.0f) }, Key{ 0.16f, body::V(50.0f, -30.0f, 0.0f), false } });
+                }
+                else
+                {
+                    // A 0.30 m push along the barrel in 0.15 s.
+                    SelfTestReachRight(body::Push(), level(0.0f, 0.0f), 2.0f);
+                }
+                return false; });
+            add(4.3f, [this, melee, cmd, level, restore](C_BasePlayer* player, float t) {
+                if (!melee)
+                    SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.6f);
+                return false; });
+            add(6.5f, [this, melee, cmd, level, restore](C_BasePlayer* player, float t) {
+                char detail[256];
+                const uint32_t strikes = (melee ? m_MeleeSwingStartSerial.load(std::memory_order_acquire)
+                    : m_PhysicalShoveSerial.load(std::memory_order_acquire)) - s_ShoveBaseline;
+                const int frames = static_cast<int>(m_VmStrikeFrames.load(std::memory_order_acquire)) - m_SelfTestValueA;
+                const int held = static_cast<int>(m_VmStrikeFramesHeld.load(std::memory_order_acquire)) - m_SelfTestValueB;
+                const int shown = static_cast<int>(m_VmStrikeFramesShown.load(std::memory_order_acquire)) - m_SelfTestValueC;
+                std::snprintf(detail, sizeof(detail), "%u %s, server shove aim %s", strikes, melee ? "swing(s)" : "bash(es)",
+                    ServerFeature(l4d2vr_features::ShoveAim) ? "on (impulse 238)" : "off (IN_ATTACK2)");
+                SelfTestReport(melee ? "swinganim: motion swing registered" : "bashanim: gun bash registered", strikes >= 1u, detail);
+                std::snprintf(detail, sizeof(detail),
+                    "native strike pose on %d draw(s) (up to %.1f units off the idle pose): %d held at the controller pose, %d shown (see [VR][VmAnim])",
+                    frames, m_VmStrikeMaxDeviation.load(std::memory_order_acquire), held, shown);
+                SelfTestReport(melee ? "swinganim: native swing animation never shown" : "bashanim: native shove animation never shown",
+                    shown == 0, detail);
+                restore();
+                return true; });
+        }
+        m_SelfTestStage = 1;
+    }
+
+    // Crouched world reach toward the dropped kit (pickup step).
+    if (s_WorldReachStart >= 0.0f && t >= s_WorldReachStart)
+    {
+        const float u = MinimumJerk((t - s_WorldReachStart) / 0.9f);
+        m_SelfTestPathActive = false;
+        m_SelfTestRightWorld = m_SelfTestSlapStart + (m_SelfTestSlapEnd - m_SelfTestSlapStart) * u;
+        m_SelfTestRightWorldValid = true;
+    }
+
+    while (m_SelfTestStage - 1 < static_cast<int>(s_Script.size()) && t >= s_Script[m_SelfTestStage - 1].at)
+    {
+        const Action action = s_Script[m_SelfTestStage - 1];
+        ++m_SelfTestStage;
+        if (action.run(player, t))
+        {
+            s_Script.clear();
+            return true;
+        }
+    }
+    return false;
 }

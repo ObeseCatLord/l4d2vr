@@ -3268,8 +3268,11 @@ void VR::ParseConfigFile()
         const l4d2vr_holster::Layout defaults{};
         for (int zone = 0; zone < l4d2vr_holster::kZoneCount; ++zone)
         {
-            m_HolsterLayout.center[zone] = getVector3(kZoneKeys[zone], defaults.center[zone]);
-            m_HolsterLayout.radius[zone] = std::clamp(getFloat(kRadiusKeys[zone], defaults.radius[zone]), 0.04f, 0.5f);
+            Vector center = getVector3(kZoneKeys[zone], defaults.center[zone]);
+            float radius = getFloat(kRadiusKeys[zone], defaults.radius[zone]);
+            l4d2vr_holster::MigrateLegacyZone(zone, defaults, center, radius);
+            m_HolsterLayout.center[zone] = center;
+            m_HolsterLayout.radius[zone] = std::clamp(radius, 0.04f, 0.5f);
         }
     }
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);

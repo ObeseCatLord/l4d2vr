@@ -10,6 +10,8 @@ int main()
     discontinuous.Observe(true,88u,true,100u);
     discontinuous.Release(true,false,true,false,101u,0u,0u);
     discontinuous.Release(true,true,true,true,102u,0u,0u);
+    discontinuous.AdoptPickup(Hand::Left); // each grip took its pistol
+    discontinuous.AdoptPickup(Hand::Right);
     CHECK(discontinuous.Release(true,false,true,true,103u,1u,0u)==Hand::None);
     CHECK(discontinuous.Release(true,true,true,false,104u,1u,0u)==Hand::Left);
     CHECK(discontinuous.Mask()==3u); // the sent left drop remains pending while right is baselined
@@ -22,7 +24,8 @@ int main()
     CHECK(cancelledPickup.Release(true, false, true, true, 120u) == Hand::None);
     CHECK(cancelledPickup.Release(true, false, true, false, 130u) == Hand::None);
     CHECK(cancelledPickup.Release(true, false, true, true, 140u) == Hand::None);
-    CHECK(cancelledPickup.Release(true, false, true, false, 150u) == Hand::Left);
+    // The left hand never took the second pistol, so letting go keeps it.
+    CHECK(cancelledPickup.Release(true, false, true, false, 150u) == Hand::None);
     CHECK(DecodeDrop(60u, false) == Hand::Right);
     CHECK(DecodeDrop(61u, false) == Hand::Left);
     CHECK(DecodeDrop(61u, true) == Hand::None);
@@ -50,6 +53,8 @@ int main()
     CHECK(hands.Mask() == 3u);
     CHECK(hands.Release(true, false, true, false, 0u) == Hand::None);
     CHECK(hands.Release(true, true, true, true, 10u) == Hand::None);
+    hands.AdoptPickup(Hand::Right);
+    hands.AdoptPickup(Hand::Left);
     CHECK(hands.Release(true, false, true, true, 20u) == Hand::Right);
     CHECK(hands.Mask() == 3u && hands.Awaiting()); // no visual detachment before confirmation
     CHECK(hands.Release(true, false, true, true, 30u) == Hand::None);
@@ -61,6 +66,8 @@ int main()
     hands.Reset(); hands.Observe(true, 100u, true, 0u);
     hands.Release(true, false, true, false, 0u);
     hands.Release(true, true, true, true, 10u);
+    hands.AdoptPickup(Hand::Right);
+    hands.AdoptPickup(Hand::Left);
     CHECK(hands.Release(true, false, true, false, 20u) == Hand::Right);
     CHECK(hands.Release(true, false, true, false, 30u) == Hand::None);
     hands.Observe(true, 100u, false, 40u);

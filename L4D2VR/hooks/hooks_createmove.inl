@@ -512,7 +512,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		float walkNx = 0.f, walkNy = 0.f; 
 		float walkMaxSpeed = 0.f;
 		float ax = 0.f, ay = 0.f;
-		if (!m_VR->m_AdjustingViewmodel && !m_VR->m_AdjustingScope && !suppressScopeWalk && m_VR->GetWalkAxis(ax, ay)) {
+		if (!m_VR->m_AdjustingViewmodel && !m_VR->m_AdjustingScope && !suppressScopeWalk && m_VR->GetWalkAxisForMove(ax, ay)) {
 			// Deadzone + normalization. In viewmodel adjustment mode this axis is reserved for rotation.
 			const float dz = 0.2f;
 			auto norm = [&](float v) {

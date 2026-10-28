@@ -509,6 +509,12 @@ namespace
         {
             VR::HolsterRenderItem item = snapshot.items[i];
             g_HolsterDrawDiag.items.fetch_add(1u, std::memory_order_relaxed);
+            // Without a first-person body nothing hides what is on your back:
+            // a slung rifle or pack would float behind you and show up when you
+            // look down. Back holsters stay grabbable (and pulse) but undrawn.
+            if (!vr->m_FirstPersonBodyEnabled &&
+                l4d2vr_holster::IsBackZone(static_cast<l4d2vr_holster::Zone>(item.slot)))
+                continue;
             // Without the hooked SetupBones the item would be drawn with its
             // native carried bones (in the player's hand), not at the holster.
             if (!item.renderable || !HooksHolsterItemBonesPlaceable(item.renderable))
@@ -545,12 +551,18 @@ namespace
                 g_HolsterDrawDiag.itemException.fetch_add(1u, std::memory_order_relaxed);
                 break;
             }
+            Vector eyeOrigin(0.0f, 0.0f, 0.0f);
+            bool eyeValid = false;
             {
                 std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
                 g_HolsterDrawDiagSample.drawValid = true;
                 g_HolsterDrawDiagSample.drawSlot = item.slot;
                 g_HolsterDrawDiagSample.drawOrigin = pose.origin;
+                eyeValid = g_HolsterDrawDiagSample.eyeValid;
+                eyeOrigin = g_HolsterDrawDiagSample.eyeOrigin;
             }
+            if (vr->m_SelfTestEnabled && eyeValid)
+                vr->SelfTestTrackHolsterDraw(item.slot, pose.origin, eyeOrigin);
         }
     }
 

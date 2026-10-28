@@ -2888,6 +2888,25 @@ public:
 	uint32_t m_SelfTestSerial = 0;
 	bool m_SelfTestPoseActive = false;
 	float m_SelfTestHeadDrop = 0.0f;
+	// Motion scenes: walk=, turnrate=, turn=, sway= hold until changed.
+	bool m_SelfTestWalkActive = false;
+	float m_SelfTestWalkX = 0.0f, m_SelfTestWalkY = 0.0f;
+	float m_SelfTestTurnRate = 0.0f;            // degrees per second of smooth turn
+	float m_SelfTestSwayDeg = 0.0f;             // head sway yaw amplitude (0 = still)
+	uint64_t m_SelfTestSwayStartMs = 0;
+	// track=: how far each drawn holster item moves relative to the eye drawing
+	// it, in the body frame, per eye (lag between the holster frame and the view).
+	struct SelfTestHolsterTrack
+	{
+		bool active = false;
+		Vector mn[2][l4d2vr_holster::kZoneCount];
+		Vector mx[2][l4d2vr_holster::kZoneCount];
+		uint32_t n[2][l4d2vr_holster::kZoneCount]{};
+	};
+	std::mutex m_SelfTestHolsterTrackMutex;
+	SelfTestHolsterTrack m_SelfTestHolsterTrack;
+	void SelfTestTrackHolsterDraw(int slot, const Vector& itemOrigin, const Vector& eyeOrigin);
+	bool GetWalkAxisForMove(float& x, float& y);
 	l4d2vr_selftest::Vec3 m_SelfTestRightLocal{ 0.35f, 0.2f, -0.3f };
 	l4d2vr_selftest::Vec3 m_SelfTestLeftLocal{ 0.35f, -0.2f, -0.35f };
 	QAngle m_SelfTestRightAngLocal{ 0.0f, 0.0f, 0.0f };

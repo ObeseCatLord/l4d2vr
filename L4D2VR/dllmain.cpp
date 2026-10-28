@@ -3205,6 +3205,7 @@ namespace
         sampleKeys.insert("HolsterReleaseDrop");
         sampleKeys.insert("GripToggle");
         sampleKeys.insert("ReloadPavlovTuning");
+        sampleKeys.insert("MagazineSlapEnabled");
         sampleKeys.insert("StickJumpCrouch");
         sampleKeys.insert("StickCrouchToggle");
         sampleKeys.insert("MotionOnlyMeleeAndShove");

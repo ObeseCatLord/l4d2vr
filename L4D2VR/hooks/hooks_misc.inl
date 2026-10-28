@@ -8788,7 +8788,8 @@ namespace
         }
 
         const char* logPrefix =
-            (vr->m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine)
+            (vr->m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine ||
+                vr->m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap)
             ? "MagazineInteractionFresh"
             : "MagazineInteraction";
         // The waist spare is drawn while no reload session is active, so shell mode cannot be
@@ -8817,8 +8818,9 @@ namespace
         return built;
     }
 
-    // An empty gun's magazine glows softly to show that a reload is needed. The
-    // clip subtree is redrawn in place over the final viewmodel pose.
+    // An empty gun's magazine glows softly to show that a reload is needed, and
+    // the seated magazine glows while a fresh one is held to slap it out (hint
+    // bit 16). The clip subtree is redrawn in place over the final viewmodel pose.
     inline bool BuildMagazineEmptyGlowBones(
         VR* vr,
         void* drawState,
@@ -8827,7 +8829,9 @@ namespace
         vr_vm_stabilize::Mat3x4*& outBones)
     {
         outBones = nullptr;
-        if (!vr || !vr->m_MagazineEmptyGlowEnabled || !vr->m_MagazineEmptyGlowActive.load(std::memory_order_acquire) ||
+        if (!vr || !vr->m_MagazineEmptyGlowEnabled ||
+            (!vr->m_MagazineEmptyGlowActive.load(std::memory_order_acquire) &&
+                (vr->m_ReloadHintMask.load(std::memory_order_acquire) & 16u) == 0u) ||
             !drawState || !pFinalBoneToWorld)
             return false;
         const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
@@ -25803,9 +25807,19 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         if (glowMaterial && BuildMagazineEmptyGlowBones(m_VR, state, modelName, pBonesToWorldFinal, glowBones) && glowBones)
         {
             const float t = static_cast<float>(GetTickCount64() % 100000u) * 0.001f;
-            const float pulse = 0.55f + 0.45f * std::sin(t * 6.2831853f * 1.1f);
-            HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
-                pulse, pulse * 0.82f, pulse * 0.35f);
+            if ((m_VR->m_ReloadHintMask.load(std::memory_order_acquire) & 16u) != 0u)
+            {
+                // The magazine to slap out: the same cool glow as the other next-step hints.
+                const float pulse = 0.6f + 0.3f * std::sin(t * 6.2831853f * 2.0f);
+                HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
+                    pulse * 0.55f, pulse * 0.85f, pulse);
+            }
+            else
+            {
+                const float pulse = 0.55f + 0.45f * std::sin(t * 6.2831853f * 1.1f);
+                HooksDrawWithForcedMaterialSafe(ecx, state, pDrawInfo, glowBones, glowMaterial,
+                    pulse, pulse * 0.82f, pulse * 0.35f);
+            }
         }
         vr_vm_stabilize::Mat3x4* boltGlowBones = nullptr;
         if (glowMaterial && BuildReloadBoltGlowBones(m_VR, state, modelName, pBonesToWorldFinal, boltGlowBones) && boltGlowBones)

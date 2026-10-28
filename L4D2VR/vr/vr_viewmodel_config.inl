@@ -3227,6 +3227,7 @@ void VR::ParseConfigFile()
     m_HolsterReleaseDropEnabled = getBool("HolsterReleaseDrop", true);
     m_GripToggleEnabled = getBool("GripToggle", true);
     m_ReloadPavlovTuning = getBool("ReloadPavlovTuning", true);
+    m_MagazineSlapEnabled = getBool("MagazineSlapEnabled", true);
     m_StickJumpCrouchEnabled = getBool("StickJumpCrouch", true);
     m_StickCrouchToggle = getBool("StickCrouchToggle", true);
     m_MotionOnlyMeleeAndShove = getBool("MotionOnlyMeleeAndShove", true);

@@ -28,14 +28,16 @@ namespace
     }
 }
 
-void VR::SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const VrHandMatrix4& world, bool leftHand)
+void VR::SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const VrHandMatrix4& world, bool leftHand,
+    const Vector* velocityOverride)
 {
     if (!m_MagazineDropEnabled || modelName.empty() || boneIndex < 0)
         return;
     const Vector origin(VrHandMath::Get(world, 0, 3), VrHandMath::Get(world, 1, 3), VrHandMath::Get(world, 2, 3));
     l4d2vr_dropped_mags::Params params{};
     params.lifetimeSeconds = m_MagazineDropLifetimeSeconds;
-    const Vector velocity = m_DroppedMagazineHandVelocity[leftHand ? 0 : 1];
+    const Vector velocity = velocityOverride && l4d2vr_interaction::Finite(*velocityOverride)
+        ? *velocityOverride : m_DroppedMagazineHandVelocity[leftHand ? 0 : 1];
     const l4d2vr_dropped_mags::Mag mag = l4d2vr_dropped_mags::Spawn(origin, velocity, params);
     if (!mag.active)
         return;

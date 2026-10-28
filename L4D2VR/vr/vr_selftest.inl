@@ -101,7 +101,16 @@ void VR::ApplySelfTestPoses()
     {
         right = HeadLocalToTracking(h, yaw, rightLocal);
     }
-    const Vec3 left = HeadLocalToTracking(h, yaw, m_SelfTestLeftLocal);
+    Vec3 left{};
+    if (m_SelfTestLeftWorldValid)
+    {
+        const Vector offset = m_SelfTestLeftWorld - m_HmdPosAbs;
+        left = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+    }
+    else
+    {
+        left = HeadLocalToTracking(h, yaw, m_SelfTestLeftLocal);
+    }
 
     const Vector rightPos(right.x, right.y, right.z), leftPos(left.x, left.y, left.z);
     if (m_SelfTestPrevValid)
@@ -217,6 +226,7 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
             SelfTestReport(m_SelfTestSteps[m_SelfTestIndex].c_str(), false, "step timed out");
         l4d2vr_selftest::ReleaseAll();
         SelfTestHoldRight(SelfTestVec(0.35f, 0.2f, -0.3f), QAngle(0.0f, 0.0f, 0.0f));
+        m_SelfTestLeftWorldValid = false;
         m_SelfTestHeadDrop = 0.0f;
         m_SelfTestStepStartMs = 0;
         if (++m_SelfTestIndex >= m_SelfTestSteps.size())
@@ -539,6 +549,200 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
                     clip + reserve == m_SelfTestValueD, detail);
                 return true;
             }
+        }
+        return false;
+    }
+
+    if (step == "slap")
+    {
+        // Pavlov magazine slap on the AK-47. First the detection against the live
+        // magazine box (or the AK-47 profile when none is published) with scripted
+        // strikes; then, when the box and the pouch exist, the real path: take the
+        // spare with the old magazine seated, strike it out along its outward
+        // axis, and expect one ejection with the spare still in the hand.
+        using l4d2vr_mag_slap::Vec3;
+        auto ammo = [&](int& clip, int& reserve) { SelfTestAmmoTransaction(player, 3, false, clip, reserve); };
+        auto slapBox = [](const MagazineInteractionBoxSnapshot& box)
+        {
+            l4d2vr_mag_slap::Box out{};
+            out.origin = { box.origin.x, box.origin.y, box.origin.z };
+            out.axisX = { box.axisX.x, box.axisX.y, box.axisX.z };
+            out.axisY = { box.axisY.x, box.axisY.y, box.axisY.z };
+            out.axisZ = { box.axisZ.x, box.axisZ.y, box.axisZ.z };
+            out.mins = { box.mins.x, box.mins.y, box.mins.z };
+            out.maxs = { box.maxs.x, box.maxs.y, box.maxs.z };
+            return out;
+        };
+        auto toVector = [](const Vec3& v) { return Vector(v.x, v.y, v.z); };
+        // A direction across the magazine (its thin axis, square to the outward axis).
+        auto sideOf = [](const l4d2vr_mag_slap::Box& box, const Vec3& outward)
+        {
+            Vec3 side{};
+            if (!l4d2vr_mag_slap::Normalize(l4d2vr_mag_slap::Sub(box.axisX,
+                    l4d2vr_mag_slap::Scale(outward, l4d2vr_mag_slap::Dot(box.axisX, outward))), side))
+                side = { 1.0f, 0.0f, 0.0f };
+            return side;
+        };
+        const Vector insertionAxis = m_MagazineInteractionMagazineInsertionAxisLocal;
+        const float scale = (std::max)(0.001f, m_VRScale);
+        if (at(0, 0.0f)) { cmd("give rifle_ak47"); button(m_ActionOffHandGrip, false); }
+        if (at(1, 1.0f)) { cmd("use weapon_rifle_ak47"); SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f)); }
+        if (at(2, 3.5f))
+        {
+            const int weaponId = SelfTestActiveWeaponId(player);
+            l4d2vr_reload_tuning::Slap tuning{};
+            const bool slapGun = l4d2vr_reload_tuning::SlapForWeapon(weaponId, tuning);
+            l4d2vr_mag_slap::Params params{};
+            if (slapGun)
+            {
+                params.speedMetersPerSecond = tuning.speedMetersPerSecond;
+                params.forwardDot = tuning.forwardDot;
+                params.reinsertSeconds = tuning.reinsertSeconds;
+            }
+            MagazineInteractionBoxSnapshot box{};
+            const bool liveBox = GetMagazineInteractionBox(box) &&
+                std::chrono::duration<float>(std::chrono::steady_clock::now() - box.publishedAt).count() < 1.0f &&
+                box.modelName.find("ak47") != std::string::npos;
+            l4d2vr_mag_slap::Box seated{};
+            if (liveBox)
+            {
+                seated = slapBox(box);
+            }
+            else
+            {
+                // AK-47 clip profile under a level gun: clip -Y down, +Z forward.
+                seated.axisX = { 0.0f, 1.0f, 0.0f };
+                seated.axisY = { 0.0f, 0.0f, 1.0f };
+                seated.axisZ = { 1.0f, 0.0f, 0.0f };
+                seated.mins = { -0.65f, -9.53f, -0.69f };
+                seated.maxs = { 0.63f, 1.34f, 7.11f };
+            }
+            Vec3 outward{};
+            const bool axisOk = l4d2vr_mag_slap::OutwardAxis(seated, { insertionAxis.x, insertionAxis.y, insertionAxis.z }, outward);
+            if (liveBox)
+            {
+                // The self-test holds the gun level, so out of the well is down.
+                std::snprintf(detail, sizeof(detail), "outward=(%.2f %.2f %.2f) model=%s", outward.x, outward.y, outward.z,
+                    box.modelName.c_str());
+                SelfTestReport("magazine slap axis points out of the well", axisOk && outward.z < -0.5f, detail);
+            }
+            const Vec3 side = sideOf(seated, outward);
+            const float touchingGap = l4d2vr_mag_slap::Gap(seated,
+                l4d2vr_mag_slap::Translated(seated, l4d2vr_mag_slap::Scale(outward, 0.02f * scale))) / scale;
+            const float apartGap = l4d2vr_mag_slap::Gap(seated,
+                l4d2vr_mag_slap::Translated(seated, l4d2vr_mag_slap::Scale(side, 0.20f * scale))) / scale;
+            auto strike = [&](const Vec3& direction, float speed, float gap)
+            {
+                return l4d2vr_mag_slap::Evaluate(params, l4d2vr_mag_slap::Scale(direction, speed), outward, gap).hit;
+            };
+            const bool detection = slapGun && axisOk &&
+                strike(outward, params.speedMetersPerSecond + 0.2f, touchingGap) &&
+                !strike(outward, params.speedMetersPerSecond * 0.6f, touchingGap) &&
+                !strike(side, 1.5f, touchingGap) &&
+                !strike(l4d2vr_mag_slap::Scale(outward, -1.0f), 1.5f, touchingGap) &&
+                !strike(outward, 1.5f, apartGap);
+            std::snprintf(detail, sizeof(detail), "weapon=%d slap>=%.2f m/s dot>=%.2f gap touching=%.3f m apart=%.3f m (%s box)",
+                weaponId, params.speedMetersPerSecond, params.forwardDot, touchingGap, apartGap,
+                liveBox ? "live" : "AK-47 profile");
+            SelfTestReport("magazine slap detection (scripted strikes)", detection, detail);
+
+            int clip = -1, reserve = -1;
+            ammo(clip, reserve);
+            m_SelfTestValueB = clip;
+            m_SelfTestValueC = reserve;
+            Vector pouch{}, held{};
+            bool heldValid = false;
+            const char* skip = !slapGun ? "the AK-47 is not the active weapon" :
+                !liveBox ? "no live magazine box" :
+                !m_MagazineSlapEnabled ? "MagazineSlapEnabled=false" :
+                m_MagazineInteractionState != MagazineInteractionManualState::Idle ? "a reload is already in progress" :
+                reserve <= 0 ? "no reserve ammo" :
+                !GetMagazineSlapSelfTestPoints(pouch, held, heldValid) ? "no pouch position" : nullptr;
+            if (skip)
+            {
+                Game::logMsg("[VR][SelfTest] slap: real path skipped (%s)", skip);
+                return true;
+            }
+            m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
+            m_SelfTestSerialB = m_DroppedMagazineSpawnSerial.load(std::memory_order_acquire);
+            m_SelfTestValueA = static_cast<int>(m_MagazineSlapSerial.load(std::memory_order_acquire));
+            Game::logMsg("[VR][SelfTest] before: weapon=%d clip=%d reserve=%d magProto=%d", weaponId, clip, reserve,
+                RemoteMagazineProtocolSupported() ? 1 : 0);
+            m_SelfTestLeftWorld = pouch;
+            m_SelfTestLeftWorldValid = true;
+        }
+        if (at(3, 4.3f)) { button(m_ActionOffHandGrip, true); }
+        if (at(4, 4.9f))
+        {
+            const bool holding = m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap;
+            std::snprintf(detail, sizeof(detail), "state=%d (see [VR][MagazineSlap] lines)",
+                static_cast<int>(m_MagazineInteractionState));
+            SelfTestReport("slap: spare taken with the old magazine seated", holding, detail);
+            Vector pouch{}, held{};
+            bool heldValid = false;
+            MagazineInteractionBoxSnapshot box{};
+            if (!holding || !GetMagazineSlapSelfTestPoints(pouch, held, heldValid) || !heldValid || !GetMagazineInteractionBox(box))
+            {
+                button(m_ActionOffHandGrip, false);
+                return true;
+            }
+            // Put the held magazine on the seated one, then strike 10 cm before
+            // to 4 cm past it along the outward axis. Park it to the side first so
+            // that moving into the start point is a sideways move (no slap).
+            const l4d2vr_mag_slap::Box seated = slapBox(box);
+            Vec3 outward{};
+            l4d2vr_mag_slap::OutwardAxis(seated, { insertionAxis.x, insertionAxis.y, insertionAxis.z }, outward);
+            const Vector contact = m_LeftControllerPosAbs + (toVector(l4d2vr_mag_slap::Center(seated)) - held);
+            m_SelfTestSlapStart = contact - toVector(outward) * (0.10f * scale);
+            m_SelfTestSlapEnd = contact + toVector(outward) * (0.04f * scale);
+            m_SelfTestLeftWorld = m_SelfTestSlapStart + toVector(sideOf(seated, outward)) * (0.30f * scale);
+        }
+        if (at(5, 5.6f))
+        {
+            m_SelfTestSlapPark = m_SelfTestLeftWorld - m_SelfTestSlapStart;
+            m_SelfTestLeftWorld = m_SelfTestSlapStart;
+        }
+        if (at(6, 6.4f)) {}
+        if (m_SelfTestStage == 7)
+        {
+            // 14 cm in 0.1 s: 1.4 m/s relative to the still gun hand.
+            const float u = std::clamp((t - 6.4f) / 0.1f, 0.0f, 1.0f);
+            m_SelfTestLeftWorld = m_SelfTestSlapStart + (m_SelfTestSlapEnd - m_SelfTestSlapStart) * u;
+        }
+        if (at(7, 6.52f))
+        {
+            // Sideways off the gun before SlapReinsertTime, so the spare stays in the hand.
+            m_SelfTestLeftWorld = m_SelfTestSlapEnd + m_SelfTestSlapPark;
+        }
+        if (at(8, 7.8f))
+        {
+            const uint32_t ejects = m_MagazineEjectSerial.load(std::memory_order_acquire) - m_SelfTestSerial;
+            const uint32_t drops = m_DroppedMagazineSpawnSerial.load(std::memory_order_acquire) - m_SelfTestSerialB;
+            const uint32_t slaps = m_MagazineSlapSerial.load(std::memory_order_acquire) - static_cast<uint32_t>(m_SelfTestValueA);
+            const bool keptSpare = m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine;
+            int clip = -1, reserve = -1;
+            ammo(clip, reserve);
+            std::snprintf(detail, sizeof(detail), "%u slap(s), %u ejection(s), %u dropped magazine(s), spare %s; clip %d -> %d",
+                slaps, ejects, drops, keptSpare ? "in hand" : "not in hand", m_SelfTestValueB, clip);
+            SelfTestReport("magazine slap ejects once", slaps == 1u && ejects == 1u && drops <= 1u &&
+                (drops == 1u || !m_MagazineDropEnabled) && keptSpare, detail);
+            if (ejects == 1u && RemoteMagazineProtocolSupported())
+            {
+                const int expectedClip = std::min(1, m_SelfTestValueB);
+                const int expectedReserve = m_SelfTestValueC + m_SelfTestValueB - expectedClip;
+                std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d (expected %d, %d)",
+                    m_SelfTestValueB, clip, m_SelfTestValueC, reserve, expectedClip, expectedReserve);
+                SelfTestReport("magazine slap returns rounds to reserve",
+                    clip == expectedClip && reserve == expectedReserve, detail);
+            }
+        }
+        if (at(9, 8.4f)) { button(m_ActionOffHandGrip, false); }
+        if (at(10, 9.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "state=%d", static_cast<int>(m_MagazineInteractionState));
+            SelfTestReport("letting go after a slap puts the spare back",
+                m_MagazineInteractionState == MagazineInteractionManualState::WaitingForFreshMagazine, detail);
+            return true;
         }
         return false;
     }

@@ -2294,18 +2294,32 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         m_VR->ServerFeature(l4d2vr_features::ShoveAim))
         cmd->impulse = 238;
 
-    if (m_VR && routingPistol && cmd->impulse == 0 &&
-        l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) &&
-        m_VR->m_MagazineInteractionEnabled && m_VR->m_MagazineInteractionSuppressEmptyClipAutoReload &&
-        (m_VR->m_VrHandsEnabled || m_VR->m_NativeViewmodelHandsOnly) &&
-        !m_VR->IsMagazineInteractionReloadCommandActive() &&
-        (m_VR->m_DualPistolNativeReloadState.load(std::memory_order_acquire) & 1u) == 0u &&
-        !m_VR->m_RenderPlayerIncap.load(std::memory_order_acquire) &&
-        l4d2vr_calibration::IsFirearm(static_cast<int>(routingPistol->GetWeaponID())) &&
-        (l4d2vr_shell::IsShotgun(static_cast<int>(routingPistol->GetWeaponID())) ?
-            m_VR->IsMagazineInteractionShotgunServerHookActive(static_cast<int>(routingPistol->GetWeaponID())) :
-            m_VR->IsMagazineInteractionDetachableBackendActive(static_cast<int>(routingPistol->GetWeaponID()))))
-        cmd->impulse = l4d2vr_grip::kBlockNativeReloadImpulse;
+    if (m_VR && routingPistol)
+    {
+        // The host's reload gate follows every command: one without the block
+        // lets the stock (auto) reload refill an empty gun with no magazine.
+        const int gateWeaponId = static_cast<int>(routingPistol->GetWeaponID());
+        uint32_t gateGap = 0u;
+        if (cmd->impulse != 0) gateGap |= 1u;
+        if (!l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire))) gateGap |= 2u;
+        if (!m_VR->m_MagazineInteractionEnabled || !m_VR->m_MagazineInteractionSuppressEmptyClipAutoReload) gateGap |= 4u;
+        if (!m_VR->m_VrHandsEnabled && !m_VR->m_NativeViewmodelHandsOnly) gateGap |= 8u;
+        if (m_VR->IsMagazineInteractionReloadCommandActive()) gateGap |= 16u;
+        if ((m_VR->m_DualPistolNativeReloadState.load(std::memory_order_acquire) & 1u) != 0u) gateGap |= 32u;
+        if (m_VR->m_RenderPlayerIncap.load(std::memory_order_acquire)) gateGap |= 64u;
+        if (!l4d2vr_calibration::IsFirearm(gateWeaponId)) gateGap |= 128u;
+        else if (!(l4d2vr_shell::IsShotgun(gateWeaponId) ? m_VR->IsMagazineInteractionShotgunServerHookActive(gateWeaponId) :
+            m_VR->IsMagazineInteractionDetachableBackendActive(gateWeaponId))) gateGap |= 256u;
+        if (!gateGap)
+            cmd->impulse = l4d2vr_grip::kBlockNativeReloadImpulse;
+        else if ((gateGap & (2u | 4u | 8u | 128u | 256u)) == 0u)
+        {
+            // Only commands that should have carried the block count as gaps.
+            m_VR->m_ReloadGateGapCommands.fetch_add(1u, std::memory_order_acq_rel);
+            m_VR->m_ReloadGateGapReason.store(gateGap | (static_cast<uint32_t>(static_cast<uint8_t>(cmd->impulse)) << 16),
+                std::memory_order_release);
+        }
+    }
 
 	if (m_Game && m_VR)
 		m_Game->PublishLocalVRPose(m_VR, localPlayerForAutoActions);

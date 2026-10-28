@@ -1636,13 +1636,13 @@ int __fastcall Hooks::dClientPistolFireActivity(void* weapon, void*)
 
 bool __fastcall Hooks::dClientPistolReload(void* weapon, void*)
 {
-    if (m_VR && m_VR->BlockPistolNativeReload(reinterpret_cast<C_WeaponCSBase*>(weapon))) return false;
+    if (m_VR && m_VR->BlockPhysicalNativeReload(reinterpret_cast<C_WeaponCSBase*>(weapon))) return false;
     return hkClientPistolReload.fOriginal(weapon);
 }
 
 void __fastcall Hooks::dClientPistolFinishReload(void* weapon, void*)
 {
-    if (m_VR && m_VR->BlockPistolNativeReload(reinterpret_cast<C_WeaponCSBase*>(weapon))) return;
+    if (m_VR && m_VR->BlockPhysicalNativeReload(reinterpret_cast<C_WeaponCSBase*>(weapon))) return;
     hkClientPistolFinishReload.fOriginal(weapon);
 }
 
@@ -3240,8 +3240,32 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 	encoding += (encoding < 0) ? -encodedAngle : encodedAngle;
 	to->viewangles.x = (float)encoding;
 
+	// Source sends only the fields that differ from `from`, and the host
+	// rebuilds the unsent ones from its copy of the previous command, which
+	// its decoder has already stripped (protocol impulses, carry word). Delta
+	// against that stripped copy, or a repeated impulse never arrives: the
+	// reload block sent on every command reached the host only once, so the
+	// stock auto reload refilled an empty gun with no magazine inserted.
+	// `from` is edited in place (the game's CUserCmd may be larger than the
+	// SDK's) and restored right after the write.
+	const auto fromImpulse = from ? from->impulse : 0;
+	const int fromButtons = from ? from->buttons : 0;
+	if (from)
+	{
+		if (l4d2vr_wire::IsGripAction(static_cast<uint8_t>(from->impulse)) ||
+			static_cast<uint8_t>(from->impulse) == l4d2vr_grip::kBlockNativeReloadImpulse)
+			from->impulse = 0;
+		from->buttons = static_cast<int>(static_cast<uint32_t>(from->buttons) & ~(0x3fu << 26));
+	}
+
 	// 写入
 	hkWriteUsercmd.fOriginal(buf, to, from);
+
+	if (from)
+	{
+		from->impulse = fromImpulse;
+		from->buttons = fromButtons;
+	}
 
 	// 还原本地 CUserCmd
 	to->viewangles.x = xAngleOrig;

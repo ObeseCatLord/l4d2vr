@@ -40,15 +40,15 @@ Dropping (`HolsterReleaseDrop`, on by default): letting go of an item you took w
 ## Reloading
 
 - **Release:** the Magazine Release button (right A by default) drops detachable magazines. The AK-47's magazine is grabbed and pulled out by hand instead (`MagazineReleaseButtonRequired`). A magazine drops once: while it is out, pressing release again does nothing, even after switching weapons. Its rounds go back to your reserve and a loaded gun keeps the round in its chamber; the fresh magazine then fills from the reserve.
-- **Fresh magazine:** grab the spare at your off-hand waist and insert it into the magazine well.
+- **Fresh magazine:** put your off hand on the spare at your waist, squeeze the grip and insert it into the magazine well. Only the fresh magazine refills the gun, from your reserve; the stock reload never runs on its own, so an empty gun stays empty until a new magazine is in.
 - **Magazine slap** (`MagazineSlapEnabled`, on by default; AK-47, SG552 and military sniper, like Pavlov's AK, Galil and AutoSniper): you can take the spare while the old magazine is still in; the old one glows. Strike it out with the fresh magazine, moving along the magazine and out of the well (roughly downward on a level gun; a forward-and-down AK slap counts) at 0.8 m/s on the AK-47 or 0.9 m/s on the others, measured against the gun hand so walking and turning don't count. The old magazine drops as with any release (one ejection, rounds back to the reserve), and the fresh one can go in 0.15 s later. Letting go of the grip before the slap puts the spare back. On the SG552 and sniper, the release button also drops the old magazine while you hold the spare.
-- **Chamber:** if the gun was empty, pull the slide, bolt, charging handle or pump to chamber the first round. Pump shotguns need a pump after each shot (`ManualPumpEnabled`).
+- **Chamber:** if the gun was empty, pull the slide, bolt, charging handle or pump to chamber the first round. Racking only chambers a round from a seated magazine: with the empty magazine still in, or with no magazine, it does nothing. Pump shotguns need a pump after each shot (`ManualPumpEnabled`); shells can be loaded before or after the pump, one shell per insertion.
 - **Empty guns** never reload or eject on their own; the magazine glows instead (`MagazineEmptyGlowEnabled`).
 - **Reload hints:** whatever the next step needs glows softly. That is the magazine when the gun is empty, the spare magazine once the old one is out, and the slide, bolt, charging handle or pump while the gun waits to be cycled. All of these use the `MagazineEmptyGlowEnabled` setting.
 - **Released magazines** fall to the floor and disappear after a while (`MagazineDropEnabled`, `MagazineDropLifetimeSeconds`).
 - **Pavlov tuning** (`ReloadPavlovTuning`, on by default): each gun uses Pavlov VR's numbers for how far you pull the slide, bolt, charging handle or pump to cock it, where the round chambers as it goes forward (or let go after a full pull and it snaps forward), and how deep a magazine must go in. Examples: the M16 cocks at 7 cm and chambers below 4.9 cm, pistols cock at 7.6 cm, and the AK at 9.5 cm; pulls are capped at 10 cm. The slide model moves only its own travel. The magazine well accepts a magazine within 10 cm and 45 degrees, and the spare magazine can be grabbed from 20 cm. Your per-weapon `MagazineInteraction...Overrides` still win.
 - **Pouch glow:** while a fresh magazine is needed, the spare glows; within 35 cm of your empty off hand it glows brighter and you feel a tick.
-- **Speed:** on servers with physical transactions (listen host or plugin) ammo is committed when the magazine seats, so you can reload faster than the animation. On other servers the stock reload runs in step with your hands, so its timer still applies (`PhysicalReloadOnUnsupportedServers`).
+- **Speed:** on servers with physical transactions (listen host or plugin) ammo is committed when the magazine seats, so you can reload faster than the animation. On other servers the stock reload runs when the fresh magazine seats, so its timer still applies (`PhysicalReloadOnUnsupportedServers`).
 
 ## Akimbo
 
@@ -103,6 +103,12 @@ Both grips are used only for gripping: they draw from holsters and hold magazine
 ## Self-test (developers)
 
 `-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
+
+The `reload`, `slap` and `shells` steps check the server transactions on their own. The hand-driven reload steps go through the whole off-hand path instead: the hand is moved onto the published boxes (bolt or slide, waist pouch, magazine well or loading port) and the grip and trigger are pressed, and each stage logs the distances it measured.
+
+- `mage2e=<give name>` (for example `mage2e=rifle`, `mage2e=pistol`): run the gun dry, rack it with the empty magazine still in and again with the magazine out (neither may refill it), release the magazine, take a spare from the waist, seat it (refilled from the reserve), check that the empty chamber holds fire, rack the bolt or slide the Pavlov distance and let go, fire.
+- `shellse2e=<give name>` (`pumpshotgun`, `shotgun_chrome`, `autoshotgun`, `shotgun_spas`): three times fire one, cycle the pump (pump and Chrome), take a shell from the waist and load it; each shell adds exactly one round. The second time the shell goes in before the pump is cycled.
+- `slape2e`: AK-47 tactical reload: take a spare with the old magazine seated, slap the old one out, seat the spare, fire.
 
 ## Headset test checklist
 

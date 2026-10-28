@@ -26,7 +26,7 @@ static void CheckEmptyPumpReload(int weaponId)
     Check(chamber.Observe(gun, handle, weaponId, 0), "The last shot leaves an empty pump chamber");
     Check(pump.Observe(gun, weaponId, 0, handle), "The spent action still needs a cycle");
     Check(!pump.Complete(gun, handle), "A dry stroke cannot complete chambering");
-    Check(!PumpShouldStartAfterShot(true, 0, 0), "An empty tube must accept shells before entering the pump stage");
+    Check(!PumpShouldStartAfterShot(true, 0), "An empty tube must accept shells before entering the pump stage");
 
     ServerLedger host; host.Reset(9u);
     ClientRequest client; client.Offer(kVersion, 9u);
@@ -46,7 +46,8 @@ static void CheckEmptyPumpReload(int weaponId)
         Check(client.Update(handle, weaponId, owner, 1u, now + 1u, reply, clip, reserve) == ClientRequest::Poll::Result,
             "The shell settles after acknowledgement and native replication");
         const bool needsCycle = pump.Observe(gun, weaponId, clip, handle);
-        Check(needsCycle && !PumpShouldStartAfterShot(needsCycle, clip, loaded), "Loading shells must not force an early pump stage");
+        Check(needsCycle && PumpShouldStartAfterShot(needsCycle, clip),
+            "Once the tube holds a shell the pump waits; the waiting pump keeps taking shells");
         Check(chamber.Observe(gun, handle, weaponId, clip), "Loading does not chamber a shell");
         Check(ShotgunBlocksFire(true, false, false, false, false), "The empty chamber blocks firing during tube loading");
         Check(clip + reserve == 3 && writes == loaded, "Each gesture transfers exactly one existing shell");
@@ -55,7 +56,8 @@ static void CheckEmptyPumpReload(int weaponId)
     Check(pump.Complete(gun, handle), "The loaded tube can now feed its chamber");
     chamber.Complete(gun);
     Check(!pump.Observe(gun, weaponId, clip, handle) && !chamber.Observe(gun, handle, weaponId, clip), "The completed reload permits firing");
-    Check(PumpShouldStartAfterShot(true, clip - 1, 0), "A normal shot with remaining shells still enters the pump stage");
+    Check(PumpShouldStartAfterShot(true, clip - 1), "A normal shot with remaining shells still enters the pump stage");
+    Check(!PumpShouldStartAfterShot(false, clip), "A cycled pump never waits again");
 }
 
 static void CheckUnfinishedCycleReturn(int weaponId, int capacity, bool shotgun)

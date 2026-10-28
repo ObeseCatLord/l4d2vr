@@ -957,9 +957,12 @@ void VR::ProcessInput()
         magazineInteractionInputEnabled &&
         (!m_MagazineInteractionUseButtonGripInput || (m_MagazineInteractionUseButtonGripInput && m_MagazineInteractionSeparateButtonInput));
     std::array<float, 5> magazineInteractionFingerCurls{};
+    // The self-test's simulated controllers have no skeleton; its scripted
+    // grip buttons stand in for the hand (curls read as open).
     const bool magazineInteractionFingerCurlsValid =
         magazineFingerCurlInput &&
-        ReadMagazineInteractionFingerCurls(magazineInteractionFingerCurls);
+        (ReadMagazineInteractionFingerCurls(magazineInteractionFingerCurls) ||
+            l4d2vr_selftest::Get().active.load(std::memory_order_acquire));
     if (!magazineFingerCurlInput)
     {
         m_MagazineInteractionThumbIndexCurlDownPrev = false;

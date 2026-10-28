@@ -24663,12 +24663,15 @@ namespace
         return 0.925f + 0.075f * std::sin(t * 6.2831853f * 0.4f);
     }
 
-    // Glow colours (additive light, kept low so the part stays readable).
+    // Glow colours: additive linear light. The frame is gamma-encoded after the
+    // add, so on the dark metal of a gun 0.27 already came out as a flat,
+    // opaque-looking 53% fill that hid the part. These stay around 0.05-0.1 so
+    // the part keeps its texture under a faint tint.
     struct HooksGlowColor { float r, g, b; };
-    constexpr HooksGlowColor kGlowAttention{ 0.30f, 0.24f, 0.11f }; // warm: empty magazine
-    constexpr HooksGlowColor kGlowNextStep{ 0.12f, 0.19f, 0.27f };  // cool: what to do next
-    constexpr HooksGlowColor kGlowInReach{ 0.20f, 0.30f, 0.40f };   // cool, brighter: spare within reach
-    constexpr HooksGlowColor kGlowHolster{ 0.20f, 0.19f, 0.15f };   // neutral: hovered holster item
+    constexpr HooksGlowColor kGlowAttention{ 0.075f, 0.060f, 0.028f }; // warm: empty magazine
+    constexpr HooksGlowColor kGlowNextStep{ 0.030f, 0.048f, 0.068f };  // cool: what to do next
+    constexpr HooksGlowColor kGlowInReach{ 0.050f, 0.075f, 0.100f };   // cool, brighter: spare within reach
+    constexpr HooksGlowColor kGlowHolster{ 0.050f, 0.048f, 0.038f };   // neutral: hovered holster item
 
     void HooksDrawGlow(void* ecx, void* state, const ModelRenderInfo_t* info, void* bones, IMaterial* material,
         const HooksGlowColor& color)

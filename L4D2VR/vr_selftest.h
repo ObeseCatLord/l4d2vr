@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -214,6 +215,120 @@ namespace l4d2vr_selftest
                 current.push_back(ch);
         }
         flush();
-        return steps;
+        // "righthand=0.02,0.22,-0.7": numeric tokens continue the previous step.
+        std::vector<std::string> merged;
+        for (const std::string& step : steps)
+        {
+            const char first = step[0];
+            const bool numeric = (first >= '0' && first <= '9') || first == '-' || first == '+' || first == '.';
+            if (numeric && !merged.empty())
+                merged.back() += "," + step;
+            else
+                merged.push_back(step);
+        }
+        return merged;
+    }
+
+    // "0.02,0.22,-0.7" -> {0.02, 0.22, -0.7}; false unless exactly three numbers.
+    inline bool ParseVec3(const std::string& text, Vec3& out)
+    {
+        float values[3] = {};
+        std::size_t begin = 0;
+        for (int i = 0; i < 3; ++i)
+        {
+            const std::size_t end = text.find(',', begin);
+            if ((i < 2) != (end != std::string::npos))
+                return false;
+            const std::string part = text.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+            char* stop = nullptr;
+            values[i] = std::strtof(part.c_str(), &stop);
+            if (part.empty() || !stop || *stop != '\0' || !std::isfinite(values[i]))
+                return false;
+            begin = end + 1;
+        }
+        out.x = values[0];
+        out.y = values[1];
+        out.z = values[2];
+        return true;
+    }
+
+    // ---- Screenshots ----------------------------------------------------------
+    // Minimal PNG writer (8-bit RGB, stored deflate blocks) for the self-test
+    // eye captures: no compression library, any viewer can open the result.
+    inline std::uint32_t PngCrc(const std::uint8_t* data, std::size_t size, std::uint32_t crc = 0xFFFFFFFFu)
+    {
+        for (std::size_t i = 0; i < size; ++i)
+        {
+            crc ^= data[i];
+            for (int bit = 0; bit < 8; ++bit)
+                crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+        return crc;
+    }
+
+    inline std::vector<std::uint8_t> EncodePngRgb(const std::uint8_t* rgb, int width, int height)
+    {
+        std::vector<std::uint8_t> png;
+        if (!rgb || width <= 0 || height <= 0)
+            return png;
+        auto put32 = [](std::vector<std::uint8_t>& out, std::uint32_t v)
+        {
+            out.push_back(static_cast<std::uint8_t>(v >> 24));
+            out.push_back(static_cast<std::uint8_t>(v >> 16));
+            out.push_back(static_cast<std::uint8_t>(v >> 8));
+            out.push_back(static_cast<std::uint8_t>(v));
+        };
+        auto chunk = [&](const char* type, const std::vector<std::uint8_t>& data)
+        {
+            put32(png, static_cast<std::uint32_t>(data.size()));
+            const std::size_t start = png.size();
+            png.insert(png.end(), type, type + 4);
+            png.insert(png.end(), data.begin(), data.end());
+            put32(png, PngCrc(png.data() + start, png.size() - start) ^ 0xFFFFFFFFu);
+        };
+        static const std::uint8_t kSignature[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+        png.insert(png.end(), kSignature, kSignature + 8);
+
+        std::vector<std::uint8_t> header;
+        put32(header, static_cast<std::uint32_t>(width));
+        put32(header, static_cast<std::uint32_t>(height));
+        header.insert(header.end(), { 8, 2, 0, 0, 0 }); // 8-bit RGB, no interlace
+        chunk("IHDR", header);
+
+        // Raw scanlines (filter byte 0) in stored deflate blocks of up to 65535 bytes.
+        const std::size_t rowBytes = static_cast<std::size_t>(width) * 3u;
+        std::vector<std::uint8_t> raw;
+        raw.reserve((rowBytes + 1u) * static_cast<std::size_t>(height));
+        for (int y = 0; y < height; ++y)
+        {
+            raw.push_back(0);
+            const std::uint8_t* row = rgb + rowBytes * static_cast<std::size_t>(y);
+            raw.insert(raw.end(), row, row + rowBytes);
+        }
+        std::vector<std::uint8_t> zlib = { 0x78, 0x01 };
+        std::size_t offset = 0;
+        do
+        {
+            const std::size_t block = (std::min)(raw.size() - offset, static_cast<std::size_t>(65535u));
+            const bool last = offset + block >= raw.size();
+            zlib.push_back(static_cast<std::uint8_t>(last ? 1u : 0u));
+            zlib.push_back(static_cast<std::uint8_t>(block));
+            zlib.push_back(static_cast<std::uint8_t>(block >> 8));
+            zlib.push_back(static_cast<std::uint8_t>(~block));
+            zlib.push_back(static_cast<std::uint8_t>(~block >> 8));
+            zlib.insert(zlib.end(), raw.begin() + static_cast<std::ptrdiff_t>(offset),
+                raw.begin() + static_cast<std::ptrdiff_t>(offset + block));
+            offset += block;
+        } while (offset < raw.size());
+        std::uint32_t a = 1u, b = 0u;
+        for (std::uint8_t byte : raw)
+        {
+            a = (a + byte) % 65521u;
+            b = (b + a) % 65521u;
+        }
+        put32(zlib, (b << 16) | a);
+        chunk("IDAT", zlib);
+        chunk("IEND", {});
+        return png;
     }
 }

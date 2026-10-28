@@ -3272,6 +3272,9 @@ void VR::ParseConfigFile()
             float radius = getFloat(kRadiusKeys[zone], defaults.radius[zone]);
             l4d2vr_holster::MigrateLegacyZone(zone, defaults, center, radius);
             m_HolsterLayout.center[zone] = center;
+            // Moving a holster moves its drawn item with it (back items keep
+            // hanging behind the zone by the default amount).
+            m_HolsterLayout.drawCenter[zone] = defaults.drawCenter[zone] + (center - defaults.center[zone]);
             m_HolsterLayout.radius[zone] = std::clamp(radius, 0.04f, 0.5f);
         }
     }

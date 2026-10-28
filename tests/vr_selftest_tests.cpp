@@ -57,6 +57,36 @@ static void TestParse()
 {
     const auto steps = ParseSteps(" Features, holster ,,throwPipe ");
     CHECK(steps.size() == 3u && steps[0] == "features" && steps[1] == "holster" && steps[2] == "throwpipe");
+    // Coordinates keep their commas; a step after them starts a new step.
+    const auto scene = ParseSteps("righthand=0.02,0.22,-0.7,look=40,shot=Hip");
+    CHECK(scene.size() == 3u && scene[0] == "righthand=0.02,0.22,-0.7" && scene[1] == "look=40" && scene[2] == "shot=hip");
+    Vec3 v{};
+    CHECK(ParseVec3("0.02,0.22,-0.7", v) && Near(v.x, 0.02f) && Near(v.y, 0.22f) && Near(v.z, -0.7f));
+    CHECK(!ParseVec3("1,2", v) && !ParseVec3("1,2,3,4", v) && !ParseVec3("1,x,3", v) && !ParseVec3("", v));
+}
+
+static std::uint32_t Be32(const std::vector<std::uint8_t>& d, std::size_t at)
+{
+    return (std::uint32_t(d[at]) << 24) | (std::uint32_t(d[at + 1]) << 16) | (std::uint32_t(d[at + 2]) << 8) | d[at + 3];
+}
+
+static void TestPng()
+{
+    const std::uint8_t rgb[6] = { 255, 0, 0, 0, 0, 255 };
+    const std::vector<std::uint8_t> png = EncodePngRgb(rgb, 2, 1);
+    // signature + IHDR(25) + IDAT(12 + 2 + 5 + 7 + 4) + IEND(12)
+    CHECK(png.size() == 8u + 25u + 30u + 12u);
+    CHECK(png.size() > 8u && png[0] == 0x89 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G');
+    CHECK(Be32(png, 8) == 13u && Be32(png, 16) == 2u && Be32(png, 20) == 1u && png[24] == 8 && png[25] == 2);
+    // IEND's CRC is the well-known AE426082.
+    CHECK(Be32(png, png.size() - 4) == 0xAE426082u);
+    // Stored block: final flag, LEN 7 and NLEN ~7, then filter byte and the pixels.
+    const std::size_t idat = 8u + 25u + 8u;
+    CHECK(png[idat] == 0x78 && png[idat + 2] == 1 && png[idat + 3] == 7 && png[idat + 5] == 0xF8);
+    CHECK(png[idat + 7] == 0 && png[idat + 8] == 255 && png[idat + 13] == 255);
+    // Adler-32 of the 7 raw bytes.
+    CHECK(Be32(png, idat + 14) == 0x070001FFu);
+    CHECK(EncodePngRgb(nullptr, 2, 1).empty() && EncodePngRgb(rgb, 0, 1).empty());
 }
 
 static void TestHumanReach()
@@ -93,6 +123,7 @@ int main()
     TestTransforms();
     TestButtons();
     TestParse();
+    TestPng();
     if (g_failures)
     {
         std::printf("%d failure(s)\n", g_failures);

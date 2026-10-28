@@ -45,6 +45,8 @@ Dropping (`HolsterReleaseDrop`, on by default): letting go of an item you took w
 - **Empty guns** never reload or eject on their own; the magazine glows instead (`MagazineEmptyGlowEnabled`).
 - **Reload hints:** whatever the next step needs glows softly. That is the magazine when the gun is empty, the spare magazine once the old one is out, and the slide, bolt, charging handle or pump while the gun waits to be cycled. All of these use the `MagazineEmptyGlowEnabled` setting.
 - **Released magazines** fall to the floor and disappear after a while (`MagazineDropEnabled`, `MagazineDropLifetimeSeconds`).
+- **Pavlov tuning** (`ReloadPavlovTuning`, on by default): each gun uses Pavlov VR's numbers for how far you pull the slide, bolt, charging handle or pump to cock it, where the round chambers as it goes forward (or let go after a full pull and it snaps forward), and how deep a magazine must go in. Examples: the M16 cocks at 7 cm and chambers below 4.9 cm, pistols cock at 7.6 cm, and the AK at 9.5 cm; pulls are capped at 10 cm. The slide model moves only its own travel. The magazine well accepts a magazine within 10 cm and 45 degrees, and the spare magazine can be grabbed from 20 cm. Your per-weapon `MagazineInteraction...Overrides` still win.
+- **Pouch glow:** while a fresh magazine is needed, the spare glows; within 35 cm of your empty off hand it glows brighter and you feel a tick.
 - **Speed:** on servers with physical transactions (listen host or plugin) ammo is committed when the magazine seats, so you can reload faster than the animation. On other servers the stock reload runs in step with your hands, so its timer still applies (`PhysicalReloadOnUnsupportedServers`).
 
 ## Akimbo

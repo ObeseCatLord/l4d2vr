@@ -135,6 +135,21 @@ int main()
     Check(!l4d2vr_magazine::MayCatchEjectedMagazine(true, false, 0.0f, 0.05f), "Lost tracking cannot catch an ejected magazine");
     Check(!l4d2vr_magazine::MayCatchEjectedMagazine(true, true, 0.06f, 0.05f), "A distant support hand cannot catch ammunition");
     Check(!l4d2vr_magazine::MayCatchEjectedMagazine(true, true, std::numeric_limits<float>::quiet_NaN(), 0.05f), "Invalid pose distances cannot attach ammunition");
+    // The pouch is reached from the hand itself, and a hand on the bolt racks.
+    Check(l4d2vr_magazine::MayTakeFreshAmmo(0.05f, 0.20f, 1e9f, 0.10f), "A hand at the pouch takes a spare");
+    Check(!l4d2vr_magazine::MayTakeFreshAmmo(0.25f, 0.20f, 1e9f, 0.10f), "A hand beyond the pouch reach takes nothing");
+    Check(!l4d2vr_magazine::MayTakeFreshAmmo(0.15f, 0.20f, 0.0f, 0.10f), "Racking the slide next to the pouch is a rack, not a spare");
+    Check(l4d2vr_magazine::MayTakeFreshAmmo(0.02f, 0.20f, 0.08f, 0.10f), "A hand in the pouch near the gun still takes a spare");
+    Check(!l4d2vr_magazine::MayTakeFreshAmmo(std::numeric_limits<float>::quiet_NaN(), 0.20f, 1e9f, 0.10f), "No pouch pose, no spare");
+    {
+        l4d2vr_magazine::FreshInsertGate fresh;
+        Check(!fresh.Update(true), "A spare taken with the hand at the well does not seat in the same motion");
+        Check(!fresh.Update(true), "Holding it there still does not seat it");
+        Check(!fresh.Update(false), "Taking it out of the well arms it");
+        Check(fresh.Update(true), "Pushing it back in seats it");
+        fresh.Reset();
+        Check(!fresh.Update(true), "The next spare needs its own trip out of the well");
+    }
     l4d2vr_magazine::RetainedInsertGate retained;
     Check(!retained.Update(true, 0.0f, 0.03f), "Catching at the well must not automatically reinsert the magazine");
     Check(!retained.Update(false, 0.01f, 0.03f), "A small overlap change is not a withdrawal gesture");

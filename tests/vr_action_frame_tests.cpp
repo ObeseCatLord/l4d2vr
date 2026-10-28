@@ -148,7 +148,7 @@ struct VR
     bool m_MagazineInteractionRetainedMagazineHeld = false, m_MagazineInteractionTransactionGripHeld = false;
     MagazineInteractionManualState m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazine;
     Vector m_RetainedMagazineCatchHandLocal{1,2,3};
-    struct InsertGate { int resets = 0; void Reset() { ++resets; } } m_RetainedMagazineInsertGate;
+    struct InsertGate { int resets = 0; void Reset() { ++resets; } } m_RetainedMagazineInsertGate, m_FreshAmmoInsertGate;
     bool magazineProtocolSupported = true;
     int magazineAnchorReads = 0;
     std::atomic<unsigned> m_MagazineInteractionLeftHandPoseActive{0u};
@@ -465,6 +465,7 @@ static void MagazineRejectionTests()
         Require(f.magazineAnchorReads==0 && f.m_RetainedMagazineCatchHandLocal.x==1.0f,
             "unknown rejected grip never updates hand-world anchor");
         Require(f.m_RetainedMagazineInsertGate.resets==int(retained),"retry grip gate resets only for retained hold");
+        Require(f.m_FreshAmmoInsertGate.resets==int(retained),"a retried magazine must leave the well before it seats again");
     }
 
     for (const Action action : {Action::Insert,Action::Reinsert})

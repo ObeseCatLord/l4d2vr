@@ -126,7 +126,7 @@ The `reload`, `slap` and `shells` steps check the server transactions on their o
 
 - `mage2e=<give name>` (for example `mage2e=rifle`, `mage2e=pistol`): run the gun dry, rack it with the empty magazine still in and again with the magazine out (neither may refill it), release the magazine, take a spare from the waist, seat it (refilled from the reserve), check that the empty chamber holds fire, rack the bolt or slide the Pavlov distance and let go, fire.
 - `shellse2e=<give name>` (`pumpshotgun`, `shotgun_chrome`, `autoshotgun`, `shotgun_spas`): three times fire one, cycle the pump (pump and Chrome), take a shell from the waist and load it; each shell adds exactly one round. The second time the shell goes in before the pump is cycled.
-- `slape2e`: AK-47 tactical reload: take a spare with the old magazine seated, slap the old one out, seat the spare, fire.
+- `slape2e`: AK-47 tactical reload: take a spare with the old magazine seated, slap the old one out, seat the spare, fire. It saves `rifle_ak47_slap_spare_in_hand` and `rifle_ak47_slap_spare_lined_up` screenshots (add `look=35` before it to see the hand and the gun).
 
 ## Headset test checklist
 

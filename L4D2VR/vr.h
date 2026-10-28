@@ -3057,6 +3057,7 @@ public:
 	Vector m_SelfTestSlapStart{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestSlapEnd{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestSlapPark{ 0.0f, 0.0f, 0.0f };   // offset beside the gun
+	uint64_t m_SelfTestAlignAtMs = 0;                 // last held-magazine alignment turn
 	std::vector<l4d2vr_selftest::Key> m_SelfTestPath;
 	std::vector<l4d2vr_selftest::Key> m_SelfTestAngPath;
 	uint64_t m_SelfTestPathStartMs = 0;

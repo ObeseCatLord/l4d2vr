@@ -1792,6 +1792,10 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     auto meters = [&](const Vector& a, const Vector& b) { return (a - b).Length() / scale; };
     // Drives the held magazine or shell (its centre) onto `target`, turning
     // the hand so a magazine lines up with the well. Returns the residual.
+    // The held pose trails the scripted hand by a frame or more, so the hand
+    // turns only once the last turn shows in the held pose; turning every
+    // frame against the stale pose flips the hand back and forth (a magazine
+    // held 180 degrees off its well never settles).
     auto steerHeld = [&](const Vector& target, bool align, float& errorDeg)
     {
         stopGlide();
@@ -1799,10 +1803,12 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         if (align)
         {
             QAngle aligned{};
-            if (SelfTestAlignHeldMagazine(m_SelfTestLeftAngWorld, aligned, errorDeg))
+            if (SelfTestAlignHeldMagazine(m_SelfTestLeftAngWorld, aligned, errorDeg) &&
+                (!m_SelfTestLeftAngWorldValid || nowMs >= m_SelfTestAlignAtMs + 200u))
             {
                 m_SelfTestLeftAngWorld = aligned;
                 m_SelfTestLeftAngWorldValid = true;
+                m_SelfTestAlignAtMs = nowMs;
             }
         }
         if (!g.heldValid)
@@ -2372,6 +2378,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     }
 
     // ---- AK-47 magazine slap -------------------------------------------------------
+    // How far the seated magazine moved since the strike was planned.
+    auto gunDrift = [&]() { return g.magazineBoxFresh ? g.magazineCenter - m_SelfTestPoint : Vector(0.0f, 0.0f, 0.0f); };
     switch (m_SelfTestPhase)
     {
     case 200:
@@ -2402,6 +2410,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         }
         std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch", m_SelfTestMeasure);
         SelfTestReport(label("spare taken with the old magazine seated"), true, detail);
+        SelfTestRequestShot(gun + "_slap_spare_in_hand", 1);
         // Hold the spare in line with the seated magazine, as a player would.
         m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
         m_SelfTestLeftAngWorldValid = true;
@@ -2434,7 +2443,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         const Vector out(outward.x, outward.y, outward.z), across(side.x, side.y, side.z);
         const l4d2vr_mag_slap::Vec3 seatedCenter = l4d2vr_mag_slap::Center(seated);
         const Vector center(seatedCenter.x, seatedCenter.y, seatedCenter.z);
-        if (inPhase < 1.0f)
+        // Line up for at least 1 s, longer (up to 3 s) until the spare is in line.
+        if (inPhase < 1.0f || (m_SelfTestMeasureB > 5.0f && inPhase < 3.0f))
         {
             float error = 0.0f;
             steerHeld(center - out * (0.10f * scale) + across * (0.30f * scale), true, error);
@@ -2445,24 +2455,28 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         m_SelfTestSlapStart = contact - out * (0.10f * scale);
         m_SelfTestSlapEnd = contact + out * (0.04f * scale);
         m_SelfTestSlapPark = across * (0.30f * scale);
+        // The strike points ride with the gun: the body can drift a few cm
+        // while the hand winds up, more than the 3 cm contact distance.
+        m_SelfTestPoint = g.magazineCenter;
         Game::logMsg("[VR][SelfTest] slap: spare lined up %.1f deg off the seated magazine", m_SelfTestMeasureB);
+        SelfTestRequestShot(gun + "_slap_spare_lined_up", 1);
         glide(m_SelfTestSlapStart + m_SelfTestSlapPark, 0.2f);
         go(203);
         return false;
     }
     case 203:
         if (!glideDone(0.2f)) return false;
-        glide(m_SelfTestSlapStart, 0.5f);
+        glide(m_SelfTestSlapStart + gunDrift(), 0.5f);
         go(204);
         return false;
     case 204:
         if (!glideDone(0.4f)) return false;
-        glide(m_SelfTestSlapEnd, 0.1f); // 14 cm in 0.1 s: 1.4 m/s against a still gun hand
+        glide(m_SelfTestSlapEnd + gunDrift(), 0.1f); // 14 cm in 0.1 s: 1.4 m/s against a still gun hand
         go(205);
         return false;
     case 205:
         if (!glideDone(0.02f)) return false;
-        glide(m_SelfTestSlapEnd + m_SelfTestSlapPark, 0.12f);
+        glide(m_SelfTestSlapEnd + m_SelfTestSlapPark + gunDrift(), 0.12f);
         go(206);
         return false;
     case 206:

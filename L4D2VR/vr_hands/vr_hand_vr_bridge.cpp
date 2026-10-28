@@ -1,5 +1,6 @@
 #include "vr.h"
 #include "vr_reload_tuning.h"
+#include "vr_mag_slap.h"
 
 #include "game.h"
 #include "hooks.h"
@@ -1360,6 +1361,53 @@ namespace
     {
         return vr && vr->m_ReloadPavlovTuning &&
             l4d2vr_reload_tuning::ForWeapon(MagazineInteractionResolveWeaponIdForConfig(vr), out);
+    }
+
+    // Pavlov magazine slap for this gun (MagazineSlapEnabled); false on guns
+    // whose magazine cannot be slapped out.
+    bool MagazineInteractionSlapParams(const VR* vr, int weaponId, l4d2vr_mag_slap::Params& out)
+    {
+        l4d2vr_reload_tuning::Slap slap{};
+        if (!vr || !vr->m_MagazineSlapEnabled || !l4d2vr_reload_tuning::SlapForWeapon(weaponId, slap))
+            return false;
+        out = {};
+        out.speedMetersPerSecond = slap.speedMetersPerSecond;
+        out.forwardDot = slap.forwardDot;
+        out.reinsertSeconds = slap.reinsertSeconds;
+        return true;
+    }
+
+    l4d2vr_mag_slap::Vec3 MagazineSlapVec(const Vector& v)
+    {
+        return { v.x, v.y, v.z };
+    }
+
+    Vector MagazineSlapVector(const l4d2vr_mag_slap::Vec3& v)
+    {
+        return Vector(v.x, v.y, v.z);
+    }
+
+    l4d2vr_mag_slap::Box MagazineSlapBox(const MagazineInteractionBoxSnapshot& box)
+    {
+        l4d2vr_mag_slap::Box out{};
+        out.origin = MagazineSlapVec(box.origin);
+        out.axisX = MagazineSlapVec(box.axisX);
+        out.axisY = MagazineSlapVec(box.axisY);
+        out.axisZ = MagazineSlapVec(box.axisZ);
+        out.mins = MagazineSlapVec(box.mins);
+        out.maxs = MagazineSlapVec(box.maxs);
+        return out;
+    }
+
+    // A magazine with the bounds of localBox placed at world (the held magazine).
+    l4d2vr_mag_slap::Box MagazineSlapBoxAt(const VrHandMatrix4& world, const MagazineInteractionBoxSnapshot& localBox)
+    {
+        l4d2vr_mag_slap::Box out = MagazineSlapBox(localBox);
+        out.origin = MagazineSlapVec(MagazineInteractionMatrixOrigin(world));
+        out.axisX = MagazineSlapVec(MagazineInteractionMatrixAxis(world, 0));
+        out.axisY = MagazineSlapVec(MagazineInteractionMatrixAxis(world, 1));
+        out.axisZ = MagazineSlapVec(MagazineInteractionMatrixAxis(world, 2));
+        return out;
     }
 
     float MagazineInteractionResolveSocketCaptureAngleDeg(const VR* vr)
@@ -4053,6 +4101,32 @@ int VR::SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int&
     return 1;
 }
 
+bool VR::GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid)
+{
+    heldValid = false;
+    MagazineInteractionBoxSnapshot pouchBox{};
+    QAngle pouchAngles{};
+    if (!MagazineInteractionBuildFreshMagazinePickupBox(this, pouchBox, pouchAngles))
+        return false;
+    pouch = pouchBox.origin;
+    if (m_MagazineInteractionSocketValid &&
+        (m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap ||
+            m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine))
+    {
+        VrHandMatrix4 held{};
+        {
+            std::lock_guard<std::mutex> lock(m_MagazineInteractionPoseMutex);
+            held = m_MagazineInteractionDetachedMagazineWorld;
+        }
+        if (MagazineInteractionMatrixLooksRenderable(held))
+        {
+            heldCenter = MagazineInteractionMatrixPointWorld(held, MagazineInteractionBoxCenterLocal(m_MagazineInteractionSocketBox));
+            heldValid = true;
+        }
+    }
+    return true;
+}
+
 void VR::RecordMeleeCommand(int command, bool eligible, uintptr_t owner, uintptr_t weapon)
 {
     if (command <= 0) return;
@@ -4476,6 +4550,7 @@ bool VR::IsMagazineInteractionLeftHandActive() const
 
     return m_MagazineInteractionState == MagazineInteractionManualState::HoldingOldMagazine ||
         m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine ||
+        m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap ||
         m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBackendReload ||
         m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab ||
         m_MagazineInteractionState == MagazineInteractionManualState::HoldingBolt ||
@@ -4625,6 +4700,9 @@ bool VR::IsMagazineInteractionBlockingFire() const
                 return true;
         }
     }
+    // A fresh magazine held for a slap: the seated one still feeds the gun.
+    if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap)
+        return false;
     if (m_MagazineInteractionShotgunShellMode)
     {
         const bool cycling =
@@ -4880,6 +4958,9 @@ bool VR::ShouldDrawMagazineInteractionDetachedMagazine() const
     return m_MagazineInteractionState == MagazineInteractionManualState::HoldingOldMagazine ||
         m_MagazineInteractionState == MagazineInteractionManualState::WaitingForFreshMagazine ||
         m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine ||
+        m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap ||
+        (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerMagazine &&
+            m_MagazineInteractionSlapEjectPending && m_MagazineInteractionLeftHandPoseActive.load(std::memory_order_relaxed) != 0) ||
         (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerShell && m_MagazineInteractionLeftHandHolding);
 }
 
@@ -4894,12 +4975,15 @@ bool VR::GetMagazineInteractionDetachedMagazineWorld(VrHandMatrix4& outWorld) co
             return true;
     }
 
-    if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingOldMagazine ||
-        m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine)
+    const bool freshInHand =
+        m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine ||
+        m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap ||
+        m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerMagazine;
+    if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingOldMagazine || freshInHand)
     {
         if (MagazineInteractionTryBuildHeldMagazineWorldFromRenderSnapshot(
             this,
-            m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine,
+            freshInHand,
             outWorld))
         {
             return true;
@@ -5002,6 +5086,9 @@ void VR::CancelMagazineInteractionManual()
     m_MagazineInteractionRetainedMagazineHeld = false;
     m_MagazineInteractionEjectByHand = false;
     m_MagazineInteractionReleaseResumed = false;
+    m_MagazineInteractionSlapEjectPending = false;
+    m_MagazineInteractionSlapAt = {};
+    m_MagazineInteractionSlapReinsertSeconds = 0.0f;
     m_PistolMagazineCycleSuppressInput = false;
     m_MagazineInteractionPistolHandle = 0u;
     m_RetainedMagazineInsertGate.Reset();
@@ -5454,6 +5541,10 @@ bool VR::UpdateMagazineInteraction(
         {
             m_ReloadSpareNear.store(false, std::memory_order_release);
         }
+        // Holding a fresh magazine for a slap: the seated magazine to strike glows.
+        if (m_MagazineEmptyGlowEnabled &&
+            m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap)
+            hint |= 16u;
         m_ReloadHintMask.store(hint, std::memory_order_release);
     }
     const bool supportLeft = MagazineReloadSupportIsLeft();
@@ -7022,6 +7113,9 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionRetainedMagazineHeld = false;
         m_MagazineInteractionEjectByHand = false;
         m_MagazineInteractionReleaseResumed = false;
+        m_MagazineInteractionSlapEjectPending = false;
+        m_MagazineInteractionSlapAt = {};
+        m_MagazineInteractionSlapReinsertSeconds = 0.0f;
         m_RetainedMagazineInsertGate.Reset();
         m_MagazineInteractionOldMagazineContactActive = false;
         m_MagazineInteractionFreshMagazineContactActive = false;
@@ -7243,6 +7337,78 @@ bool VR::UpdateMagazineInteraction(
         return true;
     };
 
+    // Pavlov magazine slap. The gun hand's motion carries the slapped magazine,
+    // plus half of the strike's speed relative to the gun.
+    const int slapGunHandIndex = MagazineReloadSupportIsLeft() ? 1 : 0;
+    auto keepFreshMagazineAfterSlap = [&]()
+    {
+        if (!leftGripDown || !HasFreshMagazineInteractionTracking())
+        {
+            // Let go while the ejection was in flight: the fresh magazine went
+            // back to the pouch.
+            m_MagazineInteractionState = MagazineInteractionManualState::WaitingForFreshMagazine;
+            m_MagazineInteractionLeftHandHolding = false;
+            m_MagazineInteractionFreshPickupBasisValid = false;
+            m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
+            return;
+        }
+        m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazine;
+        m_MagazineInteractionRetainedMagazineHeld = false;
+        m_MagazineInteractionLeftHandHolding = true;
+        m_RetainedMagazineInsertGate.Reset();
+        m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
+        setDetachedMagazineWorld(buildFreshHeldMagazineWorldFromLeftHand());
+    };
+
+    // Ejects the seated magazine exactly like a hand pull or the release button
+    // (one ejection; rounds to the reserve on transaction servers, the stock
+    // reload on plain servers). The off hand keeps the fresh magazine.
+    auto performMagazineSlap = [&](const char* reason, const Vector& dropVelocity,
+        const l4d2vr_mag_slap::Params& slap) -> bool
+    {
+        m_MagazineInteractionSlapAt = now;
+        m_MagazineInteractionSlapReinsertSeconds = slap.reinsertSeconds;
+        m_MagazineInteractionSlapDropVelocity = dropVelocity;
+        m_MagazineInteractionOldMagazinePulled = true;
+        m_MagazineInteractionOldMagazineContactActive = false;
+        m_MagazineSlapSerial.fetch_add(1u, std::memory_order_acq_rel);
+        triggerMagazineInteractionHaptic(0.035f, 120.0f, 0.65f, 3);
+        if (activeAuthoritativeMagazineBackend)
+        {
+            // The old magazine drops when the host confirms; the fresh one stays
+            // drawn in the hand meanwhile.
+            m_MagazineInteractionEjectByHand = false;
+            m_MagazineInteractionSlapEjectPending = true;
+            if (!beginRemoteMagazineAction(l4d2vr_remote_mag::Action::Eject))
+            {
+                CancelMagazineInteractionManual();
+                return false;
+            }
+            m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
+            Game::logMsg("[VR][MagazineSlap] %s: ejection requested weaponId=%d clip=%d",
+                reason ? reason : "slap", activeWeaponIdInt, activeClip);
+            return false;
+        }
+        if (!choreographedNativeReload)
+        {
+            CancelMagazineInteractionManual();
+            return false;
+        }
+        m_MagazineSeats.Eject(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle,
+            activeWeaponIdInt, activeClip);
+        ++m_MagazineEjectSerial;
+        startImmediateReloadCommand(reason ? reason : "slap");
+        MagazineInteractionPlayClipOutSound(this);
+        triggerMagazineInteractionBothHandsHaptic(0.026f, 95.0f, 0.42f, 2);
+        refreshSocketFromPublishedViewmodelBox();
+        SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+            m_MagazineInteractionSocketWorld, !MagazineReloadSupportIsLeft(), &m_MagazineInteractionSlapDropVelocity);
+        keepFreshMagazineAfterSlap();
+        Game::logMsg("[VR][MagazineSlap] %s: magazine out, native reload queued weaponId=%d clip=%d",
+            reason ? reason : "slap", activeWeaponIdInt, activeClip);
+        return reloadCommandPending();
+    };
+
     if (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerPistolCycle)
     {
         l4d2vr_pistol_reload::Reply reply{};
@@ -7278,6 +7444,14 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionQuickReloadMode && !m_MagazineInteractionRetainedMagazineHeld,
             magazineInputAvailable);
         clearNativeClientReloadState("remote-magazine-pending");
+        if (m_MagazineInteractionSlapEjectPending)
+        {
+            // A slap's ejection is in flight: the fresh magazine stays in the hand.
+            const bool freshHeld = leftGripDown && HasFreshMagazineInteractionTracking();
+            m_MagazineInteractionLeftHandPoseActive.store(freshHeld ? 1u : 0u, std::memory_order_relaxed);
+            if (freshHeld)
+                setDetachedMagazineWorld(buildFreshHeldMagazineWorldFromLeftHand());
+        }
         l4d2vr_remote_mag::Reply reply{};
         int ammoType = -1, replicatedReserve = -1, reserveOffset = -1;
         auto poll = l4d2vr_remote_mag::ClientRequest::Poll::None;
@@ -7358,8 +7532,17 @@ bool VR::UpdateMagazineInteraction(
             MagazineInteractionPlayClipOutSound(this);
             triggerMagazineInteractionBothHandsHaptic(0.026f, 95.0f, 0.42f, 2);
             // The magazine falls once the host has taken it out. A caught
-            // magazine falls when the hand lets go of it instead.
-            if (!catchRetainedMagazine())
+            // magazine falls when the hand lets go of it instead. A slapped one
+            // falls from the well while the hand keeps the fresh magazine.
+            if (m_MagazineInteractionSlapEjectPending)
+            {
+                m_MagazineInteractionSlapEjectPending = false;
+                refreshSocketFromPublishedViewmodelBox();
+                SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
+                    m_MagazineInteractionSocketWorld, !MagazineReloadSupportIsLeft(), &m_MagazineInteractionSlapDropVelocity);
+                keepFreshMagazineAfterSlap();
+            }
+            else if (!catchRetainedMagazine())
             {
                 if (!m_MagazineInteractionEjectByHand) refreshSocketFromPublishedViewmodelBox();
                 SpawnDroppedMagazine(m_MagazineInteractionMagazineModelName, m_MagazineInteractionMagazineBoneIndex,
@@ -8258,6 +8441,11 @@ bool VR::UpdateMagazineInteraction(
         updateFreshDetachedMagazineFromLeftHand();
         const bool fitsSocket = detachedMagazineFitsSocket();
         if (m_MagazineInteractionShotgunShellMode && !m_ShellRetryContact.Allows(fitsSocket)) return false;
+        // Pavlov SlapReinsertTime: the fresh magazine seats a moment after a slap.
+        if (fitsSocket && m_MagazineInteractionSlapAt.time_since_epoch().count() != 0 &&
+            !l4d2vr_mag_slap::MayReinsert(std::chrono::duration<float>(now - m_MagazineInteractionSlapAt).count(),
+                m_MagazineInteractionSlapReinsertSeconds))
+            return reloadCommandPending();
         if (m_MagazineInteractionRetainedMagazineHeld)
         {
             // Catching while the hand is still under the well must not insert
@@ -8340,6 +8528,66 @@ bool VR::UpdateMagazineInteraction(
             return false;
         }
         return reloadCommandPending();
+    }
+
+    if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap)
+    {
+        if (!leftGripDown)
+        {
+            // Letting go puts the fresh magazine back in the pouch; nothing changed.
+            Game::logMsg("[VR][MagazineSlap] fresh magazine returned to the pouch; old magazine still seated");
+            CancelMagazineInteractionManual();
+            return false;
+        }
+        l4d2vr_mag_slap::Params slap{};
+        if (!MagazineInteractionSlapParams(this, activeWeaponIdInt, slap) ||
+            !(activeAuthoritativeMagazineBackend || choreographedNativeReload))
+        {
+            CancelMagazineInteractionManual();
+            m_MagazineInteractionSuppressLeftInputUntilRelease = true;
+            return false;
+        }
+        refreshSocketFromPublishedViewmodelBox();
+        rebuildInputSocketFromSessionBox();
+        m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
+        const VrHandMatrix4 heldWorld = buildFreshHeldMagazineWorldFromLeftHand();
+        setDetachedMagazineWorld(heldWorld);
+        const Vector gunHandVelocity = m_DroppedMagazineHandVelocity[slapGunHandIndex];
+
+        // Tactical reload on guns with a release button: pressing it while the
+        // fresh magazine is held drops the old one the same way.
+        if (releaseButtonRequired && m_MagazineReleaseJustPressed)
+            return performMagazineSlap("release-button-tactical", gunHandVelocity, slap);
+
+        const MagazineInteractionBoxSnapshot& seatedBox = inputSocketValid ? inputSocketBox : m_MagazineInteractionSocketBox;
+        if (!MagazineInteractionMatrixLooksRenderable(heldWorld))
+            return false;
+        const l4d2vr_mag_slap::Box seated = MagazineSlapBox(seatedBox);
+        l4d2vr_mag_slap::Vec3 outward{};
+        if (!l4d2vr_mag_slap::OutwardAxis(seated, MagazineSlapVec(m_MagazineInteractionMagazineInsertionAxisLocal), outward))
+            return false;
+        const float gapMeters = l4d2vr_mag_slap::Gap(seated, MagazineSlapBoxAt(heldWorld, m_MagazineInteractionSocketBox)) /
+            std::max(0.001f, m_VRScale);
+        const bool supportIsLeft = MagazineReloadSupportIsLeft();
+        const l4d2vr_mag_slap::Vec3 strike = l4d2vr_mag_slap::RelativeVelocity(
+            MagazineSlapVec(supportIsLeft ? m_LeftControllerPose.TrackedDeviceVel : m_RightControllerPose.TrackedDeviceVel),
+            MagazineSlapVec(supportIsLeft ? m_RightControllerPose.TrackedDeviceVel : m_LeftControllerPose.TrackedDeviceVel),
+            m_RotationOffset);
+        const l4d2vr_mag_slap::Result result = l4d2vr_mag_slap::Evaluate(slap, strike, outward, gapMeters);
+        updateMagazineInteractionContactHaptic(
+            m_MagazineInteractionOldMagazineContactActive,
+            result.contact,
+            0.012f,
+            150.0f,
+            0.22f);
+        if (!result.hit)
+            return false;
+        Game::logMsg(
+            "[VR][MagazineSlap] slap weaponId=%d speed=%.2f m/s (min %.2f) dot=%.2f (min %.2f) gap=%.3f m outward=(%.2f %.2f %.2f)",
+            activeWeaponIdInt, result.speed, slap.speedMetersPerSecond, result.dot, slap.forwardDot, gapMeters,
+            outward.x, outward.y, outward.z);
+        return performMagazineSlap("slap",
+            gunHandVelocity + MagazineSlapVector(strike) * (0.5f * m_VRScale), slap);
     }
 
     if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingOldMagazine)
@@ -8527,6 +8775,88 @@ bool VR::UpdateMagazineInteraction(
                 GetMagazineInteractionEmptyClipAutoEjectFreezeDelaySeconds(activeWeaponId),
                 box.modelName.c_str());
             return reloadCommandPending();
+        }
+    }
+
+    // Pavlov tactical reload (MagazineSlapEnabled): on guns whose magazine can be
+    // slapped out, the off hand takes a fresh magazine from the pouch while the
+    // old one is still seated. Other guns offer it only once the old one is out.
+    {
+        l4d2vr_mag_slap::Params slap{};
+        int ammoType = -1, reserve = -1, reserveOffset = -1;
+        MagazineInteractionBoxSnapshot seatedBox{};
+        MagazineInteractionBoxSnapshot pouchBox{};
+        QAngle pouchAngles{};
+        VrHandMatrix4 pouchWorld{};
+        const bool slapReady = MagazineInteractionSlapParams(this, activeWeaponIdInt, slap) &&
+            MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId) && !magazineOut &&
+            (activeAuthoritativeMagazineBackend || choreographedNativeReload) &&
+            !m_MagazineInteractionLeftHandHolding && !m_VrHandsTwoHandedGripActive &&
+            readClientPrimaryAmmo(ammoType, reserve, reserveOffset) && reserve > 0 &&
+            GetMagazineInteractionBox(seatedBox) && boxFreshForActiveWeapon(seatedBox) &&
+            MagazineInteractionBuildFreshMagazinePickupBox(this, pouchBox, pouchAngles);
+        if (slapReady)
+        {
+            pouchWorld = MagazineInteractionBuildWorldAtBoxCenter(
+                MagazineInteractionBuildBoxWorld(pouchBox),
+                seatedBox,
+                pouchBox.origin);
+        }
+        const bool pouchValid = slapReady && MagazineInteractionMatrixLooksRenderable(pouchWorld);
+        float pouchDistance = 999999.0f;
+        if (pouchValid)
+        {
+            const MagazineInteractionBoxSnapshot pouchGrabBox = MagazineInteractionBuildWorldBoxSnapshotAtCenter(
+                pouchBox,
+                pouchWorld,
+                pouchBox.origin);
+            pouchDistance = MagazineInteractionNearestLeftHandProbeDistanceSourceUnits(
+                pouchGrabBox,
+                supportPosition,
+                supportAngles,
+                m_VRScale,
+                this);
+        }
+        const float pouchRange = std::max(0.0f, m_MagazineInteractionFreshMagazineGrabRangeMeters) * m_VRScale;
+        const bool pouchInReach = pouchValid && pouchDistance <= pouchRange;
+        updateMagazineInteractionContactHaptic(m_MagazineSlapPouchContactActive, pouchInReach, 0.012f, 150.0f, 0.22f);
+        if (pouchInReach && leftGripJustPressed && HasFreshMagazineInteractionTracking())
+        {
+            beginMagazineInteractionSession(seatedBox);
+            const VrHandMatrix4 controllerWorld = MagazineInteractionBuildViewmodelReprojectedControllerWorld(
+                this,
+                supportPosition,
+                supportForward,
+                supportRight,
+                supportUp);
+            bool usedWristAnchor = false;
+            Vector targetHandAnchorWorld{};
+            Vector freshHandAnchorLocal{};
+            Vector freshCenterLocal{};
+            if (!snapFreshMagazineCenterOffsetToLeftHandAnchor(
+                controllerWorld,
+                usedWristAnchor,
+                targetHandAnchorWorld,
+                freshHandAnchorLocal,
+                freshCenterLocal))
+            {
+                CancelMagazineInteractionManual();
+                return false;
+            }
+            m_VrHandsTwoHandedGripActive = false;
+            m_VrHandsTwoHandedGripWeaponId = 0;
+            m_VrHandsTwoHandedGripWeaponTag = 0;
+            m_MagazineSlapPouchContactActive = false;
+            m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazineForSlap;
+            m_MagazineInteractionLeftHandHolding = true;
+            m_MagazineInteractionFreshGrabbedAt = now;
+            m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
+            setDetachedMagazineWorld(buildFreshHeldMagazineWorldFromLeftHand());
+            Game::logMsg(
+                "[VR][MagazineSlap] fresh magazine taken with the old one seated weaponId=%d clip=%d reserve=%d distance=%.2f range=%.2f slap>=%.2f m/s dot>=%.2f model=%s",
+                activeWeaponIdInt, activeClip, reserve, pouchDistance, pouchRange,
+                slap.speedMetersPerSecond, slap.forwardDot, seatedBox.modelName.c_str());
+            return false;
         }
     }
 

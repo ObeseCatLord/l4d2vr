@@ -412,6 +412,9 @@ GripToggle=true
 # Pavlov VR reload feel: per-weapon slide/bolt pull, chamber return and magazine
 # insert depth taken from Pavlov (your own per-weapon overrides still win).
 ReloadPavlovTuning=true
+# Pavlov magazine slap (AK-47, SG552, military sniper): take a fresh magazine from
+# the pouch with the old one still in, then strike the old one out with it.
+MagazineSlapEnabled=true
 # Right stick: push forward to jump, pull back to crouch (hold). Turning pauses meanwhile.
 StickJumpCrouch=true
 # Pulling the right stick back toggles crouch (true) or crouches while held (false).

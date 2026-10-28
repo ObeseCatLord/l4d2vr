@@ -296,7 +296,10 @@ enum class MagazineInteractionManualState
 	AutoBolting,
     WaitingForServerShell,
     WaitingForServerMagazine,
-    WaitingForServerPistolCycle
+    WaitingForServerPistolCycle,
+    // Pavlov tactical reload: a fresh magazine in the off hand while the old one
+    // is still seated; striking the seated one knocks it out (MagazineSlapEnabled).
+    HoldingFreshMagazineForSlap
 };
 
 struct MagazineInteractionBoxSnapshot
@@ -1320,12 +1323,17 @@ public:
 	bool m_MagazineEmptyGlowEnabled = true;
 	std::atomic<bool> m_MagazineEmptyGlowActive{ false };
 	// Reload hints that glow: 1 the gun's magazine (empty), 2 the bolt / slide /
-	// pump (needs cycling), 4 the spare magazine to grab next.
+	// pump (needs cycling), 4 the spare magazine to grab next, 16 the seated
+	// magazine to slap out while a fresh one is held.
 	std::atomic<uint32_t> m_ReloadHintMask{ 0u };
 	std::atomic<bool> m_ReloadSpareNear{ false };  // empty off hand within reach of the spare (8 in the mask)
 	static constexpr float kReloadPouchHighlightMeters = 0.35f;  // Pavlov PouchHighlightThreshold
 	// Pavlov-derived per-weapon pull / chamber / insert tuning (vr_reload_tuning.h).
 	bool m_ReloadPavlovTuning = true;
+	// Pavlov magazine slap (MagazineSlapEnabled) on the AK-47, SG552 and military
+	// sniper: take a fresh magazine with the old one seated and strike it out.
+	bool m_MagazineSlapEnabled = true;
+	std::atomic<uint32_t> m_MagazineSlapSerial{ 0u };  // slaps detected (self-test)
 	// Ejected magazines that fall to the floor (rendered with the viewmodel's clip subtree).
 	bool m_MagazineDropEnabled = true;
 	float m_MagazineDropLifetimeSeconds = 8.0f;
@@ -1350,7 +1358,9 @@ public:
 	// Counted for the self-test: magazines dropped and ejections applied.
 	std::atomic<uint32_t> m_DroppedMagazineSpawnSerial{ 0u };
 	std::atomic<uint32_t> m_MagazineEjectSerial{ 0u };
-	void SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const VrHandMatrix4& world, bool leftHand);
+	// velocity (world units/s) overrides the hand's motion, e.g. a slapped magazine.
+	void SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const VrHandMatrix4& world, bool leftHand,
+		const Vector* velocity = nullptr);
 	void UpdateDroppedMagazines();
 	int GetDroppedMagazineRenders(const std::string& lowerModel, DroppedMagazineRender* out, int capacity) const;
 	bool m_MagazineReleaseJustPressed = false;
@@ -2377,6 +2387,13 @@ public:
     // Resumed with the magazine already out: the stock reload is queued again
     // when the fresh magazine seats (servers without physical transactions).
     bool m_MagazineInteractionReleaseResumed = false;
+    // The pending ejection came from a magazine slap: the fresh magazine stays in
+    // the hand and the old one falls from the well with part of the strike.
+    bool m_MagazineInteractionSlapEjectPending = false;
+    bool m_MagazineSlapPouchContactActive = false;
+    std::chrono::steady_clock::time_point m_MagazineInteractionSlapAt{};
+    float m_MagazineInteractionSlapReinsertSeconds = 0.0f;
+    Vector m_MagazineInteractionSlapDropVelocity{0.0f, 0.0f, 0.0f};
     l4d2vr_magazine::RetainedInsertGate m_RetainedMagazineInsertGate;
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
 	bool m_MagazineInteractionChamberEmpty = false;
@@ -2852,6 +2869,8 @@ public:
 	void SelfTestHoldRight(const l4d2vr_selftest::Vec3& local, const QAngle& angles);
 	void SelfTestReachHolster(int zone);
 	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
+	// Slap step: the pouch's world position and the held fresh magazine's centre.
+	bool GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid);
 	bool m_SelfTestParsed = false;
 	bool m_SelfTestEnabled = false;
 	std::vector<std::string> m_SelfTestSteps;
@@ -2875,6 +2894,11 @@ public:
 	QAngle m_SelfTestLeftAngLocal{ 0.0f, 0.0f, 0.0f };
 	bool m_SelfTestRightWorldValid = false;
 	Vector m_SelfTestRightWorld{ 0.0f, 0.0f, 0.0f };
+	bool m_SelfTestLeftWorldValid = false;
+	Vector m_SelfTestLeftWorld{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestSlapStart{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestSlapEnd{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestSlapPark{ 0.0f, 0.0f, 0.0f };   // offset beside the gun
 	std::vector<l4d2vr_selftest::Key> m_SelfTestPath;
 	std::vector<l4d2vr_selftest::Key> m_SelfTestAngPath;
 	uint64_t m_SelfTestPathStartMs = 0;

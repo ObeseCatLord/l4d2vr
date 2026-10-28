@@ -52,11 +52,40 @@ static void TestEveryEntryIsUsable()
     CHECK(!ForWeapon(37, t));               // M60 too
 }
 
+static void TestMagazineSlapGuns()
+{
+    Slap s{};
+    CHECK(SlapForWeapon(26, s));            // AK-47 <- Magazine_AKBase: 80 cm/s, 0.6
+    CHECK(Near(s.speedMetersPerSecond, 0.80f));
+    CHECK(Near(s.forwardDot, 0.60f));
+    CHECK(Near(s.reinsertSeconds, 0.15f));
+    CHECK(SlapForWeapon(34, s));            // SG552 <- Galil: VRMagazine defaults
+    CHECK(Near(s.speedMetersPerSecond, 0.90f));
+    CHECK(Near(s.forwardDot, 0.68f));
+    CHECK(SlapForWeapon(10, s));            // military sniper <- AutoSniper: defaults
+    CHECK(Near(s.speedMetersPerSecond, 0.90f));
+    CHECK(Near(s.forwardDot, 0.68f));
+    CHECK(Near(s.reinsertSeconds, kSlapReinsertSeconds));
+    const int noSlap[] = { 1, 2, 5, 6, 7, 9, 32, 33, 35, 36, 3, 4, 8, 11, 21, 37 };
+    for (int id : noSlap)
+        CHECK(!SlapForWeapon(id, s));       // only the Pavlov bAllowMagSlap counterparts
+    for (int id = 0; id < 64; ++id)
+    {
+        Tuning t{};
+        if (!SlapForWeapon(id, s))
+            continue;
+        CHECK(ForWeapon(id, t));            // every slap gun also has a physical reload
+        CHECK(s.speedMetersPerSecond > 0.0f && s.speedMetersPerSecond < 2.0f);
+        CHECK(s.forwardDot > 0.0f && s.forwardDot < 1.0f);
+    }
+}
+
 int main()
 {
     TestPavlovNumbersCarryOver();
     TestClampsKeepRatios();
     TestEveryEntryIsUsable();
+    TestMagazineSlapGuns();
     if (g_failures)
     {
         std::printf("%d failure(s)\n", g_failures);

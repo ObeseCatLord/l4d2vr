@@ -43,6 +43,7 @@ CHANGES = [
     "1.2.2: right stick forward jumps and back crouches (StickJumpCrouch); grips are only for gripping.",
     "1.2.2: larger, Pavlov-sized holster zones; no stray anchor markers; turning no longer triggers melee bashes.",
     "1.2.2: melee and shoves are motion only (no trigger bash or shove animation); the melee grip sits closer to the base of the handle.",
+    "1.2.2: Pavlov magazine slap on the AK-47, SG552 and military sniper: grab a fresh magazine with the old one still in and strike the old one out (MagazineSlapEnabled).",
 ]
 
 

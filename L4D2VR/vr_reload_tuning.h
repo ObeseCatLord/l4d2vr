@@ -86,4 +86,29 @@ namespace l4d2vr_reload_tuning
         out = FromPavlov(h);
         return true;
     }
+
+    // Pavlov magazine slap (bAllowMagSlap): striking the seated magazine with a
+    // fresh one at this speed, along its axis within this dot, knocks it out; the
+    // fresh magazine may go in SlapReinsertTime later. VRMagazine defaults are
+    // 90 cm/s and 0.68; Magazine_AKBase (AK, AK12, AKshorty) uses 80 cm/s and 0.6.
+    // Galil and AutoSniper set only bAllowMagSlap, so they keep the defaults.
+    struct Slap
+    {
+        float speedMetersPerSecond;
+        float forwardDot;
+        float reinsertSeconds;
+    };
+
+    constexpr float kSlapReinsertSeconds = 0.15f;
+
+    inline bool SlapForWeapon(int weaponId, Slap& out)
+    {
+        switch (weaponId)
+        {
+        case 26: out = { 0.80f, 0.60f, kSlapReinsertSeconds }; return true; // ak47     <- AK (Magazine_AKBase)
+        case 34: out = { 0.90f, 0.68f, kSlapReinsertSeconds }; return true; // sg552    <- Galil
+        case 10: out = { 0.90f, 0.68f, kSlapReinsertSeconds }; return true; // military <- AutoSniper
+        default: return false;
+        }
+    }
 }

@@ -702,9 +702,11 @@ void VR::ProcessInput()
     vr::InputDigitalActionData_t offHandGripData{};
     bool offHandGripDown = false;
     bool offHandGripJustPressed = false;
+    // The self-test's scripted grip has no device origin (vr_selftest.h).
     const bool offHandGripValid = getActionState(&m_ActionOffHandGrip,
         offHandGripData, offHandGripDown, offHandGripJustPressed) && offHandGripData.bActive &&
-        originMatchesRole(offHandGripData.activeOrigin, gameplayLeftRole);
+        (originMatchesRole(offHandGripData.activeOrigin, gameplayLeftRole) ||
+            l4d2vr_selftest::Get().active.load(std::memory_order_acquire));
     if (!offHandGripValid)
         offHandGripDown = offHandGripJustPressed = false;
     if (m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled)

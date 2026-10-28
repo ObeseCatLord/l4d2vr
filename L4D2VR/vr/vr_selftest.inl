@@ -1705,6 +1705,10 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
 //                         the shell loaded before the pump is cycled.
 //   slape2e               AK-47: take a spare with the old magazine seated,
 //                         slap the old one out, seat the spare, fire.
+//   sparereturne2e        AK-47: take a spare with the old magazine seated
+//                         and let it go: nothing changes, the gun still
+//                         fires. Follow it with mage2e=rifle (a gun switch
+//                         after the spare went back must not grant a round).
 bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player)
 {
     (void)t;
@@ -1724,7 +1728,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     // reloadgatee2e=<gun>: fire a few rounds, then press the stock reload; the
     // host's reload gate must refuse it while physical reload owns the gun.
     const bool gateProbe = step.rfind("reloadgatee2e=", 0) == 0;
-    const bool slap = step == "slape2e";
+    const bool spareReturn = step == "sparereturne2e";
+    const bool slap = step == "slape2e" || spareReturn;
     // magholde2e=<gun>: the spare in a natural insert pose (see below).
     const bool hold = step.rfind("magholde2e=", 0) == 0;
     if (!shells && !magazine && !slap && !hold)
@@ -2179,6 +2184,30 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 return false;
             }
             button(m_ActionPrimaryAttack, false);
+            m_SelfTestValueD = 0;
+            go(41);
+            return false;
+        case 41: // the client predicted the last shot; wait for the host to agree
+            // A host that has not fired the last round yet never fires it once
+            // the trigger is up: the clip comes back with that round chambered.
+            if (g.clip > 0 && (g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab) ||
+                    g.state == static_cast<int>(MagazineInteractionManualState::HoldingBolt) ||
+                    IsMagazineInteractionBlockingFire()))
+                m_SelfTestValueD = 1;
+            if (inPhase < 0.8f) return false;
+            if (g.clip > 0)
+            {
+                std::snprintf(detail, sizeof(detail), "client predicted empty, host kept %d round(s), reserve %d -> %d: state %s, fire blocked=%d, rack demanded=%d",
+                    g.clip, m_SelfTestReserve0, g.reserve, state(), IsMagazineInteractionBlockingFire() ? 1 : 0, m_SelfTestValueD);
+                SelfTestReport(label("a last shot the host never fired stays chambered (no rack, no extra round)"),
+                    m_SelfTestValueD == 0 && g.reserve == m_SelfTestReserve0 &&
+                        g.state == static_cast<int>(MagazineInteractionManualState::Idle) && !IsMagazineInteractionBlockingFire(),
+                    detail);
+                if (++m_SelfTestCycle > 3)
+                    return fail("fire until empty", "the host kept rounds after three trigger pulls");
+                go(10); // pull the trigger again, as a player would
+                return false;
+            }
             std::snprintf(detail, sizeof(detail), "clip %d -> 0, reserve %d", m_SelfTestClip0, g.reserve);
             SelfTestReport(label("fire until empty"), true, detail);
             m_SelfTestReserve0 = g.reserve;
@@ -2641,6 +2670,35 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     auto gunDrift = [&]() { return g.magazineBoxFresh ? g.magazineCenter - m_SelfTestPoint : Vector(0.0f, 0.0f, 0.0f); };
     switch (m_SelfTestPhase)
     {
+    case 230: // sparereturne2e: hold the spare a moment, then let it go
+        if (inPhase < 0.5f) return false;
+        button(m_ActionOffHandGrip, false);
+        glide(pullBack(0.25f), 0.3f);
+        go(231);
+        return false;
+    case 231:
+        if (inPhase < 1.0f) return false;
+        std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d, state %s, fire blocked=%d",
+            m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve, state(), IsMagazineInteractionBlockingFire() ? 1 : 0);
+        SelfTestReport(label("letting go returns the spare; nothing changes"),
+            g.clip == m_SelfTestClip0 && g.reserve == m_SelfTestReserve0 &&
+                g.state == static_cast<int>(MagazineInteractionManualState::Idle) && !IsMagazineInteractionBlockingFire(),
+            detail);
+        button(m_ActionPrimaryAttack, true);
+        go(232);
+        return false;
+    case 232:
+        if (inPhase < 0.25f) return false;
+        button(m_ActionPrimaryAttack, false);
+        go(233);
+        return false;
+    case 233:
+        if (inPhase < 0.6f) return false;
+        std::snprintf(detail, sizeof(detail), "clip %d -> %d, reserve %d -> %d, state %s",
+            m_SelfTestClip0, g.clip, m_SelfTestReserve0, g.reserve, state());
+        SelfTestReport(label("fires with the old magazine after the spare went back"),
+            g.clip < m_SelfTestClip0 && g.reserve == m_SelfTestReserve0, detail);
+        return finish();
     case 200:
         if (!g.pickupValid)
         {
@@ -2669,6 +2727,13 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         }
         std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch", m_SelfTestMeasure);
         SelfTestReport(label("spare taken with the old magazine seated"), true, detail);
+        if (spareReturn)
+        {
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            go(230);
+            return false;
+        }
         SelfTestRequestShot(gun + "_slap_spare_in_hand", 1);
         // Hold the spare in line with the seated magazine, as a player would.
         m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;

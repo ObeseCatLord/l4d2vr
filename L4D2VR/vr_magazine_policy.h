@@ -70,6 +70,18 @@ namespace l4d2vr_magazine
         }
         bool Observe(std::uintptr_t weapon, std::uint32_t handle, int weaponId, int clip)
         {
+            return Observe(weapon, handle, weaponId, clip, -1, true, 0u);
+        }
+        // The client predicts the last shot. When the host has not fired it
+        // yet and the trigger is let go, the host never fires it: the clip
+        // comes back above zero with the reserve untouched and nothing
+        // reloading. That round is still chambered, so the latch drops; a
+        // rack must not seem to load it. Any reload activity (or a reserve
+        // change) while the zero is provisional makes the latch permanent.
+        static constexpr std::uint64_t kHostOverturnWindowMs = 1000u;
+        bool Observe(std::uintptr_t weapon, std::uint32_t handle, int weaponId, int clip,
+            int reserve, bool refillPossible, std::uint64_t nowMs)
+        {
             if (!m_Owner) return false;
             if (weapon != m_ActiveWeapon || handle != m_ActiveHandle)
                 for (auto& entry : m_Entries)
@@ -85,7 +97,22 @@ namespace l4d2vr_magazine
                 selected = &m_Entries[m_Next++ % m_Entries.size()];
                 *selected = {weapon, handle, weaponId, false};
             }
-            if (clip == 0) selected->empty = true;
+            if (clip == 0)
+            {
+                if (!selected->empty)
+                {
+                    selected->empty = true;
+                    selected->provisional = reserve >= 0 && !refillPossible;
+                    selected->emptyReserve = reserve;
+                    selected->emptyAt = nowMs;
+                }
+            }
+            if (selected->provisional &&
+                (refillPossible || reserve != selected->emptyReserve || nowMs < selected->emptyAt ||
+                    nowMs - selected->emptyAt > kHostOverturnWindowMs))
+                selected->provisional = false;
+            if (clip > 0 && selected->provisional)
+                selected->empty = selected->provisional = false;
             return selected->empty;
         }
         bool HasEmptyChamber(std::uintptr_t owner, std::uintptr_t weapon, std::uint32_t handle, int weaponId) const
@@ -100,7 +127,7 @@ namespace l4d2vr_magazine
         {
             if (weapon != m_ActiveWeapon) return;
             for (auto& entry : m_Entries)
-                if (entry.weapon == weapon && entry.handle == m_ActiveHandle) entry.empty = false;
+                if (entry.weapon == weapon && entry.handle == m_ActiveHandle) entry.empty = entry.provisional = false;
         }
         void Forget(std::uintptr_t weapon)
         {
@@ -114,6 +141,9 @@ namespace l4d2vr_magazine
             std::uint32_t handle = 0u;
             int weaponId = 0;
             bool empty = false;
+            bool provisional = false; // emptied by a predicted shot the host may still overturn
+            int emptyReserve = -1;
+            std::uint64_t emptyAt = 0u;
         };
         std::array<Entry, 16> m_Entries{};
         unsigned m_Next = 0u;

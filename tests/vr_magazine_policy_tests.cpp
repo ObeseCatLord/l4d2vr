@@ -185,6 +185,46 @@ int main()
     chambers.ObserveOwner(false, 200u);
     chambers.ObserveOwner(true, 200u);
     Check(!chambers.Observe(10u, 0x2001u, 1, 15), "Death, incap or disabled physical reload must clear ownership");
+    {
+        // The client predicts the last shot; the host, a tick behind when the
+        // trigger went up, never fires it and sends the round back.
+        ChamberHistory host;
+        host.ObserveOwner(true, 100u);
+        Check(host.Observe(10u, 0x1005u, 5, 0, 360, false, 1000u), "A predicted last shot empties the chamber");
+        Check(!host.Observe(10u, 0x1005u, 5, 1, 360, false, 1080u), "A last shot the host never fired leaves that round chambered");
+        Check(!host.HasEmptyChamber(100u, 10u, 0x1005u, 5), "No rack is demanded for a round the host kept");
+        Check(host.Observe(10u, 0x1005u, 5, 0, 360, false, 1500u), "Firing that round empties the chamber again");
+        Check(host.Observe(10u, 0x1005u, 5, 0, 360, false, 2600u), "An empty gun stays empty");
+        Check(host.Observe(10u, 0x1005u, 5, 50, 360, false, 2700u), "Rounds after the overturn window are a refill: the chamber still needs a rack");
+
+        ChamberHistory insert;
+        insert.ObserveOwner(true, 100u);
+        insert.Observe(10u, 0x1005u, 5, 0, 360, false, 1000u);
+        Check(insert.Observe(10u, 0x1005u, 5, 0, 360, true, 1100u), "Reloading an empty gun keeps the empty chamber");
+        Check(insert.Observe(10u, 0x1005u, 5, 50, 311, false, 1200u), "A fresh magazine does not chamber a round");
+        Check(insert.Observe(10u, 0x1005u, 5, 50, 311, false, 1300u), "Nor does a later frame of it");
+
+        ChamberHistory reserve;
+        reserve.ObserveOwner(true, 100u);
+        reserve.Observe(10u, 0x1005u, 5, 0, 360, false, 1000u);
+        Check(reserve.Observe(10u, 0x1005u, 5, 50, 310, false, 1100u), "A refill taken from the reserve (a stock reload) does not chamber a round");
+
+        ChamberHistory reloading;
+        reloading.ObserveOwner(true, 100u);
+        Check(reloading.Observe(10u, 0x1005u, 5, 0, 360, true, 1000u), "A gun emptied while reloading is empty");
+        Check(reloading.Observe(10u, 0x1005u, 5, 1, 360, false, 1100u), "Rounds that arrive with a reload are never an overturned shot");
+
+        ChamberHistory unknown;
+        unknown.ObserveOwner(true, 100u);
+        unknown.Observe(10u, 0x1005u, 5, 0);
+        Check(unknown.Observe(10u, 0x1005u, 5, 1), "Without a reserve reading the empty chamber is kept");
+
+        ChamberHistory completed;
+        completed.ObserveOwner(true, 100u);
+        completed.Observe(10u, 0x1005u, 5, 0, 360, false, 1000u);
+        completed.Complete(10u);
+        Check(completed.Observe(10u, 0x1005u, 5, 0, 360, false, 1100u), "A rack on an empty gun leaves it empty");
+    }
 
     // A tactical top-up can end after one shell. The cumulative number of
     // inserted shells does not keep firing blocked for the rest of the session.

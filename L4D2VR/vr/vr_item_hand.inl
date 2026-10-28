@@ -238,7 +238,7 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
         {
             s_SavedToggle = m_GripToggleEnabled;
             m_GripToggleEnabled = true;
-            cmd("give rifle"); cmd("give pipe_bomb"); cmd("give pain_pills"); cmd("hurtme 40");
+            cmd("give rifle"); cmd("give pipe_bomb"); cmd("give pain_pills");
             button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false);
             button(m_ActionPrimaryAttack, false); button(m_ActionSecondaryAttack, false);
             SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));
@@ -270,7 +270,7 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             std::snprintf(detail, sizeof(detail), "pouch %.2f m %s of the head (free hand is the right)",
                 std::fabs(side(pouch)), side(pouch) < 0.0f ? "left" : "right");
             SelfTestReport("ambidextrous: pouch on the free (right) hip", pouchValid && side(pouch) > 0.05f, detail);
-            SelfTestReachLeft(SelfTestVec(0.40f, -0.18f, -0.30f), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
+            SelfTestReachLeft(SelfTestVec(0.42f, -0.12f, -0.32f), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
             SelfTestHoldRight(body::RightReady(), QAngle(0.0f, -25.0f, 0.0f));
         }
         if (at(6, 6.6f)) { SelfTestRequestShot("ambi_left_rifle", 1); }
@@ -344,6 +344,7 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             std::snprintf(detail, sizeof(detail), "grenade slot %s; afterwards weapon id %d in the %s hand",
                 grenade ? "still occupied" : "empty", SelfTestActiveWeaponId(player), hand);
             SelfTestReport("ambidextrous: left hand throws the pipe bomb", grenade == nullptr, detail);
+            cmd("hurtme 40"); // pills are only taken below full health
             SelfTestReachLeft(body::RightChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);
         }
         if (at(26, 21.8f)) { button(m_ActionOffHandGrip, true); }

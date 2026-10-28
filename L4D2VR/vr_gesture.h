@@ -271,22 +271,151 @@ namespace l4d2vr_gesture
         float m_LastFire = 0.0f;
     };
 
+    // --------------------------------------------------------- tracking frame
+    // The game places every tracked device (metres in, game units out) at
+    //   world = origin + scale * (hmdCorrected + R(yaw) * (local - hmdLocal))
+    // where origin is the camera anchor minus the eye height, hmdCorrected is
+    // the head's accumulated (stick-rotated) room position, hmdLocal is the
+    // head's raw tracking position and yaw is the stick-turn offset, pivoting
+    // about the head. Smooth/snap turning, stick walking, teleports, ladders,
+    // pushes and recentering only change origin, yaw and hmdCorrected, so a
+    // point mapped back to tracking space moves only when the player's real
+    // hand or head moves in the room. Gesture detectors work in this frame.
+    inline Vector RotateYawDeg(const Vector& v, float degrees)
+    {
+        const float radians = degrees * kDegToRad;
+        const float c = std::cos(radians), s = std::sin(radians);
+        return Vector(v.x * c - v.y * s, v.x * s + v.y * c, v.z);
+    }
+
+    struct TrackingFrame
+    {
+        Vector origin{ 0.0f, 0.0f, 0.0f };       // world units
+        float yawDeg = 0.0f;
+        Vector hmdCorrected{ 0.0f, 0.0f, 0.0f }; // metres
+        Vector hmdLocal{ 0.0f, 0.0f, 0.0f };     // metres, raw tracking space
+        float scale = 1.0f;                      // world units per metre
+
+        bool Valid() const
+        {
+            return Finite(origin) && Finite(hmdCorrected) && Finite(hmdLocal) && std::isfinite(yawDeg) &&
+                std::isfinite(scale) && scale > 1e-4f;
+        }
+        Vector ToWorldPoint(const Vector& local) const
+        {
+            return origin + (hmdCorrected + RotateYawDeg(local - hmdLocal, yawDeg)) * scale;
+        }
+        Vector ToTrackingPoint(const Vector& world) const
+        {
+            return RotateYawDeg((world - origin) * (1.0f / scale) - hmdCorrected, -yawDeg) + hmdLocal;
+        }
+        Vector ToWorldDirection(const Vector& direction) const { return RotateYawDeg(direction, yawDeg); }
+        Vector ToTrackingDirection(const Vector& direction) const { return RotateYawDeg(direction, -yawDeg); }
+    };
+
+    // Seconds since `epochSeconds`, as a float that keeps sub-millisecond
+    // precision. A float of the raw clock (seconds since boot) is quantised to
+    // 1/32 s after three days of uptime, which drops two of every three frames
+    // as duplicates and skews every velocity estimate.
+    class SessionClock
+    {
+    public:
+        // Returns false when the epoch was moved forward (time restarts near 0);
+        // callers reset their detectors then.
+        bool Seconds(double nowSeconds, float& seconds)
+        {
+            bool continuous = true;
+            if (!m_Has || nowSeconds < m_Epoch || nowSeconds - m_Epoch > kRebaseAfter)
+            {
+                continuous = !m_Has;
+                m_Epoch = nowSeconds;
+                m_Has = true;
+            }
+            seconds = static_cast<float>(nowSeconds - m_Epoch) + kStart;
+            return continuous;
+        }
+        static constexpr double kRebaseAfter = 1800.0; // float ulp stays below 0.25 ms
+        static constexpr float kStart = 1.0f;
+
+    private:
+        bool m_Has = false;
+        double m_Epoch = 0.0;
+    };
+
+    // Builds detector samples from consecutive tracking-space poses. Hand and
+    // head velocities are differentiated over the same interval, so they
+    // cancel exactly when the two move together.
+    class TrackingSampler
+    {
+    public:
+        void Reset() { m_Has = false; }
+        Sample Build(float time, const Vector& hand, const Vector& handForward, const Vector& handAngularDeg,
+            const Vector& hmd, const Vector& hmdForward, const Vector& hmdUp)
+        {
+            Sample s{};
+            s.time = time;
+            s.handPosition = hand;
+            s.handForward = handForward;
+            s.handAngularVelocityDeg = handAngularDeg;
+            s.hmdPosition = hmd;
+            s.hmdForward = hmdForward;
+            s.hmdUp = hmdUp;
+            s.hasHmdVelocity = true;
+            const float dt = time - m_Time;
+            if (m_Has && dt > 1e-4f && dt <= kMaxSampleGap)
+            {
+                s.handVelocity = (hand - m_Hand) * (1.0f / dt);
+                s.hmdVelocity = (hmd - m_Hmd) * (1.0f / dt);
+            }
+            if (!m_Has || dt > 1e-4f || dt < 0.0f)
+            {
+                m_Has = true;
+                m_Time = time;
+                m_Hand = hand;
+                m_Hmd = hmd;
+            }
+            return s;
+        }
+
+    private:
+        bool m_Has = false;
+        float m_Time = 0.0f;
+        Vector m_Hand{ 0.0f, 0.0f, 0.0f };
+        Vector m_Hmd{ 0.0f, 0.0f, 0.0f };
+    };
+
     // --------------------------------------------------------------- gun bash
-    // A gun bash is a forward push of the gun away from the body, along the
-    // barrel. Reaching for a holster (down to the hip, up over the shoulder, in
-    // to the chest) and drawing (a fast wrist rotation) are not bashes, however
-    // fast the muzzle moves: only the hand's linear motion counts.
+    // Two strikes with a gun, both measured relative to the head in tracking
+    // space (artificial locomotion never moves the hand there):
+    //  - push: the gun driven forward along its barrel, away from the body;
+    //  - sweep: a fast, level, sideways swing of the gun in front of the body.
+    // Reaching for a holster (down to the hip, up over the shoulder, in to the
+    // chest), drawing (a fast wrist rotation), aiming and turning the whole
+    // body with the gun raised are neither.
     struct GunBashParams
     {
-        float forwardSpeed = 1.8f;         // hand speed toward the view, relative to the HMD
-        float minForwardFraction = 0.75f;  // forward share of the hand speed (mostly a push)
+        // Push.
+        float forwardSpeed = 1.6f;         // hand speed toward the view, relative to the HMD
+        float minForwardFraction = 0.7f;   // forward share of the hand speed (mostly a push)
         float minBarrelDot = 0.4f;         // motion along the barrel
         float minTravel = 0.10f;           // forward travel accumulated ...
         float window = 0.20f;              // ... within this many seconds
         float minReachForward = 0.30f;     // hand ahead of the eyes when it fires (arm extending)
         float minStartForward = 0.18f;     // ... and the push began in front of the body, not at a holster
-        float maxAngularSpeedDeg = 450.0f; // peak wrist rotation allowed in the window
-        float releaseSpeed = 0.6f;         // forward speed must drop below this to re-arm
+        float maxAngularSpeedDeg = 600.0f; // peak wrist rotation allowed in the window
+        // Sweep.
+        bool sweepEnabled = true;
+        float sweepSpeed = 2.4f;               // level hand speed relative to the HMD
+        float sweepMinLevel = 0.75f;           // level share of the hand speed (at most ~41 deg up or down)
+        float sweepMinLateral = 0.55f;         // share across the view: a sideways swing, not a push or pull
+        float sweepMaxBackward = 0.35f;        // toward the body: at most this share
+        float sweepMinTravel = 0.18f;          // level travel along the swing within the window
+        float sweepMinReach = 0.25f;           // hand ahead of the eyes when it fires
+        float sweepMaxDrop = 0.75f;            // hand at most this far below the eyes (a hip reach is lower)
+        float sweepMaxRise = 0.15f;            // ... and at most this far above them
+        float sweepMaxHeadYawRateDeg = 150.0f; // turning the whole body swings the arm with the head
+        // Both.
+        float releaseSpeed = 0.6f;         // speed (forward for a push, level for a sweep) to re-arm
         float cooldown = 0.5f;
         Vector worldUp{ 0.0f, 0.0f, 1.0f };
     };
@@ -294,10 +423,12 @@ namespace l4d2vr_gesture
     struct GunBashEvent
     {
         bool fired = false;
-        Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized relative hand velocity
+        bool sweep = false;                   // fired as a sideways sweep (else a push)
+        Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized shove direction
         float speed = 0.0f;                   // forward speed toward the view
         // Diagnostics of the last sample.
         float forwardFraction = 0.0f, barrelDot = 0.0f, travel = 0.0f, peakAngular = 0.0f, reach = 0.0f;
+        float levelSpeed = 0.0f, lateralFraction = 0.0f, sweepTravel = 0.0f, headYawRate = 0.0f, height = 0.0f;
         bool armed = false;
     };
 
@@ -333,49 +464,100 @@ namespace l4d2vr_gesture
             if (status == SampleClock::Status::First)
             {
                 m_Count = 0;
-                m_Armed = false;
+                m_PushArmed = m_SweepArmed = false;
                 if (m_HasFired && s.time < m_LastFire) m_HasFired = false;
             }
             const Vector relative = s.handVelocity - hmdVelocity;
             const float speed = relative.Length();
             const float forwardSpeed = DotProduct(relative, view);
+            const Vector level = relative - up * DotProduct(relative, up);
+            const float levelSpeed = level.Length();
             const float angular = s.handAngularVelocityDeg.Length();
+            float headYawRate = 0.0f;
+            if (status == SampleClock::Status::Continuous && dt > 0.0f)
+            {
+                const float sine = DotProduct(CrossProduct(m_View, view), up);
+                headYawRate = std::atan2(sine, DotProduct(m_View, view)) / dt / kDegToRad;
+            }
+            m_View = view;
             event.speed = forwardSpeed;
+            event.levelSpeed = levelSpeed;
+            event.headYawRate = headYawRate;
             if (speed > 1e-4f) event.direction = relative * (1.0f / speed);
-            if (status == SampleClock::Status::Continuous) Push(Entry{ s.time, forwardSpeed * dt, angular });
+            if (status == SampleClock::Status::Continuous)
+                Push(Entry{ s.time, forwardSpeed * dt, level * dt, angular, std::fabs(headYawRate) });
             while (m_Count > 0 && At(0).time <= s.time - m_Params.window) Pop();
-            float travel = 0.0f, peakAngular = angular;
+            float travel = 0.0f, peakAngular = angular, peakYaw = std::fabs(headYawRate);
+            Vector levelTravel(0.0f, 0.0f, 0.0f);
             for (std::size_t i = 0; i < m_Count; ++i)
             {
                 travel += At(i).travel;
+                levelTravel = levelTravel + At(i).levelTravel;
                 peakAngular = std::max(peakAngular, At(i).angular);
+                peakYaw = std::max(peakYaw, At(i).headYaw);
             }
-            if (!m_Armed && forwardSpeed < m_Params.releaseSpeed &&
-                (!m_HasFired || s.time - m_LastFire >= m_Params.cooldown))
-                m_Armed = true;
-            if (!allowed || !m_Armed || forwardSpeed < m_Params.forwardSpeed || speed < 1e-4f)
-                return event;
-            const float reach = DotProduct(s.handPosition - s.hmdPosition, view);
-            event.forwardFraction = forwardSpeed / speed;
-            event.barrelDot = DotProduct(event.direction, barrel);
+            const bool cooled = !m_HasFired || s.time - m_LastFire >= m_Params.cooldown;
+            if (!m_PushArmed && forwardSpeed < m_Params.releaseSpeed && cooled) m_PushArmed = true;
+            if (!m_SweepArmed && levelSpeed < m_Params.releaseSpeed && cooled) m_SweepArmed = true;
+
+            const Vector offset = s.handPosition - s.hmdPosition;
+            const float reach = DotProduct(offset, view);
+            const float height = DotProduct(offset, up);
+            event.reach = reach;
+            event.height = height;
             event.travel = travel;
             event.peakAngular = peakAngular;
-            event.reach = reach;
-            event.armed = true;
-            if (forwardSpeed < m_Params.minForwardFraction * speed ||
-                DotProduct(event.direction, barrel) < m_Params.minBarrelDot ||
-                travel < m_Params.minTravel || peakAngular > m_Params.maxAngularSpeedDeg ||
-                reach < m_Params.minReachForward || reach - travel < m_Params.minStartForward)
+            event.armed = m_PushArmed || m_SweepArmed;
+            if (!allowed || speed < 1e-4f)
                 return event;
-            m_Armed = false;
-            m_HasFired = true;
-            m_LastFire = s.time;
-            event.fired = true;
+            event.forwardFraction = forwardSpeed / speed;
+            event.barrelDot = DotProduct(event.direction, barrel);
+
+            // Push.
+            if (m_PushArmed && forwardSpeed >= m_Params.forwardSpeed &&
+                forwardSpeed >= m_Params.minForwardFraction * speed &&
+                event.barrelDot >= m_Params.minBarrelDot &&
+                travel >= m_Params.minTravel && peakAngular <= m_Params.maxAngularSpeedDeg &&
+                reach >= m_Params.minReachForward && reach - travel >= m_Params.minStartForward)
+            {
+                Fire(s.time, event);
+                return event;
+            }
+
+            // Sweep.
+            if (!m_Params.sweepEnabled || levelSpeed < 1e-4f)
+                return event;
+            const Vector levelDirection = level * (1.0f / levelSpeed);
+            const Vector side = CrossProduct(up, view);
+            event.lateralFraction = std::fabs(DotProduct(level, side)) / levelSpeed;
+            event.sweepTravel = DotProduct(levelTravel, levelDirection);
+            if (m_SweepArmed && levelSpeed >= m_Params.sweepSpeed &&
+                levelSpeed >= m_Params.sweepMinLevel * speed &&
+                event.lateralFraction >= m_Params.sweepMinLateral &&
+                forwardSpeed >= -m_Params.sweepMaxBackward * speed &&
+                event.sweepTravel >= m_Params.sweepMinTravel &&
+                reach >= m_Params.sweepMinReach &&
+                height >= -m_Params.sweepMaxDrop && height <= m_Params.sweepMaxRise &&
+                peakYaw <= m_Params.sweepMaxHeadYawRateDeg)
+            {
+                Fire(s.time, event);
+                event.sweep = true;
+                // Shove toward the gun: level, from the head to the hand.
+                Vector toward = offset - up * height;
+                if (!Normalize(toward, event.direction)) event.direction = view;
+            }
             return event;
         }
 
     private:
-        struct Entry { float time; float travel; float angular; };
+        struct Entry { float time; float travel; Vector levelTravel; float angular; float headYaw; };
+        void Fire(float time, GunBashEvent& event)
+        {
+            m_PushArmed = m_SweepArmed = false;
+            m_HasFired = true;
+            m_LastFire = time;
+            event.fired = true;
+        }
         void Push(const Entry& entry)
         {
             if (m_Count == m_Entries.size()) Pop();
@@ -389,7 +571,10 @@ namespace l4d2vr_gesture
         SampleClock m_Clock{};
         std::array<Entry, 128> m_Entries{};
         std::size_t m_Head = 0, m_Count = 0;
-        bool m_Armed = false; // a fresh detector waits for the hand to be still first
+        Vector m_View{ 1.0f, 0.0f, 0.0f };
+        // A fresh detector waits for the hand to be still first.
+        bool m_PushArmed = false;
+        bool m_SweepArmed = false;
         bool m_HasFired = false;
         float m_LastFire = 0.0f;
     };

@@ -3233,6 +3233,7 @@ void VR::ParseConfigFile()
     m_IntermissionHudEnabled = getBool("IntermissionHudEnabled", true);
     m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 150.0f), 100.0f, 1000.0f);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
+    m_GunBashSweepEnabled = getBool("GunBashSweepEnabled", true);
     m_HolsterReleaseDropEnabled = getBool("HolsterReleaseDrop", true);
     m_GripToggleEnabled = getBool("GripToggle", true);
     m_ReloadPavlovTuning = getBool("ReloadPavlovTuning", true);

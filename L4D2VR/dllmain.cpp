@@ -3188,6 +3188,7 @@ namespace
         sampleKeys.insert("SightAutoAlignEnabled");
         sampleKeys.insert("MeleeInertiaEnabled");
         sampleKeys.insert("PhysicalShoveEnabled");
+        sampleKeys.insert("GunBashSweepEnabled");
         sampleKeys.insert("ConsumableGesturesEnabled");
         sampleKeys.insert("LoadingFramePumpEnabled");
         sampleKeys.insert("LoadingFramePumpStallMs");

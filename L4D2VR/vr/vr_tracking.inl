@@ -2730,7 +2730,9 @@ void VR::UpdateMotionGestures(C_BasePlayer* localPlayer)
     const Vector rightDelta = m_RightControllerPose.TrackedDevicePos - m_PrevRightControllerLocalPos;
     const Vector hmdDelta = m_HmdPose.TrackedDevicePos - m_PrevHmdLocalPos;
 
-    const float rightDownSpeed = (-rightDelta.z) / deltaSeconds;
+    // Hand motion relative to the head (all tracking space): crouching or
+    // walking in the room is not a hand gesture.
+    const float rightDownSpeed = (-(rightDelta.z - hmdDelta.z)) / deltaSeconds;
     const float hmdVerticalSpeed = hmdDelta.z / deltaSeconds;
 
     auto startHold = [&](std::chrono::steady_clock::time_point& holdUntil)
@@ -2745,20 +2747,28 @@ void VR::UpdateMotionGestures(C_BasePlayer* localPlayer)
                 std::chrono::duration<float>(m_MotionGestureCooldown));
         };
 
-    const Vector leftForwardHorizontal{ m_LeftControllerForward.x, m_LeftControllerForward.y, 0.0f };
+    // The deltas are tracking space; so must the hand's forward be (the world
+    // forward includes the stick-turn yaw).
+    const Vector leftForwardTracking = l4d2vr_gesture::RotateYawDeg(m_LeftControllerForward, -m_RotationOffset);
+    const Vector leftForwardHorizontal{ leftForwardTracking.x, leftForwardTracking.y, 0.0f };
+    const Vector leftRelativeDelta = leftDelta - hmdDelta;
     const float leftForwardHorizontalLength = VectorLength(leftForwardHorizontal);
     const Vector leftForwardHorizontalNorm = leftForwardHorizontalLength > 0.0f
         ? leftForwardHorizontal / leftForwardHorizontalLength
         : Vector(0.0f, 0.0f, 0.0f);
 
-    const float leftOutwardHorizontalSpeed = std::max(0.0f, DotProduct(leftDelta, leftForwardHorizontalNorm)) / deltaSeconds;
-    const float leftHorizontalSpeed = VectorLength(Vector(leftDelta.x, leftDelta.y, 0.0f)) / deltaSeconds;
+    const float leftOutwardHorizontalSpeed = std::max(0.0f, DotProduct(leftRelativeDelta, leftForwardHorizontalNorm)) / deltaSeconds;
+    const float leftHorizontalSpeed = VectorLength(Vector(leftRelativeDelta.x, leftRelativeDelta.y, 0.0f)) / deltaSeconds;
     const float leftOutwardSpeed = leftForwardHorizontalLength > 0.01f ? leftOutwardHorizontalSpeed : leftHorizontalSpeed;
     const bool inventoryQuickSwitchHeld = m_InventoryQuickSwitchEnabled && PressedDigitalAction(m_ActionInventoryQuickSwitch);
-    if (leftOutwardSpeed >= m_MotionGestureSwingThreshold && now >= m_SecondaryGestureCooldownEnd)
+    // Not while the off hand works the gun (two-handed grip, a manual reload).
+    const bool offHandBusy = IsVrHandsTwoHandedGripPoseActive() || IsMagazineInteractionManualActive();
+    if (!offHandBusy && leftOutwardSpeed >= m_MotionGestureSwingThreshold && now >= m_SecondaryGestureCooldownEnd)
     {
         startHold(m_SecondaryAttackGestureHoldUntil);
         startCooldown(m_SecondaryGestureCooldownEnd);
+        m_PhysicalShoveSerial.fetch_add(1u, std::memory_order_acq_rel);
+        Game::logMsg("[VR][Gesture] off-hand swing shove: outward %.2f m/s relative to the head", leftOutwardSpeed);
     }
 
     if (inventoryQuickSwitchHeld)

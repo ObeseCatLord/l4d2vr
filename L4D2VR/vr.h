@@ -2933,8 +2933,13 @@ public:
 	std::atomic<bool> m_MeleeSwingActive{ false };
 	std::atomic<uint32_t> m_MeleeSwingStartSerial{ 0u };
 	Vector m_MeleeSwingDirection{ 0.0f, 0.0f, 0.0f };
-	Vector m_MeleeMotionPrevHand{ 0.0f, 0.0f, 0.0f };
-	bool m_MeleeMotionPrevValid = false;
+	// Gesture samples are built in tracking space (see l4d2vr_gesture::TrackingFrame)
+	// on a session clock, so artificial locomotion never reads as hand motion.
+	l4d2vr_gesture::TrackingSampler m_GestureSampler;
+	l4d2vr_gesture::SessionClock m_GestureSessionClock;
+	float m_GestureLastYawDeg = 0.0f;
+	uint64_t m_GunBashNearMissLogMs = 0u;
+	bool m_GunBashSweepEnabled = true; // GunBashSweepEnabled: a fast sideways swing of the gun also bashes
 	std::chrono::steady_clock::time_point m_MeleeMotionLastUpdate{};
 	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
 	QAngle m_PhysicalShoveAngles{ 0.0f, 0.0f, 0.0f };
@@ -3055,6 +3060,8 @@ public:
 	bool m_SelfTestWalkActive = false;
 	float m_SelfTestWalkX = 0.0f, m_SelfTestWalkY = 0.0f;
 	float m_SelfTestTurnRate = 0.0f;            // degrees per second of smooth turn
+	bool m_SelfTestTurnStickActive = false;      // turnstick=: scripted right-stick x through the real turn path
+	float m_SelfTestTurnStickX = 0.0f;
 	float m_SelfTestSwayDeg = 0.0f;             // head sway yaw amplitude (0 = still)
 	uint64_t m_SelfTestSwayStartMs = 0;
 	// track=: how far each drawn holster item moves relative to the eye drawing

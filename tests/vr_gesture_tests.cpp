@@ -263,12 +263,44 @@ static void TestGunBash()
         return CountFires(detector, rig, frames, [&](Rig& r) { r.Move(velocity, kZero, kZero, true); });
     };
     Check(run(Vector(3.0f, 0.0f, 0.0f), 10) == 1);   // forward shove fires once
-    Check(run(Vector(0.0f, 3.0f, 0.0f), 10) == 1);   // lateral sweep
     Check(run(Vector(2.5f, 0.0f, -1.5f), 10) == 1);  // 31 degrees down is still a bash
+    Check(run(Vector(0.0f, 3.0f, 0.0f), 10) == 0);   // a sideways sweep is not a push
     Check(run(Vector(0.5f, 0.0f, -3.0f), 10) == 0);  // downward reload motion (80 degrees down)
     Check(run(Vector(0.0f, 0.0f, -3.0f), 10) == 0);  // straight down
+    Check(run(Vector(0.8f, 0.0f, 3.0f), 10) == 0);   // up (toward the shoulder)
     Check(run(Vector(-3.0f, 0.0f, 0.0f), 10) == 0);  // pulling the gun back toward the face
     Check(run(Vector(1.5f, 0.0f, 0.0f), 10) == 0);   // too slow
+    {
+        // Pushing forward with the barrel pointing sideways is not a bash.
+        GunBashDetector detector;
+        Rig rig;
+        rig.s.handForward = Vector(0.0f, 1.0f, 0.0f);
+        CountFires(detector, rig, 5, still);
+        Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true); }) == 0);
+    }
+    {
+        // A fast wrist flick swings the muzzle at > 3 m/s but moves the hand
+        // little: not a bash.
+        GunBashDetector detector;
+        Rig rig;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        CountFires(detector, rig, 5, still);
+        Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(0.3f, 0.0f, 0.0f), Vector(0.0f, 600.0f, 0.0f), kZero, true); }) == 0);
+    }
+    {
+        // Not while the hand is at a holster (allowed=false).
+        GunBashDetector detector;
+        Rig rig;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        CountFires(detector, rig, 5, still);
+        int fired = 0;
+        for (int i = 0; i < 10; ++i)
+        {
+            rig.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true);
+            if (detector.Update(rig.s, false).fired) ++fired;
+        }
+        Check(fired == 0);
+    }
     {
         // Walking with the gun raised does not bash.
         GunBashDetector detector;
@@ -279,16 +311,147 @@ static void TestGunBash()
         Check(CountFires(detector, rig, 60, [&](Rig& r) { r.Move(walk, kZero, walk, false); }) == 0);
     }
     {
+        // A gun adopted mid-motion (e.g. just drawn) waits for the hand to settle.
+        GunBashDetector detector;
+        Rig rig;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        Check(CountFires(detector, rig, 10, [](Rig& r) { r.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true); }) == 0);
+    }
+    {
         // Re-arms only after slowing down and the cooldown.
         GunBashDetector detector;
         Rig rig;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         auto shove = [](Rig& r) { r.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true); };
+        CountFires(detector, rig, 5, still);
         Check(CountFires(detector, rig, 5, shove) == 1);
         Check(CountFires(detector, rig, 5, still) == 0);
         Check(CountFires(detector, rig, 5, shove) == 0); // within 0.5 s cooldown
         Check(CountFires(detector, rig, 50, still) == 0);
         Check(CountFires(detector, rig, 5, shove) == 1);
+    }
+}
+
+// Realistic reaches from a standing body model (eyes 1.65 m, metres, x
+// forward, y RIGHT, z up; converted to Source's +y-left world here). The hand
+// follows a minimum-jerk path at 90 Hz with tracking jitter, the barrel turns
+// on the way, and the head bobs and turns a little. The gun-hand policy of the
+// game is applied: no bash while the hand is at a holster or within 0.7 s of
+// a squeeze (0.3 s of a release).
+namespace realistic
+{
+    struct Pose { Vector hand; Vector barrel; };
+    static Vector Body(float x, float yRight, float z) { return Vector(x, -yRight, 1.65f + z); }
+    static float MinJerk(float u) { u = std::min(1.0f, std::max(0.0f, u)); return u * u * u * (10.0f + u * (-15.0f + 6.0f * u)); }
+    static Vector Lerp(const Vector& a, const Vector& b, float t) { return a + (b - a) * t; }
+    static unsigned g_seed = 12345u;
+    static float Jitter() { g_seed = g_seed * 1664525u + 1013904223u; return ((g_seed >> 8) / 16777216.0f - 0.5f) * 0.002f; }
+
+    struct Sim
+    {
+        GunBashDetector detector;
+        Sample s{};
+        Vector hand{}, barrel{ 1.0f, 0.0f, 0.0f }, prevHand{};
+        float headYaw = 0.0f;
+        float blockUntil = -1.0f;
+        int fired = 0;
+        bool started = false;
+        Sim(const Vector& start) : hand(start), prevHand(start) { s.hmdPosition = Body(0, 0, 0); s.hmdUp = Vector(0, 0, 1); }
+        void Frame(const Vector& newHand, const Vector& newBarrel, bool atHolster)
+        {
+            s.time += kDt;
+            Vector h = newHand + Vector(Jitter(), Jitter(), Jitter());
+            Vector b{};
+            Normalize(newBarrel, b);
+            // Angular velocity from the barrel's turn (deg/s).
+            Vector axis = CrossProduct(barrel, b);
+            const float sine = axis.Length();
+            const Vector angular = sine > 1e-6f ? axis * (std::asin(std::min(1.0f, sine)) / kDt / kDegToRad / sine) : Vector(0, 0, 0);
+            s.handVelocity = started ? (h - prevHand) * (1.0f / kDt) : Vector(0, 0, 0);
+            s.handPosition = h;
+            s.handForward = b;
+            s.handAngularVelocityDeg = angular;
+            const float bob = 0.01f * std::sin(s.time * 6.0f);
+            s.hmdPosition = Body(0.0f, 0.0f, bob);
+            const float yaw = headYaw * kDegToRad;
+            s.hmdForward = Vector(std::cos(yaw), std::sin(yaw), 0.0f);
+            s.hasHmdVelocity = false;
+            const bool allowed = !atHolster && s.time >= blockUntil;
+            if (detector.Update(s, allowed).fired) ++fired;
+            prevHand = h; barrel = b; hand = newHand; started = true;
+        }
+        void Hold(float seconds, bool atHolster = false) { for (float t = 0; t < seconds; t += kDt) Frame(hand, barrel, atHolster); }
+        // Moves to `target` at `speed` m/s average; the hand counts as at the
+        // holster within `holsterRadius` of `holster`.
+        void Move(const Vector& target, const Vector& targetBarrel, float speed, const Vector& holster, float holsterRadius,
+            float headTurnDeg = 0.0f)
+        {
+            const Vector from = hand, fromBarrel = barrel;
+            const float duration = std::max(0.15f, (target - from).Length() / speed);
+            const float yaw0 = headYaw;
+            for (float t = kDt; t <= duration + 1e-4f; t += kDt)
+            {
+                const float u = MinJerk(t / duration);
+                headYaw = yaw0 + headTurnDeg * u;
+                const Vector p = Lerp(from, target, u);
+                Frame(p, Lerp(fromBarrel, targetBarrel, u), (p - holster).Length() <= holsterRadius);
+            }
+        }
+        void Squeeze() { blockUntil = s.time + 0.7f; }
+        void Release() { blockUntil = std::max(blockUntil, s.time + 0.3f); }
+    };
+}
+
+static void TestGunBashRealisticReaches()
+{
+    using namespace realistic;
+    const Vector ready = Body(0.40f, 0.15f, -0.35f);
+    const Vector forward(1.0f, 0.0f, 0.0f);
+    struct Target { const char* name; Vector point; Vector barrel; float headTurn; };
+    const Target targets[] = {
+        { "right hip", Body(-0.05f, 0.22f, -0.80f), Vector(0.2f, 0.0f, -1.0f), -25.0f },
+        { "over the right shoulder", Body(-0.10f, 0.15f, -0.05f), Vector(-0.3f, 0.0f, 0.95f), -15.0f },
+        { "right chest", Body(0.12f, 0.10f, -0.36f), Vector(0.3f, 0.9f, -0.3f), 0.0f },
+        { "left chest", Body(0.12f, -0.10f, -0.36f), Vector(0.2f, 0.9f, -0.4f), 10.0f },
+        { "over the left shoulder", Body(-0.10f, -0.14f, -0.06f), Vector(-0.4f, 0.3f, 0.85f), 20.0f },
+        { "lower back", Body(-0.15f, 0.10f, -0.45f), Vector(0.0f, 0.3f, -0.95f), -30.0f },
+    };
+    for (const float speed : { 0.5f, 1.0f, 1.5f })
+    {
+        for (const Target& target : targets)
+        {
+            Sim sim(ready);
+            sim.Hold(0.5f);
+            // Reach, squeeze at the holster, come back out (drawing), let go.
+            sim.Move(target.point, target.barrel, speed, target.point, 0.20f, target.headTurn);
+            sim.Squeeze();
+            sim.Hold(0.15f, true);
+            sim.Move(ready, forward, speed, target.point, 0.20f, -target.headTurn);
+            sim.Release();
+            sim.Hold(0.5f);
+            // An empty-handed reach that changes its mind halfway (no squeeze).
+            sim.Move(Lerp(ready, target.point, 0.6f), Lerp(forward, target.barrel, 0.6f), speed, target.point, 0.20f);
+            sim.Move(ready, forward, speed, target.point, 0.20f);
+            sim.Hold(0.5f);
+            if (sim.fired != 0)
+                std::fprintf(stderr, "gun bash fired %d time(s) reaching for the %s at %.1f m/s\n", sim.fired, target.name, speed);
+            Check(sim.fired == 0);
+        }
+    }
+    // A real bash still works: a 0.30 m push along the barrel in 0.15-0.25 s.
+    for (const float duration : { 0.15f, 0.2f, 0.25f })
+    {
+        Sim sim(ready);
+        sim.Hold(0.5f);
+        const Vector end = Body(0.70f, 0.15f, -0.30f);
+        sim.Move(end, forward, (end - ready).Length() / duration, Body(-5, 0, 0), 0.0f);
+        sim.Hold(0.3f);
+        sim.Move(ready, forward, 0.6f, Body(-5, 0, 0), 0.0f);
+        sim.Hold(0.6f);
+        sim.Move(end, forward, (end - ready).Length() / duration, Body(-5, 0, 0), 0.0f);
+        if (sim.fired != 2)
+            std::fprintf(stderr, "a %.2f s push fired %d bash(es), expected 2\n", duration, sim.fired);
+        Check(sim.fired == 2);
     }
 }
 
@@ -535,6 +698,7 @@ int main()
     TestSwingValidation();
     TestThrust();
     TestGunBash();
+    TestGunBashRealisticReaches();
     TestPills();
     TestAdrenaline();
     TestSampleGapRestartsTiming();

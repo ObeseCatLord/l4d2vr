@@ -177,11 +177,13 @@ namespace l4d2vr_physical
     public:
         enum : unsigned { RequestUse = 1u, AdoptWeapon = 2u };
 
-        void Begin(std::uint32_t now, std::uintptr_t weapon)
+        // windowMs: how long the item may take to arrive in the hand.
+        void Begin(std::uint32_t now, std::uintptr_t weapon, std::uint32_t windowMs = 650u)
         {
             m_Pending = true;
             m_Started = now;
             m_PreviousWeapon = weapon;
+            m_Window = windowMs;
         }
 
         unsigned Update(bool eligible, bool active, bool down, bool contact,
@@ -194,13 +196,13 @@ namespace l4d2vr_physical
             }
             if (m_Pending)
             {
-                if (now - m_Started <= 650u && weapon && weapon != m_PreviousWeapon)
+                if (now - m_Started <= m_Window && weapon && weapon != m_PreviousWeapon)
                 {
                     m_Pending = false;
                     m_Consumed = true;
                     return AdoptWeapon;
                 }
-                if (now - m_Started <= 650u)
+                if (now - m_Started <= m_Window)
                     return 0u;
                 m_Pending = false;
                 m_Consumed = true;
@@ -217,11 +219,13 @@ namespace l4d2vr_physical
             m_Consumed = false;
             m_Started = 0u;
             m_PreviousWeapon = 0u;
+            m_Window = 650u;
         }
     private:
         bool m_Pending = false;
         bool m_Consumed = false;
         std::uint32_t m_Started = 0u;
+        std::uint32_t m_Window = 650u;
         std::uintptr_t m_PreviousWeapon = 0u;
     };
 

@@ -12,6 +12,7 @@
 #include "vr_interaction_geometry.h"
 #include "vr_interaction_protocol.h"
 #include "vr_ladder_input.h"
+#include "vr_viewmodel_strike.h"
 #include "trace.h"
 #include "offsets.h"
 #include "vr_hands/vr_hand_math.h"

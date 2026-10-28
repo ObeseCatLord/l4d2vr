@@ -1381,6 +1381,7 @@ public:
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_BodyGripSelectionSerial{ 0 };
+    std::atomic<uint32_t> m_GripDrawSerial{ 0 }; // weapon-hand grip drew from a holster (the grip took the item)
     bool m_BodyGripInventoryEnabled = false;
     bool m_PhysicalReloadOnUnsupportedServers = true;
     bool m_ManualPumpEnabled = false;
@@ -1449,6 +1450,10 @@ public:
     float m_BodyInventoryRotationOffset = 0.0f;
     Vector m_BodyInventoryOrigin{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryHeadPosAbs{0.0f, 0.0f, 0.0f};
+    // Tracked eyes -> level-head eyes (world units): looking down at a holster
+    // must not move the holsters (l4d2vr_holster::NeutralHeadOffset).
+    Vector m_BodyInventoryNeutralHeadOffset{0.0f, 0.0f, 0.0f};
+    float m_BodyInventoryHeadYaw = 0.0f; // diagnostics: head yaw the body frame follows
     Vector m_BodyInventoryForward{0.0f, 0.0f, 0.0f};
     Vector m_BodyInventoryRight{0.0f, 0.0f, 0.0f};
     std::chrono::steady_clock::time_point m_BodyInventoryLastUpdate{};
@@ -1463,6 +1468,8 @@ public:
     float m_HolsterHighlightBrightness = 1.6f;
     float m_HolsterHoverHapticAmplitude = 0.4f;
     uint32_t m_HolsterHoverPulseCount = 0u; // self-test evidence
+    uint32_t m_HolsterLeftHoverPulseCount = 0u;
+    bool m_WeaponGripPhysicalDown = false; // the weapon-hand grip is squeezed (before toggling)
     float m_HolsterGrabHapticAmplitude = 0.6f;
     l4d2vr_holster::Layout m_HolsterLayout{};
     l4d2vr_holster::GrabFsm m_HolsterGrab;
@@ -1493,6 +1500,8 @@ public:
     void* m_HolsterEntityIndexCacheKey[l4d2vr_holster::kZoneCount]{};
     int m_HolsterEntityIndexCache[l4d2vr_holster::kZoneCount]{ -1, -1, -1, -1, -1 };
     bool GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const;
+    void LogHolsterGripPress(bool leftHand, const l4d2vr_holster::BodyFrame* frame, const Vector& hand, bool ready,
+        int zone, int activeSlot) const;
     void UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot);
     bool GetHolsterRenderSnapshot(HolsterRenderSnapshot& out) const;
     bool BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::ItemPose& pose) const;
@@ -2849,6 +2858,8 @@ public:
 	l4d2vr_gesture::SwingDetector m_MeleeSwing;
 	l4d2vr_gesture::ThrustDetector m_MeleeThrust{ l4d2vr_gesture::ThrustParams::Melee() };
 	l4d2vr_gesture::GunBashDetector m_GunBash;
+	std::atomic<uint64_t> m_GunBashGripBlockUntilMs{ 0u }; // physical weapon-grip squeeze/let go: no bash until then
+	std::atomic<uint32_t> m_PhysicalShoveSerial{ 0u }; // every motion shove / gun bash fired
 	std::atomic<bool> m_MeleeSwingActive{ false };
 	std::atomic<uint32_t> m_MeleeSwingStartSerial{ 0u };
 	Vector m_MeleeSwingDirection{ 0.0f, 0.0f, 0.0f };
@@ -2868,6 +2879,10 @@ public:
 	void SelfTestStartPath(const std::vector<l4d2vr_selftest::Key>& position, const std::vector<l4d2vr_selftest::Key>& angles);
 	void SelfTestHoldRight(const l4d2vr_selftest::Vec3& local, const QAngle& angles);
 	void SelfTestReachHolster(int zone);
+	// Realistic reaches (body model in vr_selftest.h) from where the hand is now.
+	void SelfTestReachRight(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed);
+	void SelfTestReachLeft(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed);
+	bool RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer* player);
 	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
 	// Slap step: the pouch's world position and the held fresh magazine's centre.
 	bool GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid);
@@ -2903,6 +2918,16 @@ public:
 	std::vector<l4d2vr_selftest::Key> m_SelfTestAngPath;
 	uint64_t m_SelfTestPathStartMs = 0;
 	bool m_SelfTestPathActive = false;
+	std::vector<l4d2vr_selftest::Key> m_SelfTestLeftPath;
+	std::vector<l4d2vr_selftest::Key> m_SelfTestLeftAngPath;
+	uint64_t m_SelfTestLeftPathStartMs = 0;
+	bool m_SelfTestLeftPathActive = false;
+	// Where the scripted hands are this frame (head-yaw frame metres / angles).
+	l4d2vr_selftest::Vec3 m_SelfTestRightNow{ 0.35f, 0.2f, -0.3f };
+	l4d2vr_selftest::Vec3 m_SelfTestRightAngNow{};
+	l4d2vr_selftest::Vec3 m_SelfTestLeftNow{ 0.35f, -0.2f, -0.35f };
+	l4d2vr_selftest::Vec3 m_SelfTestLeftAngNow{};
+	unsigned m_SelfTestJitterSeed = 1u;
 	Vector m_SelfTestPrevRight{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestPrevLeft{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestPrevHmd{ 0.0f, 0.0f, 0.0f };
@@ -2916,6 +2941,13 @@ public:
 	float m_MeleeGripReachMeters = 0.12f;
 	// While set, the viewmodel holds its ready pose (no shove / melee swing animation).
 	std::atomic<uint64_t> m_ViewmodelAnimSuppressUntilMs{ 0 };
+	// Native strike animations (gun shove, melee swing) on the viewmodel: frames
+	// the viewmodel was in one, and whether the held pose replaced it.
+	std::atomic<uint32_t> m_VmStrikeFrames{ 0u };
+	std::atomic<uint32_t> m_VmStrikeFramesHeld{ 0u };
+	std::atomic<uint32_t> m_VmStrikeFramesShown{ 0u };
+	std::atomic<float> m_VmStrikeMaxDeviation{ 0.0f }; // native pose vs the held idle pose after a strike (units)
+	std::atomic<uint64_t> m_VmAnimTraceUntilMs{ 0u }; // self-test: log the viewmodel sequence every frame
 	// Holster drop: a holster-drawn item is held by the grip; releasing drops it.
 	bool m_HolsterReleaseDropEnabled = true;
 	// The weapon hand is over another occupied holster (letting go there never drops).

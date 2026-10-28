@@ -272,13 +272,21 @@ namespace l4d2vr_gesture
     };
 
     // --------------------------------------------------------------- gun bash
+    // A gun bash is a forward push of the gun away from the body, along the
+    // barrel. Reaching for a holster (down to the hip, up over the shoulder, in
+    // to the chest) and drawing (a fast wrist rotation) are not bashes, however
+    // fast the muzzle moves: only the hand's linear motion counts.
     struct GunBashParams
     {
-        float muzzleLength = 0.35f;        // hand origin to muzzle along handForward
-        float minSpeed = 2.2f;             // muzzle speed relative to the HMD
-        float maxBelowHorizontalDeg = 60.0f; // steeper downward motions are reload gestures
-        float minForwardDot = -0.2f;       // horizontal direction vs HMD forward; below = pulling back
-        float releaseSpeed = 0.8f;
+        float forwardSpeed = 1.8f;         // hand speed toward the view, relative to the HMD
+        float minForwardFraction = 0.75f;  // forward share of the hand speed (mostly a push)
+        float minBarrelDot = 0.4f;         // motion along the barrel
+        float minTravel = 0.10f;           // forward travel accumulated ...
+        float window = 0.20f;              // ... within this many seconds
+        float minReachForward = 0.30f;     // hand ahead of the eyes when it fires (arm extending)
+        float minStartForward = 0.18f;     // ... and the push began in front of the body, not at a holster
+        float maxAngularSpeedDeg = 450.0f; // peak wrist rotation allowed in the window
+        float releaseSpeed = 0.6f;         // forward speed must drop below this to re-arm
         float cooldown = 0.5f;
         Vector worldUp{ 0.0f, 0.0f, 1.0f };
     };
@@ -286,9 +294,18 @@ namespace l4d2vr_gesture
     struct GunBashEvent
     {
         bool fired = false;
-        Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized relative muzzle velocity
-        float speed = 0.0f;
+        Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized relative hand velocity
+        float speed = 0.0f;                   // forward speed toward the view
     };
+
+    // Horizontal facing of the head. Looking down, the head's up vector tips
+    // forward and carries the yaw.
+    inline bool HorizontalFacing(const Vector& hmdForward, const Vector& hmdUp, const Vector& up, Vector& facing)
+    {
+        const float down = std::max(0.0f, -DotProduct(hmdForward, up));
+        const Vector f = hmdForward + hmdUp * down;
+        return Normalize(f - up * DotProduct(f, up), facing);
+    }
 
     class GunBashDetector
     {
@@ -298,32 +315,48 @@ namespace l4d2vr_gesture
         const GunBashParams& GetParams() const { return m_Params; }
         void Reset() { *this = GunBashDetector(m_Params); }
 
-        GunBashEvent Update(const Sample& s)
+        // allowed=false (the hand is at a holster, or the grip just drew) never fires.
+        GunBashEvent Update(const Sample& s, bool allowed = true)
         {
             GunBashEvent event{};
-            Vector forward{}, up{};
-            if (!SampleFinite(s) || !Normalize(s.handForward, forward) || !Normalize(m_Params.worldUp, up))
+            Vector barrel{}, up{}, view{};
+            if (!SampleFinite(s) || !Normalize(s.handForward, barrel) || !Normalize(m_Params.worldUp, up) ||
+                !HorizontalFacing(s.hmdForward, s.hmdUp, up, view))
                 return event;
             float dt = 0.0f;
             Vector hmdVelocity{};
             const SampleClock::Status status = m_Clock.Update(s, dt, hmdVelocity);
             if (status == SampleClock::Status::Invalid) return event;
-            if (status == SampleClock::Status::First && m_HasFired && s.time < m_LastFire) m_HasFired = false;
-            const Vector muzzle = PointVelocity(s.handVelocity - hmdVelocity, s.handAngularVelocityDeg,
-                forward * m_Params.muzzleLength);
-            const float speed = muzzle.Length();
-            event.speed = speed;
-            if (speed > 1e-4f) event.direction = muzzle * (1.0f / speed);
-
-            if (!m_Armed && speed < m_Params.releaseSpeed && (!m_HasFired || s.time - m_LastFire >= m_Params.cooldown))
+            if (status == SampleClock::Status::First)
+            {
+                m_Count = 0;
+                m_Armed = false;
+                if (m_HasFired && s.time < m_LastFire) m_HasFired = false;
+            }
+            const Vector relative = s.handVelocity - hmdVelocity;
+            const float speed = relative.Length();
+            const float forwardSpeed = DotProduct(relative, view);
+            const float angular = s.handAngularVelocityDeg.Length();
+            event.speed = forwardSpeed;
+            if (speed > 1e-4f) event.direction = relative * (1.0f / speed);
+            if (status == SampleClock::Status::Continuous) Push(Entry{ s.time, forwardSpeed * dt, angular });
+            while (m_Count > 0 && At(0).time <= s.time - m_Params.window) Pop();
+            float travel = 0.0f, peakAngular = angular;
+            for (std::size_t i = 0; i < m_Count; ++i)
+            {
+                travel += At(i).travel;
+                peakAngular = std::max(peakAngular, At(i).angular);
+            }
+            if (!m_Armed && forwardSpeed < m_Params.releaseSpeed &&
+                (!m_HasFired || s.time - m_LastFire >= m_Params.cooldown))
                 m_Armed = true;
-            if (!m_Armed || speed < m_Params.minSpeed) return event;
-            if (DotProduct(event.direction, up) < -std::sin(m_Params.maxBelowHorizontalDeg * kDegToRad))
+            if (!allowed || !m_Armed || forwardSpeed < m_Params.forwardSpeed || speed < 1e-4f)
                 return event;
-            Vector horizontal{}, view{};
-            if (Normalize(event.direction - up * DotProduct(event.direction, up), horizontal) &&
-                Normalize(s.hmdForward - up * DotProduct(s.hmdForward, up), view) &&
-                DotProduct(horizontal, view) < m_Params.minForwardDot)
+            const float reach = DotProduct(s.handPosition - s.hmdPosition, view);
+            if (forwardSpeed < m_Params.minForwardFraction * speed ||
+                DotProduct(event.direction, barrel) < m_Params.minBarrelDot ||
+                travel < m_Params.minTravel || peakAngular > m_Params.maxAngularSpeedDeg ||
+                reach < m_Params.minReachForward || reach - travel < m_Params.minStartForward)
                 return event;
             m_Armed = false;
             m_HasFired = true;
@@ -333,9 +366,21 @@ namespace l4d2vr_gesture
         }
 
     private:
+        struct Entry { float time; float travel; float angular; };
+        void Push(const Entry& entry)
+        {
+            if (m_Count == m_Entries.size()) Pop();
+            m_Entries[(m_Head + m_Count) % m_Entries.size()] = entry;
+            ++m_Count;
+        }
+        void Pop() { m_Head = (m_Head + 1) % m_Entries.size(); --m_Count; }
+        const Entry& At(std::size_t i) const { return m_Entries[(m_Head + i) % m_Entries.size()]; }
+
         GunBashParams m_Params{};
         SampleClock m_Clock{};
-        bool m_Armed = true;
+        std::array<Entry, 128> m_Entries{};
+        std::size_t m_Head = 0, m_Count = 0;
+        bool m_Armed = false; // a fresh detector waits for the hand to be still first
         bool m_HasFired = false;
         float m_LastFire = 0.0f;
     };

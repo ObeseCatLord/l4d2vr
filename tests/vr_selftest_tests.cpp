@@ -59,8 +59,36 @@ static void TestParse()
     CHECK(steps.size() == 3u && steps[0] == "features" && steps[1] == "holster" && steps[2] == "throwpipe");
 }
 
+static void TestHumanReach()
+{
+    // Ready -> right hip at 0.8 m/s: minimum-jerk timing, human peak speed,
+    // endpoints exact, jitter of a few millimetres.
+    std::vector<Key> position, angles;
+    const Vec3 from = body::RightReady(), to = body::RightHip();
+    BuildReach(from, to, body::V(0, 0, 0), body::V(60, 0, 0), 0.8f, 3u, position, angles);
+    const float distance = Distance(from, to);
+    CHECK(position.size() == angles.size() && position.size() > 8u);
+    CHECK(std::fabs(position.back().time - distance / 0.8f) < 1e-3f);
+    CHECK(Distance(Evaluate(position, 0.0f), from) < 1e-5f);
+    CHECK(Distance(Evaluate(position, 10.0f), to) < 1e-5f);
+    CHECK(std::fabs(Evaluate(angles, 10.0f).x - 60.0f) < 1e-4f);
+    float peak = 0.0f;
+    for (std::size_t i = 1; i < position.size(); ++i)
+        peak = std::max(peak, SegmentSpeed(position, i));
+    CHECK(peak > 1.2f && peak < 2.0f); // ~1.9x the average, plus jitter
+    for (std::size_t i = 1; i + 1 < position.size(); ++i)
+    {
+        const float u = MinimumJerk(position[i].time / position.back().time);
+        CHECK(Distance(position[i].position, Lerp(from, to, u)) < 0.004f);
+    }
+    // Very short reaches still take a human 0.15 s.
+    BuildReach(from, Lerp(from, to, 0.01f), body::V(0, 0, 0), body::V(0, 0, 0), 1.5f, 1u, position, angles);
+    CHECK(std::fabs(position.back().time - 0.15f) < 1e-4f);
+}
+
 int main()
 {
+    TestHumanReach();
     TestPath();
     TestTransforms();
     TestButtons();

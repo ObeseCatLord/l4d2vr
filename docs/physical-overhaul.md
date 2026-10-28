@@ -20,7 +20,7 @@ Grips are toggles, as in Pavlov (`GripToggle`, on by default). One firm squeeze 
 - over another holster, you swap to that item;
 - anywhere else, it is dropped.
 
-A squeeze that takes nothing is ignored. With `GripToggle=false` you hold the grip to keep an item instead. The two-handed foregrip is also a toggle: squeeze once to take the front of the gun and again to let go (`VrHandsTwoHandedGripHeldMode=false`). Magazines, bolts and slides are held only while you keep squeezing.
+A squeeze that takes nothing is ignored: only an item the grip itself took (drawn from a holster or picked up with the grip) can be dropped by letting go. A gun you spawned with, picked up with Use or switched to stays in your hand however often you squeeze. With `GripToggle=false` you hold the grip to keep an item instead. The two-handed foregrip is also a toggle: squeeze once to take the front of the gun and again to let go (`VrHandsTwoHandedGripHeldMode=false`). Magazines, bolts and slides are held only while you keep squeezing.
 
 | Holster | Contents |
 |---|---|
@@ -31,7 +31,7 @@ A squeeze that takes nothing is ignored. With `GripToggle=false` you hold the gr
 | Chest, dominant side | Pills or adrenaline |
 | Off-hand waist | Spare magazine (or a shell for shotguns) while you have reserve ammo |
 
-The holsters follow your head's yaw past a dead band, and snap turns move them instantly. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn in both eyes whether or not the first-person body is enabled.
+The holsters sit where a standing adult reaches: the hip about 0.8 m below your eyes (anywhere from 0.66 to 0.9 m, slightly behind the hip bone), the chest pouches 0.36 m below and 0.12 m in front, and the shoulder holsters just behind your head. Each grip press logs where your hand was (`[VR][Holster] grip pressed`), so the layout can be checked against your own reaches. The holsters follow your head's yaw past a dead band, and snap turns move them instantly; looking down at a holster does not move it. Settings: `HolsterPavlovLayoutEnabled`, `HolsterItemsVisible`, `HolsterInstantDraw`, `HolsterYawDeadbandDeg`, `HolsterYawSmoothingSeconds`, `HolsterHeightScale`, `Holster*OffsetMeters` (metres from the head: forward, toward the dominant side, up), `Holster*RadiusMeters`, `HolsterHoverHapticAmplitude`, `HolsterGrabHapticAmplitude`. Holstered items are drawn in both eyes whether or not the first-person body is enabled.
 
 On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
 
@@ -58,7 +58,8 @@ With dual pistols, each trigger fires its own pistol along its own hand. On serv
 
 - Melee weapons lag your hand through a spring tuned per weapon class, so swings move at the regular melee animation speed. The visible weapon, the server sweep and the swing detector all use the same lagged weapon (`MeleeInertiaEnabled`).
 - A swing is detected from the blade tip's speed relative to your head, so walking doesn't count; the weapon has to come to rest before the next swing. The chainsaw only needs the trigger.
-- Thrusting a melee weapon forward, or bashing with a gun, shoves in that direction (`PhysicalShoveEnabled`).
+- Thrusting a melee weapon forward, or pushing a gun forward along its barrel (a gun bash), shoves in that direction (`PhysicalShoveEnabled`). Reaching for a holster, drawing, or flicking the wrist is never a bash.
+- The game's own shove and swing animations never play: your hand stays where your controller is, while the shove's sound and hits still happen.
 
 ## Grenades
 
@@ -102,7 +103,7 @@ Both grips are used only for gripping: they draw from holsters and hold magazine
 
 ## Self-test (developers)
 
-`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `reach` (both hands reach every holster from a human body model at human speeds; checks draws, hover pulses and no gun bash), `emptysqueeze` (squeezing the grip in the air never drops the gun), `pickup` (grip contact pickup of a first aid kit keeps the gun), `bashanim` and `swinganim` (the strike registers and the viewmodel never shows the native shove or swing animation, `[VR][VmAnim]` lines), `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server. Run the game in `gamescope --backend headless` with `-nosound` to keep it off the desktop. Without the launch option none of this runs.
 
 ## Headset test checklist
 

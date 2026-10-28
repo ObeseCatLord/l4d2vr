@@ -184,7 +184,7 @@ static void TestHolsterPlacementNearHead()
         CHECK(pose.valid);
         const Vector d = pose.origin - frame.head;
         const float meters = std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
-        CHECK(meters > 0.1f && meters < 0.8f);
+        CHECK(meters > 0.1f && meters < 0.9f);
         CHECK(pose.origin.z < frame.head.z); // below the head
         const Vector local = ToLocal(frame, pose.origin);
         CHECK(Near(local.x, layout.center[zone].x, 0.001f));
@@ -196,8 +196,143 @@ static void TestHolsterPlacementNearHead()
     CHECK(hip.origin.x > frame.head.x);
 }
 
+// Where real hands go, from a standing-adult body model (eyes ~1.65 m),
+// independent of the layout under test: metres from the eyes, x forward,
+// y toward the right (dominant) hand, z up.
+struct Reach { const char* name; Vector point; Zone expected; };
+static const Reach kReaches[] = {
+    { "right hip", Vector(-0.05f, 0.22f, -0.80f), Zone::Secondary },
+    { "right hip, high belt", Vector(-0.03f, 0.20f, -0.72f), Zone::Secondary },
+    { "right hip, low belt", Vector(-0.06f, 0.24f, -0.88f), Zone::Secondary },
+    { "right hip, slightly forward", Vector(0.04f, 0.21f, -0.78f), Zone::Secondary },
+    { "over the right shoulder", Vector(-0.10f, 0.15f, -0.05f), Zone::Primary },
+    { "over the right shoulder, low", Vector(-0.12f, 0.17f, -0.22f), Zone::Primary },
+    { "over the right shoulder, high", Vector(-0.06f, 0.12f, 0.05f), Zone::Primary },
+    { "over the left shoulder", Vector(-0.10f, -0.14f, -0.06f), Zone::Medical },
+    { "right chest pouch", Vector(0.12f, 0.10f, -0.35f), Zone::Consumable },
+    { "right chest pouch, low", Vector(0.14f, 0.11f, -0.40f), Zone::Consumable },
+    { "left chest pouch", Vector(0.12f, -0.10f, -0.35f), Zone::Throwable },
+    { "left chest pouch, high", Vector(0.10f, -0.09f, -0.30f), Zone::Throwable },
+};
+// Hands that are NOT reaching for a holster.
+static const Vector kNotReaches[] = {
+    Vector(0.40f, 0.15f, -0.35f),  // gun ready
+    Vector(0.45f, 0.20f, -0.30f),  // aiming at arm's length
+    Vector(0.25f, 0.06f, -0.12f),  // aiming down the sights
+    Vector(0.30f, 0.15f, -0.25f),  // close ready
+    Vector(0.35f, 0.25f, -0.60f),  // low ready
+    Vector(0.15f, 0.30f, -0.10f),  // gun raised beside the head (in front of the shoulder plane)
+};
+
+static void TestAnthropometricReaches()
+{
+    const Layout layout{};
+    const float scale = 43.2f;
+    const Vector eyes(100.0f, 200.0f, 1.65f * scale);
+    const BodyFrame truth = MakeFrame(eyes, 0.0f, false, scale, 1.0f);
+    // The tracked body yaw lags or leads the torso by up to the dead band
+    // (glancing at the hip or the shoulder): the reaches must still land.
+    for (const float yawError : { -30.0f, -20.0f, 0.0f, 20.0f, 30.0f })
+    {
+        const BodyFrame frame = MakeFrame(eyes, yawError, false, scale, 1.0f);
+        for (const Reach& reach : kReaches)
+        {
+            const Vector hand = ToWorld(truth, reach.point);
+            const Zone zone = FindZone(frame, layout, hand, 0x1Fu);
+            if (zone != reach.expected)
+                std::printf("  reach '%s' with yaw error %.0f -> zone %d (expected %d)\n", reach.name, yawError,
+                    static_cast<int>(zone), static_cast<int>(reach.expected));
+            CHECK(zone == reach.expected);
+        }
+        for (const Vector& point : kNotReaches)
+        {
+            const Zone zone = FindZone(frame, layout, ToWorld(truth, point), 0x1Fu);
+            if (zone != Zone::None)
+                std::printf("  hand at (%.2f %.2f %.2f) with yaw error %.0f -> zone %d\n", point.x, point.y, point.z,
+                    yawError, static_cast<int>(zone));
+            CHECK(zone == Zone::None);
+        }
+    }
+}
+
+static void TestNeutralHeadOffset()
+{
+    const Vector bodyForward(1.0f, 0.0f, 0.0f);
+    // Level head: no correction.
+    Vector offset = NeutralHeadOffset(Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), bodyForward, 1.0f);
+    CHECK(Near(offset.x, 0.0f, 1e-4f) && Near(offset.y, 0.0f, 1e-4f) && Near(offset.z, 0.0f, 1e-4f));
+    // Looking 60 degrees down at the hip: the eyes dropped ~0.13 m and moved
+    // forward ~0.04 m; the correction restores the level-head position.
+    const float p = 60.0f * kPi / 180.0f;
+    offset = NeutralHeadOffset(Vector(std::cos(p), 0.0f, -std::sin(p)), Vector(std::sin(p), 0.0f, std::cos(p)),
+        bodyForward, 1.0f);
+    CHECK(offset.z > 0.10f && offset.z < 0.16f);
+    CHECK(offset.x < -0.02f && offset.x > -0.08f);
+    // A right hip reach while looking down still lands in the hip zone.
+    const Layout layout{};
+    const Vector eyesLevel(0.0f, 0.0f, 1.65f);
+    const Vector eyesDown = eyesLevel - offset; // tracked eyes after the head pitched down
+    const BodyFrame looking = MakeFrame(eyesDown + offset, 0.0f, false, 1.0f, 1.0f);
+    const BodyFrame truth = MakeFrame(eyesLevel, 0.0f, false, 1.0f, 1.0f);
+    CHECK(FindZone(looking, layout, ToWorld(truth, Vector(-0.05f, 0.22f, -0.80f)), 0x1Fu) == Zone::Secondary);
+    // Garbage in, no correction.
+    offset = NeutralHeadOffset(Vector(0.0f, 0.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), bodyForward, 1.0f);
+    CHECK(Near(offset.z, 0.0f, 1e-6f));
+}
+
+static void TestHeadYawLookingDown()
+{
+    // Looking 85 degrees down with a little roll: the yaw still faces forward.
+    const float p = 85.0f * kPi / 180.0f;
+    const Vector forward(std::cos(p), 0.02f, -std::sin(p));
+    const Vector up(std::sin(p), 0.0f, std::cos(p));
+    CHECK(std::fabs(HeadYawDegrees(forward, up, 0.0f)) < 3.0f);
+    // Looking up does not flip the yaw.
+    CHECK(std::fabs(HeadYawDegrees(Vector(0.5f, 0.0f, 0.866f), Vector(-0.866f, 0.0f, 0.5f), 0.0f)) < 0.01f);
+    CHECK(Near(HeadYawDegrees(Vector(0.0f, 1.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), 0.0f), 90.0f, 0.01f));
+}
+
+static void TestLegacyMigration()
+{
+    const Layout defaults{};
+    for (int zone = 0; zone < kZoneCount; ++zone)
+    {
+        Vector center = LegacyCenter(zone);
+        float radius = LegacyRadius(zone);
+        MigrateLegacyZone(zone, defaults, center, radius);
+        CHECK(NearlyEqual(center, defaults.center[zone]));
+        CHECK(Near(radius, defaults.radius[zone], 1e-6f));
+    }
+    // A player's own tuning is kept.
+    Vector custom(0.05f, 0.25f, -0.75f);
+    float customRadius = 0.22f;
+    MigrateLegacyZone(1, defaults, custom, customRadius);
+    CHECK(NearlyEqual(custom, Vector(0.05f, 0.25f, -0.75f)) && Near(customRadius, 0.22f, 1e-6f));
+}
+
+static void TestHeadsetSessionPresses()
+{
+    // headset-session3: every right-grip press logged the chest pouch (slot 5)
+    // as the nearest zone centre at 0.25-0.37 m. With the old layout that is a
+    // hand held out in front (gun ready), whatever the body yaw; a reach to
+    // the hip, shoulder or chest would have been within ~0.2 m of its zone.
+    const Vector oldChest = LegacyCenter(4);
+    const Vector ready(0.40f, 0.15f, -0.35f);
+    const Vector d = ready - oldChest;
+    const float distance = std::sqrt(DotProduct(d, d));
+    CHECK(distance > 0.24f && distance < 0.30f);
+    const Layout layout{};
+    const BodyFrame frame = MakeFrame(Vector(0.0f, 0.0f, 0.0f), 0.0f, false, 1.0f, 1.0f);
+    CHECK(FindZone(frame, layout, ToWorld(frame, ready), 0x1Fu) == Zone::None);
+}
+
 int main()
 {
+    TestAnthropometricReaches();
+    TestNeutralHeadOffset();
+    TestHeadYawLookingDown();
+    TestLegacyMigration();
+    TestHeadsetSessionPresses();
     TestWeaponClasses();
     TestDiagPacer();
     TestControlReadyUsesCameraReport();

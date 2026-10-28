@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <string>
 
 static void CheckImpl(bool result, int line)
 {
@@ -264,12 +265,53 @@ static void TestGunBash()
     };
     Check(run(Vector(3.0f, 0.0f, 0.0f), 10) == 1);   // forward shove fires once
     Check(run(Vector(2.5f, 0.0f, -1.5f), 10) == 1);  // 31 degrees down is still a bash
-    Check(run(Vector(0.0f, 3.0f, 0.0f), 10) == 0);   // a sideways sweep is not a push
+    Check(run(Vector(0.0f, 3.0f, 0.0f), 10) == 1);   // a fast sideways sweep in front of the body
+    Check(run(Vector(0.0f, -3.0f, 0.0f), 10) == 1);  // ... either way
+    Check(run(Vector(0.0f, 2.0f, 0.0f), 10) == 0);   // a slower sideways move is aiming, not a sweep
+    Check(run(Vector(0.0f, 2.6f, -2.6f), 10) == 0);  // 45 degrees down is not level (a reload or hip reach)
+    Check(run(Vector(-1.5f, 3.0f, 0.0f), 10) == 0);  // swinging in toward the body (a chest reach)
     Check(run(Vector(0.5f, 0.0f, -3.0f), 10) == 0);  // downward reload motion (80 degrees down)
     Check(run(Vector(0.0f, 0.0f, -3.0f), 10) == 0);  // straight down
     Check(run(Vector(0.8f, 0.0f, 3.0f), 10) == 0);   // up (toward the shoulder)
     Check(run(Vector(-3.0f, 0.0f, 0.0f), 10) == 0);  // pulling the gun back toward the face
-    Check(run(Vector(1.5f, 0.0f, 0.0f), 10) == 0);   // too slow
+    Check(run(Vector(1.4f, 0.0f, 0.0f), 10) == 0);   // too slow
+    {
+        // The sweep is reported as one and shoves toward the gun, level.
+        GunBashDetector detector;
+        Rig rig;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        CountFires(detector, rig, 5, still);
+        GunBashEvent fired{};
+        for (int i = 0; i < 10 && !fired.fired; ++i)
+        {
+            rig.Move(Vector(0.0f, 3.0f, 0.0f), kZero, kZero, true);
+            fired = detector.Update(rig.s);
+        }
+        Check(fired.fired && fired.sweep);
+        Check(std::fabs(fired.direction.z) < 1e-5f && fired.direction.x > 0.5f);
+    }
+    {
+        // Sweeping low at the hip or above the head is not a sweep.
+        for (const float z : { 0.85f, 1.9f })
+        {
+            GunBashDetector detector;
+            Rig rig;
+            rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+            rig.s.handPosition.z = z;
+            CountFires(detector, rig, 5, still);
+            Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(0.0f, 3.0f, 0.0f), kZero, kZero, true); }) == 0);
+        }
+    }
+    {
+        // Sweeps can be turned off.
+        GunBashParams params{};
+        params.sweepEnabled = false;
+        GunBashDetector detector(params);
+        Rig rig;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        CountFires(detector, rig, 5, still);
+        Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(0.0f, 3.0f, 0.0f), kZero, kZero, true); }) == 0);
+    }
     {
         // Pushing forward with the barrel pointing sideways is not a bash.
         GunBashDetector detector;
@@ -453,6 +495,391 @@ static void TestGunBashRealisticReaches()
             std::fprintf(stderr, "a %.2f s push fired %d bash(es), expected 2\n", duration, sim.fired);
         Check(sim.fired == 2);
     }
+}
+
+// Strikes and gun handling from the standing body model, at human speeds.
+static void TestGunBashRealisticStrikes()
+{
+    using namespace realistic;
+    const Vector ready = Body(0.40f, 0.15f, -0.35f);
+    const Vector forward(1.0f, 0.0f, 0.0f);
+    const Vector nowhere = Body(-5, 0, 0);
+    // Pushes along the barrel: 0.20 m in up to 0.2 s, 0.30 m in up to 0.3 s
+    // (peak hand speed 1.9-3.75 m/s).
+    for (const float distance : { 0.20f, 0.30f })
+    {
+        for (const float duration : { 0.12f, 0.15f, 0.2f, 0.25f, 0.3f })
+        {
+            if (duration > distance + 1e-3f)
+                continue;
+            Sim sim(ready);
+            sim.Hold(0.5f);
+            const Vector end = ready + Vector(distance, 0.0f, 0.03f);
+            sim.Move(end, forward, distance / duration, nowhere, 0.0f);
+            sim.Hold(0.3f);
+            sim.Move(ready, forward, 0.6f, nowhere, 0.0f);
+            sim.Hold(0.4f);
+            if (sim.fired != 1)
+                std::fprintf(stderr, "a %.2f m push in %.2f s fired %d bash(es), expected 1\n", distance, duration, sim.fired);
+            Check(sim.fired == 1);
+        }
+    }
+    // Sideways sweeps across the front of the body, both ways, level or a
+    // little downward, the barrel turning with the swing (0.45 m in 0.15-0.3 s).
+    struct Sweep { const char* name; Vector from; Vector to; Vector fromBarrel; Vector toBarrel; };
+    const Sweep sweeps[] = {
+        { "right to left", Body(0.38f, 0.30f, -0.30f), Body(0.42f, -0.15f, -0.32f), Vector(0.8f, -0.6f, 0.0f), Vector(0.8f, 0.6f, 0.0f) },
+        { "left to right", Body(0.40f, -0.10f, -0.30f), Body(0.38f, 0.35f, -0.35f), Vector(0.8f, 0.6f, 0.0f), Vector(0.8f, -0.6f, 0.0f) },
+        { "down and left", Body(0.36f, 0.30f, -0.20f), Body(0.44f, -0.12f, -0.45f), Vector(0.7f, -0.5f, 0.3f), Vector(0.7f, 0.5f, -0.4f) },
+    };
+    for (const Sweep& sweep : sweeps)
+    {
+        for (const float duration : { 0.15f, 0.2f, 0.3f })
+        {
+            Sim sim(sweep.from);
+            sim.barrel = sweep.fromBarrel;
+            sim.Hold(0.5f);
+            sim.Move(sweep.to, sweep.toBarrel, (sweep.to - sweep.from).Length() / duration, nowhere, 0.0f);
+            sim.Hold(0.4f);
+            if (sim.fired != 1)
+                std::fprintf(stderr, "a %s sweep in %.2f s fired %d bash(es), expected 1\n", sweep.name, duration, sim.fired);
+            Check(sim.fired == 1);
+        }
+    }
+
+    // Gun handling that is not a strike.
+    auto expectNone = [](const char* name, Sim& sim) {
+        if (sim.fired != 0)
+            std::fprintf(stderr, "gun bash fired %d time(s) while %s\n", sim.fired, name);
+        Check(sim.fired == 0);
+    };
+    {
+        // Aim sweeps: slow tracking, and a quick re-aim across 0.30 m in 0.3 s.
+        Sim sim(ready);
+        sim.Hold(0.5f);
+        for (int i = 0; i < 3; ++i)
+        {
+            sim.Move(Body(0.42f, -0.10f, -0.33f), Vector(0.9f, 0.4f, 0.0f), 0.6f, nowhere, 0.0f, 20.0f);
+            sim.Move(ready, forward, 0.6f, nowhere, 0.0f, -20.0f);
+            sim.Move(Body(0.42f, 0.45f, -0.33f), Vector(0.9f, -0.45f, 0.0f), 1.0f, nowhere, 0.0f, -30.0f);
+            sim.Move(ready, forward, 1.0f, nowhere, 0.0f, 30.0f);
+        }
+        sim.Hold(0.3f);
+        sim.Move(Body(0.42f, -0.15f, -0.33f), Vector(0.9f, 0.4f, 0.0f), 0.30f / 0.3f, nowhere, 0.0f);
+        sim.Hold(0.3f);
+        sim.Move(Body(0.40f, 0.20f, -0.33f), Vector(0.9f, -0.3f, 0.0f), 0.35f / 0.3f, nowhere, 0.0f);
+        sim.Hold(0.3f);
+        expectNone("aiming", sim);
+    }
+    {
+        // Turning the whole body 90 degrees with the gun raised: the arm swings
+        // round with the head (2.4 m/s at the hand), but nothing struck.
+        for (const float sign : { 1.0f, -1.0f })
+        {
+            Sim sim(ready);
+            sim.Hold(0.5f);
+            const float duration = 0.35f;
+            const Vector offset = ready - Body(0, 0, 0);
+            for (float t = kDt; t <= duration + 1e-4f; t += kDt)
+            {
+                const float yaw = sign * 90.0f * MinJerk(t / duration);
+                sim.headYaw = yaw;
+                const Vector p = Body(0, 0, 0) + RotateYawDeg(offset, yaw);
+                sim.Frame(p, RotateYawDeg(forward, yaw), false);
+            }
+            sim.Hold(0.5f);
+            expectNone("turning the body with the gun raised", sim);
+        }
+    }
+    {
+        // Two-handed aim with the support hand steadying: small, slow motion.
+        Sim sim(ready);
+        for (int i = 0; i < 270; ++i)
+        {
+            const float t = i * kDt;
+            sim.Frame(ready + Vector(0.01f * std::sin(t * 7.0f), 0.015f * std::sin(t * 5.0f), 0.01f * std::sin(t * 9.0f)),
+                forward, false);
+        }
+        expectNone("aiming two-handed", sim);
+    }
+    {
+        // A reload: the gun comes in toward the chest and tilts, the off hand
+        // slaps the magazine home (the gun hand is bumped up), the gun goes back out.
+        Sim sim(ready);
+        sim.Hold(0.5f);
+        const Vector reload = Body(0.28f, 0.02f, -0.42f);
+        for (const float speed : { 0.8f, 1.5f })
+        {
+            sim.Move(reload, Vector(0.6f, 0.6f, 0.5f), speed, nowhere, 0.0f, 10.0f);
+            sim.Hold(0.4f);
+            sim.Move(reload + Vector(0.0f, 0.0f, 0.03f), Vector(0.6f, 0.6f, 0.5f), 1.0f, nowhere, 0.0f);
+            sim.Move(reload, Vector(0.6f, 0.6f, 0.5f), 1.0f, nowhere, 0.0f);
+            sim.Hold(0.3f);
+            // Rolling the gun to look at the ejection port, then racking it.
+            sim.Move(reload, Vector(0.5f, -0.5f, 0.7f), 0.5f, nowhere, 0.0f);
+            sim.Move(reload, Vector(0.6f, 0.6f, 0.5f), 0.5f, nowhere, 0.0f);
+            sim.Move(ready, forward, speed, nowhere, 0.0f, -10.0f);
+            sim.Hold(0.5f);
+        }
+        expectNone("reloading", sim);
+    }
+}
+
+// The whole client path: the game places the hands in the world from tracking
+// poses (the formula of VR::UpdateTracking: pivot about the head by the stick
+// yaw, offset by the camera anchor), and the gesture code maps them back with
+// a TrackingFrame. Artificial locomotion must never bash; real strikes during
+// it still do.
+namespace locomotion
+{
+    constexpr float kScale = 43.2f; // world units per metre (Source body scale)
+
+    struct Game
+    {
+        // Physical state, tracking space, metres.
+        // Standing away from the room centre; the game.s accumulated head offset
+        // (hmdCorrected) drifts further over a session.
+        Vector hmdLocal{ 3.0f, -2.0f, 1.65f };
+        float headYawLocal = 30.0f;
+        Vector handLocal{};                      // set from the body model below
+        Vector handForwardLocal{ 1.0f, 0.0f, 0.0f };
+        // Game state.
+        Vector anchor{ 6300.0f, -640.0f, 900.0f }; // world units, includes the 64-unit eye height
+        float yaw = 120.0f;
+        Vector hmdCorrected{};
+        Vector hmdLocalPrev{};
+        bool started = false;
+
+        // The game's own placement (vr_tracking.inl), in world units.
+        void Place(Vector& hmdWorld, Vector& handWorld, Vector& handForwardWorld, Vector& hmdForwardWorld)
+        {
+            if (!started)
+            {
+                hmdCorrected = hmdLocal;
+                hmdLocalPrev = hmdLocal;
+                started = true;
+            }
+            Vector corrected = hmdCorrected + (hmdLocal - hmdLocalPrev);
+            VectorPivotXY(corrected, hmdCorrected, yaw);
+            hmdCorrected = corrected;
+            hmdLocalPrev = hmdLocal;
+            const Vector base = anchor - Vector(0.0f, 0.0f, 64.0f);
+            hmdWorld = base + hmdCorrected * kScale;
+            Vector hand = hmdCorrected + (handLocal - hmdLocal);
+            VectorPivotXY(hand, hmdCorrected, yaw);
+            handWorld = base + hand * kScale;
+            const float handYaw = std::atan2(handForwardLocal.y, handForwardLocal.x) / kDegToRad + yaw;
+            const float handPitch = std::asin(std::max(-1.0f, std::min(1.0f, handForwardLocal.z)));
+            handForwardWorld = Vector(std::cos(handPitch) * std::cos(handYaw * kDegToRad),
+                std::cos(handPitch) * std::sin(handYaw * kDegToRad), std::sin(handPitch));
+            const float headYaw = (headYawLocal + yaw) * kDegToRad;
+            hmdForwardWorld = Vector(std::cos(headYaw), std::sin(headYaw), 0.0f);
+        }
+        TrackingFrame Frame() const
+        {
+            TrackingFrame frame{};
+            frame.origin = anchor - Vector(0.0f, 0.0f, 64.0f);
+            frame.yawDeg = yaw;
+            frame.hmdCorrected = hmdCorrected;
+            frame.hmdLocal = hmdLocal;
+            frame.scale = kScale;
+            return frame;
+        }
+    };
+
+    // Body-model hand point (x forward, y right, z up from the eyes) for a head yaw.
+    static Vector HandAt(const Game& g, float x, float yRight, float z)
+    {
+        return g.hmdLocal + RotateYawDeg(Vector(x, -yRight, z), g.headYawLocal);
+    }
+
+    struct Pipeline
+    {
+        Game game;
+        TrackingSampler sampler;
+        GunBashDetector detector;
+        float time = 1.0f;
+        int frame = 0;
+        int fired = 0, sweeps = 0;
+        // The pre-fix client: anchor-pivot body frame, float time since boot, head velocity
+        // differentiated by the detector over the sample clock.
+        GunBashDetector legacy;
+        double legacyClock = 274380.0; // three days of uptime
+        Vector legacyPrevHand{};
+        bool legacyHas = false;
+        int legacyFired = 0;
+
+        void Step(float dt)
+        {
+            ++frame;
+            time += dt;
+            Vector hmdWorld{}, handWorld{}, handForwardWorld{}, hmdForwardWorld{};
+            game.Place(hmdWorld, handWorld, handForwardWorld, hmdForwardWorld);
+            const TrackingFrame f = game.Frame();
+            const Sample s = sampler.Build(time, f.ToTrackingPoint(handWorld), f.ToTrackingDirection(handForwardWorld),
+                kZero, f.ToTrackingPoint(hmdWorld), f.ToTrackingDirection(hmdForwardWorld), Vector(0.0f, 0.0f, 1.0f));
+            const GunBashEvent e = detector.Update(s);
+            if (e.fired) { ++fired; if (e.sweep) ++sweeps; }
+
+            legacyClock += dt;
+            Sample l{};
+            l.time = static_cast<float>(legacyClock);
+            auto toBody = [&](const Vector& p) { return RotateYawDeg(p - game.anchor, -game.yaw) * (1.0f / kScale); };
+            l.handPosition = toBody(handWorld);
+            l.handForward = RotateYawDeg(handForwardWorld, -game.yaw);
+            if (legacyHas) l.handVelocity = (l.handPosition - legacyPrevHand) * (1.0f / dt);
+            legacyPrevHand = l.handPosition;
+            legacyHas = true;
+            l.hmdPosition = toBody(hmdWorld);
+            l.hmdForward = RotateYawDeg(hmdForwardWorld, -game.yaw);
+            l.hmdUp = Vector(0.0f, 0.0f, 1.0f);
+            if (legacy.Update(l).fired) ++legacyFired;
+        }
+    };
+
+    // Frame times of a 90 Hz headset with jitter.
+    static float FrameDt(int frame) { return kDt * (1.0f + 0.12f * std::sin(frame * 1.7f)); }
+}
+
+static void TestLocomotionNeverBashes()
+{
+    using namespace locomotion;
+    auto ready = [](Pipeline& p) {
+        p.game.handLocal = HandAt(p.game, 0.40f, 0.15f, -0.35f);
+        p.game.handForwardLocal = RotateYawDeg(Vector(1.0f, 0.0f, 0.0f), p.game.headYawLocal);
+    };
+    auto run = [&](Pipeline& p, float seconds, const auto& drive) {
+        for (float t = 0.0f; t < seconds;)
+        {
+            const float dt = FrameDt(p.frame);
+            drive(p, t, dt);
+            p.Step(dt);
+            t += dt;
+        }
+    };
+    auto settle = [&](Pipeline& p) { run(p, 0.5f, [&](Pipeline& q, float, float) { ready(q); }); };
+
+    struct Scene { const char* name; void (*drive)(Pipeline&, float, float); float seconds; };
+    const Scene scenes[] = {
+        { "smooth turning at full stick (300 deg/s), both ways", [](Pipeline& p, float t, float dt) {
+            p.game.yaw += (t < 3.0f ? -300.0f : 300.0f) * dt; }, 6.0f },
+        { "snap turning 45 degrees", [](Pipeline& p, float t, float dt) {
+            const int step = static_cast<int>(t / 0.3f), prev = static_cast<int>((t - dt) / 0.3f);
+            if (t > 0.0f && step != prev) p.game.yaw += (step % 8 < 4) ? 45.0f : -45.0f; }, 4.0f },
+        { "walking at full speed while turning", [](Pipeline& p, float t, float dt) {
+            const float heading = (p.game.yaw + p.game.headYawLocal) * kDegToRad;
+            p.game.anchor = p.game.anchor + Vector(std::cos(heading), std::sin(heading), 0.0f) * (220.0f * dt);
+            p.game.yaw += 150.0f * std::sin(t * 2.0f) * dt; }, 5.0f },
+        { "teleports, ladders and being pushed", [](Pipeline& p, float t, float dt) {
+            const int step = static_cast<int>(t / 0.7f), prev = static_cast<int>((t - dt) / 0.7f);
+            if (t > 0.0f && step != prev) p.game.anchor = p.game.anchor + Vector(300.0f, -120.0f, 40.0f); // teleport
+            if (t > 1.0f && t < 2.5f) p.game.anchor.z += 110.0f * dt;                                        // ladder
+            if (t > 3.0f && t < 3.12f) p.game.anchor = p.game.anchor + Vector(-350.0f * dt, 200.0f * dt, 0.0f); // charger hit
+            }, 4.0f },
+        { "looking around while turning", [](Pipeline& p, float t, float dt) {
+            p.game.headYawLocal = 30.0f + 50.0f * std::sin(t * 3.0f);
+            p.game.yaw -= 200.0f * dt; }, 4.0f },
+        { "walking around the room (head and hand together)", [](Pipeline& p, float t, float dt) {
+            const Vector step = Vector(std::cos(t), std::sin(t * 0.7f), 0.0f) * (1.2f * dt);
+            p.game.hmdLocal = p.game.hmdLocal + step;
+            p.game.handLocal = p.game.handLocal + step;
+            p.game.yaw += 100.0f * dt; }, 4.0f },
+    };
+    for (const Scene& scene : scenes)
+    {
+        Pipeline p;
+        settle(p);
+        run(p, scene.seconds, [&](Pipeline& q, float t, float dt) {
+            if (std::string(scene.name).find("room") == std::string::npos) ready(q);
+            scene.drive(q, t, dt);
+        });
+        if (p.fired != 0)
+            std::fprintf(stderr, "gun bash fired %d time(s) while %s\n", p.fired, scene.name);
+        Check(p.fired == 0);
+        if (std::string(scene.name).find("smooth turning") != std::string::npos)
+        {
+            // The scene is not vacuous: the pre-fix client fired here.
+            std::printf("  legacy client bashed %d time(s) while %s\n", p.legacyFired, scene.name);
+            Check(p.legacyFired > 0);
+        }
+    }
+
+    // Real strikes during artificial locomotion still register, once each.
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        Pipeline p;
+        settle(p);
+        auto locomote = [mode](Pipeline& q, float t, float dt) {
+            if (mode == 0) q.game.yaw -= 300.0f * dt;
+            if (mode == 1)
+            {
+                const int step = static_cast<int>(t / 0.25f), prev = static_cast<int>((t - dt) / 0.25f);
+                if (t > 0.0f && step != prev) q.game.yaw += 45.0f;
+            }
+            if (mode == 2) q.game.anchor = q.game.anchor + Vector(220.0f * dt, 0.0f, 0.0f);
+        };
+        auto strike = [&](bool sweep) {
+            const Vector from = sweep ? HandAt(p.game, 0.38f, 0.30f, -0.30f) : HandAt(p.game, 0.40f, 0.15f, -0.35f);
+            const Vector to = sweep ? HandAt(p.game, 0.42f, -0.15f, -0.32f) : HandAt(p.game, 0.68f, 0.15f, -0.32f);
+            run(p, 0.4f, [&](Pipeline& q, float t, float dt) { q.game.handLocal = from; locomote(q, t, dt); });
+            run(p, 0.2f, [&](Pipeline& q, float t, float dt) {
+                q.game.handLocal = from + (to - from) * realistic::MinJerk(t / 0.2f);
+                locomote(q, t, dt); });
+            run(p, 0.4f, [&](Pipeline& q, float t, float dt) { q.game.handLocal = to; locomote(q, t, dt); });
+            run(p, 0.5f, [&](Pipeline& q, float t, float dt) {
+                q.game.handLocal = to + (HandAt(q.game, 0.40f, 0.15f, -0.35f) - to) * realistic::MinJerk(t / 0.5f);
+                locomote(q, t, dt); });
+            run(p, 0.3f, [&](Pipeline& q, float t, float dt) { ready(q); locomote(q, t, dt); });
+        };
+        strike(false);
+        strike(true);
+        if (p.fired != 2 || p.sweeps != 1)
+            std::fprintf(stderr, "strikes during locomotion mode %d: %d fired (%d sweeps), expected 2 (1)\n", mode, p.fired, p.sweeps);
+        Check(p.fired == 2 && p.sweeps == 1);
+    }
+}
+
+static void TestTrackingFrameAndClock()
+{
+    // The tracking frame inverts the game's placement exactly, whatever the turn.
+    locomotion::Game game;
+    game.handLocal = locomotion::HandAt(game, 0.4f, 0.15f, -0.35f);
+    for (const float yaw : { 0.0f, 45.0f, 137.0f, 271.0f, 359.0f })
+    {
+        game.yaw = yaw;
+        Vector hmdWorld{}, handWorld{}, handForwardWorld{}, hmdForwardWorld{};
+        game.Place(hmdWorld, handWorld, handForwardWorld, hmdForwardWorld);
+        const TrackingFrame f = game.Frame();
+        Check(f.Valid());
+        Check((f.ToTrackingPoint(handWorld) - game.handLocal).Length() < 1e-3f);
+        Check((f.ToTrackingPoint(hmdWorld) - game.hmdLocal).Length() < 1e-3f);
+        Check((f.ToWorldPoint(game.handLocal) - handWorld).Length() < 0.05f); // world units
+        Check((f.ToTrackingDirection(handForwardWorld) - game.handForwardLocal).Length() < 1e-4f);
+    }
+    TrackingFrame bad{};
+    bad.scale = 0.0f;
+    Check(!bad.Valid());
+
+    // Session time keeps 11 ms frames distinct after days of uptime.
+    SessionClock clock;
+    float a = 0.0f, b = 0.0f;
+    Check(clock.Seconds(274380.0, a));
+    Check(clock.Seconds(274380.011, b));
+    Check(b - a > 0.0105f && b - a < 0.0115f);
+    Check(clock.Seconds(274380.0 + 1700.0, b) && b > 1700.0f);
+    Check(!clock.Seconds(274380.0 + 1900.0, b) && b == SessionClock::kStart); // rebased
+    Check(!clock.Seconds(1000.0, b));                                         // clock went backwards
+    Check(static_cast<float>(274380.011) == static_cast<float>(274380.0) ||
+        static_cast<float>(274380.022) - static_cast<float>(274380.0) != 0.022f); // why: raw float time is coarse
+
+    // The sampler differentiates hand and head over the same interval.
+    TrackingSampler sampler;
+    Sample s = sampler.Build(1.0f, Vector(0, 0, 0), Vector(1, 0, 0), kZero, Vector(0, 0, 1), Vector(1, 0, 0), Vector(0, 0, 1));
+    Check(s.hasHmdVelocity && s.handVelocity.Length() == 0.0f);
+    s = sampler.Build(1.01f, Vector(0.03f, 0, 0), Vector(1, 0, 0), kZero, Vector(0.01f, 0, 1), Vector(1, 0, 0), Vector(0, 0, 1));
+    Check(std::fabs(s.handVelocity.x - 3.0f) < 0.01f && std::fabs(s.hmdVelocity.x - 1.0f) < 0.01f);
+    s = sampler.Build(1.5f, Vector(0.5f, 0, 0), Vector(1, 0, 0), kZero, Vector(0.01f, 0, 1), Vector(1, 0, 0), Vector(0, 0, 1));
+    Check(s.handVelocity.Length() == 0.0f); // a hitch restarts
 }
 
 static void TestPills()
@@ -699,6 +1126,9 @@ int main()
     TestThrust();
     TestGunBash();
     TestGunBashRealisticReaches();
+    TestGunBashRealisticStrikes();
+    TestTrackingFrameAndClock();
+    TestLocomotionNeverBashes();
     TestPills();
     TestAdrenaline();
     TestSampleGapRestartsTiming();

@@ -413,6 +413,8 @@ ScopeParallaxStrength=1.0
 ScopeEyeboxDeg=8
 ScopeVignetteExponent=0.25
 PhysicalShoveEnabled=true
+# A fast, level, sideways swing of the gun in front of the body also bashes (shoves toward the gun).
+GunBashSweepEnabled=true
 HolsterReleaseDrop=true
 # Toggle grips (Pavlov style): one firm squeeze takes an item and the hand keeps it;
 # the next squeeze lets it go (puts it away inside its holster, drops it elsewhere).

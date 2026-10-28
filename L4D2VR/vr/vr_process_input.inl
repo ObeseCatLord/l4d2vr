@@ -208,8 +208,19 @@ void VR::ProcessInput()
     }
 
     vr::InputAnalogActionData_t analogActionData;
+    bool turnActionRead = GetAnalogActionData(m_ActionTurn, analogActionData);
+    if (m_SelfTestEnabled && m_SelfTestTurnStickActive)
+    {
+        // Self-test: a scripted right stick through the real turn path.
+        if (!turnActionRead)
+            analogActionData = {};
+        analogActionData.bActive = true;
+        analogActionData.x = m_SelfTestTurnStickX;
+        analogActionData.y = 0.0f;
+        turnActionRead = true;
+    }
 
-    if (GetAnalogActionData(m_ActionTurn, analogActionData))
+    if (turnActionRead)
     {
         auto applyTurnFromStick = [&](float stickX)
             {

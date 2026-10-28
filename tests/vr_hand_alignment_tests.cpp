@@ -111,4 +111,67 @@ int main()
         Check(Near(l4d2vr_ammo_grip::Origin(translated)-l4d2vr_ammo_grip::Origin(held),motion));
     }
     Check(!l4d2vr_ammo_grip::BodyWorld(Vector(0.0f,0.0f,1.0f),Vector(0.0f,-1.0f,0.0f),p,boxCenter,held));
+
+    // Natural hold: with the off hand turned as the gun hand and raised by the
+    // tilt, the spare sits exactly as the magazine sits in the well, whatever
+    // the gun's pose and the magazine bone's axes.
+    auto sameRotation=[](const VrHandMatrix4& a,const VrHandMatrix4& b)
+    {
+        for (int col=0;col<3;++col) if (!Near(l4d2vr_ammo_grip::Axis(a,col),l4d2vr_ammo_grip::Axis(b,col))) return false;
+        return true;
+    };
+    const Vector boneTurns[]={Vector(0.0f,0.0f,0.0f),Vector(-90.0f,0.0f,90.0f),Vector(30.0f,170.0f,-20.0f),Vector(0.0f,180.0f,0.0f)};
+    for (int i=0;i<8;++i)
+    {
+        const float step=static_cast<float>(i);
+        const auto gun=VrHandMath::BuildControllerWorld(Vector(step*5.0f,-10.0f,60.0f),
+            QAngle(-30.0f+step*9.0f,step*47.0f,step*13.0f),units,1.0f/units,zero,zero);
+        for (const Vector& turn : boneTurns)
+        {
+            auto well=VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(turn));
+            VrHandMath::Set(well,0,3,VrHandMath::Get(well,0,3)+12.0f); // the well is ahead of the hand
+            for (float tilt : {0.0f,5.0f,15.0f})
+            {
+                VrHandMatrix4 hold{};
+                Check(l4d2vr_ammo_grip::NaturalHold(gun,well,tilt,zero,hold) && l4d2vr_ammo_grip::Rigid(hold));
+                const auto natural=VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(tilt,0.0f,0.0f)));
+                const auto spare=VrHandMath::Multiply(natural,hold);
+                Check(sameRotation(spare,well));
+                Check(l4d2vr_ammo_grip::AngleBetweenDeg(spare,well)<0.1f);
+                // Raising the hand nose-up really points it up: the forward
+                // axis (-z) gains height toward the gun's up.
+                Check(VrHandMath::Dot(l4d2vr_ammo_grip::Axis(natural,2)*-1.0f,l4d2vr_ammo_grip::Axis(gun,1))>=
+                    std::sin(tilt*3.14159265f/180.0f)-0.001f);
+                // Held parallel to the gun hand the spare leans by the tilt.
+                Check(std::fabs(l4d2vr_ammo_grip::AngleBetweenDeg(VrHandMath::Multiply(gun,hold),well)-tilt)<0.1f);
+                // The configured rotation turns it further in the hand.
+                VrHandMatrix4 turned{};
+                const Vector extra(10.0f,-20.0f,5.0f);
+                Check(l4d2vr_ammo_grip::NaturalHold(gun,well,tilt,extra,turned));
+                Check(sameRotation(turned,VrHandMath::Multiply(l4d2vr_ammo_grip::Calibration(extra),hold)));
+                // The Calibration angles read back.
+                Check(sameRotation(l4d2vr_ammo_grip::Calibration(l4d2vr_ammo_grip::CalibrationDegrees(hold)),hold));
+            }
+        }
+    }
+    {
+        const auto gun=VrHandMath::BuildControllerWorld(p,angle,units,1.0f/units,zero,zero);
+        auto mirrored=gun;
+        for (int row=0;row<3;++row) VrHandMath::Set(mirrored,row,0,-VrHandMath::Get(mirrored,row,0));
+        VrHandMatrix4 hold{};
+        Check(!l4d2vr_ammo_grip::NaturalHold(gun,mirrored,15.0f,zero,hold));
+        Check(!l4d2vr_ammo_grip::NaturalHold(gun,gun,std::numeric_limits<float>::quiet_NaN(),zero,hold));
+        // Capture with a hold matrix keeps it.
+        l4d2vr_ammo_grip::Pose pose{};
+        const auto turn=l4d2vr_ammo_grip::Calibration(Vector(20.0f,-50.0f,70.0f));
+        Check(l4d2vr_ammo_grip::Capture(gun,turn,Point(gun,palmLocal),boxCenter,gripPoint,pose));
+        Check(sameRotation(pose.orientationLocal,turn));
+        // The well accepts a spare only facing the way it goes in.
+        const float minDot=std::cos(45.0f*3.14159265f/180.0f);
+        Check(l4d2vr_ammo_grip::AxesAgree(gun,gun,minDot));
+        Check(l4d2vr_ammo_grip::AxesAgree(VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(30.0f,0.0f,0.0f))),gun,minDot));
+        Check(!l4d2vr_ammo_grip::AxesAgree(VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(60.0f,0.0f,0.0f))),gun,minDot));
+        Check(!l4d2vr_ammo_grip::AxesAgree(VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(0.0f,180.0f,0.0f))),gun,minDot)); // backwards
+        Check(!l4d2vr_ammo_grip::AxesAgree(VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(180.0f,0.0f,0.0f))),gun,minDot)); // upside down
+    }
 }

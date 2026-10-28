@@ -101,6 +101,28 @@ namespace l4d2vr_reload_tuning
 
     constexpr float kSlapReinsertSeconds = 0.15f;
 
+    // How a spare magazine (or shell) sits in the hand. Pavlov attaches a held
+    // item at its PickRotationOffset from the motion controller: magazines at
+    // pitch -75 deg, the guns that feed from them at -60 (Gun_Base: M16, AK,
+    // SCAR, MP5, shotguns, whose Magazine_PumpShotgun shell is also -75) or -70
+    // (M9, Desert Eagle, Glock, Uzi). So a magazine is held as its gun is held,
+    // upright with its top leaning this many degrees further forward; the hand
+    // comes up a little nose-high to seat it. Guns whose magazine goes into the
+    // pistol grip (pistols, Uzi, MAC-10) lean 5 deg, the rest 15 deg.
+    inline float MagazineHoldTiltDeg(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 1:  // pistol      <- M9
+        case 32: // magnum      <- Desert Eagle
+        case 2:  // uzi         <- Uzi
+        case 7:  // mac10       <- Uzi (magazine in the grip)
+            return 5.0f;
+        default:
+            return 15.0f;
+        }
+    }
+
     inline bool SlapForWeapon(int weaponId, Slap& out)
     {
         switch (weaponId)

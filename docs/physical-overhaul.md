@@ -95,7 +95,7 @@ Before trusting a new game build, run `l4d2vr_server_symcheck <path to server_sr
 
 ## Controls (physical layout)
 
-Both grips draw from holsters and hold magazines, bolts and foregrips; right A releases the magazine; the right stick click jumps; left trigger shoves, or fires the left pistol in akimbo. Oculus Touch, Index (Knuckles) and Vive Cosmos defaults follow this layout.
+Both grips are used only for gripping: they draw from holsters and hold magazines, bolts and foregrips. On Index the grips respond to a firm, full-hand squeeze (squeeze value 0.85 right, 0.8 left). Right A releases the magazine. Push the right stick forward to jump and pull it back to crouch (hold; `StickJumpCrouch`); turning pauses while the stick is pushed mostly forward or back, and clicking the right stick also jumps. Left trigger shoves, or fires the left pistol in akimbo. Oculus Touch, Index (Knuckles) and Vive Cosmos defaults follow this layout.
 
 ## Self-test (developers)
 

@@ -2985,6 +2985,160 @@
             target == g_HooksWorldPoseWeaponSetupBonesTarget.load(std::memory_order_acquire);
     }
 
+    // Model and model name of a holstered item's renderable, for diagnostics.
+    void HooksHolsterDiagReadModelSafe(Game* game, void* renderable, char* name, size_t nameSize)
+    {
+        if (!name || nameSize == 0)
+            return;
+        name[0] = '\0';
+        if (!game || !game->m_ModelInfo || !renderable)
+            return;
+#ifdef _MSC_VER
+        __try
+        {
+#endif
+            void** const vtable = *reinterpret_cast<void***>(renderable);
+            if (!vtable || !vtable[8])
+                return;
+            using GetModelFn = void* (__thiscall*)(void*);
+            void* const model = reinterpret_cast<GetModelFn>(vtable[8])(renderable);
+            const char* const modelName = model ? game->m_ModelInfo->GetModelName(model) : nullptr;
+            std::snprintf(name, nameSize, "%s", modelName ? modelName : "<no model>");
+#ifdef _MSC_VER
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            std::snprintf(name, nameSize, "<fault>");
+        }
+#endif
+    }
+
+    // [VR][HolsterDraw] report: every gate between the holster snapshot and the
+    // pixels, the snapshot items with their world placement relative to the
+    // head, and what the render path did since the previous report.
+    void HooksHolsterDrawDiagnosticsMainThread(VR* vr, Game* game)
+    {
+        if (!vr || !game || !game->m_EngineClient || !game->m_EngineClient->IsInGame())
+            return;
+
+        const bool itemsEnabled = HooksHolsterItemsEnabled(vr);
+        const bool controlReady = vr->m_FirstPersonControlReady.load(std::memory_order_acquire);
+        const bool camera = g_FirstPersonCameraActualFirstPerson.load(std::memory_order_acquire);
+        const bool bodyHooks = g_FirstPersonBodyRenderableHooksReady.load(std::memory_order_acquire);
+        const bool setupBonesHook = g_HooksWorldPoseWeaponSetupBonesHookReady.load(std::memory_order_acquire);
+        void* const setupBonesTarget = g_HooksWorldPoseWeaponSetupBonesTarget.load(std::memory_order_acquire);
+        VR::HolsterRenderSnapshot snapshot{};
+        vr->GetHolsterRenderSnapshot(snapshot);
+
+        std::uint32_t slotMask = 0u;
+        std::uint32_t placeableMask = 0u;
+        for (int i = 0; i < snapshot.count; ++i)
+        {
+            const VR::HolsterRenderItem& item = snapshot.items[i];
+            if (item.slot < 0 || item.slot >= l4d2vr_holster::kZoneCount)
+                continue;
+            slotMask |= 1u << item.slot;
+            if (HooksHolsterItemBonesPlaceable(item.renderable))
+                placeableMask |= 1u << item.slot;
+        }
+        const bool healthy =
+            g_HolsterDrawDiag.drawOk.load(std::memory_order_relaxed) != 0u &&
+            g_HolsterDrawDiag.setupBonesPlaced.load(std::memory_order_relaxed) != 0u;
+        const std::uint64_t key =
+            (itemsEnabled ? 1u : 0u) | (vr->m_IsVREnabled ? 2u : 0u) | (controlReady ? 4u : 0u) |
+            (camera ? 8u : 0u) | (vr->m_IsThirdPersonCamera ? 16u : 0u) | (vr->m_FirstPersonBodyEnabled ? 32u : 0u) |
+            (bodyHooks ? 64u : 0u) | (setupBonesHook ? 128u : 0u) | (healthy ? 256u : 0u) |
+            (static_cast<std::uint64_t>(slotMask) << 16) | (static_cast<std::uint64_t>(placeableMask) << 24);
+        // Every 5 s while the holsters are not drawing, every 30 s once they
+        // are, and on any gate change (at most every 2 s).
+        const std::uint64_t periodMs = !itemsEnabled ? ~0ull : (healthy ? 30000u : 5000u);
+        static l4d2vr_holster::DiagPacer s_Pacer;
+        static std::uint64_t s_LastReportMs = 0;
+        const std::uint64_t nowMs = GetTickCount64();
+        if (!s_Pacer.Due(nowMs, key, 2000u, periodMs))
+            return;
+        const float intervalSeconds = s_LastReportMs ? (nowMs - s_LastReportMs) / 1000.0f : 0.0f;
+        s_LastReportMs = nowMs;
+
+        Game::logMsg("[VR][HolsterDraw] gates: items=%d (bodyGrip=%d pavlov=%d visible=%d) vr=%d controlReady=%d camera1P=%d thirdPerson=%d body=%d bodyHooks=%d setupBonesHook=%d target=%p queue=%d snapshot=%d serial=%u highlight=slot%d",
+            itemsEnabled ? 1 : 0, vr->m_BodyGripInventoryEnabled ? 1 : 0, vr->m_HolsterPavlovLayoutEnabled ? 1 : 0,
+            vr->m_HolsterItemsVisible ? 1 : 0, vr->m_IsVREnabled ? 1 : 0, controlReady ? 1 : 0, camera ? 1 : 0,
+            vr->m_IsThirdPersonCamera ? 1 : 0, vr->m_FirstPersonBodyEnabled ? 1 : 0, bodyHooks ? 1 : 0,
+            setupBonesHook ? 1 : 0, setupBonesTarget, game->GetMatQueueMode(), snapshot.count, snapshot.serial,
+            vr->m_HolsterHighlightSlot.load(std::memory_order_acquire) + 1);
+
+        l4d2vr_holster::BodyFrame frame{};
+        const bool frameValid = vr->GetHolsterBodyFrame(frame);
+        if (snapshot.count > 0 || frameValid)
+        {
+            char line[1024];
+            int length = std::snprintf(line, sizeof(line), "[VR][HolsterDraw] snapshot: frame=%d head=(%.1f %.1f %.1f) hmd=(%.1f %.1f %.1f) unitsPerMeter=%.1f",
+                frameValid ? 1 : 0, frame.head.x, frame.head.y, frame.head.z,
+                vr->m_HmdPosAbs.x, vr->m_HmdPosAbs.y, vr->m_HmdPosAbs.z, frame.unitsPerMeter);
+            for (int i = 0; i < snapshot.count && length > 0 && length < static_cast<int>(sizeof(line)); ++i)
+            {
+                const VR::HolsterRenderItem& item = snapshot.items[i];
+                char modelName[96];
+                HooksHolsterDiagReadModelSafe(game, item.renderable, modelName, sizeof(modelName));
+                void* itemTarget = nullptr;
+                HooksWorldPoseProbeWeaponSetupBonesTarget(item.renderable, itemTarget);
+                l4d2vr_holster::ItemPose pose{};
+                const bool poseValid = vr->BuildHolsterItemWorld(item, pose);
+                const Vector local = frameValid ? l4d2vr_holster::ToLocal(frame, pose.origin) : Vector(0.0f, 0.0f, 0.0f);
+                const float distanceMeters = frameValid
+                    ? (pose.origin - frame.head).Length() / (std::max)(1.0f, frame.unitsPerMeter) : 0.0f;
+                length += std::snprintf(line + length, sizeof(line) - length,
+                    " | slot%d id=%d ent=%d model=%s placeable=%d setupBones=%p pose=%d at=(%.1f %.1f %.1f) %.2fm local(fwd,dom,up)=(%.2f %.2f %.2f)",
+                    item.slot + 1, item.weaponId, item.entityIndex, modelName,
+                    HooksHolsterItemBonesPlaceable(item.renderable) ? 1 : 0, itemTarget, poseValid ? 1 : 0,
+                    pose.origin.x, pose.origin.y, pose.origin.z, distanceMeters, local.x, local.y, local.z);
+            }
+            Game::logMsg("%s", line);
+        }
+
+        HooksHolsterDrawDiagSample sample{};
+        {
+            std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
+            sample = g_HolsterDrawDiagSample;
+            g_HolsterDrawDiagSample = HooksHolsterDrawDiagSample{};
+        }
+        auto take = [](std::atomic<uint32_t>& counter) { return counter.exchange(0u, std::memory_order_relaxed); };
+        const uint32_t eyeTokens = take(g_HolsterDrawDiag.eyeTokens);
+        const uint32_t eyeBlocked = take(g_HolsterDrawDiag.eyeBlocked);
+        const uint32_t eyeBlockBits = take(g_HolsterDrawDiag.eyeBlockBits);
+        const uint32_t viewmodelDraws = take(g_HolsterDrawDiag.viewmodelDraws);
+        const uint32_t stageGateSkips = take(g_HolsterDrawDiag.stageGateSkips);
+        const uint32_t stageGateBits = take(g_HolsterDrawDiag.stageGateBits);
+        const uint32_t stageNoClaim = take(g_HolsterDrawDiag.stageNoClaim);
+        const uint32_t stageSubmits = take(g_HolsterDrawDiag.stageSubmits);
+        const uint32_t bodyStageSubmits = take(g_HolsterDrawDiag.bodyStageSubmits);
+        const uint32_t submitDisabled = take(g_HolsterDrawDiag.submitDisabled);
+        const uint32_t submitEmpty = take(g_HolsterDrawDiag.submitEmpty);
+        const uint32_t items = take(g_HolsterDrawDiag.items);
+        const uint32_t itemUnplaceable = take(g_HolsterDrawDiag.itemUnplaceable);
+        const uint32_t itemPoseFailed = take(g_HolsterDrawDiag.itemPoseFailed);
+        const uint32_t itemNoModel = take(g_HolsterDrawDiag.itemNoModel);
+        const uint32_t itemException = take(g_HolsterDrawDiag.itemException);
+        const uint32_t drawOk = take(g_HolsterDrawDiag.drawOk);
+        const uint32_t drawZero = take(g_HolsterDrawDiag.drawZero);
+        const uint32_t setupBonesCalls = take(g_HolsterDrawDiag.setupBonesCalls);
+        const uint32_t setupBonesFailed = take(g_HolsterDrawDiag.setupBonesFailed);
+        const uint32_t setupBonesPlaced = take(g_HolsterDrawDiag.setupBonesPlaced);
+        const float scale = (std::max)(1.0f, vr->m_VRScale);
+        Game::logMsg("[VR][HolsterDraw] render %.1fs: eyes token=%u blocked=%u(bits 0x%X) vmDraws=%u gateSkips=%u(bits 0x%X) noClaim=%u vmSubmits=%u bodySubmits=%u disabled=%u empty=%u items=%u unplaceable=%u poseFail=%u noModel=%u fault=%u drawOk=%u drawZero=%u lastRet=%d setupBones=%u failed=%u placed=%u | eye=(%.1f %.1f %.1f) lastDraw slot%d=(%.1f %.1f %.1f) %.2fm from eye, root %d (%.1f %.1f %.1f)->(%.1f %.1f %.1f) moved %.2fm",
+            intervalSeconds, eyeTokens, eyeBlocked, eyeBlockBits, viewmodelDraws, stageGateSkips, stageGateBits,
+            stageNoClaim, stageSubmits, bodyStageSubmits, submitDisabled, submitEmpty, items, itemUnplaceable,
+            itemPoseFailed, itemNoModel, itemException, drawOk, drawZero,
+            g_HolsterDrawDiag.lastDrawResult.load(std::memory_order_relaxed), setupBonesCalls, setupBonesFailed,
+            setupBonesPlaced,
+            sample.eyeOrigin.x, sample.eyeOrigin.y, sample.eyeOrigin.z, sample.drawSlot + 1,
+            sample.drawOrigin.x, sample.drawOrigin.y, sample.drawOrigin.z,
+            (sample.eyeValid && sample.drawValid) ? (sample.drawOrigin - sample.eyeOrigin).Length() / scale : -1.0f,
+            sample.rootValid ? 1 : 0, sample.rootBefore.x, sample.rootBefore.y, sample.rootBefore.z,
+            sample.rootAfter.x, sample.rootAfter.y, sample.rootAfter.z,
+            sample.rootValid ? (sample.rootAfter - sample.rootBefore).Length() / scale : -1.0f);
+    }
+
     inline bool HooksWorldPoseApplyWeaponSetupBones(
         VR* vr,
         Game* game,

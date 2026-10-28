@@ -254,7 +254,14 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     {
         if (at(0, 0.0f)) { cmd("give rifle"); }
         if (at(1, 1.5f)) { cmd("use weapon_rifle"); }
-        if (at(2, 3.0f)) { m_SelfTestValueA = SelfTestActiveSlot(player); }
+        if (at(2, 3.0f))
+        {
+            m_SelfTestValueA = SelfTestActiveSlot(player);
+            // Holster draw counters at the start of the window in which the
+            // pistol (and later the rifle) sits in its holster.
+            m_SelfTestValueB = static_cast<int>(m_HolsterDrawSubmittedCount.load(std::memory_order_relaxed));
+            m_SelfTestValueC = static_cast<int>(m_HolsterDrawBonesPlacedCount.load(std::memory_order_relaxed));
+        }
         if (m_SelfTestStage >= 3 && m_SelfTestStage <= 4) SelfTestReachHolster(1);
         if (at(3, 3.8f)) { button(m_ActionWeaponGrip, true); }
         if (at(4, 4.3f))
@@ -275,7 +282,21 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             SelfTestReport("holster draw from back", slot == 0, detail);
             SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.3f), QAngle(0.0f, 0.0f, 0.0f));
         }
-        if (at(9, 7.6f)) { button(m_ActionWeaponGrip, false); return true; }
+        if (at(9, 7.6f))
+        {
+            button(m_ActionWeaponGrip, false);
+            // Holstered items reached the screen: DrawModel accepted them and the
+            // weapon SetupBones hook moved their bones to the holster.
+            const unsigned submitted =
+                m_HolsterDrawSubmittedCount.load(std::memory_order_relaxed) - static_cast<unsigned>(m_SelfTestValueB);
+            const unsigned placed =
+                m_HolsterDrawBonesPlacedCount.load(std::memory_order_relaxed) - static_cast<unsigned>(m_SelfTestValueC);
+            std::snprintf(detail, sizeof(detail),
+                "draws=%u bonesPlaced=%u controlReady=%d (see [VR][HolsterDraw] lines)", submitted, placed,
+                m_FirstPersonControlReady.load(std::memory_order_acquire) ? 1 : 0);
+            SelfTestReport("holster items drawn", submitted > 0u && placed > 0u, detail);
+            return true;
+        }
         return false;
     }
 

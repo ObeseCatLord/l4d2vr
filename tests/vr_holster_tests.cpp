@@ -10,6 +10,7 @@
 #pragma warning(pop)
 #endif
 #include "../L4D2VR/vr_holster.h"
+#include "vr_holster_control_ready_source.inl"
 #include <cstdio>
 #include <string>
 #include <cstdlib>
@@ -144,9 +145,63 @@ static void TestWeaponClasses()
     CHECK(l4d2vr_holster::WeaponClassForId(0) == nullptr);
 }
 
+static void TestDiagPacer()
+{
+    DiagPacer pacer;
+    CHECK(pacer.Due(10000u, 1u, 2000u, 5000u));   // first call reports
+    CHECK(!pacer.Due(10500u, 1u, 2000u, 5000u));  // same state, too soon
+    CHECK(!pacer.Due(11000u, 2u, 2000u, 5000u));  // changed, but under the minimum interval
+    CHECK(pacer.Due(12000u, 2u, 2000u, 5000u));   // changed after the minimum interval
+    CHECK(!pacer.Due(16000u, 2u, 2000u, 5000u));  // unchanged, period not reached
+    CHECK(pacer.Due(17000u, 2u, 2000u, 5000u));   // heartbeat
+    // A disabled heartbeat still reports state changes.
+    DiagPacer changesOnly;
+    CHECK(changesOnly.Due(0u, 7u, 2000u, ~0ull));
+    CHECK(!changesOnly.Due(1000000u, 7u, 2000u, ~0ull));
+    CHECK(changesOnly.Due(1000001u, 8u, 2000u, ~0ull));
+}
+
+static void TestControlReadyUsesCameraReport()
+{
+    // Regression: with FirstPersonBodyEnabled=false the body lifecycle clears
+    // g_FirstPersonBodyActualFirstPerson each CreateMove just before the
+    // readiness check, so readiness (and with it the holster snapshot, the
+    // weapon SetupBones hook and holster grabs) never became true.
+    const std::string source(kControlReadySource);
+    CHECK(source.find("g_FirstPersonCameraActualFirstPerson") != std::string::npos);
+    CHECK(source.find("g_FirstPersonBodyActualFirstPerson") == std::string::npos);
+}
+
+static void TestHolsterPlacementNearHead()
+{
+    // Default layout at VRScale 43.2: every holster is within reach of the head
+    // and on the expected side, i.e. drawn on the body rather than far away.
+    const BodyFrame frame = MakeFrame(Vector(100.0f, 200.0f, 64.0f), 90.0f, false, 43.2f, 1.0f);
+    const Layout layout{};
+    for (int zone = 0; zone < kZoneCount; ++zone)
+    {
+        const ItemPose pose = BuildItemPose(frame, layout, static_cast<Zone>(zone), ItemShape::LongGun);
+        CHECK(pose.valid);
+        const Vector d = pose.origin - frame.head;
+        const float meters = std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
+        CHECK(meters > 0.1f && meters < 0.8f);
+        CHECK(pose.origin.z < frame.head.z); // below the head
+        const Vector local = ToLocal(frame, pose.origin);
+        CHECK(Near(local.x, layout.center[zone].x, 0.001f));
+        CHECK(Near(local.y, layout.center[zone].y, 0.001f));
+        CHECK(Near(local.z, layout.center[zone].z, 0.001f));
+    }
+    // Hip (slot 2) sits on the dominant (right) side: yaw 90 faces +y, right is +x.
+    const ItemPose hip = BuildItemPose(frame, layout, Zone::Secondary, ItemShape::Pistol);
+    CHECK(hip.origin.x > frame.head.x);
+}
+
 int main()
 {
     TestWeaponClasses();
+    TestDiagPacer();
+    TestControlReadyUsesCameraReport();
+    TestHolsterPlacementNearHead();
     TestYawDeadband();
     TestZones();
     TestItemPoseOrthonormal();

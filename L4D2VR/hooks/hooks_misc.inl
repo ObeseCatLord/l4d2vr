@@ -24332,10 +24332,11 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
 
 namespace
 {
-    void HooksHolsterPlaceBones(const l4d2vr_holster::ItemPose& pose, vr_vm_stabilize::Mat3x4* bones, int count)
+    bool HooksHolsterPlaceBones(const l4d2vr_holster::ItemPose& pose, vr_vm_stabilize::Mat3x4* bones, int count,
+        Vector* outRootBefore = nullptr, Vector* outRootAfter = nullptr)
     {
         if (!bones || count <= 0 || count > 512 || !pose.valid)
-            return;
+            return false;
         vr_vm_stabilize::Mat3x4 target{};
         const Vector* axes[3] = { &pose.axisX, &pose.axisY, &pose.axisZ };
         for (int row = 0; row < 3; ++row)
@@ -24346,7 +24347,7 @@ namespace
         }
         vr_vm_stabilize::Mat3x4 root{};
         if (!vr_vm_stabilize::SafeRead(bones, root))
-            return;
+            return false;
         vr_vm_stabilize::Mat3x4 inverseRoot{}, delta{};
         vr_vm_stabilize::InvertTR(root, inverseRoot);
         vr_vm_stabilize::Mul(target, inverseRoot, delta);
@@ -24354,9 +24355,14 @@ namespace
         {
             vr_vm_stabilize::Mat3x4 source{};
             if (!vr_vm_stabilize::SafeRead(bones + bone, source))
-                return;
+                return false;
             vr_vm_stabilize::Mul(delta, source, bones[bone]);
         }
+        if (outRootBefore)
+            *outRootBefore = Vector(root.m[0][3], root.m[1][3], root.m[2][3]);
+        if (outRootAfter)
+            *outRootAfter = Vector(bones[0].m[0][3], bones[0].m[1][3], bones[0].m[2][3]);
+        return true;
     }
 }
 
@@ -24402,12 +24408,28 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
             maxBones,
             boneMask,
             currentTime);
-    if (result && boneToWorldOut && ecx && ecx == g_HolsterDrawScope.renderable)
+    if (ecx && ecx == g_HolsterDrawScope.renderable)
     {
+        g_HolsterDrawDiag.setupBonesCalls.fetch_add(1u, std::memory_order_relaxed);
+        if (!result || !boneToWorldOut)
+        {
+            g_HolsterDrawDiag.setupBonesFailed.fetch_add(1u, std::memory_order_relaxed);
+            return result;
+        }
         // Holstered item: keep the model's own bone layout and move it rigidly so
         // its root bone lands on the holster pose.
-        HooksHolsterPlaceBones(g_HolsterDrawScope.pose,
-            reinterpret_cast<vr_vm_stabilize::Mat3x4*>(boneToWorldOut), maxBones);
+        Vector rootBefore(0.0f, 0.0f, 0.0f), rootAfter(0.0f, 0.0f, 0.0f);
+        if (HooksHolsterPlaceBones(g_HolsterDrawScope.pose,
+            reinterpret_cast<vr_vm_stabilize::Mat3x4*>(boneToWorldOut), maxBones, &rootBefore, &rootAfter))
+        {
+            g_HolsterDrawDiag.setupBonesPlaced.fetch_add(1u, std::memory_order_relaxed);
+            if (m_VR)
+                m_VR->m_HolsterDrawBonesPlacedCount.fetch_add(1u, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(g_HolsterDrawDiagSampleMutex);
+            g_HolsterDrawDiagSample.rootValid = true;
+            g_HolsterDrawDiagSample.rootBefore = rootBefore;
+            g_HolsterDrawDiagSample.rootAfter = rootAfter;
+        }
         return result;
     }
     if (result && boneToWorldOut)
@@ -24849,9 +24871,14 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         // Do not gate this on the reported network class or a custom-bone
         // pointer: L4D2 bonemerge children can report the owning player's class
         // and can deliberately submit a null custom-bone array.
+        // A holstered item's bones were already placed at its holster by the
+        // weapon SetupBones hook; a hand-delta retarget would pull it off the body.
+        const bool holsterItemDraw =
+            g_HolsterDrawScope.renderable && info.pRenderable == g_HolsterDrawScope.renderable;
         if (!isSurvivorWorldModel &&
             !shadowDepthDraw &&
-            !teleportSuppressibleViewmodel)
+            !teleportSuppressibleViewmodel &&
+            !holsterItemDraw)
         {
             vr_vm_stabilize::Mat3x4* alignedWorldWeaponBones = nullptr;
             vr_vm_stabilize::Mat3x4 weaponNativeToFinal =

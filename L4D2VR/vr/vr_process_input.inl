@@ -1743,6 +1743,28 @@ void VR::ProcessInput()
                 Game::logMsg("[VR][Holster] holstered slot=%d -> slot=%d", activeSlot + 1, grab.holsterTo + 1);
             }
             UpdateHolsterRenderSnapshot(ready ? localPlayer : nullptr, activeSlot);
+            {
+                // Holster render producer: why the snapshot is (not) filled.
+                const bool controlReady = m_FirstPersonControlReady.load(std::memory_order_acquire);
+                const bool incap = m_RenderPlayerIncap.load(std::memory_order_relaxed);
+                const bool pinned = m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
+                const std::uint64_t key =
+                    (ready ? 1u : 0u) | (localPlayer ? 2u : 0u) | (isObserverOrIdle ? 4u : 0u) |
+                    (m_SuppressPlayerInput ? 8u : 0u) | (controlReady ? 16u : 0u) | (incap ? 32u : 0u) |
+                    (pinned ? 64u : 0u) | (frameValid ? 128u : 0u) | (m_HolsterItemsVisible ? 256u : 0u) |
+                    (static_cast<std::uint64_t>(occupiedMask) << 16) |
+                    (static_cast<std::uint64_t>(activeSlot + 1) << 24);
+                static l4d2vr_holster::DiagPacer s_HolsterDrawProducerDiag;
+                if (s_HolsterDrawProducerDiag.Due(GetTickCount64(), key, 2000u, 10000u))
+                {
+                    HolsterRenderSnapshot published{};
+                    GetHolsterRenderSnapshot(published);
+                    Game::logMsg("[VR][HolsterDraw] producer: ready=%d (player=%d observerOrIdle=%d suppressInput=%d controlReady=%d incap=%d pinned=%d) visible=%d frame=%d active=slot%d occupied=0x%X published=%d serial=%u",
+                        ready ? 1 : 0, localPlayer ? 1 : 0, isObserverOrIdle ? 1 : 0, m_SuppressPlayerInput ? 1 : 0,
+                        controlReady ? 1 : 0, incap ? 1 : 0, pinned ? 1 : 0, m_HolsterItemsVisible ? 1 : 0,
+                        frameValid ? 1 : 0, activeSlot + 1, occupiedMask, published.count, published.serial);
+                }
+            }
         }
         else if (m_BodyGripInventoryEnabled)
         {

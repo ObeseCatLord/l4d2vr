@@ -341,12 +341,16 @@ namespace
     }
 
     // Visible holsters: carried (inactive) weapons are drawn through Source's own
-    // model path inside the local player's native eye draw stage. SetupBones sees
-    // this scope and moves the item's bones rigidly to its holster pose.
+    // model path inside the local player's eye view. DrawModelExecute sees this
+    // scope, moves the item's bones rigidly so its weapon_bone lands on the
+    // holster pose, and draws it without any viewmodel processing (the local
+    // player's carried weapons report their v_ model). A hovered item gets a
+    // second, soft glow pass with the same bones.
     struct HooksHolsterDrawScope
     {
         void* renderable = nullptr;
         l4d2vr_holster::ItemPose pose{};
+        IMaterial* highlight = nullptr;
     };
     thread_local HooksHolsterDrawScope g_HolsterDrawScope{};
 
@@ -397,6 +401,11 @@ namespace
 
     IMaterial* HooksHolsterHighlightMaterial()
     {
+        if (Hooks::m_VR)
+        {
+            if (IMaterial* const selfTest = Hooks::m_VR->m_SelfTestGlowMaterial.load(std::memory_order_acquire))
+                return selfTest;
+        }
         static IMaterial* s_material = nullptr;
         static bool s_attempted = false;
         if (!s_attempted && Hooks::m_Game && Hooks::m_Game->m_MaterialSystem)
@@ -408,12 +417,19 @@ namespace
                     "l4d2vr/holster_highlight", "Model textures", false, nullptr);
                 if (s_material && s_material->IsErrorMaterial())
                     s_material = nullptr;
+                // FindMaterial does not reference the material. Unreferenced, the
+                // material system uncaches it ("bad reference count 0 when being
+                // bound") and it draws as the pink error texture. Hold it for the
+                // whole session.
+                if (s_material)
+                    s_material->IncrementReferenceCount();
             }
             __except (EXCEPTION_EXECUTE_HANDLER)
             {
                 s_material = nullptr;
             }
-            Game::logMsg("[VR][Holster] highlight material %s", s_material ? "loaded" : "unavailable");
+            Game::logMsg("[VR][Holster] highlight material %s shader=%s", s_material ? "loaded" : "unavailable",
+                s_material ? s_material->GetShaderName() : "-");
         }
         return s_material;
     }
@@ -449,21 +465,17 @@ namespace
             QAngle::VectorAngles(pose.axisX, angles);
             g_HolsterDrawScope.renderable = item.renderable;
             g_HolsterDrawScope.pose = pose;
+            g_HolsterDrawScope.highlight = item.highlighted ? highlight : nullptr;
             outDrawResult = Hooks::m_Game->m_ModelRender->DrawModel(flags, item.renderable, 0xFFFF,
                 item.entityIndex > 0 ? item.entityIndex : 0, model, pose.origin, angles, 0, 0, 0);
-            if (highlight && item.highlighted)
-            {
-                Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(highlight);
-                Hooks::m_Game->m_ModelRender->DrawModel(flags, item.renderable, 0xFFFF,
-                    item.entityIndex > 0 ? item.entityIndex : 0, model, pose.origin, angles, 0, 0, 0);
-                Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr);
-            }
             g_HolsterDrawScope.renderable = nullptr;
+            g_HolsterDrawScope.highlight = nullptr;
             return HooksHolsterDrawStatus::Drawn;
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             g_HolsterDrawScope.renderable = nullptr;
+            g_HolsterDrawScope.highlight = nullptr;
             if (Hooks::m_Game && Hooks::m_Game->m_ModelRender)
             {
                 __try { Hooks::m_Game->m_ModelRender->ForcedMaterialOverride(nullptr); }

@@ -80,6 +80,18 @@ namespace l4d2vr_holster
             Vector(-0.10f, -0.15f, -0.08f),
             Vector(0.12f, 0.10f, -0.36f),
         };
+        // Where the items are drawn (their visible centre). Hip and chest items
+        // sit in their grab zones and are seen when looking down. Back items hang
+        // where a slung item would, behind the back and below the head, out of
+        // the forward view (Pavlov's back slot sits ~0.44 m behind its inventory
+        // root); their grab zones stay at the shoulders.
+        Vector drawCenter[kZoneCount] = {
+            Vector(-0.26f, 0.02f, -0.38f),
+            Vector(-0.04f, 0.22f, -0.78f),
+            Vector(0.12f, -0.10f, -0.36f),
+            Vector(-0.26f, -0.14f, -0.32f),
+            Vector(0.12f, 0.10f, -0.36f),
+        };
         // Generous, Pavlov-sized zones (its hips are 0.20 m capsules and its back a
         // 0.40 m sphere): a holster you have to hunt for is a holster nobody uses.
         float radius[kZoneCount] = { 0.28f, 0.20f, 0.15f, 0.28f, 0.15f };
@@ -326,9 +338,11 @@ namespace l4d2vr_holster
     }
 
     // World placement for a holstered item. The returned basis is for the item's
-    // reference bone: longAxis = the bone's local +Z (barrel/long axis on L4D2
-    // w_models), upAxis = local +Y (sight side). Melee blades run along local +Y
-    // on the stock melee w_models, so they use a separate preset.
+    // reference bone, ValveBiped.weapon_bone (on the v_ models that the local
+    // player's carried weapons report, and on the w_ models): longAxis = the
+    // bone's local +Z (barrel, or the side facing away from the hand on
+    // equipment), upAxis = local +Y (sights; upright on kits, bottles and
+    // grenades). Melee blades run along local +Y, so they use a separate preset.
     struct ItemPose
     {
         Vector origin{ 0.0f, 0.0f, 0.0f };
@@ -354,6 +368,25 @@ namespace l4d2vr_holster
         return v * (1.0f / length);
     }
 
+    // The visible centre of an item relative to its reference bone, in model
+    // units along the bone's axes (stock models: rifles and shotguns reach about
+    // 35 units forward of the bone and 15 behind it, pistols 10 forward; melee
+    // weapons and equipment are held by their middle or handle).
+    inline Vector ReferenceToCenterUnits(ItemShape shape)
+    {
+        switch (shape)
+        {
+        case ItemShape::LongGun: return Vector(0.0f, 0.0f, 9.0f);
+        case ItemShape::Pistol: return Vector(0.0f, 0.0f, 5.0f);
+        default: return Vector(0.0f, 0.0f, 0.0f);
+        }
+    }
+
+    inline bool IsBackZone(Zone zone)
+    {
+        return zone == Zone::Primary || zone == Zone::Medical;
+    }
+
     inline ItemPose BuildItemPose(const BodyFrame& frame, const Layout& layout, Zone zone, ItemShape shape)
     {
         ItemPose pose{};
@@ -367,8 +400,9 @@ namespace l4d2vr_holster
         switch (shape)
         {
         case ItemShape::LongGun:
-            // Slung diagonally across the back: grip behind the shoulder,
-            // barrel down toward the opposite hip, sights facing away from the body.
+            // Slung diagonally across the back: stock behind the dominant
+            // shoulder, barrel down toward the opposite hip, sights facing away
+            // from the body.
             longAxis = Normalized(up * -0.8f + d * -0.6f, up * -1.0f);
             topAxis = f * -1.0f;
             break;
@@ -381,8 +415,10 @@ namespace l4d2vr_holster
             // Handled separately below: blade (local +Y) points down and back.
             break;
         case ItemShape::Equipment:
-            longAxis = up;
-            topAxis = f;
+            // Upright. On the chest the front faces forward; on the back the kit
+            // lies flat against it (its thin local X along the body's front-back).
+            topAxis = up;
+            longAxis = IsBackZone(zone) ? d : f;
             break;
         }
 
@@ -403,7 +439,10 @@ namespace l4d2vr_holster
         CrossProduct(axisY, axisZ, axisX);
         axisX = Normalized(axisX, d);
 
-        pose.origin = ZoneCenterWorld(frame, layout, zone);
+        // The item's visible centre goes to the draw centre.
+        const Vector centerUnits = ReferenceToCenterUnits(shape);
+        pose.origin = ToWorld(frame, layout.drawCenter[SlotIndex(zone)]) -
+            (axisX * centerUnits.x + axisY * centerUnits.y + axisZ * centerUnits.z);
         pose.axisX = axisX;
         pose.axisY = axisY;
         pose.axisZ = axisZ;

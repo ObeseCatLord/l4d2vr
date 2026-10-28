@@ -2933,6 +2933,27 @@ public:
 	Vector m_SelfTestPrevHmd{ 0.0f, 0.0f, 0.0f };
 	uint64_t m_SelfTestPrevPoseMs = 0;
 	bool m_SelfTestPrevValid = false;
+	// Scene steps (look=, lefthand=, righthand=) hold until changed or "=off",
+	// across later steps, so a following shot= photographs that scene.
+	bool m_SelfTestLookActive = false;
+	float m_SelfTestLookPitch = 0.0f;           // degrees, positive looks down
+	bool m_SelfTestSceneRightValid = false;
+	bool m_SelfTestSceneLeftValid = false;
+	l4d2vr_selftest::Vec3 m_SelfTestSceneRight{}; // holster body frame metres: x forward, y dominant side, z up
+	l4d2vr_selftest::Vec3 m_SelfTestSceneLeft{};
+	// Screenshots (shot=<name>): the next completed eye pair is read back on the
+	// render thread before submit and saved as l4d2vr_selftest_<name>.png.
+	std::mutex m_SelfTestShotMutex;
+	std::string m_SelfTestShotName;
+	int m_SelfTestShotEyes = 1;                 // bit 0 left eye, bit 1 right eye
+	std::atomic<uint32_t> m_SelfTestShotRequest{ 0u };
+	std::atomic<uint32_t> m_SelfTestShotDone{ 0u };
+	std::atomic<bool> m_SelfTestShotOk{ false };
+	// glowmat=<material>: draw every glow with this material instead (A/B tests).
+	std::atomic<IMaterial*> m_SelfTestGlowMaterial{ nullptr };
+	void SelfTestRequestShot(const std::string& name, int eyes);
+	void SelfTestCaptureEyes(IDirect3DSurface9* left, IDirect3DSurface9* right, bool deviceLocked);
+	bool SelfTestSaveEyePng(IDirect3DSurface9* source, int eyeIndex, bool deviceLocked, const std::string& path);
 	// One-shot request to tag the next usercmd with the server shove intent (impulse 238).
 	std::atomic<bool> m_PhysicalShoveImpulsePending{ false };
 	// Shoves and melee come from motion only; the triggers do not shove or swing.
@@ -2948,6 +2969,7 @@ public:
 	std::atomic<uint32_t> m_VmStrikeFramesShown{ 0u };
 	std::atomic<float> m_VmStrikeMaxDeviation{ 0.0f }; // native pose vs the held idle pose after a strike (units)
 	std::atomic<uint64_t> m_VmAnimTraceUntilMs{ 0u }; // self-test: log the viewmodel sequence every frame
+	bool m_VmStrikeHoldDisabled = false; // self-test comparison: let the native strike animation play
 	// Holster drop: a holster-drawn item is held by the grip; releasing drops it.
 	bool m_HolsterReleaseDropEnabled = true;
 	// The weapon hand is over another occupied holster (letting go there never drops).

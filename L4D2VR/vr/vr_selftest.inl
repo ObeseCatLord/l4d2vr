@@ -97,7 +97,21 @@ void VR::ApplySelfTestPoses()
     const float yaw = m_HmdPose.TrackedDeviceAng.y;
     head.z -= m_SelfTestHeadDrop;
     m_HmdPose.TrackedDevicePos = head;
+    if (m_SelfTestLookActive)
+    {
+        m_HmdPose.TrackedDeviceAng.x = m_SelfTestLookPitch;
+        m_HmdPose.TrackedDeviceAng.z = 0.0f;
+    }
     const Vec3 h = SelfTestVec(head.x, head.y, head.z);
+    // Scene hands (lefthand=/righthand=) in the holster body frame. A step's own
+    // world target or scripted path still wins while it runs.
+    l4d2vr_holster::BodyFrame sceneFrame{};
+    const bool sceneFrameValid = (m_SelfTestSceneRightValid || m_SelfTestSceneLeftValid) && GetHolsterBodyFrame(sceneFrame);
+    auto sceneTracking = [&](const Vec3& local)
+    {
+        const Vector offset = l4d2vr_holster::ToWorld(sceneFrame, Vector(local.x, local.y, local.z)) - m_HmdPosAbs;
+        return WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+    };
 
     Vec3 rightLocal = m_SelfTestRightLocal;
     Vec3 rightAng = SelfTestVec(m_SelfTestRightAngLocal.x, m_SelfTestRightAngLocal.y, m_SelfTestRightAngLocal.z);
@@ -122,7 +136,11 @@ void VR::ApplySelfTestPoses()
     m_SelfTestLeftNow = leftLocal;
     m_SelfTestLeftAngNow = leftAng;
     Vec3 right{};
-    if (m_SelfTestRightWorldValid)
+    if (m_SelfTestSceneRightValid && sceneFrameValid && !m_SelfTestRightWorldValid && !m_SelfTestPathActive)
+    {
+        right = sceneTracking(m_SelfTestSceneRight);
+    }
+    else if (m_SelfTestRightWorldValid)
     {
         const Vector offset = m_SelfTestRightWorld - m_HmdPosAbs;
         right = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
@@ -132,7 +150,11 @@ void VR::ApplySelfTestPoses()
         right = HeadLocalToTracking(h, yaw, rightLocal);
     }
     Vec3 left{};
-    if (m_SelfTestLeftWorldValid)
+    if (m_SelfTestSceneLeftValid && sceneFrameValid && !m_SelfTestLeftWorldValid && !m_SelfTestLeftPathActive)
+    {
+        left = sceneTracking(m_SelfTestSceneLeft);
+    }
+    else if (m_SelfTestLeftWorldValid)
     {
         const Vector offset = m_SelfTestLeftWorld - m_HmdPosAbs;
         left = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
@@ -1008,6 +1030,132 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "wait")
         return t >= 10.0f;
 
+    // ---- Render verification scenes -----------------------------------------
+    // look=<pitch>: scripted head pitch in degrees (positive looks down; "off"
+    // returns to the headset's own). Holds for the following steps.
+    if (step.rfind("look=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            const std::string value = step.substr(5);
+            m_SelfTestLookActive = value != "off";
+            m_SelfTestLookPitch = m_SelfTestLookActive ? std::clamp(static_cast<float>(std::atof(value.c_str())), -89.0f, 89.0f) : 0.0f;
+            Game::logMsg("[VR][SelfTest] head pitch %s", m_SelfTestLookActive ? value.c_str() : "released");
+        }
+        return t >= 1.0f;
+    }
+
+    // lefthand=x,y,z / righthand=x,y,z: hold a hand at a point of the holster
+    // body frame in metres (x forward, y toward the dominant hand, z up, from
+    // the head), e.g. righthand=0.02,0.22,-0.7 is the hip holster. "off" releases.
+    if (step.rfind("lefthand=", 0) == 0 || step.rfind("righthand=", 0) == 0)
+    {
+        const bool leftHand = step[0] == 'l';
+        if (at(0, 0.0f))
+        {
+            const std::string value = step.substr(leftHand ? 9 : 10);
+            l4d2vr_selftest::Vec3 local{};
+            const bool valid = value != "off" && l4d2vr_selftest::ParseVec3(value, local);
+            if (value != "off" && !valid)
+            {
+                SelfTestReport(step.c_str(), false, "expected x,y,z in metres or off");
+                return true;
+            }
+            (leftHand ? m_SelfTestSceneLeftValid : m_SelfTestSceneRightValid) = valid;
+            (leftHand ? m_SelfTestSceneLeft : m_SelfTestSceneRight) = local;
+        }
+        return t >= 1.0f;
+    }
+
+    // glowmat=<material>: use this material for every glow from now on ("off"
+    // = the built-in one), to compare glow materials in screenshots.
+    if (step.rfind("glowmat=", 0) == 0)
+    {
+        const std::string name = step.substr(8);
+        IMaterial* material = nullptr;
+        if (name != "off" && m_Game && m_Game->m_MaterialSystem)
+            material = m_Game->m_MaterialSystem->FindMaterial(name.c_str(), "Model textures", false, nullptr);
+        const bool usable = material && !material->IsErrorMaterial();
+        if (usable)
+            material->IncrementReferenceCount(); // see HooksHolsterHighlightMaterial
+        m_SelfTestGlowMaterial.store(usable ? material : nullptr, std::memory_order_release);
+        std::snprintf(detail, sizeof(detail), "%s shader=%s translucent=%d", name.c_str(),
+            usable ? material->GetShaderName() : "-", usable && material->IsTranslucent() ? 1 : 0);
+        SelfTestReport("glow material", name == "off" || usable, detail);
+        return true;
+    }
+
+    // fire=<seconds>: hold the trigger (e.g. to empty a magazine).
+    if (step.rfind("fire=", 0) == 0)
+    {
+        const float seconds = std::clamp(static_cast<float>(std::atof(step.c_str() + 5)), 0.1f, 30.0f);
+        if (at(0, 0.0f)) { button(m_ActionPrimaryAttack, true); }
+        if (at(1, seconds)) { button(m_ActionPrimaryAttack, false); }
+        return t >= seconds + 1.0f;
+    }
+
+    // magrelease: one press of the magazine release (the old magazine drops and
+    // the spare-magazine hint lights up).
+    if (step == "magrelease")
+    {
+        if (at(0, 0.0f)) { button(m_ActionMagazineRelease, true); }
+        if (at(1, 0.2f)) { button(m_ActionMagazineRelease, false); }
+        return t >= 1.5f;
+    }
+
+    // shot=<name>[*N]: save the left eye as l4d2vr_selftest_<name>.png in the
+    // game folder (N captures 0.3 s apart: <name>_1 .. <name>_N, to compare for
+    // flicker). shotlr=<name> saves both eyes as <name>_l / <name>_r.
+    if (step.rfind("shot=", 0) == 0 || step.rfind("shotlr=", 0) == 0)
+    {
+        const bool both = step.rfind("shotlr=", 0) == 0;
+        std::string name = step.substr(both ? 7 : 5);
+        int count = 1;
+        const size_t star = name.find('*');
+        if (star != std::string::npos)
+        {
+            count = std::clamp(std::atoi(name.c_str() + star + 1), 1, 20);
+            name.resize(star);
+        }
+        for (char& ch : name)
+            if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '-' && ch != '_')
+                ch = '_';
+        if (name.empty())
+            name = "shot";
+        const int index = m_SelfTestStage / 2;
+        const float due = 0.5f + index * 0.3f;
+        if (m_SelfTestStage % 2 == 0)
+        {
+            if (index >= count)
+            {
+                std::snprintf(detail, sizeof(detail), "%d of %d image(s) saved as l4d2vr_selftest_%s%s%s.png",
+                    count - m_SelfTestValueD, count, name.c_str(), count > 1 ? "_N" : "", both ? "_l/_r" : "");
+                SelfTestReport("screenshot", m_SelfTestValueD == 0, detail);
+                return true;
+            }
+            if (t >= due)
+            {
+                if (index == 0)
+                    m_SelfTestValueD = 0; // failed captures
+                SelfTestRequestShot(count > 1 ? name + "_" + std::to_string(index + 1) : name, both ? 3 : 1);
+                m_SelfTestSerial = m_SelfTestShotRequest.load(std::memory_order_acquire);
+                ++m_SelfTestStage;
+            }
+        }
+        else if (m_SelfTestShotDone.load(std::memory_order_acquire) == m_SelfTestSerial)
+        {
+            if (!m_SelfTestShotOk.load(std::memory_order_acquire))
+                ++m_SelfTestValueD;
+            ++m_SelfTestStage;
+        }
+        else if (t > due + 5.0f)
+        {
+            SelfTestReport("screenshot", false, "no eye frame was rendered within 5 s");
+            return true;
+        }
+        return false;
+    }
+
     if (step.rfind("cmd=", 0) == 0)
     {
         Game::logMsg("[VR][SelfTest] console command: %s", step.c_str() + 4);
@@ -1038,7 +1186,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
-    if (step == "reach" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim")
+    if (step == "reach" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim" ||
+        step == "bashanimraw" || step == "swinganimraw")
         return RunSelfTestRealisticStep(step, t, player);
 
     SelfTestReport(step.c_str(), false, "unknown step");
@@ -1080,6 +1229,7 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
         m_GripToggleEnabled = s_SavedToggle;
         m_GripReleaseDropEnabled = s_SavedContact;
         m_SelfTestHeadDrop = 0.0f;
+        m_VmStrikeHoldDisabled = false;
         s_WorldReachStart = -1.0f;
     };
 
@@ -1275,11 +1425,20 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 restore();
                 return true; });
         }
-        else if (step == "bashanim" || step == "swinganim")
+        else if (step == "bashanim" || step == "swinganim" || step == "bashanimraw" || step == "swinganimraw")
         {
             // Native strike animations never play on the controller-driven
-            // viewmodel; the strike itself still happens.
-            const bool melee = step == "swinganim";
+            // viewmodel; the strike itself still happens. The *raw variants
+            // leave the native animation on, for comparison screenshots.
+            const bool melee = step == "swinganim" || step == "swinganimraw";
+            const bool raw = step == "bashanimraw" || step == "swinganimraw";
+            const std::string shotName = step;
+            m_VmStrikeHoldDisabled = raw;
+            // Left-eye pictures before and during the strike (strike at 3.5 s).
+            add(3.3f, [this, shotName](C_BasePlayer*, float) { SelfTestRequestShot(shotName + "_0before", 1); return false; });
+            for (int i = 1; i <= 4; ++i)
+                add(3.5f + 0.2f * i, [this, shotName, i](C_BasePlayer*, float) {
+                    SelfTestRequestShot(shotName + "_" + std::to_string(i), 1); return false; });
             if (melee)
             {
                 for (const char* item : { "give machete", "give fireaxe", "give crowbar", "give baseball_bat", "give katana" })
@@ -1360,4 +1519,136 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
         }
     }
     return false;
+}
+
+// ---- Self-test screenshots ---------------------------------------------------
+
+void VR::SelfTestRequestShot(const std::string& name, int eyes)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_SelfTestShotMutex);
+        m_SelfTestShotName = name;
+        m_SelfTestShotEyes = eyes;
+    }
+    m_SelfTestShotRequest.fetch_add(1u, std::memory_order_acq_rel);
+}
+
+// Render thread, after both eyes of a frame are complete and before they are
+// submitted: saves the requested eyes. deviceLocked: the caller already holds
+// the DXVK device lock.
+void VR::SelfTestCaptureEyes(IDirect3DSurface9* left, IDirect3DSurface9* right, bool deviceLocked)
+{
+    const uint32_t request = m_SelfTestShotRequest.load(std::memory_order_acquire);
+    if (!m_SelfTestEnabled || request == m_SelfTestShotDone.load(std::memory_order_acquire))
+        return;
+    std::string name;
+    int eyes = 1;
+    {
+        std::lock_guard<std::mutex> lock(m_SelfTestShotMutex);
+        name = m_SelfTestShotName;
+        eyes = m_SelfTestShotEyes;
+    }
+    bool ok = true;
+    for (int eye = 0; eye < 2; ++eye)
+    {
+        if ((eyes & (1 << eye)) == 0)
+            continue;
+        std::string path = "l4d2vr_selftest_" + name;
+        if (eyes == 3)
+            path += eye == 0 ? "_l" : "_r";
+        path += ".png";
+        ok = SelfTestSaveEyePng(eye == 0 ? left : right, eye, deviceLocked, path) && ok;
+    }
+    m_SelfTestShotOk.store(ok, std::memory_order_release);
+    m_SelfTestShotDone.store(request, std::memory_order_release);
+}
+
+bool VR::SelfTestSaveEyePng(IDirect3DSurface9* source, int eyeIndex, bool deviceLocked, const std::string& path)
+{
+    if (!source || !g_D3DVR9)
+        return false;
+    IDirect3DDevice9* device = nullptr;
+    if (FAILED(source->GetDevice(&device)) || !device)
+        return false;
+    D3DSURFACE_DESC desc{};
+    if (FAILED(source->GetDesc(&desc)) || desc.Width == 0 || desc.Height == 0)
+    {
+        device->Release();
+        return false;
+    }
+    // The eye's visible area (the SteamVR texture bounds), scaled to at most
+    // 1024 pixels wide.
+    const vr::VRTextureBounds_t& bounds = m_TextureBounds[eyeIndex == 0 ? 0 : 1];
+    float u0 = std::clamp((std::min)(bounds.uMin, bounds.uMax), 0.0f, 1.0f);
+    float u1 = std::clamp((std::max)(bounds.uMin, bounds.uMax), 0.0f, 1.0f);
+    float v0 = std::clamp((std::min)(bounds.vMin, bounds.vMax), 0.0f, 1.0f);
+    float v1 = std::clamp((std::max)(bounds.vMin, bounds.vMax), 0.0f, 1.0f);
+    if (u1 - u0 < 0.05f || v1 - v0 < 0.05f)
+    {
+        u0 = v0 = 0.0f;
+        u1 = v1 = 1.0f;
+    }
+    RECT sourceRect{};
+    sourceRect.left = static_cast<LONG>(u0 * desc.Width);
+    sourceRect.right = static_cast<LONG>(u1 * desc.Width);
+    sourceRect.top = static_cast<LONG>(v0 * desc.Height);
+    sourceRect.bottom = static_cast<LONG>(v1 * desc.Height);
+    const int sourceWidth = (std::max)(1, static_cast<int>(sourceRect.right - sourceRect.left));
+    const int sourceHeight = (std::max)(1, static_cast<int>(sourceRect.bottom - sourceRect.top));
+    const int width = (std::min)(sourceWidth, 1024);
+    const int height = (std::max)(1, sourceHeight * width / sourceWidth);
+
+    std::vector<std::uint8_t> rgb;
+    IDirect3DSurface9* scaled = nullptr;
+    IDirect3DSurface9* readback = nullptr;
+    if (!deviceLocked)
+        g_D3DVR9->LockDevice();
+    HRESULT hr = device->CreateRenderTarget(width, height, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &scaled, nullptr);
+    if (SUCCEEDED(hr))
+        hr = device->StretchRect(source, &sourceRect, scaled, nullptr, D3DTEXF_LINEAR);
+    if (SUCCEEDED(hr))
+        hr = device->CreateOffscreenPlainSurface(width, height, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &readback, nullptr);
+    if (SUCCEEDED(hr))
+        hr = device->GetRenderTargetData(scaled, readback);
+    D3DLOCKED_RECT locked{};
+    if (SUCCEEDED(hr))
+        hr = readback->LockRect(&locked, nullptr, D3DLOCK_READONLY);
+    if (SUCCEEDED(hr))
+    {
+        rgb.resize(static_cast<size_t>(width) * height * 3u);
+        for (int y = 0; y < height; ++y)
+        {
+            const std::uint8_t* row = static_cast<const std::uint8_t*>(locked.pBits) + static_cast<size_t>(locked.Pitch) * y;
+            std::uint8_t* out = rgb.data() + static_cast<size_t>(width) * 3u * y;
+            for (int x = 0; x < width; ++x)
+            {
+                out[x * 3 + 0] = row[x * 4 + 2];
+                out[x * 3 + 1] = row[x * 4 + 1];
+                out[x * 3 + 2] = row[x * 4 + 0];
+            }
+        }
+        readback->UnlockRect();
+    }
+    if (readback)
+        readback->Release();
+    if (scaled)
+        scaled->Release();
+    if (!deviceLocked)
+        g_D3DVR9->UnlockDevice();
+    device->Release();
+
+    bool saved = false;
+    if (SUCCEEDED(hr))
+    {
+        const std::vector<std::uint8_t> png = l4d2vr_selftest::EncodePngRgb(rgb.data(), width, height);
+        if (FILE* file = std::fopen(path.c_str(), "wb"))
+        {
+            saved = std::fwrite(png.data(), 1, png.size(), file) == png.size();
+            saved = std::fclose(file) == 0 && saved;
+        }
+    }
+    Game::logMsg("[VR][SelfTest] screenshot %s eye=%d %dx%d of %ux%u format=%d hr=0x%08X %s", path.c_str(), eyeIndex,
+        width, height, desc.Width, desc.Height, static_cast<int>(desc.Format), static_cast<unsigned int>(hr),
+        saved ? "saved" : "failed");
+    return saved;
 }

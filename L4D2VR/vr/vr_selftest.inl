@@ -1868,7 +1868,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
             if (!glideDone(0.1f)) return false;
             // All the way forward (a little past where it was taken).
-            glide(m_SelfTestPoint + g.gunForward * (0.02f * scale), 0.3f);
+            glide(m_SelfTestPoint + g.gunForward * (0.06f * scale), 0.3f);
             go(114);
             return false;
         case 114:
@@ -2025,6 +2025,14 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         }
         std::snprintf(detail, sizeof(detail), "hand %.3f m from the pouch", m_SelfTestMeasure);
         SelfTestReport(label("spare taken with the old magazine seated"), true, detail);
+        // Hold the spare in line with the seated magazine, as a player would.
+        m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
+        m_SelfTestLeftAngWorldValid = true;
+        go(212);
+        return false;
+    }
+    case 212:
+    {
         // Strike 10 cm before to 4 cm past the seated magazine along its
         // outward axis; reach the start sideways so only the strike counts.
         MagazineInteractionBoxSnapshot box{};
@@ -2049,11 +2057,19 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         const Vector out(outward.x, outward.y, outward.z), across(side.x, side.y, side.z);
         const l4d2vr_mag_slap::Vec3 seatedCenter = l4d2vr_mag_slap::Center(seated);
         const Vector center(seatedCenter.x, seatedCenter.y, seatedCenter.z);
+        if (inPhase < 1.0f)
+        {
+            float error = 0.0f;
+            steerHeld(center - out * (0.10f * scale) + across * (0.30f * scale), true, error);
+            m_SelfTestMeasureB = error;
+            return false;
+        }
         const Vector contact = m_LeftControllerPosAbs + (center - held);
         m_SelfTestSlapStart = contact - out * (0.10f * scale);
         m_SelfTestSlapEnd = contact + out * (0.04f * scale);
         m_SelfTestSlapPark = across * (0.30f * scale);
-        glide(m_SelfTestSlapStart + m_SelfTestSlapPark, 0.5f);
+        Game::logMsg("[VR][SelfTest] slap: spare lined up %.1f deg off the seated magazine", m_SelfTestMeasureB);
+        glide(m_SelfTestSlapStart + m_SelfTestSlapPark, 0.2f);
         go(203);
         return false;
     }

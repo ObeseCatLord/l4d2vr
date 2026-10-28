@@ -46,6 +46,7 @@ void VR::SpawnDroppedMagazine(const std::string& modelName, int boneIndex, const
     for (char& c : info.modelLower)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     info.boneIndex = boneIndex;
+    m_DroppedMagazineSpawnSerial.fetch_add(1u, std::memory_order_acq_rel);
     info.rotation = world;
     VrHandMath::Set(info.rotation, 0, 3, 0.0f);
     VrHandMath::Set(info.rotation, 1, 3, 0.0f);

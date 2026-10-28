@@ -237,7 +237,7 @@ namespace
         Check(bundle[0] == "l4d2vr_server_ack 4\n");
         Check(bundle[1] == "l4d2vr_interaction_ack 1\n");
         Check(bundle[2] == "l4d2vr_shell_capability 1 41\n");
-        Check(bundle[3] == "l4d2vr_mag_capability 2 42\n");
+        Check(bundle[3] == "l4d2vr_mag_capability 3 42\n");
         Check(bundle[4] == "l4d2vr_feature_ack 3ff 1\n");
         Check(s.EffectiveFeatures(2) == kFeatureAllMask);
         // The client answers server_ack with another hello: no duplicate bundle.
@@ -346,7 +346,7 @@ namespace
         Check(host.sent.empty());
         Dispatch(s, 1, &vr, { "l4d2vr_pose_hello", "2" });
         const auto bundle = host.To(&vr);
-        Check(bundle.size() == 4u && bundle[1] == "l4d2vr_shell_capability 1 1001\n" && bundle[2] == "l4d2vr_mag_capability 2 1002\n");
+        Check(bundle.size() == 4u && bundle[1] == "l4d2vr_shell_capability 1 1001\n" && bundle[2] == "l4d2vr_mag_capability 3 1002\n");
 
         ammo.state = AmmoState{ true, 0x3001u, 200u, 3, 4, 50, 8, false, nullptr, nullptr, 7 };
         host.sent.clear();
@@ -364,20 +364,20 @@ namespace
         Dispatch(s, 1, &vr, { "l4d2vr_shell_insert_v1", "1001", "2", "12289", "200", "3", "-5", "49" }, &ammo);
         Check(host.sent.empty());
 
-        // Magazine eject then insert.
+        // Magazine eject (29 rounds back to the reserve) then insert.
         ammo.state = AmmoState{ true, 0x3002u, 300u, 5, 30, 100, 50, false, nullptr, nullptr, 3 };
         host.sent.clear();
         Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "1", "12290", "300", "5", "30", "100", "0" }, &ammo);
-        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 1 12290 300 5 30 100 0 0 1 100\n" });
+        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 1 12290 300 5 30 100 0 0 1 129\n" });
         host.Advance(200);
         host.sent.clear();
-        Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "2", "12290", "301", "5", "1", "100", "1" }, &ammo);
-        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 2 12290 301 5 1 100 1 0 50 51\n" });
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "2", "12290", "301", "5", "1", "129", "1" }, &ammo);
+        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 2 12290 301 5 1 129 1 0 50 80\n" });
         // Backend that cannot serve: Unsupported (7).
         ammo.unsupported = true;
         host.sent.clear();
-        Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "3", "12290", "302", "5", "50", "51", "0" }, &ammo);
-        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 3 12290 302 5 50 51 0 7 0 0\n" });
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "3", "12290", "302", "5", "50", "80", "0" }, &ammo);
+        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 3 12290 302 5 50 80 0 7 0 0\n" });
         // Without the feature bit the commands are consumed silently.
         FakeHost host2;
         Session off(host2);

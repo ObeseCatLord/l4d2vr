@@ -5,8 +5,11 @@
 
 namespace l4d2vr_remote_mag
 {
-    constexpr unsigned kVersion = 2u;
+    // Version 3: ejection returns the magazine's rounds to the reserve pool.
+    // Older peers keep the stock reload instead of mixing the two ledgers.
+    constexpr unsigned kVersion = 3u;
     constexpr int kMaxClip = 512;
+    constexpr int kMaxReserve = 5000;
     using Status = l4d2vr_shell::Status;
     enum class Action : unsigned { Eject = 0, Insert = 1, Reinsert = 2 };
     inline bool RetainsRejectedHeldMagazine(Status status, Action action, bool held,
@@ -16,6 +19,17 @@ namespace l4d2vr_remote_mag
             return false;
         return l4d2vr_shell::RetainRejectedShell(status) ||
             (inputKnown && gripDown && (pistol || (action == Action::Reinsert && retained)));
+    }
+    // A loaded chamber keeps its round when the magazine drops out; the
+    // magazine's remaining rounds go back to the reserve until a magazine is
+    // inserted again. Infinite-ammo hosts never consume reserve on insertion,
+    // so their reserve stays unchanged.
+    inline int ClipAfterEject(int clip) { return clip > 0 ? 1 : 0; }
+    inline int RoundsInEjectedMagazine(int clip) { return clip > 0 ? clip - ClipAfterEject(clip) : 0; }
+    inline int ReserveAfterEject(int clip, int reserve, bool infinite)
+    {
+        if (infinite) return reserve;
+        return std::min(kMaxReserve, reserve + RoundsInEjectedMagazine(clip));
     }
     inline bool ValidAction(Action action)
     {
@@ -95,18 +109,23 @@ namespace l4d2vr_remote_mag
                 const bool reinsert = request.action == Action::Reinsert;
                 if (eject && !detached) detached = EmptySlot();
                 const int added = eject ? 0 : std::min(state.capacity - state.clip,
-                    reinsert ? detached->rounds : state.infinite ? state.capacity : state.reserve);
-                const int clip = eject ? std::min(1, state.clip) : state.clip + added;
-                const int reserve = state.reserve - ((!eject && !reinsert && !state.infinite) ? added : 0);
+                    reinsert ? (state.infinite ? detached->rounds : std::min(detached->rounds, state.reserve)) :
+                    state.infinite ? state.capacity : state.reserve);
+                // The ejected rounds were returned to the reserve, so putting the
+                // caught magazine back draws them out of it again.
+                const int clip = eject ? ClipAfterEject(state.clip) : state.clip + added;
+                const int reserve = eject ? ReserveAfterEject(state.clip, state.reserve, state.infinite) :
+                    state.reserve - (state.infinite ? 0 : added);
                 if ((eject && !detached) || (!eject && !reinsert && added <= 0)) reply.status = Status::NoSpaceOrAmmo;
                 else if (!writer(clip, reserve)) reply.status = Status::Backend;
                 else
                 {
                     if (eject)
                     {
-                        // A new gesture replaces the old catch opportunity.
+                        // A new gesture replaces the old catch opportunity. A
+                        // repeated ejection (a redrawn gun) holds no rounds.
                         // Exact network repeats reuse the memo before this write.
-                        *detached = {state.handle, state.clip - clip};
+                        *detached = {state.handle, RoundsInEjectedMagazine(state.clip)};
                     }
                     else *detached = {};
                     reply.status = Status::Applied; reply.clip = clip; reply.reserve = reserve;
@@ -178,11 +197,15 @@ namespace l4d2vr_remote_mag
                 if (reply.clip < 0 || reply.clip > kMaxClip || reply.reserve < 0 || reply.reserve > 5000) return;
                 if (m_Request.action == Action::Eject)
                 {
-                    if (reply.clip != std::min(1, m_Request.clip) || reply.reserve != m_Request.reserve) return;
+                    if (reply.clip != ClipAfterEject(m_Request.clip) ||
+                        (reply.reserve != ReserveAfterEject(m_Request.clip, m_Request.reserve, false) &&
+                            reply.reserve != m_Request.reserve)) return;
                 }
                 else if (m_Request.action == Action::Reinsert)
                 {
-                    if (reply.clip < m_Request.clip || reply.reserve != m_Request.reserve) return;
+                    const int added = reply.clip - m_Request.clip;
+                    const int used = m_Request.reserve - reply.reserve;
+                    if (added < 0 || (used != 0 && used != added)) return;
                 }
                 else
                 {

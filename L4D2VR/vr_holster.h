@@ -65,20 +65,17 @@ namespace l4d2vr_holster
         }
     }
 
-    // Offsets are metres in the body frame relative to the head (the eyes of a
-    // level-looking head, see NeutralHeadOffset): x forward, y toward the
-    // DOMINANT side, z up. Mirroring is implicit in the dominant-side convention.
-    // Sized for a standing adult (eyes ~1.65 m): belt 0.75-0.85 m below the eyes
-    // with the hip holster 0.22 m out and slightly behind, chest pouches 0.36 m
-    // below and 0.12 m forward, and over-the-shoulder reaches just behind the head.
+    // Offsets are metres in the body frame relative to the head:
+    // x forward, y toward the DOMINANT side, z up. Mirroring is implicit in
+    // the dominant-side convention.
     struct Layout
     {
         Vector center[kZoneCount] = {
-            Vector(-0.10f, 0.15f, -0.08f),
-            Vector(-0.04f, 0.22f, -0.78f),
-            Vector(0.12f, -0.10f, -0.36f),
-            Vector(-0.10f, -0.15f, -0.08f),
-            Vector(0.12f, 0.10f, -0.36f),
+            Vector(-0.10f, 0.16f, -0.12f),
+            Vector(0.02f, 0.22f, -0.70f),
+            Vector(0.16f, -0.09f, -0.34f),
+            Vector(-0.10f, -0.16f, -0.12f),
+            Vector(0.16f, 0.09f, -0.34f),
         };
         // Where the items are drawn (their visible centre). Hip and chest items
         // sit in their grab zones and are seen when looking down. Back items hang
@@ -87,80 +84,20 @@ namespace l4d2vr_holster
         // root); their grab zones stay at the shoulders.
         Vector drawCenter[kZoneCount] = {
             Vector(-0.26f, 0.02f, -0.38f),
-            Vector(-0.04f, 0.22f, -0.78f),
-            Vector(0.12f, -0.10f, -0.36f),
+            Vector(0.02f, 0.22f, -0.70f),
+            Vector(0.16f, -0.09f, -0.34f),
             Vector(-0.26f, -0.14f, -0.32f),
-            Vector(0.12f, 0.10f, -0.36f),
+            Vector(0.16f, 0.09f, -0.34f),
         };
         // Generous, Pavlov-sized zones (its hips are 0.20 m capsules and its back a
         // 0.40 m sphere): a holster you have to hunt for is a holster nobody uses.
-        float radius[kZoneCount] = { 0.28f, 0.20f, 0.15f, 0.28f, 0.15f };
-        // Vertical capsule half-length: the hip accepts any belt height from
-        // 0.66 m to 0.90 m below the eyes.
-        float halfHeight[kZoneCount] = { 0.0f, 0.12f, 0.0f, 0.0f, 0.0f };
+        float radius[kZoneCount] = { 0.25f, 0.20f, 0.13f, 0.25f, 0.13f };
         // Shoulder zones only accept a hand that reached over the shoulder:
         // behind the head's frontal plane and above this height below the head.
         bool overShoulder[kZoneCount] = { true, false, false, true, false };
-        float behindPlaneToleranceMeters = 0.06f;
-        float overShoulderMaxDropMeters = 0.40f;
-        // ... and within the shoulders (a gun held up beside the head is not a reach).
-        float overShoulderMaxLateralMeters = 0.27f;
+        float behindPlaneToleranceMeters = 0.03f;
+        float overShoulderMaxDropMeters = 0.38f;
     };
-
-    // The first layout's defaults. Installed config files repeat them verbatim,
-    // so a configured value equal to one of these means "default", not a choice.
-    inline const Vector& LegacyCenter(int zone)
-    {
-        static const Vector kCenters[kZoneCount] = {
-            Vector(-0.10f, 0.16f, -0.12f), Vector(0.02f, 0.22f, -0.70f), Vector(0.16f, -0.09f, -0.34f),
-            Vector(-0.10f, -0.16f, -0.12f), Vector(0.16f, 0.09f, -0.34f) };
-        return kCenters[zone < 0 || zone >= kZoneCount ? 0 : zone];
-    }
-    inline float LegacyRadius(int zone)
-    {
-        static const float kRadii[kZoneCount] = { 0.25f, 0.20f, 0.13f, 0.25f, 0.13f };
-        return kRadii[zone < 0 || zone >= kZoneCount ? 0 : zone];
-    }
-    inline bool NearlyEqual(const Vector& a, const Vector& b)
-    {
-        return std::fabs(a.x - b.x) < 0.0005f && std::fabs(a.y - b.y) < 0.0005f && std::fabs(a.z - b.z) < 0.0005f;
-    }
-    // Configured zone -> effective zone: legacy defaults move to the new layout,
-    // anything the player tuned is kept.
-    inline void MigrateLegacyZone(int zone, const Layout& defaults, Vector& center, float& radius)
-    {
-        if (zone < 0 || zone >= kZoneCount)
-            return;
-        if (NearlyEqual(center, LegacyCenter(zone)))
-            center = defaults.center[zone];
-        if (std::fabs(radius - LegacyRadius(zone)) < 0.0005f)
-            radius = defaults.radius[zone];
-    }
-
-    // Eye position relative to the head's pivot (top of the neck): when the
-    // player looks down at a holster the eyes swing forward and drop ~0.1 m,
-    // which must not move the holsters. Returns world offset (units) from the
-    // tracked eyes to where they would be with the head level and facing the body.
-    constexpr float kEyeForwardOfNeckMeters = 0.09f;
-    constexpr float kEyeAboveNeckMeters = 0.11f;
-    inline Vector NeutralHeadOffset(const Vector& hmdForward, const Vector& hmdUp, const Vector& bodyForward,
-        float unitsPerMeter)
-    {
-        if (!l4d2vr_interaction::Finite(hmdForward) || !l4d2vr_interaction::Finite(hmdUp) ||
-            !l4d2vr_interaction::Finite(bodyForward) || !std::isfinite(unitsPerMeter) || unitsPerMeter <= 0.001f)
-            return Vector(0.0f, 0.0f, 0.0f);
-        const float fLen = std::sqrt(DotProduct(hmdForward, hmdForward));
-        const float uLen = std::sqrt(DotProduct(hmdUp, hmdUp));
-        const float bLen = std::sqrt(bodyForward.x * bodyForward.x + bodyForward.y * bodyForward.y);
-        if (fLen < 0.5f || uLen < 0.5f || bLen < 0.5f)
-            return Vector(0.0f, 0.0f, 0.0f);
-        const Vector f = hmdForward * (1.0f / fLen);
-        const Vector u = hmdUp * (1.0f / uLen);
-        const Vector b(bodyForward.x / bLen, bodyForward.y / bLen, 0.0f);
-        const Vector tracked = f * kEyeForwardOfNeckMeters + u * kEyeAboveNeckMeters;
-        const Vector level = b * kEyeForwardOfNeckMeters + Vector(0.0f, 0.0f, kEyeAboveNeckMeters);
-        return (level - tracked) * unitsPerMeter;
-    }
 
     struct BodyFrame
     {
@@ -237,39 +174,12 @@ namespace l4d2vr_holster
         return l4d2vr_interaction::WrapYaw(yaw);
     }
 
-    // Facing direction of the head. Looking steeply down at a holster leaves
-    // little horizontal forward, so the head's up vector (which then tips
-    // forward) carries the yaw instead.
-    inline float HeadYawDegrees(const Vector& worldHeadForward, const Vector& worldHeadUp, float fallback)
-    {
-        if (!l4d2vr_interaction::Finite(worldHeadForward) || !l4d2vr_interaction::Finite(worldHeadUp))
-            return fallback;
-        const float down = std::fmax(0.0f, -worldHeadForward.z);
-        const Vector facing = worldHeadForward + worldHeadUp * down;
-        if (facing.x * facing.x + facing.y * facing.y < 0.0004f)
-            return fallback;
-        return std::atan2(facing.y, facing.x) * 180.0f / kPi;
-    }
-
     inline float HeadYawDegrees(const Vector& worldHeadForward, float fallback)
     {
         if (!l4d2vr_interaction::Finite(worldHeadForward) ||
             worldHeadForward.x * worldHeadForward.x + worldHeadForward.y * worldHeadForward.y < 0.0004f)
             return fallback;
         return std::atan2(worldHeadForward.y, worldHeadForward.x) * 180.0f / kPi;
-    }
-
-    // Distance (m) from a body-frame point to a zone's centre (or its vertical
-    // capsule segment), ignoring the over-the-shoulder gate.
-    inline float ZoneDistance(const Layout& layout, int index, const Vector& local)
-    {
-        if (index < 0 || index >= kZoneCount)
-            return 1.0e9f;
-        Vector delta = local - layout.center[index];
-        const float half = std::fmax(0.0f, layout.halfHeight[index]);
-        const float dz = std::fabs(delta.z) - half;
-        delta.z = dz > 0.0f ? dz : 0.0f;
-        return std::sqrt(DotProduct(delta, delta));
     }
 
     inline bool HandFitsZone(const BodyFrame& frame, const Layout& layout, Zone zone, const Vector& hand,
@@ -286,12 +196,21 @@ namespace l4d2vr_holster
                 return false;
             if (local.z < -layout.overShoulderMaxDropMeters)
                 return false;
-            if (std::fabs(local.y) > layout.overShoulderMaxLateralMeters)
-                return false;
         }
-        const float distance = ZoneDistance(layout, index, local);
+        const Vector delta = local - layout.center[index];
+        const float distance = std::sqrt(DotProduct(delta, delta));
         outDistanceMeters = distance;
         return std::isfinite(distance) && distance <= layout.radius[index];
+    }
+
+    // Distance (m) from a body-frame point to a zone's centre, ignoring the
+    // over-the-shoulder gate (diagnostics).
+    inline float ZoneDistance(const Layout& layout, int index, const Vector& local)
+    {
+        if (index < 0 || index >= kZoneCount)
+            return 1.0e9f;
+        const Vector delta = local - layout.center[index];
+        return std::sqrt(DotProduct(delta, delta));
     }
 
     // The hand is in, or within marginMeters of, any holster zone (occupied or
@@ -305,8 +224,7 @@ namespace l4d2vr_holster
         for (int i = 0; i < kZoneCount; ++i)
         {
             if (layout.overShoulder[i] && (local.x > layout.behindPlaneToleranceMeters + marginMeters ||
-                    local.z < -layout.overShoulderMaxDropMeters - marginMeters ||
-                    std::fabs(local.y) > layout.overShoulderMaxLateralMeters + marginMeters))
+                    local.z < -layout.overShoulderMaxDropMeters - marginMeters))
                 continue;
             if (ZoneDistance(layout, i, local) <= layout.radius[i] + marginMeters)
                 return true;

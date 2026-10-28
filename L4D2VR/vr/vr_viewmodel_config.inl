@@ -3268,14 +3268,12 @@ void VR::ParseConfigFile()
         const l4d2vr_holster::Layout defaults{};
         for (int zone = 0; zone < l4d2vr_holster::kZoneCount; ++zone)
         {
-            Vector center = getVector3(kZoneKeys[zone], defaults.center[zone]);
-            float radius = getFloat(kRadiusKeys[zone], defaults.radius[zone]);
-            l4d2vr_holster::MigrateLegacyZone(zone, defaults, center, radius);
-            m_HolsterLayout.center[zone] = center;
+            m_HolsterLayout.center[zone] = getVector3(kZoneKeys[zone], defaults.center[zone]);
             // Moving a holster moves its drawn item with it (back items keep
             // hanging behind the zone by the default amount).
-            m_HolsterLayout.drawCenter[zone] = defaults.drawCenter[zone] + (center - defaults.center[zone]);
-            m_HolsterLayout.radius[zone] = std::clamp(radius, 0.04f, 0.5f);
+            m_HolsterLayout.drawCenter[zone] = defaults.drawCenter[zone] +
+                (m_HolsterLayout.center[zone] - defaults.center[zone]);
+            m_HolsterLayout.radius[zone] = std::clamp(getFloat(kRadiusKeys[zone], defaults.radius[zone]), 0.04f, 0.5f);
         }
     }
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);

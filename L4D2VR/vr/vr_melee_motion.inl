@@ -292,6 +292,15 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
             l4d2vr_holster::NearAnyZone(holsterFrame, m_HolsterLayout, m_RightControllerPosAbs, 0.05f))
             bashAllowed = false;
         const l4d2vr_gesture::GunBashEvent bash = m_GunBash.Update(sample, bashAllowed);
+        if (GetTickCount64() < m_VmAnimTraceUntilMs.load(std::memory_order_acquire))
+            Game::logMsg("[VR][Melee] bash trace: hand=(%.3f %.3f %.3f) vel=(%.2f %.2f %.2f) hmd=(%.3f %.3f %.3f) dt=%.4f forward=%.2f allowed=%d",
+                sample.handPosition.x, sample.handPosition.y, sample.handPosition.z,
+                sample.handVelocity.x, sample.handVelocity.y, sample.handVelocity.z,
+                sample.hmdPosition.x, sample.hmdPosition.y, sample.hmdPosition.z, dt, bash.speed, bashAllowed ? 1 : 0);
+        if (bash.speed > 1.2f && l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+            Game::logMsg("[VR][Melee] bash candidate: forward %.2f m/s fraction %.2f barrel %.2f travel %.2f m angular %.0f reach %.2f m allowed=%d armed=%d fired=%d",
+                bash.speed, bash.forwardFraction, bash.barrelDot, bash.travel, bash.peakAngular, bash.reach,
+                bashAllowed ? 1 : 0, bash.armed ? 1 : 0, bash.fired ? 1 : 0);
         if (bash.fired && !IsMagazineInteractionManualActive())
         {
             shove = true;

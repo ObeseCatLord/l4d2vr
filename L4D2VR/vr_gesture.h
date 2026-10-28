@@ -296,6 +296,9 @@ namespace l4d2vr_gesture
         bool fired = false;
         Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized relative hand velocity
         float speed = 0.0f;                   // forward speed toward the view
+        // Diagnostics of the last sample.
+        float forwardFraction = 0.0f, barrelDot = 0.0f, travel = 0.0f, peakAngular = 0.0f, reach = 0.0f;
+        bool armed = false;
     };
 
     // Horizontal facing of the head. Looking down, the head's up vector tips
@@ -353,6 +356,12 @@ namespace l4d2vr_gesture
             if (!allowed || !m_Armed || forwardSpeed < m_Params.forwardSpeed || speed < 1e-4f)
                 return event;
             const float reach = DotProduct(s.handPosition - s.hmdPosition, view);
+            event.forwardFraction = forwardSpeed / speed;
+            event.barrelDot = DotProduct(event.direction, barrel);
+            event.travel = travel;
+            event.peakAngular = peakAngular;
+            event.reach = reach;
+            event.armed = true;
             if (forwardSpeed < m_Params.minForwardFraction * speed ||
                 DotProduct(event.direction, barrel) < m_Params.minBarrelDot ||
                 travel < m_Params.minTravel || peakAngular > m_Params.maxAngularSpeedDeg ||

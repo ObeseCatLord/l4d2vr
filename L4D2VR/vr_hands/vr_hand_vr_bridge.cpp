@@ -4332,7 +4332,7 @@ void VR::UpdateBodyInventoryPose()
     {
         // Pavlov-style: the body follows the head yaw smoothly past a dead band,
         // and stick/snap turns move it immediately.
-        m_BodyInventoryHeadYaw = l4d2vr_holster::HeadYawDegrees(m_HmdForward, m_HmdUp, m_BodyInventoryYaw);
+        m_BodyInventoryHeadYaw = l4d2vr_holster::HeadYawDegrees(m_HmdForward, m_BodyInventoryYaw);
         m_BodyInventoryYaw = l4d2vr_holster::SmoothBodyYaw(m_BodyInventoryYaw, m_BodyInventoryPoseValid,
             m_BodyInventoryHeadYaw, m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt,
             m_HolsterYawDeadbandDeg, m_HolsterYawSmoothingSeconds);
@@ -4348,9 +4348,6 @@ void VR::UpdateBodyInventoryPose()
     m_BodyInventoryForward = Vector(std::cos(radians), std::sin(radians), 0.0f);
     m_BodyInventoryRight = Vector(m_BodyInventoryForward.y, -m_BodyInventoryForward.x, 0.0f);
     m_BodyInventoryHeadPosAbs = m_HmdPosAbs;
-    m_BodyInventoryNeutralHeadOffset = m_HolsterPavlovLayoutEnabled
-        ? l4d2vr_holster::NeutralHeadOffset(m_HmdForward, m_HmdUp, m_BodyInventoryForward, m_VRScale)
-        : Vector(0.0f, 0.0f, 0.0f);
     m_BodyInventoryOrigin = l4d2vr_interaction::BodyOrigin(m_BodyInventoryHeadPosAbs,
         m_BodyInventoryForward, m_BodyInventoryRight, m_InventoryBodyOriginOffset, m_VRScale);
     // Keep the cached head frame as the fallback. A model sample may expire or
@@ -4398,7 +4395,6 @@ bool VR::GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const
 {
     frame = {};
     Vector head{};
-    Vector neutral{};
     float yaw = 0.0f;
     {
         std::lock_guard<std::mutex> lock(m_BodyInventoryPoseMutex);
@@ -4406,12 +4402,10 @@ bool VR::GetHolsterBodyFrame(l4d2vr_holster::BodyFrame& frame) const
             return false;
         head = m_BodyInventoryHeadPosAbs;
         yaw = m_BodyInventoryYaw;
-        neutral = m_BodyInventoryNeutralHeadOffset;
     }
     Vector renderHead{};
     if (VR::t_UseRenderFrameSnapshot && MagazineInteractionTryGetRenderSnapshotHmdPosAbs(this, renderHead))
         head = renderHead;
-    head += neutral;
     frame = l4d2vr_holster::MakeFrame(head, yaw, m_LeftHanded, m_VRScale, m_HolsterHeightScale);
     return frame.valid;
 }

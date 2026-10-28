@@ -9232,21 +9232,21 @@ namespace
         return state;
     }
 
-    // The draw belongs to a viewmodel entity (CBaseViewModel, CTerrorViewModel...).
-    inline bool HooksEntityIsViewmodel(VR* vr, int entityIndex)
+    // The draw is a holstered item (a carried weapon entity drawn on the body
+    // with its v_ model), not the hand's viewmodel.
+    inline bool HooksDrawIsHolsteredItem(const VR* vr, const ModelRenderInfo_t& info)
     {
-        if (!vr || !vr->m_Game || entityIndex <= 0)
+        VR::HolsterRenderSnapshot snapshot{};
+        if (!vr || !vr->GetHolsterRenderSnapshot(snapshot))
             return false;
-        __try
+        for (int i = 0; i < snapshot.count; ++i)
         {
-            C_BaseEntity* const entity = vr->m_Game->GetClientEntity(entityIndex);
-            const char* const name = entity ? vr->m_Game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(entity)) : nullptr;
-            return name && std::strstr(name, "ViewModel") != nullptr;
+            const VR::HolsterRenderItem& item = snapshot.items[i];
+            if ((item.entityIndex > 0 && item.entityIndex == info.entity_index) ||
+                (item.renderable && item.renderable == info.pRenderable))
+                return true;
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
-            return false;
-        }
+        return false;
     }
 
     // Current sequence of a viewmodel entity and its classification.
@@ -9308,7 +9308,7 @@ namespace
 
         // Only the hand's viewmodel: holstered items and other weapon entities
         // drawn with v_ models are placed elsewhere and keep their own bones.
-        if (!armsModel && !drawEntityIsViewmodelClass && !HooksEntityIsViewmodel(vr, info.entity_index))
+        if (!armsModel && !drawEntityIsViewmodelClass && HooksDrawIsHolsteredItem(vr, info))
             return;
 
         HolsterInstantDrawPoseState& state = GetHolsterInstantDrawPoseState();
@@ -9333,10 +9333,14 @@ namespace
         int numBones = 0;
         if (!vr_vm_stabilize::TryGetNumBonesFromDrawState(drawState, numBones) || numBones <= 0 || numBones > 512)
             return;
-        vr_vm_stabilize::Mat3x4 modelAnchor{};
-        if (!TryGetMagazineInteractionModelAnchor(info, modelAnchor))
-            return;
+        // Poses are kept relative to the model's root bone (ValveBiped.ValveBiped),
+        // which the VR code places at the controller; animations move the bones
+        // below it. (The render origin can differ from where the bones were set
+        // up, so it is not a stable reference.)
         const auto* sourceBones = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pCustomBoneToWorld);
+        vr_vm_stabilize::Mat3x4 modelAnchor{};
+        if (!vr_vm_stabilize::SafeRead(sourceBones, modelAnchor))
+            return;
 
         // What the viewmodel is playing. The arms follow the weapon's last state.
         using l4d2vr_vm_anim::Kind;
@@ -9402,6 +9406,12 @@ namespace
             {
                 const auto& c = currentLocal[static_cast<size_t>(bone)].m;
                 const auto& p = pose.frozenLocalBones[static_cast<size_t>(bone)].m;
+                // Bones the VR code parks far away (hidden arms, camera helpers)
+                // are not part of the visible hand and gun.
+                const float cl = c[0][3] * c[0][3] + c[1][3] * c[1][3] + c[2][3] * c[2][3];
+                const float pl = p[0][3] * p[0][3] + p[1][3] * p[1][3] + p[2][3] * p[2][3];
+                if (cl > 80.0f * 80.0f || pl > 80.0f * 80.0f)
+                    continue;
                 const float dx = c[0][3] - p[0][3], dy = c[1][3] - p[1][3], dz = c[2][3] - p[2][3];
                 worst = (std::max)(worst, std::sqrt(dx * dx + dy * dy + dz * dz));
             }
@@ -9488,7 +9498,7 @@ namespace
         // The idle pose: an idle sequence whose pose has settled (a recoil or
         // other gesture layered over the idle base moves between captures), or,
         // where the header cannot say, a weapon that has been out for a while.
-        const bool settled = steadyMatches && maxDeviation(steady) < 0.15f;
+        const bool settled = steadyMatches && maxDeviation(steady) < 0.5f;
         constexpr float kSettledSeconds = 1.6f;
         if ((kind == Kind::Idle && settled) || (kind == Kind::Unknown && modelAge >= kSettledSeconds && !readyMatches))
         {

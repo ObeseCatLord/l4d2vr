@@ -2072,11 +2072,10 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                     return finish();
                 m_SelfTestClip0 = g.clip;
                 m_SelfTestReserve0 = g.reserve;
-                m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
-                m_SelfTestLeftAngWorldValid = true;
-                m_SelfTestMeasure = 1e9f;
-                m_SelfTestMeasureB = 180.0f;
-                go(408);
+                // All the way out (the ejection fires a few centimetres into
+                // the pull), clear of where the well catches a magazine.
+                glide(leftNow() + g.socketOutward * (0.12f * scale), 0.3f);
+                go(420);
                 return false;
             }
             // Second pull: let go away from the gun, it drops.
@@ -2086,6 +2085,14 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             go(411);
             return false;
         }
+        case 420:
+            if (!glideDone(0.2f)) return false;
+            m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
+            m_SelfTestLeftAngWorldValid = true;
+            m_SelfTestMeasure = 1e9f;
+            m_SelfTestMeasureB = 180.0f;
+            go(408);
+            return false;
         case 408: // put it back
         {
             if (inPhase < 0.4f) return false;
@@ -2390,8 +2397,9 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
             const float side = motion == "wide" ? 0.12f : 0.0f;
             // The AK-47's curved magazine is about 18 cm deep along the barrel:
-            // a strike toward the muzzle starts behind all of it.
-            const float back = motion == "forward" ? 0.25f : 0.12f;
+            // a strike toward the muzzle, or straight down across a canted
+            // magazine, starts clear of all of it.
+            const float back = (motion == "forward" || motion == "cant") ? 0.25f : 0.12f;
             m_SelfTestMeasureB = back;
             m_SelfTestSlapStart = contact - dir * (back * scale) + across * (side * scale);
             m_SelfTestSlapEnd = contact + dir * (0.05f * scale) + across * (side * scale);

@@ -164,11 +164,15 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
     using l4d2vr_selftest::Vec3;
     namespace body = l4d2vr_selftest::body;
     auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+    // At most one stage per frame: after a hitch, a press and its release
+    // must not land in the same frame (the press would never be seen).
+    bool stageFiredThisFrame = false;
     auto at = [&](int stage, float when) -> bool
     {
-        if (m_SelfTestStage != stage || t < when)
+        if (stageFiredThisFrame || m_SelfTestStage != stage || t < when)
             return false;
         m_SelfTestStage = stage + 1;
+        stageFiredThisFrame = true;
         return true;
     };
     // Physical buttons (default bindings): the right controller's grip and

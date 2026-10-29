@@ -339,11 +339,16 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 {
     using l4d2vr_selftest::Key;
     auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+    // At most one stage per frame: after a hitch (a model loading on first
+    // use), a press and its release must not land in the same frame, or the
+    // press is never seen.
+    bool stageFiredThisFrame = false;
     auto at = [&](int stage, float when) -> bool
     {
-        if (m_SelfTestStage != stage || t < when)
+        if (stageFiredThisFrame || m_SelfTestStage != stage || t < when)
             return false;
         m_SelfTestStage = stage + 1;
+        stageFiredThisFrame = true;
         return true;
     };
     auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };

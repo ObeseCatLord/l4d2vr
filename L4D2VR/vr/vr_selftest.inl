@@ -2235,7 +2235,14 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 503:
             if (m_SecondaryAttackCmdOwned || m_PrimaryAttackCmdOwned) m_SelfTestValueC = 1;
             if (inPhase < 0.4f) return false;
+            // Let go before moving: on the AK-47 the trigger holds the magazine,
+            // and moving off while still holding it pulls it out.
             button(m_ActionSecondaryAttack, false);
+            go(511);
+            return false;
+        case 511:
+            if (m_SecondaryAttackCmdOwned || m_PrimaryAttackCmdOwned) m_SelfTestValueC = 1;
+            if (inPhase < 0.25f) return false;
             if (g.boltBoxFresh)
                 glide(g.boltCenter, 0.35f);
             go(504);

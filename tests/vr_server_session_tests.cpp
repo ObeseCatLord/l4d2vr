@@ -238,7 +238,7 @@ namespace
         Check(bundle[1] == "l4d2vr_interaction_ack 1\n");
         Check(bundle[2] == "l4d2vr_shell_capability 1 41\n");
         Check(bundle[3] == "l4d2vr_mag_capability 3 42\n");
-        Check(bundle[4] == "l4d2vr_feature_ack 3ff 1\n");
+        Check(bundle[4] == "l4d2vr_feature_ack 7ff 1\n");
         Check(s.EffectiveFeatures(2) == kFeatureAllMask);
         // The client answers server_ack with another hello: no duplicate bundle.
         host.sent.clear();

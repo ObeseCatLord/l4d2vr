@@ -36,6 +36,7 @@
 #include "vr_grip_toggle.h"
 #include "vr_gesture.h"
 #include "vr_throw_ballistics.h"
+#include "vr_hand_throw.h"
 #include "vr_scope_lens.h"
 #include "vr_sight_correction.h"
 #include "vr_server_features.h"
@@ -1533,6 +1534,48 @@ public:
 	int m_ManualThrowVelocityWindowTicks = 5;
 	float m_ManualThrowPeakVelocityBlend = 0.5f;
 	float m_ManualThrowMaxVelocity = 1400.0f;
+	// Pavlov-style hand throws (servers with the HandThrow feature): the grip
+	// holds the grenade, the trigger pulls the pin, letting go of the grip
+	// throws it from the hand with the hand's measured release velocity.
+	bool m_ManualThrowPinRequired = true;
+	float m_ManualThrowHandVelocityScale = 3.0f;   // listen host: hand velocity multiplier
+	int m_ManualThrowVelocityWindowMs = 80;
+	struct HandThrowUsercmd
+	{
+		int command = 0;
+		Vector position = { 0.0f, 0.0f, 0.0f };
+		QAngle angles = { 0.0f, 0.0f, 0.0f };
+		Vector velocity = { 0.0f, 0.0f, 0.0f };   // hand relative to the body, world axes, units/s
+		int kind = 0;                              // l4d2vr_hand_throw::Kind
+		bool leftHand = false;
+	};
+	static constexpr size_t kHandThrowUsercmdCount = 16;
+	std::array<HandThrowUsercmd, kHandThrowUsercmdCount> m_HandThrowUsercmds{};
+	mutable std::mutex m_HandThrowMutex;
+	l4d2vr_hand_throw::VelocityTracker m_HandThrowTracker[2];   // [0] left, [1] right (dominant)
+	uint32_t m_HandThrowItemHandSerial = 0u; // item-hand swaps exchange the tracked hands
+	std::chrono::steady_clock::time_point m_HandThrowClockBase = std::chrono::steady_clock::now();
+	std::atomic<uint64_t> m_HandThrowHideUntilMs{ 0u };          // hide the thrown grenade's viewmodel
+	std::atomic<uint32_t> m_HandThrowCount{ 0u };
+	std::atomic<uint64_t> m_HandThrowLastReleaseMs{ 0u };
+	Vector m_HandThrowLastReleasePos = { 0.0f, 0.0f, 0.0f };        // m_HandThrowMutex
+	Vector m_HandThrowLastReleaseVelocity = { 0.0f, 0.0f, 0.0f };   // m_HandThrowMutex
+	// Listen host: the server-side spawn of the last hand throw (self-test evidence).
+	std::atomic<uint32_t> m_HandThrowServerSpawnCount{ 0u };
+	std::atomic<uint64_t> m_HandThrowServerSpawnMs{ 0u };
+	Vector m_HandThrowServerSpawnOrigin = { 0.0f, 0.0f, 0.0f };     // m_HandThrowMutex
+	Vector m_HandThrowServerSpawnVelocity = { 0.0f, 0.0f, 0.0f };   // m_HandThrowMutex
+	Vector m_HandThrowServerSpawnBody = { 0.0f, 0.0f, 0.0f };       // m_HandThrowMutex
+	int m_HandThrowServerSpawnCommand = 0;                          // m_HandThrowMutex
+	void NoteHandThrowServerSpawn(const Vector& origin, const Vector& velocity, const Vector& body, int command);
+	double HandThrowNowSeconds() const;
+	void UpdateHandThrowTracking();
+	bool HandThrowServerReady() const;
+	bool ThrowableHandIsLeft() const;
+	bool EstimateHandThrowVelocity(bool leftHand, Vector& worldRelative) const;
+	void QueueHandThrowUsercmd(const HandThrowUsercmd& entry);
+	bool GetHandThrowUsercmd(int command, HandThrowUsercmd& out) const;
+	bool HandThrowHidesViewmodel(const std::string& modelName) const;
 	float m_ThrowArcBaseDistance = 500.0f;
 	float m_ThrowArcMinDistance = 20.0f;
 	float m_ThrowArcMaxDistance = 2200.0f;
@@ -3075,6 +3118,8 @@ public:
 	float m_SelfTestMeasureB = 0.0f;
 	Vector m_SelfTestPoint{ 0.0f, 0.0f, 0.0f };
 	bool RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player);
+	bool RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player);
+	void SelfTestListProjectiles(std::vector<std::pair<int, Vector>>& out);
 	bool m_SelfTestParsed = false;
 	bool m_SelfTestEnabled = false;
 	std::vector<std::string> m_SelfTestSteps;

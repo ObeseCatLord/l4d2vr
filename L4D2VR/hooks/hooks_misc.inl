@@ -25285,6 +25285,10 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             (modelName.find("/hands/") != std::string::npos) ||
             (modelName.find("v_hands") != std::string::npos);
         drawUsesNativeViewmodelDepthHack = teleportSuppressibleViewmodel;
+        // A hand-thrown grenade has left the hand: do not draw it there while
+        // the server's switch to the next item is on its way.
+        if (teleportSuppressibleViewmodel && m_VR && m_VR->HandThrowHidesViewmodel(modelName))
+            return;
         const std::string lowerWorldPoseModelName =
             vr_vm_stabilize::ToLowerAscii(modelName);
         const bool looksLikeHeldWorldModel =

@@ -170,6 +170,34 @@ namespace
             Check(d.intent == Intent::ObjectPull && d.objectPullCommand == 242 && d.objectPullEntity == 1500 &&
                 d.objectPullHint == 3 && c.impulse == 0 && c.weaponselect == 0 && c.weaponsubtype == 0);
         }
+        // Hand throw: the velocity leaves forwardmove/sidemove/weaponselect/
+        // weaponsubtype; the game sees the real movement and no weapon select.
+        {
+            UsercmdData c = SampleCommand(10, 20, 0.0f, 0.0f);
+            c.buttons = 0;
+            c.impulse = kImpulseHandThrow;
+            c.forwardmove = l4d2vr_hand_throw::PackMove(450.0f, 310.0f);
+            c.sidemove = l4d2vr_hand_throw::PackMove(-225.0f, -40.0f);
+            l4d2vr_hand_throw::PackVertical(120.0f, l4d2vr_hand_throw::Kind::Molotov, true, c.weaponselect, c.weaponsubtype);
+            EncodeVRUsercmd(c, Vec3(1, 2, 3), Angles(), false);
+            const DecodedUsercmd d = DecodeVRUsercmd(c);
+            Check(d.intent == Intent::HandThrow && d.handThrow.valid && d.handThrow.kind == l4d2vr_hand_throw::Kind::Molotov);
+            Check(d.handThrow.leftHand && d.handThrow.velocity.x == 310.0f && d.handThrow.velocity.y == -40.0f &&
+                d.handThrow.velocity.z == 120.0f);
+            Check(c.impulse == 0 && c.weaponselect == 0 && c.weaponsubtype == 0 && c.forwardmove == 450.0f &&
+                c.sidemove == -225.0f && !IsInventoryRelease(d) && d.carryWeaponId == weapon::kNone);
+            // A hand throw keeps the pose of its command.
+            Check(Near(d.controllerPos.x, 1.0f, 1e-4f) && Near(d.controllerPos.z, 3.0f, 0.11f));
+        }
+        {
+            UsercmdData c = SampleCommand(10, 20, 0.0f, 0.0f);
+            c.impulse = kImpulseHandThrow;     // garbage payload
+            c.weaponselect = 77;
+            EncodeVRUsercmd(c, Vec3(), Angles(), false);
+            const DecodedUsercmd d = DecodeVRUsercmd(c);
+            Check(d.intent == Intent::None && !d.handThrow.valid && c.impulse == 0 && c.weaponselect == 0 &&
+                c.weaponsubtype == 0 && c.forwardmove == 0.0f && c.sidemove == 0.0f);
+        }
         // Carry word: weapon id + 1 and pistol markers 60..63 are stripped.
         {
             UsercmdData c = SampleCommand(10, 20, 0.0f, 0.0f);

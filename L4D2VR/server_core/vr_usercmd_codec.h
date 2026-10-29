@@ -16,6 +16,8 @@
 //   impulse         234..243 interaction intents (vr_server_protocol.h)
 //   weaponselect    object-pull entity index (impulse 240..243 only)
 //   weaponsubtype   object-pull target hint (impulse 240..243 only)
+//   impulse 244     hand throw: forwardmove/sidemove/weaponselect/weaponsubtype
+//                   carry the hand velocity (vr_hand_throw.h)
 //   buttons 26..31  "carry word": weapon id + 1 of a released carry/inventory
 //                   item, or pistol markers 60..63
 // Commands without the VR flag are never modified.
@@ -25,6 +27,7 @@
 #include <cstdint>
 
 #include "../vr_dual_pistols.h"
+#include "../vr_hand_throw.h"
 #include "../vr_pistol_detachment.h"
 #include "../vr_interaction_protocol.h"
 #include "../vr_server_pistol_commands.h"
@@ -62,6 +65,7 @@ namespace l4d2vr_server
         Shove,
         PillGive,
         ObjectPull,
+        HandThrow,
     };
 
     struct DecodedUsercmd
@@ -84,6 +88,7 @@ namespace l4d2vr_server
         l4d2vr_server_pistol::ReloadPolicy reload = l4d2vr_server_pistol::ReloadPolicy::Native;
         bool attackDown = false;
         bool useDown = false;
+        l4d2vr_hand_throw::Payload handThrow{};   // intent HandThrow with a valid payload
     };
 
     namespace codec_detail
@@ -186,6 +191,13 @@ namespace l4d2vr_server
         case kImpulseHolsterDrop: out.intent = Intent::HolsterDrop; cmd.impulse = 0u; break;
         case kImpulseShove: out.intent = Intent::Shove; cmd.impulse = 0u; break;
         case kImpulsePillGive: out.intent = Intent::PillGive; cmd.impulse = 0u; break;
+        case kImpulseHandThrow:
+            // Strip the payload whatever it holds; a malformed one throws nothing.
+            out.handThrow = l4d2vr_hand_throw::DecodeFields(cmd.forwardmove, cmd.sidemove,
+                cmd.weaponselect, cmd.weaponsubtype);
+            out.intent = out.handThrow.valid ? Intent::HandThrow : Intent::None;
+            cmd.impulse = 0u;
+            break;
         default:
             if (incoming >= kImpulseObjectPullBegin && incoming <= kImpulseObjectPullEnd)
             {

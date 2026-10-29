@@ -3585,14 +3585,57 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     case 203:
         if (!glideDone(0.2f)) return false;
         glide(m_SelfTestSlapStart + gunDrift(), 0.5f);
+        m_SelfTestStrikeCorrections = 0;
         go(204);
         return false;
     case 204:
+    {
         if (!glideDone(0.4f)) return false;
-        glide(m_SelfTestSlapEnd + gunDrift(), 0.25f); // 39 cm in 0.25 s: 1.6 m/s against a still gun hand
+        // As in slapmotione2e: line the still spare up across the strike and
+        // at least 30 cm back, then strike through the old magazine's centre.
+        Vector dir = g.socketOutward * (1.0f / (std::max)(0.001f, g.socketOutward.Length()));
+        const bool collider = nowMs - m_MagazineSlapCentersAtMs < 200u;
+        if (collider && m_SelfTestStrikeCorrections < 6)
+        {
+            Vector miss = m_MagazineSlapSeatedCenter - m_MagazineSlapHeldCenter;
+            const float along = DotProduct(miss, dir);
+            miss = miss - dir * along;
+            const float backMissing = (std::max)(0.0f, 0.30f * scale - along);
+            if (miss.Length() > 0.008f * scale || backMissing > 0.01f * scale)
+            {
+                ++m_SelfTestStrikeCorrections;
+                glide(leftNow() + miss - dir * (backMissing > 0.01f * scale ? backMissing + 0.04f * scale : 0.0f), 0.2f);
+                return false;
+            }
+        }
+        if (collider)
+            m_SelfTestSlapEnd = leftNow() + (m_MagazineSlapSeatedCenter + dir * (0.04f * scale) - m_MagazineSlapHeldCenter);
+        else
+            m_SelfTestSlapEnd = m_SelfTestSlapEnd + gunDrift();
+        m_SelfTestPoint = g.magazineCenter;
+        m_SelfTestStrikeCorrections = 0;
+        glide(m_SelfTestSlapEnd, meters(m_SelfTestSlapEnd, leftNow()) / 1.6f); // 1.6 m/s against a still gun hand
         go(205);
         return false;
+    }
     case 205:
+        if (m_MagazineSlapSerial.load(std::memory_order_acquire) == static_cast<uint32_t>(m_SelfTestValueA) &&
+            m_SelfTestGlideMs && !glideDone(0.0f) && m_SelfTestStrikeCorrections < 40 &&
+            nowMs - m_MagazineSlapCentersAtMs < 200u)
+        {
+            // Keep the strike on line (sideways only, keeping the speed).
+            const Vector dir = g.socketOutward * (1.0f / (std::max)(0.001f, g.socketOutward.Length()));
+            Vector miss = m_MagazineSlapSeatedCenter - m_MagazineSlapHeldCenter;
+            miss = miss - dir * DotProduct(miss, dir);
+            const Vector planned = m_SelfTestGlideTo - leftNow();
+            const Vector correction = miss - (planned - dir * DotProduct(planned, dir));
+            if (correction.Length() > 0.005f * scale)
+            {
+                ++m_SelfTestStrikeCorrections;
+                m_SelfTestSlapEnd = m_SelfTestGlideTo + correction;
+                glide(m_SelfTestSlapEnd, meters(m_SelfTestSlapEnd, leftNow()) / 1.6f);
+            }
+        }
         if (!glideDone(0.02f)) return false;
         glide(m_SelfTestSlapEnd + m_SelfTestSlapPark + gunDrift(), 0.12f);
         go(206);

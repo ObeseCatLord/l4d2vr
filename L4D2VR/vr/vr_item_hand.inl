@@ -37,7 +37,7 @@ void VR::CommitItemHandSwitch()
     // The gameplay hands trade controllers this frame: forget per-hand motion
     // history so no detector reads the jump as a swing, bash, shove or throw.
     m_MeleeMotionWeapon = nullptr; // UpdateMeleeMotion resets swing, thrust, bash and inertia
-    m_MeleeMotionPrevValid = false;
+    m_GestureSampler.Reset(); // tracking-space hand history (vr_gesture.h)
     m_MotionGestureInitialized = false;
     if (nowMs + 500u > m_GunBashGripBlockUntilMs.load(std::memory_order_acquire))
         m_GunBashGripBlockUntilMs.store(nowMs + 500u, std::memory_order_release);

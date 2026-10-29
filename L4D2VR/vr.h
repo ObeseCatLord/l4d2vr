@@ -3059,6 +3059,7 @@ public:
 	uint64_t m_SelfTestPhaseStartMs = 0;
 	Vector m_SelfTestGlideFrom{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestGlideTo{ 0.0f, 0.0f, 0.0f };
+	int m_SelfTestStrikeCorrections = 0; // sideways corrections during one slap strike
 	uint64_t m_SelfTestGlideStartMs = 0;
 	uint64_t m_SelfTestGlideMs = 0;
 	int m_SelfTestCycle = 0;

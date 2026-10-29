@@ -209,6 +209,11 @@ void VR::ApplySelfTestPoses()
         m_LeftControllerPose.TrackedDeviceAng = QAngle(leftAng.x, yaw + leftAng.y, leftAng.z);
     }
     m_LeftControllerPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
+    // Scripted hands are physical hands (righthand= is the configured gun
+    // hand's controller); after an ambidextrous swap the gameplay right pose is
+    // the other controller.
+    if (m_ItemHandSwapped.load(std::memory_order_acquire))
+        std::swap(m_RightControllerPose, m_LeftControllerPose);
 }
 
 void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
@@ -338,6 +343,9 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     };
     auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
     char detail[192];
+
+    if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
+        return RunItemHandSelfTestStep(step, t, player);
 
     if (step == "features")
     {

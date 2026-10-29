@@ -90,6 +90,19 @@ int main()
     CHECK(KindOf(broken, 7, false) == Kind::Unknown);
     CHECK(Classify(nullptr, nullptr, false) == Kind::Unknown);
 
+    // Weapon switches never animate in VR: deploys, draws and item pickups.
+    CHECK(IsSwitchActivity("ACT_VM_DEPLOY", "deploy"));
+    CHECK(IsSwitchActivity("ACT_VM_DEPLOY_PIPEBOMB", "pipebomb_deploy"));
+    CHECK(IsSwitchActivity("ACT_VM_DEPLOY_PAINPILLS", "painpills_draw"));
+    CHECK(IsSwitchActivity("ACT_VM_DRAW", "deploy_layer"));
+    CHECK(IsSwitchActivity("ACT_VM_ITEMPICKUP_EXTEND", "item_extend"));
+    CHECK(IsSwitchActivity("", "awm_draw"));
+    CHECK(!IsSwitchActivity("ACT_VM_IDLE", "idle"));
+    CHECK(!IsSwitchActivity("ACT_VM_PRIMARYATTACK", "fire"));
+    CHECK(!IsSwitchActivity("ACT_VM_RELOAD", "reload"));
+    CHECK(!IsSwitchActivity("ACT_VM_HELPINGHAND_LOOP", "helping_hand_loop"));
+    CHECK(!IsSwitchActivity(nullptr, nullptr));
+
     CHECK(IsSwungMeleeModel("models/weapons/melee/v_bat.mdl"));
     CHECK(!IsSwungMeleeModel("models/weapons/melee/v_chainsaw.mdl"));
     CHECK(!IsSwungMeleeModel("models/v_models/v_rifle.mdl"));

@@ -3194,6 +3194,11 @@ public:
 	// across later steps, so a following shot= photographs that scene.
 	bool m_SelfTestLookActive = false;
 	float m_SelfTestLookPitch = 0.0f;           // degrees, positive looks down
+	// backpreview=<m>: back holster items drawn this far forward of their real
+	// place (and with the body off), so a picture shows them as seen from behind.
+	float m_SelfTestBackPreviewMeters = 0.0f;
+	// allpreview=<m>: every holster item drawn this far forward (orientation checks).
+	float m_SelfTestAllPreviewMeters = 0.0f;
 	bool m_SelfTestSceneRightValid = false;
 	bool m_SelfTestSceneLeftValid = false;
 	l4d2vr_selftest::Vec3 m_SelfTestSceneRight{}; // holster body frame metres: x forward, y dominant side, z up

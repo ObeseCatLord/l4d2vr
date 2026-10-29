@@ -131,7 +131,7 @@ magazine/chamber ammunition remains unfinished.
   do not create release events.
 - Right A releases a magazine for physical reloads. For dual pistols and a
   single pistol held in the left hand, it requests native reload instead.
-- Left X toggles the flashlight; right stick click jumps.
+- Right stick click or left X toggles the flashlight; the right stick pushed forward jumps.
 
 Pistol splitting uses the native `CPistol::RemoveDualWeapons` function after
 preparing a world pistol. Signature and clip-layout checks disable the

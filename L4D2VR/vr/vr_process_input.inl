@@ -832,6 +832,14 @@ void VR::ProcessInput()
         primaryAttackDown = primaryAttackJustPressed = false;
         secondaryAttackActive = secondaryAttackJustPressed = false;
     }
+    // The free (off) hand's trigger, read before it can become a shove or a
+    // left pistol shot. With MagazineInteractionTriggerInteractions it does the
+    // small reload interactions instead (Pavlov: grips grab, triggers interact).
+    const bool offHandTriggerValid = secondaryAttackDataValid && secondaryAttackActionData.bActive &&
+        (originMatchesRole(secondaryAttackActionData.activeOrigin, gameplayLeftRole) ||
+            l4d2vr_selftest::Get().active.load(std::memory_order_acquire));
+    const bool offHandTriggerDown = offHandTriggerValid && secondaryAttackActive;
+    const bool offHandTriggerJustPressed = offHandTriggerValid && secondaryAttackJustPressed;
 
     const bool dualTriggerRouting = (dualPistolsActive || leftHeldPistol) && m_EncodeVRUsercmd &&
         !m_ForceNonVRServerMovement && Hooks::s_ServerUnderstandsVR;
@@ -851,6 +859,10 @@ void VR::ProcessInput()
         secondaryAttackActive = false; // Left trigger fires its pistol rather than shoving.
         secondaryAttackJustPressed = false;
     }
+    // A left-held pistol or akimbo pair keeps its own trigger and the old
+    // grip-based reload; everything else reloads with the free hand's trigger.
+    const bool triggerInteractions = m_MagazineInteractionTriggerInteractions && !leftHeldPistol &&
+        !dualTriggerRouting && !m_MouseModeEnabled;
 
     // Motion-only shoves and melee: the triggers never shove (secondary) with
     // guns, melee weapons or throwables, and never swing a melee weapon (the
@@ -875,6 +887,16 @@ void VR::ProcessInput()
         primaryAttackDown = false;
         primaryAttackJustPressed = false;
     }
+    // The free hand's trigger never shoves or fires while a gun is in the other
+    // hand: it belongs to magazines, slides and bolts (motion shoves still work).
+    const bool freeHandTriggerOwnedByGun = triggerInteractions && offHandTriggerValid &&
+        l4d2vr_calibration::IsFirearm(triggerWeaponId);
+    if (freeHandTriggerOwnedByGun)
+    {
+        secondaryAttackActive = false;
+        secondaryAttackJustPressed = false;
+    }
+    m_FreeHandTriggerDown.store(offHandTriggerDown, std::memory_order_release);
 
     // Manual magazine handling uses the gameplay left/off hand. In LeftHanded mode
     // that is the physical right controller after the pose remap in GetPoses().
@@ -1024,18 +1046,24 @@ void VR::ProcessInput()
         m_MagazineInteractionThreeFingerCurlDownPrev = false;
     }
 
+    // Trigger interactions: the free hand's trigger takes the grip's place for
+    // magazines, shells and slides; the grip keeps the foregrip (below).
+    const bool interactionButtonValid = triggerInteractions ? offHandTriggerValid : offHandGripValid;
+    const bool interactionButtonDown = triggerInteractions ? offHandTriggerDown : offHandGripDown;
+    const bool interactionButtonJustPressed = triggerInteractions ? offHandTriggerJustPressed : offHandGripJustPressed;
+    const bool legacySecondarySource = !triggerInteractions && secondaryAttackFromLeftHand;
     const bool legacyMagazineButtonGripDown =
-        (offHandGripValid && offHandGripDown) ||
+        (interactionButtonValid && interactionButtonDown) ||
         (reloadFromLeftHand && reloadButtonDown) ||
         (crouchFromLeftHand && crouchButtonDown) ||
         (jumpFromLeftHand && jumpButtonDown) ||
-        (secondaryAttackFromLeftHand && secondaryAttackActive);
+        (legacySecondarySource && secondaryAttackActive);
     const bool legacyMagazineButtonGripJustPressed =
-        (offHandGripValid && offHandGripJustPressed) ||
+        (interactionButtonValid && interactionButtonJustPressed) ||
         (reloadFromLeftHand && reloadJustPressed) ||
         (crouchFromLeftHand && crouchJustPressed) ||
         (jumpFromLeftHand && jumpJustPressed) ||
-        (secondaryAttackFromLeftHand && secondaryAttackJustPressed);
+        (legacySecondarySource && secondaryAttackJustPressed);
     // A retained-left pistol reload uses only the free right grip. Other right
     // buttons keep their gameplay functions, including jump and flashlight.
     const bool magazineButtonGripDown = leftHeldPistol
@@ -1043,13 +1071,14 @@ void VR::ProcessInput()
     const bool magazineButtonGripJustPressed = leftHeldPistol
         ? (rightGripValid && rightGripJustPressed) : legacyMagazineButtonGripJustPressed;
     const uint32_t knownMagazineButtons = leftHeldPistol ? (rightGripValid ? 32u : 0u) :
-        (offHandGripValid ? 1u : 0u) | (reloadFromLeftHand ? 2u : 0u) |
-        (crouchFromLeftHand ? 4u : 0u) | (jumpFromLeftHand ? 8u : 0u) | (secondaryAttackFromLeftHand ? 16u : 0u);
+        (interactionButtonValid ? 1u : 0u) | (reloadFromLeftHand ? 2u : 0u) |
+        (crouchFromLeftHand ? 4u : 0u) | (jumpFromLeftHand ? 8u : 0u) | (legacySecondarySource ? 16u : 0u);
     const uint32_t downMagazineButtons = leftHeldPistol ? (rightGripDown ? 32u : 0u) :
-        (offHandGripDown ? 1u : 0u) | (reloadButtonDown ? 2u : 0u) |
+        (interactionButtonDown ? 1u : 0u) | (reloadButtonDown ? 2u : 0u) |
         (crouchButtonDown ? 4u : 0u) | (jumpButtonDown ? 8u : 0u) | (secondaryAttackActive ? 16u : 0u);
     const uint32_t buttonContext = (leftHeldPistol ? 32u : 31u) |
-        (IsGameplayHandLeftPhysical(MagazineReloadSupportIsLeft()) ? 256u : 0u);
+        (IsGameplayHandLeftPhysical(MagazineReloadSupportIsLeft()) ? 256u : 0u) |
+        (triggerInteractions ? 512u : 0u);
     const bool magazineButtonGripAvailable = m_MagazineButtonGripSources.Update(
         knownMagazineButtons, downMagazineButtons, buttonContext);
     const bool magazineGripInputAvailable = magazineButtonGripInput
@@ -1062,7 +1091,7 @@ void VR::ProcessInput()
     const bool magazineButtonGripJustPressedFromOther =
         (crouchFromLeftHand && crouchJustPressed) ||
         (jumpFromLeftHand && jumpJustPressed) ||
-        (secondaryAttackFromLeftHand && secondaryAttackJustPressed);
+        (legacySecondarySource && secondaryAttackJustPressed);
     const bool allowGameplayInputOnTwoHandedGripRelease =
         !leftHeldPistol && magazineButtonGripInput &&
         magazineButtonGripJustPressedFromReload &&
@@ -1095,6 +1124,12 @@ void VR::ProcessInput()
             magazineInteractionFingerCurls[4] >= threeFingerThreshold;
     }
 
+    // The two-handed foregrip follows the off-hand grip with trigger
+    // interactions; otherwise UpdateMagazineInteraction uses the magazine grip.
+    const bool foregripSplit = triggerInteractions && magazineButtonGripInput;
+    const bool foregripSplitDown = foregripSplit && offHandGripValid && offHandGripDown;
+    const bool foregripSplitJustPressed = foregripSplit && offHandGripValid && offHandGripJustPressed &&
+        !l4d2vr_input::ActionFrame::SuppressEdges(m_InputActionFrame.Read());
     const bool magazineGripDown = magazineButtonGripInput
         ? magazineButtonGripDown
         : (thumbIndexGripDown || threeFingerGripDown);
@@ -1121,7 +1156,10 @@ void VR::ProcessInput()
         magazineGripJustPressed,
         supportHandDown,
         supportHandJustPressed,
-        allowGameplayInputOnTwoHandedGripRelease);
+        allowGameplayInputOnTwoHandedGripRelease,
+        foregripSplit,
+        foregripSplitDown,
+        foregripSplitJustPressed);
     // Ambidextrous hand-off: whatever the magazine/foregrip logic took first wins.
     UpdateItemHandOff(localPlayer, isObserverOrIdle, leftHeldPistol || dualPistolsActive,
         offHandGripValid && offHandGripJustPressed);
@@ -2379,6 +2417,8 @@ void VR::ProcessInput()
         {
             if (wantAttack2 && !m_SecondaryAttackCmdOwned)
             {
+                if (freeHandTriggerOwnedByGun && offHandTriggerDown && !gestureSecondaryAttackActive)
+                    m_FreeHandTriggerLeakSerial.fetch_add(1u, std::memory_order_acq_rel);
                 m_Game->ClientCmd_Unrestricted("+attack2");
                 m_SecondaryAttackCmdOwned = true;
                 TriggerShoveHaptics(true);
@@ -2431,7 +2471,9 @@ void VR::ProcessInput()
 
     if (flashlightJustPressed)
     {
-        if (crouchButtonDown)
+        // Crouch + flashlight votes yes (F1). The right stick's own crouch
+        // (pulled back while it is clicked) is not that combo.
+        if (crouchButtonDown && !m_StickCrouchDown)
             SendFunctionKey(VK_F1);
         else
             IssueFlashlightToggle(true);

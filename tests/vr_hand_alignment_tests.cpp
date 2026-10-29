@@ -174,4 +174,46 @@ int main()
         Check(!l4d2vr_ammo_grip::AxesAgree(VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(0.0f,180.0f,0.0f))),gun,minDot)); // backwards
         Check(!l4d2vr_ammo_grip::AxesAgree(VrHandMath::Multiply(gun,l4d2vr_ammo_grip::Calibration(Vector(180.0f,0.0f,0.0f))),gun,minDot)); // upside down
     }
+    {
+        // The drawn L4D2 left hand (bone positions logged in-game, hand bone
+        // frame, units): the fist sits off the palm on the thumb's side, at
+        // the base of the fingers, half way across the hand.
+        l4d2vr_ammo_grip::HandBones hand{};
+        hand.wrist = Vector(0.0f, 0.0f, 0.0f);
+        hand.knuckles[0] = Vector(3.68f, -0.16f, 1.42f); hand.knuckleValid[0] = true;
+        hand.knuckles[1] = Vector(3.57f, 0.10f, 0.41f); hand.knuckleValid[1] = true;
+        hand.knuckles[2] = Vector(3.30f, 0.20f, -0.55f); hand.knuckleValid[2] = true;
+        hand.knuckles[3] = Vector(2.99f, 0.00f, -1.48f); hand.knuckleValid[3] = true;
+        hand.thumbRoot = Vector(1.07f, -1.29f, 0.98f); hand.thumbValid = true;
+        Vector fist{};
+        Check(l4d2vr_ammo_grip::FistCenter(hand, 0.8f, 0.45f, fist));
+        Check(fist.y < -1.0f);                         // the palm side (where the thumb is)
+        Check(fist.x > 2.0f && fist.x < 3.3f);         // at the base of the fingers
+        Check(std::fabs(fist.z) < 0.5f);               // across the middle of the hand
+        // Moved and turned with the hand, the fist moves with it.
+        const auto turn = l4d2vr_ammo_grip::Calibration(Vector(30.0f, -70.0f, 120.0f));
+        const Vector shift(100.0f, -40.0f, 25.0f);
+        l4d2vr_ammo_grip::HandBones moved = hand;
+        moved.wrist = shift + l4d2vr_ammo_grip::Rotate(turn, hand.wrist);
+        for (int i = 0; i < 4; ++i) moved.knuckles[i] = shift + l4d2vr_ammo_grip::Rotate(turn, hand.knuckles[i]);
+        moved.thumbRoot = shift + l4d2vr_ammo_grip::Rotate(turn, hand.thumbRoot);
+        Vector movedFist{};
+        Check(l4d2vr_ammo_grip::FistCenter(moved, 0.8f, 0.45f, movedFist));
+        Check((movedFist - (shift + l4d2vr_ammo_grip::Rotate(turn, fist))).Length() < 0.001f);
+        // Without the thumb (which side is the palm?) or two knuckles: no fist.
+        l4d2vr_ammo_grip::HandBones noThumb = hand; noThumb.thumbValid = false;
+        Check(!l4d2vr_ammo_grip::FistCenter(noThumb, 0.8f, 0.45f, fist));
+        l4d2vr_ammo_grip::HandBones oneKnuckle = hand;
+        oneKnuckle.knuckleValid[1] = oneKnuckle.knuckleValid[2] = oneKnuckle.knuckleValid[3] = false;
+        Check(!l4d2vr_ammo_grip::FistCenter(oneKnuckle, 0.8f, 0.45f, fist));
+        l4d2vr_ammo_grip::HandBones flatThumb = hand; flatThumb.thumbRoot = Vector(1.0f, 0.0f, 0.9f);
+        Check(!l4d2vr_ammo_grip::FistCenter(flatThumb, 0.8f, 0.45f, fist));
+
+        // The fist closes low on a magazine: 30 percent up from the end that
+        // stays outside the gun (the insertion line points out of the well).
+        const Vector mins(-1.0f, -5.0f, -2.0f), maxs(1.0f, 5.0f, 2.0f);
+        Check(Near(l4d2vr_ammo_grip::SpareGripPoint(mins, maxs, Vector(0.0f, -1.0f, 0.0f), 0.3f), Vector(0.0f, -2.0f, 0.0f)));
+        Check(Near(l4d2vr_ammo_grip::SpareGripPoint(mins, maxs, Vector(0.0f, 1.0f, 0.0f), 0.3f), Vector(0.0f, 2.0f, 0.0f)));
+        Check(Near(l4d2vr_ammo_grip::SpareGripPoint(mins, maxs, Vector(0.0f, 0.0f, 1.0f), 0.5f), Vector(0.0f, 0.0f, 0.0f)));
+    }
 }

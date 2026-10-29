@@ -75,9 +75,12 @@ namespace l4d2vr_grip
                 m_Armed = m_Owned;
                 return false;
             }
+            // A release ends the ownership. With the grip up and nothing
+            // armed there is no release: a reclaimed item stays owned.
             const bool released = m_Armed && dropHere;
+            if (m_Armed)
+                m_Owned = false;
             m_Armed = false;
-            m_Owned = false;
             return released;
         }
 
@@ -87,6 +90,17 @@ namespace l4d2vr_grip
         {
             m_Weapon = weapon;
             m_Armed = weapon != 0u;
+            m_Owned = weapon != 0u;
+            m_WaitForRelease = false;
+        }
+
+        // The item the grip let go of is back in the hand (see DropReturn):
+        // the grip owns it again although it is not held now, so the next
+        // squeeze and release lets it go.
+        void ReclaimWeapon(std::uintptr_t weapon)
+        {
+            m_Weapon = weapon;
+            m_Armed = false;
             m_Owned = weapon != 0u;
             m_WaitForRelease = false;
         }
@@ -105,5 +119,40 @@ namespace l4d2vr_grip
         bool m_Owned = false;
         bool m_WaitForRelease = false;
         std::uint32_t m_Discontinuity = 0u;
+    };
+
+    // After the grip lets an item go, the host may keep it (a drop it refuses)
+    // or hand it straight back (L4D2 picks a dropped weapon up again when it
+    // lands at the player's feet and the slot is empty). Either way the item is
+    // in the hand again and must not become one the grip can no longer let go
+    // of: Returned() reports it once, so the grip reclaims it.
+    class DropReturn
+    {
+    public:
+        static constexpr std::uint64_t kSettleMs = 700u;  // time for the host to act on the drop
+        static constexpr std::uint64_t kWindowMs = 6000u; // a later pickup is a new take
+        void Dropped(std::uintptr_t weapon, std::uint64_t nowMs)
+        {
+            m_Weapon = weapon;
+            m_At = nowMs;
+        }
+        bool Returned(std::uintptr_t active, bool gripDown, std::uint64_t nowMs)
+        {
+            if (!m_Weapon)
+                return false;
+            if (nowMs < m_At || nowMs - m_At > kWindowMs)
+            {
+                m_Weapon = 0u;
+                return false;
+            }
+            if (active != m_Weapon || gripDown || nowMs - m_At < kSettleMs)
+                return false;
+            m_Weapon = 0u;
+            return true;
+        }
+        void Reset() { m_Weapon = 0u; }
+    private:
+        std::uintptr_t m_Weapon = 0u;
+        std::uint64_t m_At = 0u;
     };
 }

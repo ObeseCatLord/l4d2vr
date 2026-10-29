@@ -78,7 +78,9 @@ namespace l4d2vr_magazine
         // reloading. That round is still chambered, so the latch drops; a
         // rack must not seem to load it. Any reload activity (or a reserve
         // change) while the zero is provisional makes the latch permanent.
-        static constexpr std::uint64_t kHostOverturnWindowMs = 1000u;
+        // There is no time limit: the correction can arrive while another
+        // item is in the hand and is only seen when the gun is drawn again,
+        // and a clip cannot rise with the reserve unchanged and no reload.
         bool Observe(std::uintptr_t weapon, std::uint32_t handle, int weaponId, int clip,
             int reserve, bool refillPossible, std::uint64_t nowMs)
         {
@@ -108,8 +110,7 @@ namespace l4d2vr_magazine
                 }
             }
             if (selected->provisional &&
-                (refillPossible || reserve != selected->emptyReserve || nowMs < selected->emptyAt ||
-                    nowMs - selected->emptyAt > kHostOverturnWindowMs))
+                (refillPossible || reserve < 0 || reserve != selected->emptyReserve || nowMs < selected->emptyAt))
                 selected->provisional = false;
             if (clip > 0 && selected->provisional)
                 selected->empty = selected->provisional = false;

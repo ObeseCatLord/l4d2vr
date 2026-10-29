@@ -62,6 +62,39 @@ int main()
         Check(!empty.Update(true, true, false, 1), "Releasing an empty squeeze must not drop the held weapon");
     }
 
+    {
+        // The headset session: the grip let the shotgun go, the host dropped
+        // it at the feet and picked it straight back up. It is in the hand
+        // again, so the next squeeze must let it go (it did nothing before).
+        using l4d2vr_grip::DropReturn;
+        ReleaseLatch latch;
+        DropReturn back;
+        latch.Update(true, true, true, 3);
+        latch.AdoptWeapon(3);
+        Check(latch.Update(true, true, false, 3), "Letting go drops the shotgun");
+        back.Dropped(3, 10000u);
+        Check(!back.Returned(3, false, 10100u), "The host has not acted yet");
+        latch.Update(true, true, false, 1); // the pistol comes out
+        Check(!back.Returned(1, false, 10400u), "Another item in the hand is not the dropped one");
+        Check(!back.Returned(3, true, 12000u), "Not while the grip is squeezed");
+        Check(back.Returned(3, false, 12100u), "The shotgun is back in the hand");
+        Check(!back.Returned(3, false, 12200u), "Reported once");
+        latch.ReclaimWeapon(3);
+        Check(latch.Owns(), "The grip owns the returned shotgun");
+        Check(!latch.Update(true, true, false, 3), "Reclaiming does not drop it by itself");
+        Check(!latch.Update(true, true, true, 3), "Squeezing again");
+        Check(latch.Update(true, true, false, 3), "and letting go drops it");
+        DropReturn late;
+        late.Dropped(3, 10000u);
+        Check(!late.Returned(3, false, 17000u), "An item picked up long after the drop is a new take");
+        DropReturn kept;
+        kept.Dropped(4, 10000u);
+        Check(kept.Returned(4, false, 10800u), "A drop the host refused leaves the item owned by the hand");
+        ReleaseLatch plain;
+        plain.ReclaimWeapon(0u);
+        Check(!plain.Owns(), "Nothing to reclaim");
+    }
+
     ReleaseLatch grip;
     Check(!grip.Update(true, true, false, 1), "Idle input must not drop a weapon");
     Check(!grip.Update(true, true, true, 1), "Pressing grip must not drop a weapon");

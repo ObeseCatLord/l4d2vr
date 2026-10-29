@@ -2460,6 +2460,11 @@ public:
 	VrHandMatrix4 m_MagazineInteractionNativeLeftWristWorld{};
 	bool m_MagazineInteractionNativeLeftWristValid = false;
 	std::chrono::steady_clock::time_point m_MagazineInteractionNativeLeftWristPublishedAt{};
+	// Where the rendered off hand's fist holds a spare (between the palm and
+	// the curled fingers), from the drawn hand bones.
+	Vector m_MagazineInteractionNativeLeftFistWorld{};
+	bool m_MagazineInteractionNativeLeftFistValid = false;
+	std::chrono::steady_clock::time_point m_MagazineInteractionNativeLeftFistPublishedAt{};
 	uint32_t m_MagazineInteractionPublishSeq = 0;
 	uint32_t m_MagazineInteractionBoltPublishSeq = 0;
 	uint32_t m_VrHandsTwoHandedGripWeaponBoxPublishSeq = 0;
@@ -3102,6 +3107,19 @@ public:
 		Vector seatedAxesInHand[3]{};
 	};
 	bool SelfTestMeasureHeldMagazine(SelfTestHeldMagazine& out);
+	// The drawn fist against the held spare: how far it is off the spare's
+	// long axis (the spare passes through the fist when this is within its
+	// half thickness) and where along the spare, from its base (0) to the
+	// end that goes into the gun (1).
+	struct SelfTestSpareInFist
+	{
+		Vector fist{ 0.0f, 0.0f, 0.0f };
+		float lateralMeters = 1.0f;
+		float halfThicknessMeters = 0.0f;
+		float alongFromBase = -1.0f;
+		float lengthMeters = 0.0f;
+	};
+	bool SelfTestMeasureSpareInFist(SelfTestSpareInFist& out);
 	bool m_SelfTestLeftAngWorldValid = false;
 	QAngle m_SelfTestLeftAngWorld{ 0.0f, 0.0f, 0.0f };
 	// Hand-driven reload steps: a phase machine with glides between targets.
@@ -3117,6 +3135,7 @@ public:
 	float m_SelfTestMeasure = 0.0f;
 	float m_SelfTestMeasureB = 0.0f;
 	Vector m_SelfTestPoint{ 0.0f, 0.0f, 0.0f };
+	Vector m_SelfTestPumpInGun{ 0.0f, 0.0f, 0.0f }; // pumpredrawe2e: the pump in the gun hand's frame, metres
 	bool RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player);
 	bool RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player);
 	void SelfTestListProjectiles(std::vector<std::pair<int, Vector>>& out);
@@ -3200,6 +3219,10 @@ public:
 	// allpreview=<m>: every holster item drawn this far forward (orientation checks).
 	float m_SelfTestAllPreviewMeters = 0.0f;
 	bool m_SelfTestSceneRightValid = false;
+	bool m_SelfTestSceneRightAngValid = false; // rightang=/leftang=: scene hand angles (pitch, yaw from the head, roll)
+	bool m_SelfTestSceneLeftAngValid = false;
+	QAngle m_SelfTestSceneRightAng{ 0.0f, 0.0f, 0.0f };
+	QAngle m_SelfTestSceneLeftAng{ 0.0f, 0.0f, 0.0f };
 	bool m_SelfTestSceneLeftValid = false;
 	l4d2vr_selftest::Vec3 m_SelfTestSceneRight{}; // holster body frame metres: x forward, y dominant side, z up
 	l4d2vr_selftest::Vec3 m_SelfTestSceneLeft{};
@@ -3235,7 +3258,10 @@ public:
 	std::atomic<bool> m_VmIdlePosesClearRequest{ false }; // self-test: forget the learned idle poses
 	std::atomic<float> m_VmStrikeMaxDeviation{ 0.0f }; // native pose vs the held idle pose after a strike (units)
 	std::atomic<uint64_t> m_VmAnimTraceUntilMs{ 0u }; // self-test: log the viewmodel sequence every frame
+	std::atomic<uint64_t> m_SelfTestHandDumpUntilMs{ 0u }; // self-test: log the drawn off hand's bones
+	std::atomic<uint32_t> m_GripDropReclaims{ 0u }; // dropped items the grip took back (see l4d2vr_grip::DropReturn)
 	bool m_VmStrikeHoldDisabled = false; // self-test comparison: let the native strike animation play
+	bool m_SelfTestFreezeAnyFrame = false; // self-test comparison: pause the viewmodel on whatever frame it shows (the old behaviour)
 	// Holster drop: a holster-drawn item is held by the grip; releasing drops it.
 	bool m_HolsterReleaseDropEnabled = true;
 	// The weapon hand is over another occupied holster (letting go there never drops).
@@ -4700,6 +4726,8 @@ public:
 	bool GetMagazineInteractionBoltBox(MagazineInteractionBoxSnapshot& outSnapshot) const;
 	bool GetVrHandsTwoHandedGripWeaponBox(MagazineInteractionBoxSnapshot& outSnapshot) const;
 	bool GetMagazineInteractionNativeLeftWristAnchor(VrHandMatrix4& outWorld) const;
+	void PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld);
+	bool GetMagazineInteractionNativeLeftFist(Vector& outWorld) const;
 	bool HasFreshMagazineInteractionDebugBoxWork() const;
 	bool GetMagazineInteractionCalibrationSnapshot(MagazineInteractionCalibrationSnapshot& outSnapshot) const;
 	void PublishPlayerModelMaterialsSnapshot(

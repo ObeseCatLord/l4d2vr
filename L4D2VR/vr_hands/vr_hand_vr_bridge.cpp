@@ -1071,6 +1071,8 @@ namespace
                 vr->m_MagazineInteractionFreshMagazineWristAnchorOffsetMeters * vr->m_VRScale);
     }
 
+    bool MagazineInteractionNativeFist(const VR* vr, Vector& outWorld);
+
     bool MagazineInteractionResolveFreshMagazineHandAnchorWorld(
         const VR* vr,
         const VrHandMatrix4& controllerWorld,
@@ -1083,6 +1085,10 @@ namespace
             outAnchorWorld = MagazineInteractionMatrixOrigin(controllerWorld);
             return false;
         }
+
+        // The drawn hand's fist, where the spare is seen to be held.
+        if (MagazineInteractionNativeFist(vr, outAnchorWorld))
+            return true;
 
         const VrHandMatrix4 nativeLeftHandWorld =
             MagazineInteractionBuildNativeLeftHandWorldFromController(vr, controllerWorld);
@@ -1850,12 +1856,27 @@ namespace
             std::max(0.005f, vr->m_MagazineInteractionFreshMagazineBoxHalfExtentsMeters.z) * vr->m_VRScale);
     }
 
+    // The drawn native off hand's fist, when it holds the spare (see
+    // l4d2vr_ammo_grip::FistCenter): the spare is placed in it.
+    bool MagazineInteractionNativeFist(const VR* vr, Vector& outWorld)
+    {
+        return vr && !vr->m_VrHandsEnabled && vr->MagazineReloadSupportIsLeft() &&
+            vr->GetMagazineInteractionNativeLeftFist(outWorld);
+    }
+
+    // How far up a spare magazine the fist closes, from its base (Pavlov holds
+    // magazines low, the feed end clear of the hand to go in).
+    constexpr float kSpareGripFromBase = 0.30f;
+    constexpr float kShellBoxGripFromBase = 0.80f;
+
     Vector MagazineInteractionFreshMagazineHandAnchorLocal(
         const VR* vr,
         const MagazineInteractionBoxSnapshot& magazineBox)
     {
         Vector anchorLocal = MagazineInteractionBoxCenterLocal(magazineBox);
         if (vr && vr->m_VrHandsEnabled) return anchorLocal;
+        Vector fist{};
+        const bool inFist = MagazineInteractionNativeFist(vr, fist);
         const Vector size = magazineBox.maxs - magazineBox.mins;
         const int insertion = MagazineInteractionDominantAxis(vr ? vr->m_MagazineInteractionMagazineInsertionAxisLocal : Vector(0.0f, -1.0f, 0.0f));
         const int longest = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
@@ -1878,6 +1899,14 @@ namespace
             else anchorLocal.z = end.z;
             return anchorLocal;
         }
+        // In the drawn fist: the magazine passes through it along its length,
+        // held low on that length.
+        // The auto shotgun and SPAS draw their shell at the feed end of their
+        // larger clip box: the fist closes there.
+        if (inFist)
+            return l4d2vr_ammo_grip::SpareGripPoint(magazineBox.mins, magazineBox.maxs,
+                vr->m_MagazineInteractionMagazineInsertionAxisLocal,
+                vr->m_MagazineInteractionShotgunShellMode ? kShellBoxGripFromBase : kSpareGripFromBase);
         const Vector freshHalf = MagazineInteractionFreshMagazineHalfExtentsSourceUnits(vr);
         const float configuredHeight = freshHalf.z * 2.0f;
         const float fallbackHeight = std::max(0.0f, magazineBox.maxs.z - magazineBox.mins.z);
@@ -3487,6 +3516,29 @@ bool VR::GetVrHandsTwoHandedGripWeaponBox(MagazineInteractionBoxSnapshot& outSna
     return true;
 }
 
+void VR::PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld)
+{
+    if (!l4d2vr_ammo_grip::Finite(fistWorld))
+        return;
+    std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+    m_MagazineInteractionNativeLeftFistWorld = fistWorld;
+    m_MagazineInteractionNativeLeftFistPublishedAt = std::chrono::steady_clock::now();
+    m_MagazineInteractionNativeLeftFistValid = true;
+}
+
+bool VR::GetMagazineInteractionNativeLeftFist(Vector& outWorld) const
+{
+    std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+    if (!m_MagazineInteractionNativeLeftFistValid)
+        return false;
+    const float staleSeconds = std::max(0.02f, m_MagazineInteractionStaleSeconds);
+    if (std::chrono::duration<float>(std::chrono::steady_clock::now() -
+        m_MagazineInteractionNativeLeftFistPublishedAt).count() > staleSeconds)
+        return false;
+    outWorld = m_MagazineInteractionNativeLeftFistWorld;
+    return true;
+}
+
 bool VR::GetMagazineInteractionNativeLeftWristAnchor(VrHandMatrix4& outWorld) const
 {
     std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
@@ -4389,6 +4441,49 @@ bool VR::GetReloadSelfTestGeometry(ReloadSelfTestGeometry& out)
     out.chamberEmpty = m_MagazineInteractionChamberEmpty;
     out.pouchRange = MagazineInteractionPouchReachMeters(this);
     out.boltRange = MagazineInteractionResolveBoltGrabPaddingMeters(this);
+    return true;
+}
+
+bool VR::SelfTestMeasureSpareInFist(SelfTestSpareInFist& out)
+{
+    out = {};
+    if (!m_MagazineInteractionSocketValid || !m_MagazineInteractionLeftHandHolding)
+        return false;
+    if (!GetMagazineInteractionNativeLeftFist(out.fist))
+        return false;
+    VrHandMatrix4 held{};
+    {
+        std::lock_guard<std::mutex> lock(m_MagazineInteractionPoseMutex);
+        held = m_MagazineInteractionDetachedMagazineWorld;
+    }
+    if (!MagazineInteractionMatrixLooksRenderable(held))
+        return false;
+    const MagazineInteractionBoxSnapshot& box = m_MagazineInteractionSocketBox;
+    const Vector delta = out.fist - MagazineInteractionMatrixOrigin(held);
+    const Vector local(DotProduct(delta, VrHandMath::Normalize(MagazineInteractionMatrixAxis(held, 0))),
+        DotProduct(delta, VrHandMath::Normalize(MagazineInteractionMatrixAxis(held, 1))),
+        DotProduct(delta, VrHandMath::Normalize(MagazineInteractionMatrixAxis(held, 2))));
+    const Vector& outward = m_MagazineInteractionMagazineInsertionAxisLocal;
+    const int axis = MagazineInteractionDominantAxis(outward);
+    const float toward = axis == 0 ? outward.x : axis == 1 ? outward.y : outward.z;
+    const float lo = axis == 0 ? box.mins.x : axis == 1 ? box.mins.y : box.mins.z;
+    const float hi = axis == 0 ? box.maxs.x : axis == 1 ? box.maxs.y : box.maxs.z;
+    const float base = toward < 0.0f ? lo : hi, top = toward < 0.0f ? hi : lo;
+    const float at = axis == 0 ? local.x : axis == 1 ? local.y : local.z;
+    out.alongFromBase = std::fabs(top - base) > 0.001f ? (at - base) / (top - base) : 0.0f;
+    const Vector center = MagazineInteractionBoxCenterLocal(box);
+    float lateral = 0.0f, halfThick = 0.0f;
+    for (int other = 0; other < 3; ++other)
+    {
+        if (other == axis) continue;
+        const float d = local[other] - center[other];
+        lateral += d * d;
+        halfThick = std::max(halfThick, 0.5f * (box.maxs[other] - box.mins[other]));
+    }
+    const float scale = std::max(0.001f, m_VRScale);
+    out.lateralMeters = std::sqrt(lateral) / scale;
+    out.halfThicknessMeters = halfThick / scale;
+    out.lengthMeters = std::fabs(top - base) / scale;
     return true;
 }
 
@@ -7100,6 +7195,10 @@ bool VR::UpdateMagazineInteraction(
             int ammoType = -1;
             if (MagazineInteractionTryReadValue(activeWeapon, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
                 MagazineInteractionTryReadValue(localPlayer, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), pumpReserve);
+            // A shell going in is loading, never an overturned shot: no
+            // reserve reading while the host loads it ends the provisional shot.
+            if (RemoteShellRequestPending())
+                pumpReserve = -1;
         }
         std::lock_guard<std::mutex> lock(m_ManualPumpMutex);
         if (!m_ManualPumpEnabled)

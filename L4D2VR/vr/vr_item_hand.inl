@@ -394,6 +394,125 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
         return false;
     }
 
+    if (step == "ambimelee")
+    {
+        // The left hand draws the melee weapon from the hip and swings it; the
+        // still right hand swings nothing.
+        if (at(0, 0.0f))
+        {
+            s_SavedToggle = m_GripToggleEnabled;
+            m_GripToggleEnabled = true;
+            for (const char* melee : { "give machete", "give fireaxe", "give crowbar", "give baseball_bat", "give katana" })
+                cmd(melee);
+            button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false);
+            SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));
+            holdLeft(body::LeftReady(), QAngle(0.0f, 0.0f, 0.0f));
+        }
+        if (at(1, 1.2f)) { cmd("use weapon_rifle"); }
+        if (at(2, 2.4f)) { SelfTestReachLeft(body::RightHip(), SelfTestVec(60.0f, 0.0f, 0.0f), 0.8f); }
+        if (at(3, 3.8f)) { button(m_ActionOffHandGrip, true); }
+        if (at(4, 4.0f)) { button(m_ActionOffHandGrip, false); }
+        if (at(5, 4.8f))
+        {
+            std::snprintf(detail, sizeof(detail), "active weapon id %d (melee %d), item hand %s", SelfTestActiveWeaponId(player),
+                static_cast<int>(C_WeaponCSBase::MELEE), hand);
+            SelfTestReport("ambidextrous: left hand draws the melee weapon into the left hand",
+                SelfTestActiveWeaponId(player) == C_WeaponCSBase::MELEE && ItemHandIsPhysicalLeft(), detail);
+            SelfTestReachLeft(SelfTestVec(0.2f, -0.35f, 0.2f), SelfTestVec(-60.0f, -30.0f, 0.0f), 0.8f);
+            m_SelfTestSerial = m_MeleeSwingStartSerial.load(std::memory_order_acquire);
+        }
+        if (at(6, 6.6f))
+        {
+            // Diagonal downward slash with the left hand at about 5 m/s.
+            m_SelfTestLeftPath = { Key{ 0.0f, SelfTestVec(0.2f, -0.35f, 0.2f) }, Key{ 0.16f, SelfTestVec(0.55f, 0.15f, -0.35f), false } };
+            m_SelfTestLeftAngPath = { Key{ 0.0f, SelfTestVec(-60.0f, -30.0f, 0.0f) }, Key{ 0.16f, SelfTestVec(50.0f, 30.0f, 0.0f), false } };
+            m_SelfTestLeftWorldValid = false;
+            m_SelfTestLeftPathStartMs = GetTickCount64();
+            m_SelfTestLeftPathActive = true;
+        }
+        if (at(7, 8.0f))
+        {
+            const uint32_t swings = m_MeleeSwingStartSerial.load(std::memory_order_acquire) - m_SelfTestSerial;
+            std::snprintf(detail, sizeof(detail), "%u swing(s) for one left-hand slash (the right hand stayed still)", swings);
+            SelfTestReport("ambidextrous: the left hand swings the melee weapon", swings >= 1u, detail);
+            holdLeft(body::LeftReady(), QAngle(0.0f, 0.0f, 0.0f));
+            m_GripToggleEnabled = s_SavedToggle;
+            return true;
+        }
+        return false;
+    }
+
+    if (step == "ambimedkit")
+    {
+        // The left hand takes the medkit from the chest and heals with the left
+        // trigger, then takes adrenaline and stabs it into the chest.
+        auto health = [&]() { int value = -1; if (player) VR_TryReadI32(reinterpret_cast<const unsigned char*>(player), kHealthOffset, value); return value; };
+        if (at(0, 0.0f))
+        {
+            s_SavedToggle = m_GripToggleEnabled;
+            m_GripToggleEnabled = true;
+            cmd("give first_aid_kit"); cmd("give adrenaline"); cmd("hurtme 50");
+            button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false); button(m_ActionSecondaryAttack, false);
+            SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));
+            holdLeft(body::LeftReady(), QAngle(0.0f, 0.0f, 0.0f));
+        }
+        if (at(1, 1.2f)) { cmd("use weapon_rifle"); }
+        if (at(2, 2.0f)) { SelfTestReachLeft(body::CentreChest(), SelfTestVec(30.0f, -20.0f, 0.0f), 0.5f); }
+        if (at(3, 3.4f)) { button(m_ActionOffHandGrip, true); }
+        if (at(4, 3.6f)) { button(m_ActionOffHandGrip, false); }
+        if (at(5, 4.4f))
+        {
+            std::snprintf(detail, sizeof(detail), "active weapon id %d (medkit %d), item hand %s", SelfTestActiveWeaponId(player),
+                static_cast<int>(C_WeaponCSBase::FIRST_AID_KIT), hand);
+            SelfTestReport("ambidextrous: left hand takes the medkit",
+                SelfTestActiveWeaponId(player) == C_WeaponCSBase::FIRST_AID_KIT && ItemHandIsPhysicalLeft(), detail);
+            holdLeft(SelfTestVec(0.40f, -0.12f, -0.35f), QAngle(0.0f, 0.0f, 0.0f));
+            m_SelfTestValueA = health();
+        }
+        if (at(6, 5.0f)) { button(m_ActionSecondaryAttack, true); }
+        if (at(7, 11.5f)) { button(m_ActionSecondaryAttack, false); }
+        if (at(8, 12.5f))
+        {
+            void* const kit = player->Weapon_GetSlot(3);
+            std::snprintf(detail, sizeof(detail), "health %d -> %d, medkit %s", m_SelfTestValueA, health(), kit ? "still held" : "used");
+            SelfTestReport("ambidextrous: the left trigger heals with the left-held medkit", !kit && health() > m_SelfTestValueA, detail);
+            SelfTestReachLeft(body::RightChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);
+        }
+        if (at(9, 14.0f)) { button(m_ActionOffHandGrip, true); }
+        if (at(10, 14.2f)) { button(m_ActionOffHandGrip, false); }
+        if (at(11, 15.0f))
+        {
+            std::snprintf(detail, sizeof(detail), "active weapon id %d (adrenaline %d), item hand %s", SelfTestActiveWeaponId(player),
+                static_cast<int>(C_WeaponCSBase::ADRENALINE), hand);
+            SelfTestReport("ambidextrous: left hand takes the adrenaline",
+                SelfTestActiveWeaponId(player) == C_WeaponCSBase::ADRENALINE && ItemHandIsPhysicalLeft(), detail);
+            holdLeft(SelfTestVec(0.50f, -0.05f, -0.26f), QAngle(0.0f, 180.0f, 0.0f));
+            m_SelfTestValueC = 0;
+        }
+        if (at(12, 15.6f))
+        {
+            // Needle pointing back at the chest; the tip lands on it at about 2.3 m/s.
+            m_SelfTestLeftPath = { Key{ 0.0f, SelfTestVec(0.50f, -0.05f, -0.26f) }, Key{ 0.12f, SelfTestVec(0.22f, 0.0f, -0.30f), false } };
+            m_SelfTestLeftAngPath = { Key{ 0.0f, SelfTestVec(0.0f, 180.0f, 0.0f) }, Key{ 0.12f, SelfTestVec(0.0f, 180.0f, 0.0f) } };
+            m_SelfTestLeftWorldValid = false;
+            m_SelfTestLeftPathStartMs = GetTickCount64();
+            m_SelfTestLeftPathActive = true;
+        }
+        if (m_SelfTestStage >= 13 && std::chrono::steady_clock::now() < m_ConsumableUseHoldUntil)
+            m_SelfTestValueC = 1;
+        if (at(13, 19.0f))
+        {
+            void* const item = player->Weapon_GetSlot(4);
+            std::snprintf(detail, sizeof(detail), "gesture %s, adrenaline %s", m_SelfTestValueC ? "fired" : "not fired",
+                item ? "still held" : "used");
+            SelfTestReport("ambidextrous: adrenaline stab with the left hand", m_SelfTestValueC == 1 && !item, detail);
+            holdLeft(body::LeftReady(), QAngle(0.0f, 0.0f, 0.0f));
+            m_GripToggleEnabled = s_SavedToggle;
+            return true;
+        }
+        return false;
+    }
+
     if (step == "switchanim")
     {
         // Switches of every kind; three photographs 0.1, 0.4 and 0.7 s after

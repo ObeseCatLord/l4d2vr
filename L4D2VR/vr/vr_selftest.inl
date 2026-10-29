@@ -344,7 +344,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
     char detail[192];
 
-    if (step == "ambie2e" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
+    if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
 
     if (step == "features")

@@ -2403,7 +2403,9 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             if (!g.heldValid)
                 return fail("slap motion", "no held spare pose");
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
-            const float side = motion == "wide" ? 0.12f : 0.0f;
+            // Wide: 30 cm beside, clear of the magazine box along any axis (a
+            // pass within 4 cm counts as a touch).
+            const float side = motion == "wide" ? 0.30f : 0.0f;
             // The AK-47's curved magazine box is about 25 cm long and 18 cm
             // deep: every strike starts clear of it, so the strike itself
             // makes the touch (a spare already overlapping the old magazine
@@ -2447,8 +2449,18 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 m_SelfTestClip0, g.clip);
             if (m->hit)
             {
+                // The well catches the spare as soon as it may go in (0.15 s
+                // after the slap), so on the way back it can already be seated.
+                const bool seatedAlready = g.state == idleState && g.clip > 1 &&
+                    g.clip + g.reserve == m_SelfTestClip0 + m_SelfTestReserve0;
                 SelfTestReport(label((std::string("slap motion '") + m->name + "' knocks the old magazine out").c_str()),
-                    slaps() == 1u && ejects() == 1u && kept, detail);
+                    slaps() == 1u && ejects() == 1u && (kept || seatedAlready), detail);
+                if (seatedAlready)
+                {
+                    SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f));
+                    go(611);
+                    return false;
+                }
                 if (!kept)
                     return finish();
                 m_SelfTestClip0 = g.clip;

@@ -139,275 +139,204 @@ static void TestStrikeOnLiveGeometry()
     CHECK(!Evaluate(ak, rel, out, Gap(seated, aside) / unitsPerMeter).hit);
 }
 
-// ---- Forgiving detector --------------------------------------------------------
-// A scripted strike: the held magazine (same box) starts `startCm` before the
-// seated one along `dir` and moves at `speed` m/s for `seconds`, sampled at
-// `hz`, with the tracked velocity optionally lagging. Returns whether a slap
-// was detected.
-struct StrikeRun
-{
-    bool hit = false;
-    bool nearMiss = false;
-    float speed = 0.0f;
-    float dot = -1.0f;
-};
+// ---- Physical slap ----------------------------------------------------------------
+static const float kUnitsPerMeter = 40.0f;
 
-static StrikeRun RunStrike(const Box& seated, const Vec3& outward, const Vec3& gunForward, const Vec3& dirIn,
-    float speed, float startCm, float travelCm, float hz, const ForgivingParams& p,
-    const Vec3& sideOffsetCm = { 0.0f, 0.0f, 0.0f }, bool decelerate = false)
-{
-    const float unitsPerMeter = 40.0f;
-    Vec3 dir{};
-    Normalize(dirIn, dir);
-    Detector detector;
-    detector.Reset();
-    StrikeRun run{};
-    const float dt = 1.0f / hz;
-    const float total = travelCm * 0.01f;
-    float travelled = 0.0f;
-    float t = 0.0f;
-    Vec3 previous{};
-    bool havePrevious = false;
-    // Start position: centred on the seated magazine, moved back along the strike.
-    const Vec3 start = Add(Scale(dir, -startCm * 0.01f * unitsPerMeter), Scale(sideOffsetCm, 0.01f * unitsPerMeter));
-    for (int frame = 0; frame < 400 && travelled <= total + 1e-4f; ++frame)
-    {
-        // Decelerating: full speed until the touch region, then half.
-        const float v = decelerate && travelled > startCm * 0.01f * 0.8f ? speed * 0.4f : speed;
-        const Box held = Translated(seated, Add(start, Scale(dir, travelled * unitsPerMeter)));
-        const bool touching = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, p.contactMeters * unitsPerMeter);
-        const bool overlapping = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, p.overlapMeters * unitsPerMeter);
-        previous = RelativeOrigin(seated, held);
-        havePrevious = true;
-        const Vec3 strike = Scale(dir, v);
-        const Detector::Outcome o = detector.Update(p, t, &strike, 1, outward, gunForward, touching, overlapping);
-        if (o.hit && !run.hit)
-        {
-            run.hit = true;
-            run.speed = o.strike.speed;
-            run.dot = o.strike.direction.dot;
-        }
-        if (o.nearMiss)
-            run.nearMiss = true;
-        travelled += v * dt;
-        t += dt;
-    }
-    return run;
-}
-
-static Vec3 Rotate(const Vec3& v, const Vec3& axis, float deg)
-{
-    Vec3 k{};
-    Normalize(axis, k);
-    const float r = deg * 3.14159265f / 180.0f, c = std::cos(r), s = std::sin(r);
-    const Vec3 kxv{ k.y * v.z - k.z * v.y, k.z * v.x - k.x * v.z, k.x * v.y - k.y * v.x };
-    return Add(Add(Scale(v, c), Scale(kxv, s)), Scale(k, Dot(k, v) * (1.0f - c)));
-}
-
-static void TestForgivingParams()
+static Params AkPavlov()
 {
     Params ak{};
     ak.speedMetersPerSecond = 0.8f;
     ak.forwardDot = 0.6f;
-    const ForgivingParams f = Forgiving(ak);
-    CHECK(Near(f.speedMetersPerSecond, 0.64f));
-    CHECK(Near(f.dot, 0.5f));
+    return ak;
 }
 
-static void TestDirectionMatch()
+struct StrikeRun
 {
-    const Vec3 down{ 0.0f, 0.0f, -1.0f }, forward{ 1.0f, 0.0f, 0.0f };
-    CHECK(Near(MatchDirection(down, down, forward).dot, 1.0f));
-    CHECK(Near(MatchDirection(forward, down, forward).dot, 1.0f));                 // knocked toward the muzzle
-    CHECK(Near(MatchDirection({ 1.0f, 0.0f, -1.0f }, down, forward).dot, 1.0f));   // forward and down
-    CHECK(MatchDirection({ -1.0f, 0.0f, 0.0f }, down, forward).dot < 0.75f);       // toward the stock
-    CHECK(Near(MatchDirection({ 0.0f, 0.0f, 1.0f }, down, forward).intoWell, 1.0f));
-    CHECK(MatchDirection({ 0.0f, 1.0f, 0.0f }, down, forward).dot < 0.01f);        // sideways
-    // A gun forward along the magazine (degenerate) falls back to the outward axis.
-    CHECK(Near(MatchDirection(down, down, down).dot, 1.0f));
+    bool hit = false;
+    bool contact = false;
+    float release = 0.0f;
+    float approach = 0.0f;
+    float maxClamp = 0.0f;
+};
+
+// The held magazine (same box, offset `startOffsetM` metres from the seated
+// one in world axes) moves at `velocity` m/s for `seconds`, sampled at `hz`.
+static StrikeRun RunStrike(const Box& seated, const Vec3& outward, const Vec3& gunForward, const Vec3& startOffsetM,
+    const Vec3& velocity, float seconds, float hz, const PhysicsParams& p)
+{
+    Collider c;
+    c.Reset();
+    StrikeRun run{};
+    const int frames = static_cast<int>(seconds * hz);
+    for (int f = 0; f <= frames; ++f)
+    {
+        const float t = f / hz;
+        const Vec3 offset = Scale(Add(startOffsetM, Scale(velocity, t)), kUnitsPerMeter);
+        const Box held = Translated(seated, offset);
+        const Collider::Outcome o = c.Update(p, t, seated, held, &velocity, 1, outward, gunForward, kUnitsPerMeter);
+        if (o.contactBegan && !run.contact)
+        {
+            run.contact = true;
+            run.release = o.impulse.release;
+            run.approach = o.impulse.approach;
+        }
+        run.maxClamp = std::max(run.maxClamp, Length(o.clampOffset) / kUnitsPerMeter);
+        if (o.hit)
+        {
+            run.hit = true;
+            break;
+        }
+    }
+    return run;
 }
 
-static void TestOverlapWithMargin()
+static void TestPhysicalParams()
+{
+    const PhysicsParams ak = Physical(AkPavlov());
+    CHECK(Near(ak.releaseSpeedMetersPerSecond, 0.384f));
+    CHECK(Near(Physical(Params{}).releaseSpeedMetersPerSecond, 0.9f * 0.68f * 0.8f));
+}
+
+static void TestSatAndSweep()
 {
     const Box seated = AkSeatedBox();
-    CHECK(OverlapWithMargin(seated, seated, 0.0f));
+    // 2 units apart beside the thin side: separation 2 along world Y (the box's x).
     const float width = seated.maxs.x - seated.mins.x;
-    const Box beside = Translated(seated, Scale(seated.axisX, width + 1.5f));
-    CHECK(!OverlapWithMargin(seated, beside, 1.4f));
-    CHECK(OverlapWithMargin(seated, beside, 1.6f));
-    // Crossing at right angles with no lattice point inside: it overlaps.
-    Box crossing = seated;
-    crossing.axisX = { 1.0f, 0.0f, 0.0f };
-    crossing.axisZ = { 0.0f, -1.0f, 0.0f };
-    crossing.origin = Add(Center(seated), { -3.0f, 0.0f, 4.0f });
-    CHECK(OverlapWithMargin(seated, crossing, 0.0f));
-    // A pass that skips over the seated magazine in one step still touches when swept.
-    const Box before = Translated(seated, { 0.0f, 30.0f, 0.0f });
-    const Box after = Translated(seated, { 0.0f, -30.0f, 0.0f });
-    const Vec3 prev = RelativeOrigin(seated, before);
-    CHECK(!OverlapWithMargin(seated, after, 1.0f));
-    CHECK(TouchingSwept(seated, after, &prev, 1.0f));
-    CHECK(!TouchingSwept(seated, after, nullptr, 1.0f));
+    const SatResult apart = SatQuery(seated, Translated(seated, { 0.0f, width + 2.0f, 0.0f }));
+    CHECK(apart.valid && Near(apart.separation, 2.0f, 0.01f) && Near(apart.axis.y, 1.0f));
+    const SatResult inside = SatQuery(seated, Translated(seated, { 0.0f, 0.5f, 0.0f }));
+    CHECK(inside.valid && inside.separation < 0.0f);
+    // A pass that jumps over the magazine in one frame still hits, on the face it came from.
+    const Box after = Translated(seated, { 0.0f, -(width + 10.0f), 0.0f });
+    const Vec3 before = RelativeOrigin(seated, Translated(seated, { 0.0f, width + 10.0f, 0.0f }));
+    const SweepResult sweep = Sweep(seated, after, &before, 0.1f, 24);
+    CHECK(sweep.hit && !sweep.started && sweep.normal.y > 0.9f);
+    CHECK(!Sweep(seated, after, nullptr, 0.1f, 24).hit);
 }
 
-static void TestDetectorRealisticSlaps()
+static void TestImpulse()
 {
-    const Box seated = AkSeatedBox();   // level gun: magazine straight down, forward +X
+    const PhysicsParams p = Physical(AkPavlov());
+    const Vec3 down{ 0.0f, 0.0f, -1.0f }, forward{ 1.0f, 0.0f, 0.0f };
+    // Hitting the back face (normal toward the stock) moving toward the muzzle.
+    const Impulse push = StrikeImpulse(p, { 1.0f, 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, down, forward);
+    CHECK(Near(push.approach, 1.0f) && Near(push.release, 1.0f));
+    // The front face moving toward the stock: nothing along a release direction.
+    CHECK(Near(StrikeImpulse(p, { -1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, down, forward).release, 0.0f));
+    // The bottom moving up into the well: nothing, and flagged as an insert.
+    const Impulse insert = StrikeImpulse(p, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, down, forward);
+    CHECK(Near(insert.release, 0.0f) && insert.intoWell > 0.9f);
+    // Sliding down a side face: friction only, limited by the small approach.
+    const Impulse glance = StrikeImpulse(p, { 0.0f, -0.1f, -1.0f }, { 0.0f, 1.0f, 0.0f }, down, forward);
+    CHECK(Near(glance.approach, 0.1f) && Near(glance.release, 0.05f));
+    // Moving away from the face: no impulse at all.
+    CHECK(StrikeImpulse(p, { 0.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, down, forward).approach == 0.0f);
+}
+
+static void TestStrikes()
+{
+    const Box seated = AkSeatedBox();
     Vec3 out{};
     CHECK(OutwardAxis(seated, { 0.0f, -1.0f, 0.0f }, out));
     const Vec3 forward{ 1.0f, 0.0f, 0.0f };
-    Params akPavlov{};
-    akPavlov.speedMetersPerSecond = 0.8f;
-    akPavlov.forwardDot = 0.6f;
-    const ForgivingParams ak = Forgiving(akPavlov);
-    const ForgivingParams galil = Forgiving(Params{});
-    // Each strike starts 12 cm before the seated magazine and goes 20 cm.
-    struct Case { const char* name; Vec3 dir; float speed; float hz; bool decel; bool hit; };
-    const Vec3 down = out;
-    const Vec3 fwdDown = Add(forward, out);
+    const PhysicsParams ak = Physical(AkPavlov());
+    struct Case { const char* name; Vec3 start; Vec3 velocity; float hz; bool hit; };
     const Case cases[] = {
-        { "straight down 1.2 m/s 90 Hz", down, 1.2f, 90.0f, false, true },
-        { "straight down 0.75 m/s (under Pavlov's 0.8)", down, 0.75f, 90.0f, false, true },
-        { "forward and down 1.0 m/s", fwdDown, 1.0f, 90.0f, false, true },
-        { "toward the muzzle 1.0 m/s", forward, 1.0f, 90.0f, false, true },
-        { "60 deg off down toward the muzzle", Rotate(down, { 0.0f, 1.0f, 0.0f }, -60.0f), 1.0f, 90.0f, false, true },
-        { "70 deg off down toward the stock", Rotate(down, { 0.0f, 1.0f, 0.0f }, 70.0f), 1.0f, 90.0f, false, false },
-        { "fast 2.5 m/s at 45 Hz (skips the contact)", fwdDown, 2.5f, 45.0f, false, true },
-        { "lands and slows (1.5 -> 0.6 m/s)", down, 1.5f, 90.0f, true, true },
-        // Negative: slow strikes, inserts and wrong directions.
-        { "slow down 0.4 m/s", down, 0.4f, 90.0f, false, false },
-        { "slow insert up 0.3 m/s", Scale(out, -1.0f), 0.3f, 90.0f, false, false },
-        { "fast insert up 1.5 m/s", Scale(out, -1.0f), 1.5f, 90.0f, false, false },
-        { "fast forward and up 1.5 m/s", Add(forward, Scale(out, -1.0f)), 1.5f, 90.0f, false, false },
-        { "sideways 1.5 m/s", { 0.0f, 1.0f, 0.0f }, 1.5f, 90.0f, false, false },
-        { "toward the stock 1.5 m/s", Scale(forward, -1.0f), 1.5f, 90.0f, false, false },
+        // From behind toward the muzzle (the AK rock-out), several speeds.
+        { "toward the muzzle 1.0 m/s", { -0.30f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 90.0f, true },
+        { "toward the muzzle 0.45 m/s", { -0.30f, 0.0f, 0.0f }, { 0.45f, 0.0f, 0.0f }, 90.0f, true },
+        { "forward and down 0.9 m/s", { -0.25f, 0.0f, 0.15f }, { 0.64f, 0.0f, -0.64f }, 90.0f, true },
+        { "down onto the top 1.0 m/s", { 0.0f, 0.0f, 0.35f }, { 0.0f, 0.0f, -1.0f }, 90.0f, true },
+        // Tunnelling: 5.5 m/s at 30 Hz is 18 cm a frame.
+        { "toward the muzzle 5.5 m/s at 30 Hz", { -0.40f, 0.0f, 0.0f }, { 5.5f, 0.0f, 0.0f }, 30.0f, true },
+        // Never: slow pushes, the wrong way, into the well, glancing, too fast to be a hand.
+        { "slow push toward the muzzle 0.3 m/s", { -0.30f, 0.0f, 0.0f }, { 0.3f, 0.0f, 0.0f }, 90.0f, false },
+        { "toward the stock 1.5 m/s", { 0.30f, 0.0f, 0.0f }, { -1.5f, 0.0f, 0.0f }, 90.0f, false },
+        { "up into the well 1.5 m/s", { 0.0f, 0.0f, -0.40f }, { 0.0f, 0.0f, 1.5f }, 90.0f, false },
+        { "slow insert 0.3 m/s", { 0.0f, 0.0f, -0.40f }, { 0.0f, 0.0f, 0.3f }, 90.0f, false },
+        { "glancing down the side 1.0 m/s", { 0.0f, 0.052f, 0.30f }, { 0.0f, -0.05f, -1.0f }, 90.0f, false },
+        { "sideways 1.5 m/s", { 0.0f, 0.30f, 0.0f }, { 0.0f, -1.5f, 0.0f }, 90.0f, false },
+        { "tracking jump 9 m/s", { -0.40f, 0.0f, 0.0f }, { 9.0f, 0.0f, 0.0f }, 90.0f, false },
     };
     for (const Case& c : cases)
     {
-        const StrikeRun r = RunStrike(seated, out, forward, c.dir, c.speed, 12.0f, 20.0f, c.hz, ak, { 0.0f, 0.0f, 0.0f }, c.decel);
+        const StrikeRun r = RunStrike(seated, out, forward, c.start, c.velocity, 0.8f, c.hz, ak);
         if (r.hit != c.hit)
-            std::printf("  case '%s': hit=%d (want %d) speed=%.2f dot=%.2f\n", c.name, r.hit ? 1 : 0, c.hit ? 1 : 0, r.speed, r.dot);
+            std::printf("  case '%s': hit=%d (want %d) contact=%d approach=%.2f release=%.2f\n", c.name,
+                r.hit ? 1 : 0, c.hit ? 1 : 0, r.contact ? 1 : 0, r.approach, r.release);
         CHECK(r.hit == c.hit);
     }
-    // A fast strike that passes 12 cm beside the magazine never touches it.
-    const StrikeRun wide = RunStrike(seated, out, forward, down, 1.5f, 12.0f, 20.0f, 90.0f, ak, { 0.0f, 12.0f, 0.0f });
-    CHECK(!wide.hit && !wide.nearMiss);
-    // Galil/AutoSniper: 0.72 m/s and 0.58.
-    CHECK(RunStrike(seated, out, forward, down, 0.8f, 12.0f, 20.0f, 90.0f, galil).hit);
-    CHECK(!RunStrike(seated, out, forward, down, 0.6f, 12.0f, 20.0f, 90.0f, galil).hit);
-    // A touch with a slow hand is reported as a near miss (for the log).
-    CHECK(RunStrike(seated, out, forward, down, 0.4f, 12.0f, 20.0f, 90.0f, ak).nearMiss);
-    // A short wind-up: the spare starts inside the touch distance (3 cm from the
-    // old magazine) and strikes; the overlap starting still counts.
-    {
-        const float unitsPerMeter = 40.0f;
-        const float length = seated.maxs.z - seated.mins.z; // along the barrel
-        Detector d;
-        d.Reset();
-        Vec3 previous{};
-        bool havePrevious = false;
-        bool hit = false;
-        float offset = -(length + 0.03f * unitsPerMeter); // 3 cm behind it
-        for (int frame = 0; frame < 90 && !hit; ++frame)
-        {
-            const bool striking = frame >= 45;
-            const float speed = striking ? 1.0f : 0.0f;
-            offset += speed * unitsPerMeter / 90.0f;
-            const Box held = Translated(seated, Scale(forward, offset));
-            const bool touching = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, ak.contactMeters * unitsPerMeter);
-            const bool overlapping = TouchingSwept(seated, held, havePrevious ? &previous : nullptr, ak.overlapMeters * unitsPerMeter);
-            previous = RelativeOrigin(seated, held);
-            havePrevious = true;
-            const Vec3 strike = Scale(forward, speed);
-            const Detector::Outcome o = d.Update(ak, frame / 90.0f, &strike, 1, out, forward, touching, overlapping);
-            CHECK(!(o.hit && !striking));
-            CHECK(!(frame == 0 && !touching)); // the wind-up starts inside the touch distance
-            hit = hit || o.hit;
-        }
-        CHECK(hit);
-    }
-    // Tracking jumps faster than a hand never slap.
-    CHECK(!RunStrike(seated, out, forward, down, 9.0f, 12.0f, 20.0f, 90.0f, ak).hit);
+    // The glancing pass does touch the side face; the slow push touches too.
+    CHECK(RunStrike(seated, out, forward, { 0.0f, 0.052f, 0.30f }, { 0.0f, -0.05f, -1.0f }, 0.8f, 90.0f, ak).contact);
+    CHECK(RunStrike(seated, out, forward, { -0.30f, 0.0f, 0.0f }, { 0.3f, 0.0f, 0.0f }, 0.8f, 90.0f, ak).contact);
+    // 12 cm beside, moving along it: never touches.
+    CHECK(!RunStrike(seated, out, forward, { 0.0f, 0.12f, 0.35f }, { 0.0f, 0.0f, -1.5f }, 0.8f, 90.0f, ak).contact);
 }
 
-static void TestDetectorCantedGunFromHeadsetLog()
+static void TestRestingContactClampsAndNeverSlaps()
 {
-    // The user's logged outward axes (the gun canted 30-60 degrees): the
-    // magazine leaves the well partly sideways. Build the seated box with that
-    // outward axis and the barrel level.
-    const Vec3 logged[] = { { 0.22f, -0.84f, -0.49f }, { 0.02f, -0.80f, -0.60f }, { 0.13f, -0.36f, -0.92f },
-        { 0.39f, -0.84f, -0.37f }, { 0.44f, -0.79f, -0.43f }, { 0.42f, -0.86f, -0.29f } };
-    Params akPavlov{};
-    akPavlov.speedMetersPerSecond = 0.8f;
-    akPavlov.forwardDot = 0.6f;
-    const ForgivingParams ak = Forgiving(akPavlov);
-    for (const Vec3& o : logged)
-    {
-        Vec3 out{};
-        Normalize(o, out);
-        // Barrel: horizontal and square to the magazine.
-        Vec3 forward{};
-        const Vec3 up{ 0.0f, 0.0f, 1.0f };
-        const Vec3 side{ out.y * up.z - out.z * up.y, out.z * up.x - out.x * up.z, out.x * up.y - out.y * up.x };
-        Normalize(side, forward);
-        Box seated = AkSeatedBox();
-        seated.axisY = Scale(out, -1.0f);   // the box's +Y points into the well
-        seated.axisZ = forward;
-        const Vec3 x{ seated.axisY.y * seated.axisZ.z - seated.axisY.z * seated.axisZ.y,
-            seated.axisY.z * seated.axisZ.x - seated.axisY.x * seated.axisZ.z,
-            seated.axisY.x * seated.axisZ.y - seated.axisY.y * seated.axisZ.x };
-        seated.axisX = x;
-        Vec3 check{};
-        CHECK(OutwardAxis(seated, { 0.0f, -1.0f, 0.0f }, check));
-        CHECK(Near(Dot(check, out), 1.0f, 0.01f));
-        // A world-down slap (what a player does with a canted gun) and one along the magazine.
-        CHECK(RunStrike(seated, out, forward, { 0.0f, 0.0f, -1.0f }, 1.0f, 12.0f, 20.0f, 90.0f, ak).hit ==
-            (MatchDirection({ 0.0f, 0.0f, -1.0f }, out, forward).dot >= ak.dot));
-        CHECK(RunStrike(seated, out, forward, out, 0.8f, 12.0f, 20.0f, 90.0f, ak).hit);
-        CHECK(RunStrike(seated, out, forward, Add(out, forward), 0.9f, 12.0f, 20.0f, 90.0f, ak).hit);
-        CHECK(!RunStrike(seated, out, forward, Scale(out, -1.0f), 0.3f, 12.0f, 20.0f, 90.0f, ak).hit);
-    }
-}
-
-static void TestDetectorRestingContact()
-{
-    // The spare resting against the old magazine, then jerked: no new touch, no slap.
+    // A slow push against the back face: contact, no slap, and the held box is
+    // held on the surface (the clamp grows with the push).
     const Box seated = AkSeatedBox();
     Vec3 out{};
     OutwardAxis(seated, { 0.0f, -1.0f, 0.0f }, out);
-    Params akPavlov{};
-    akPavlov.speedMetersPerSecond = 0.8f;
-    akPavlov.forwardDot = 0.6f;
-    const ForgivingParams ak = Forgiving(akPavlov);
-    Detector d;
-    d.Reset();
-    const Vec3 still{ 0.0f, 0.0f, 0.0f };
-    for (int i = 0; i < 60; ++i)
-        CHECK(!d.Update(ak, i / 90.0f, &still, 1, out, { 1.0f, 0.0f, 0.0f }, true).hit);
-    const Vec3 jerk = Scale(out, 2.0f);
-    for (int i = 60; i < 70; ++i)
-        CHECK(!d.Update(ak, i / 90.0f, &jerk, 1, out, { 1.0f, 0.0f, 0.0f }, true).hit);
-    // The same resting overlap (inner contact too) jerked: still no new touch.
-    d.Reset();
-    for (int i = 0; i < 60; ++i)
-        CHECK(!d.Update(ak, i / 90.0f, &still, 1, out, { 1.0f, 0.0f, 0.0f }, true, true).hit);
-    for (int i = 60; i < 70; ++i)
-        CHECK(!d.Update(ak, i / 90.0f, &jerk, 1, out, { 1.0f, 0.0f, 0.0f }, true, true).hit);
-    // Either of two velocity estimates may carry the strike.
-    d.Reset();
-    const Vec3 two[2] = { { 0.0f, 0.0f, 0.0f }, Scale(out, 1.0f) };
-    d.Update(ak, 0.0f, two, 2, out, { 1.0f, 0.0f, 0.0f }, false);
-    CHECK(d.Update(ak, 0.011f, two, 2, out, { 1.0f, 0.0f, 0.0f }, true).hit);
+    const PhysicsParams ak = Physical(AkPavlov());
+    const StrikeRun slow = RunStrike(seated, out, { 1.0f, 0.0f, 0.0f }, { -0.25f, 0.0f, 0.0f }, { 0.2f, 0.0f, 0.0f },
+        2.0f, 90.0f, ak);
+    CHECK(slow.contact && !slow.hit && slow.maxClamp > 0.1f);
+    // Taken already overlapping it, then struck from there: nothing until apart.
+    Collider c;
+    c.Reset();
+    const Vec3 fast{ 2.0f, 0.0f, 0.0f };
+    for (int f = 0; f < 20; ++f)
+    {
+        const Box held = Translated(seated, { f * 2.0f * kUnitsPerMeter / 90.0f, 0.0f, 0.0f });
+        CHECK(!c.Update(ak, f / 90.0f, seated, held, &fast, 1, out, { 1.0f, 0.0f, 0.0f }, kUnitsPerMeter).hit);
+    }
+}
+
+static Vec3 Cross(const Vec3& a, const Vec3& b)
+{
+    return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+}
+
+static void TestCantedGunFromHeadsetLog()
+{
+    // The user's logged outward axes (gun canted 25-75 degrees). Seated box
+    // with that outward axis and a level barrel; strikes from clear of it.
+    const Vec3 logged[] = { { 0.22f, -0.84f, -0.49f }, { 0.02f, -0.80f, -0.60f }, { 0.13f, -0.36f, -0.92f },
+        { 0.39f, -0.84f, -0.37f }, { 0.44f, -0.79f, -0.43f }, { 0.42f, -0.86f, -0.29f } };
+    const PhysicsParams ak = Physical(AkPavlov());
+    for (const Vec3& o : logged)
+    {
+        Vec3 out{}, forward{};
+        Normalize(o, out);
+        Normalize(Cross(out, { 0.0f, 0.0f, 1.0f }), forward);
+        Box seated = AkSeatedBox();
+        seated.axisY = Scale(out, -1.0f);
+        seated.axisZ = forward;
+        seated.axisX = Cross(seated.axisY, seated.axisZ);
+        Vec3 check{};
+        CHECK(OutwardAxis(seated, { 0.0f, -1.0f, 0.0f }, check) && Near(Dot(check, out), 1.0f, 0.01f));
+        // Along the magazine out of the well, from inside the gun: slaps at 0.8 m/s.
+        CHECK(RunStrike(seated, out, forward, Scale(out, -0.35f), Scale(out, 0.8f), 0.8f, 90.0f, ak).hit);
+        // From behind toward the muzzle: slaps at 0.9 m/s.
+        CHECK(RunStrike(seated, out, forward, Scale(forward, -0.30f), Scale(forward, 0.9f), 0.8f, 90.0f, ak).hit);
+        // A slow insert from below never does.
+        CHECK(!RunStrike(seated, out, forward, Scale(out, 0.40f), Scale(out, -0.3f), 1.5f, 90.0f, ak).hit);
+        // Pushed in hard from below: never.
+        CHECK(!RunStrike(seated, out, forward, Scale(out, 0.40f), Scale(out, -2.0f), 0.8f, 90.0f, ak).hit);
+    }
 }
 
 int main()
 {
-    TestForgivingParams();
-    TestDirectionMatch();
-    TestOverlapWithMargin();
-    TestDetectorRealisticSlaps();
-    TestDetectorCantedGunFromHeadsetLog();
-    TestDetectorRestingContact();
+    TestPhysicalParams();
+    TestSatAndSweep();
+    TestImpulse();
+    TestStrikes();
+    TestRestingContactClampsAndNeverSlaps();
+    TestCantedGunFromHeadsetLog();
     TestGap();
     TestOutwardAxis();
     TestRelativeVelocity();

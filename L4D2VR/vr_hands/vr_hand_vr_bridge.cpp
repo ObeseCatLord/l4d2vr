@@ -9300,34 +9300,39 @@ bool VR::UpdateMagazineInteraction(
         l4d2vr_mag_slap::Vec3 outward{};
         if (!l4d2vr_mag_slap::OutwardAxis(seated, MagazineSlapVec(m_MagazineInteractionMagazineInsertionAxisLocal), outward))
             return false;
-        const float gapMeters = l4d2vr_mag_slap::Gap(seated, held) / std::max(0.001f, m_VRScale);
-        const l4d2vr_mag_slap::ForgivingParams forgiving = l4d2vr_mag_slap::Forgiving(slap);
-        const l4d2vr_mag_slap::Vec3* previousHeld = m_MagazineSlapPrevHeldValid ? &m_MagazineSlapPrevHeldRel : nullptr;
-        const bool touching = l4d2vr_mag_slap::TouchingSwept(seated, held, previousHeld,
-            forgiving.contactMeters * std::max(0.001f, m_VRScale));
-        const bool overlapping = touching && l4d2vr_mag_slap::TouchingSwept(seated, held, previousHeld,
-            forgiving.overlapMeters * std::max(0.001f, m_VRScale));
-        m_MagazineSlapPrevHeldRel = l4d2vr_mag_slap::RelativeOrigin(seated, held);
-        m_MagazineSlapPrevHeldValid = l4d2vr_mag_slap::Finite(m_MagazineSlapPrevHeldRel);
+        const float unitsPerMeter = std::max(0.001f, m_VRScale);
+        const float gapMeters = l4d2vr_mag_slap::Gap(seated, held) / unitsPerMeter;
+        const l4d2vr_mag_slap::PhysicsParams physics = l4d2vr_mag_slap::Physical(slap);
 
-        // Two strike estimates, both the spare's hand relative to the gun's in
-        // tracking space (walking and stick turns never count): the runtime's
-        // velocity, and the change in position since the last frame.
+        // Strike velocity estimates, all the spare relative to the gun so
+        // walking and stick turns never count: the held box's own motion
+        // against the seated magazine since the last frame (what the sweep
+        // moves), the runtime's hand velocities, and the hands' tracked
+        // positions since the last frame.
         const bool supportIsLeft = MagazineReloadSupportIsLeft();
         const TrackedDevicePoseData& supportPose = supportIsLeft ? m_LeftControllerPose : m_RightControllerPose;
         const TrackedDevicePoseData& gunPose = supportIsLeft ? m_RightControllerPose : m_LeftControllerPose;
-        l4d2vr_mag_slap::Vec3 strikes[2];
+        l4d2vr_mag_slap::Vec3 strikes[3];
         int strikeCount = 0;
         strikes[strikeCount++] = l4d2vr_mag_slap::RelativeVelocity(
             MagazineSlapVec(supportPose.TrackedDeviceVel), MagazineSlapVec(gunPose.TrackedDeviceVel), m_RotationOffset);
         {
             const float dt = m_MagazineSlapPrevAt.time_since_epoch().count() != 0
                 ? std::chrono::duration<float>(now - m_MagazineSlapPrevAt).count() : 0.0f;
+            const l4d2vr_mag_slap::Vec3 relative = l4d2vr_mag_slap::RelativeOrigin(seated, held);
             if (m_MagazineSlapPrevTrackingValid && dt >= 0.002f && dt <= 0.1f)
             {
                 const Vector moved = (supportPose.TrackedDevicePos - m_MagazineSlapPrevSupportTracking) -
                     (gunPose.TrackedDevicePos - m_MagazineSlapPrevGunTracking);
                 strikes[strikeCount++] = l4d2vr_mag_slap::RotateYaw(MagazineSlapVec(moved * (1.0f / dt)), m_RotationOffset);
+                if (m_MagazineSlapPrevHeldValid)
+                {
+                    const l4d2vr_mag_slap::Vec3 local = l4d2vr_mag_slap::Scale(
+                        l4d2vr_mag_slap::Sub(relative, m_MagazineSlapPrevHeldRel), 1.0f / (dt * unitsPerMeter));
+                    strikes[strikeCount++] = l4d2vr_mag_slap::Add(l4d2vr_mag_slap::Scale(seated.axisX, local.x),
+                        l4d2vr_mag_slap::Add(l4d2vr_mag_slap::Scale(seated.axisY, local.y),
+                            l4d2vr_mag_slap::Scale(seated.axisZ, local.z)));
+                }
             }
             if (!m_MagazineSlapPrevTrackingValid || dt >= 0.002f)
             {
@@ -9335,18 +9340,32 @@ bool VR::UpdateMagazineInteraction(
                 m_MagazineSlapPrevGunTracking = gunPose.TrackedDevicePos;
                 m_MagazineSlapPrevAt = now;
                 m_MagazineSlapPrevTrackingValid = true;
+                m_MagazineSlapPrevHeldRel = relative;
+                m_MagazineSlapPrevHeldValid = l4d2vr_mag_slap::Finite(relative);
             }
         }
         const float slapClock = std::chrono::duration<float>(now - m_MagazineInteractionFreshGrabbedAt).count();
-        const l4d2vr_mag_slap::Detector::Outcome result = m_MagazineSlapDetector.Update(forgiving, slapClock,
-            strikes, strikeCount, outward, MagazineSlapVec(gunForward), touching, overlapping);
+        const l4d2vr_mag_slap::Collider::Outcome result = m_MagazineSlapCollider.Update(physics, slapClock,
+            seated, held, strikes, strikeCount, outward, MagazineSlapVec(gunForward), unitsPerMeter);
+        // A light tick when the magazines touch, a strong one for the slap.
         updateMagazineInteractionContactHaptic(
             m_MagazineInteractionOldMagazineContactActive,
-            touching,
+            result.touching || result.contactBegan,
             0.012f,
             150.0f,
             0.22f);
-        if (result.nearMiss)
+        if (result.touching && l4d2vr_mag_slap::Length(result.clampOffset) > 0.0f)
+        {
+            // Below the threshold the spare rests on the old magazine instead of
+            // passing through it.
+            VrHandMatrix4 clamped = heldWorld;
+            const Vector origin = MagazineInteractionMatrixOrigin(heldWorld) + MagazineSlapVector(result.clampOffset);
+            VrHandMath::Set(clamped, 0, 3, origin.x);
+            VrHandMath::Set(clamped, 1, 3, origin.y);
+            VrHandMath::Set(clamped, 2, 3, origin.z);
+            setDetachedMagazineWorld(clamped);
+        }
+        if (result.contactBegan && !result.hit)
         {
             m_MagazineSlapNearMissSerial.fetch_add(1u, std::memory_order_acq_rel);
             if (m_MagazineSlapNearMissLogAt.time_since_epoch().count() == 0 ||
@@ -9354,21 +9373,24 @@ bool VR::UpdateMagazineInteraction(
             {
                 m_MagazineSlapNearMissLogAt = now;
                 Game::logMsg(
-                    "[VR][MagazineSlap] touched the old magazine without a slap: fastest %.2f m/s (min %.2f) direction %.2f (min %.2f) into-well %.2f (max %.2f) gap=%.3f m",
-                    result.strike.speed, forgiving.speedMetersPerSecond, result.strike.direction.dot, forgiving.dot,
-                    result.strike.direction.intoWell, forgiving.maxIntoWellDot, gapMeters);
+                    "[VR][MagazineSlap] the spare hit the old magazine without a slap: closing %.2f m/s, %.2f m/s along its release (needs %.2f), into-well %.2f (max %.2f), face normal (%.2f %.2f %.2f)",
+                    result.impulse.approach, result.impulse.release, physics.releaseSpeedMetersPerSecond,
+                    result.impulse.intoWell, physics.maxIntoWellDot, result.normal.x, result.normal.y, result.normal.z);
             }
         }
         if (!result.hit)
             return false;
         Game::logMsg(
-            "[VR][MagazineSlap] slap weaponId=%d speed=%.2f m/s (min %.2f) direction=%.2f (min %.2f) into-well=%.2f gap=%.3f m %.0f ms before the touch outward=(%.2f %.2f %.2f)",
-            activeWeaponIdInt, result.strike.speed, forgiving.speedMetersPerSecond, result.strike.direction.dot, forgiving.dot,
-            result.strike.direction.intoWell, gapMeters, (slapClock - result.strike.time) * 1000.0f,
-            outward.x, outward.y, outward.z);
-        const l4d2vr_mag_slap::Vec3 strike = strikes[0];
+            "[VR][MagazineSlap] slap weaponId=%d closing %.2f m/s, %.2f m/s along its release (needs %.2f) into-well=%.2f face normal (%.2f %.2f %.2f) release (%.2f %.2f %.2f) gap=%.3f m outward=(%.2f %.2f %.2f)",
+            activeWeaponIdInt, result.impulse.approach, result.impulse.release, physics.releaseSpeedMetersPerSecond,
+            result.impulse.intoWell, result.normal.x, result.normal.y, result.normal.z,
+            result.impulse.releaseDirection.x, result.impulse.releaseDirection.y, result.impulse.releaseDirection.z,
+            gapMeters, outward.x, outward.y, outward.z);
+        // The old magazine leaves with the gun's motion plus most of what the
+        // strike gave it along its release direction, then falls.
+        const float flySpeed = std::max(0.6f, 0.8f * result.impulse.release);
         return performMagazineSlap("slap",
-            gunHandVelocity + MagazineSlapVector(strike) * (0.5f * m_VRScale), slap);
+            gunHandVelocity + MagazineSlapVector(result.impulse.releaseDirection) * (flySpeed * m_VRScale), slap);
     }
 
     if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingOldMagazine)
@@ -9675,7 +9697,7 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazineForSlap;
             m_MagazineInteractionLeftHandHolding = true;
             m_MagazineInteractionFreshGrabbedAt = now;
-            m_MagazineSlapDetector.Reset();
+            m_MagazineSlapCollider.Reset();
             m_MagazineSlapPrevHeldValid = false;
             m_MagazineSlapPrevTrackingValid = false;
             m_MagazineSlapPrevAt = {};

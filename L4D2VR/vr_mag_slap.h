@@ -186,86 +186,57 @@ namespace l4d2vr_mag_slap
         return !(secondsSinceSlap >= 0.0f && secondsSinceSlap < reinsertSeconds);
     }
 
-    // ---- Forgiving slap (what the game uses) --------------------------------
-    // Pavlov tests the held magazine's physics velocity at the instant its
-    // collision starts overlapping the seated one. Our hand is a tracked point
-    // and one game frame can be 1-3 cm of a fast swing, so a strict
-    // same-frame test missed most real slaps (headset log 2026-10-28: the user
-    // held the spare for 31 s of strikes before one counted; every slap that
-    // counted was within 0.05 m/s or 0.04 of a threshold). Here:
-    //  - contact is the held box overlapping the seated one, swept along the
-    //    path since the last frame, so a fast pass cannot skip through between
-    //    frames. A touch counts when the boxes come within a few centimetres
-    //    or when they start to overlap, so a spare held close for a short
-    //    wind-up still slaps;
-    //  - the strike is the fastest qualifying sample from up to `window`
-    //    seconds before the touch (the hand slows as it lands); samples faster
-    //    than any hand (tracking jumps) never count;
-    //  - a slap may run along the magazine out of the well (straight down on a
-    //    level gun) or knock it toward the muzzle (how an AK magazine rocks
-    //    out, and what Pavlov's magazine forward axis means), or anything in
-    //    between; moving into the well never counts, so a slow or a fast
-    //    insert can never knock the old magazine out.
-    struct ForgivingParams
+    // ---- Physical slap (what the game uses) ---------------------------------
+    // The held fresh magazine and the seated one are oriented boxes from their
+    // rendered bones. Every frame the held box is swept from where it was last
+    // frame (relative to the seated one, so the gun's own motion never counts)
+    // to where it is now, in small steps, so a fast strike cannot tunnel
+    // through a 3 cm magazine between frames. The first touch gives a contact
+    // normal (the face that was hit) and the strike's velocity relative to the
+    // gun. The seated magazine can only leave its well along its release
+    // directions (out of the well, rocked toward the muzzle, or between), so
+    // the strike counts by the part of its impulse along those: the approach
+    // speed into the face pushes along the face's inward normal, and friction
+    // (up to kFriction of that) drags along the face. A slap is that release
+    // speed reaching Pavlov's threshold (speed x dot, 80 % of it). A glancing
+    // touch, a push toward the stock or into the well, or a slow push never
+    // ejects; touching below the threshold keeps the held magazine on the
+    // seated one's surface instead of passing through it.
+    struct PhysicsParams
     {
-        float speedMetersPerSecond = 0.72f; // 80 % of Pavlov's 90 cm/s
-        float dot = 0.58f;                  // Pavlov's forward dot less 0.1
-        float windowSeconds = 0.15f;        // strike up to this long before the touch
-        float lateSeconds = 0.06f;          // or this long after it began (velocity lag)
-        float contactMeters = 0.04f;        // boxes this close touch
-        float overlapMeters = 0.005f;       // ... and this close overlap
-        float maxIntoWellDot = 0.35f;       // more than this along the insert axis is an insert
-        float maxSpeedMetersPerSecond = 6.0f; // faster is a tracking jump, not a hand
+        float releaseSpeedMetersPerSecond = 0.49f; // 0.9 m/s x 0.68 x 0.8
+        float friction = 0.5f;                     // magazine on magazine
+        float contactMeters = 0.015f;              // boxes this close are in contact
+        float maxIntoWellDot = 0.35f;              // strikes this much into the well are inserts
+        float maxSpeedMetersPerSecond = 6.0f;      // faster is a tracking jump, not a hand
+        float lagSeconds = 0.1f;                   // a strike sample may be this old (velocity lag)
+        int sweepSteps = 24;
     };
 
-    inline ForgivingParams Forgiving(const Params& pavlov)
+    // Pavlov's gate (|v| >= speed and dot >= forwardDot) needs at least
+    // speed x dot along the magazine; 80 % of that is the release speed.
+    inline PhysicsParams Physical(const Params& pavlov)
     {
-        ForgivingParams out{};
-        out.speedMetersPerSecond = pavlov.speedMetersPerSecond * 0.8f;
-        out.dot = pavlov.forwardDot - 0.1f;
+        PhysicsParams out{};
+        out.releaseSpeedMetersPerSecond = pavlov.speedMetersPerSecond * pavlov.forwardDot * 0.8f;
         return out;
     }
 
-    // How well a strike direction matches a slap: the best of out of the well,
-    // toward the muzzle (gun forward, square to the magazine) and halfway.
-    // intoWell is its component along the insert direction.
-    struct DirectionMatch
+    // Separating-axis query: the axis along which the boxes are furthest apart
+    // (separation > 0: apart by that much; <= 0: overlapping that deep), its
+    // direction from a toward b. Works in any unit.
+    struct SatResult
     {
-        float dot = -1.0f;
-        float intoWell = 0.0f;
+        bool valid = false;
+        float separation = 0.0f;
+        Vec3 axis{};
     };
 
-    inline DirectionMatch MatchDirection(const Vec3& strike, const Vec3& outwardAxis, const Vec3& gunForward)
+    inline SatResult SatQuery(const Box& a, const Box& b)
     {
-        DirectionMatch m{};
-        Vec3 dir{}, out{};
-        if (!Normalize(strike, dir) || !Normalize(outwardAxis, out))
-            return m;
-        m.intoWell = -Dot(dir, out);
-        m.dot = Dot(dir, out);
-        Vec3 forward{};
-        if (Finite(gunForward) && Normalize(Sub(gunForward, Scale(out, Dot(gunForward, out))), forward))
-        {
-            Vec3 between{};
-            m.dot = std::max(m.dot, Dot(dir, forward));
-            if (Normalize(Add(out, forward), between))
-                m.dot = std::max(m.dot, Dot(dir, between));
-        }
-        return m;
-    }
-
-    inline bool StrikeQualifies(const ForgivingParams& p, float speed, const DirectionMatch& m)
-    {
-        return std::isfinite(speed) && speed >= p.speedMetersPerSecond && speed <= p.maxSpeedMetersPerSecond &&
-            m.dot >= p.dot && m.intoWell <= p.maxIntoWellDot;
-    }
-
-    // Oriented box overlap (separating axis test) with `margin` added to a's
-    // half extents. Works in any unit.
-    inline bool OverlapWithMargin(const Box& a, const Box& b, float margin)
-    {
-        if (!ValidBox(a) || !ValidBox(b) || !std::isfinite(margin))
-            return false;
+        SatResult out{};
+        if (!ValidBox(a) || !ValidBox(b))
+            return out;
         Vec3 ax[3], bx[3];
         float ah[3], bh[3];
         const Vec3* aAxes[3] = { &a.axisX, &a.axisY, &a.axisZ };
@@ -277,35 +248,50 @@ namespace l4d2vr_mag_slap
             const float la = Length(*aAxes[i]), lb = Length(*bAxes[i]);
             ax[i] = Scale(*aAxes[i], 1.0f / la);
             bx[i] = Scale(*bAxes[i], 1.0f / lb);
-            ah[i] = 0.5f * (aMax[i] - aMin[i]) * la + std::max(0.0f, margin);
+            ah[i] = 0.5f * (aMax[i] - aMin[i]) * la;
             bh[i] = 0.5f * (bMax[i] - bMin[i]) * lb;
         }
         const Vec3 d = Sub(Center(b), Center(a));
-        float r[3][3], absR[3][3];
+        float best = -INFINITY;
+        auto test = [&](const Vec3& raw, bool face)
+        {
+            Vec3 axis{};
+            if (!Normalize(raw, axis))
+                return;
+            float ra = 0.0f, rb = 0.0f;
+            for (int i = 0; i < 3; ++i)
+            {
+                ra += std::fabs(Dot(ax[i], axis)) * ah[i];
+                rb += std::fabs(Dot(bx[i], axis)) * bh[i];
+            }
+            const float along = Dot(d, axis);
+            float separation = std::fabs(along) - (ra + rb);
+            // Prefer a face over an edge pair at (nearly) the same distance:
+            // its normal is the one a hand sees being hit.
+            if (!face)
+                separation -= 1e-3f * (ra + rb);
+            if (separation > best)
+            {
+                best = separation;
+                out.axis = along >= 0.0f ? axis : Scale(axis, -1.0f);
+            }
+        };
+        for (int i = 0; i < 3; ++i)
+        {
+            test(ax[i], true);
+            test(bx[i], true);
+        }
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j)
             {
-                r[i][j] = Dot(ax[i], bx[j]);
-                absR[i][j] = std::fabs(r[i][j]) + 1e-5f;
+                const Vec3 c{ ax[i].y * bx[j].z - ax[i].z * bx[j].y, ax[i].z * bx[j].x - ax[i].x * bx[j].z,
+                    ax[i].x * bx[j].y - ax[i].y * bx[j].x };
+                if (Length(c) > 1e-3f)
+                    test(c, false);
             }
-        const float t[3] = { Dot(d, ax[0]), Dot(d, ax[1]), Dot(d, ax[2]) };
-        for (int i = 0; i < 3; ++i)
-            if (std::fabs(t[i]) > ah[i] + bh[0] * absR[i][0] + bh[1] * absR[i][1] + bh[2] * absR[i][2])
-                return false;
-        for (int j = 0; j < 3; ++j)
-            if (std::fabs(t[0] * r[0][j] + t[1] * r[1][j] + t[2] * r[2][j]) >
-                ah[0] * absR[0][j] + ah[1] * absR[1][j] + ah[2] * absR[2][j] + bh[j])
-                return false;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-            {
-                const int i1 = (i + 1) % 3, i2 = (i + 2) % 3, j1 = (j + 1) % 3, j2 = (j + 2) % 3;
-                const float ra = ah[i1] * absR[i2][j] + ah[i2] * absR[i1][j];
-                const float rb = bh[j1] * absR[i][j2] + bh[j2] * absR[i][j1];
-                if (std::fabs(t[i2] * r[i1][j] - t[i1] * r[i2][j]) > ra + rb)
-                    return false;
-            }
-        return true;
+        out.valid = std::isfinite(best);
+        out.separation = best;
+        return out;
     }
 
     // The held box's origin in the seated box's frame, so a sweep follows the
@@ -316,127 +302,255 @@ namespace l4d2vr_mag_slap
         return { Dot(d, seated.axisX), Dot(d, seated.axisY), Dot(d, seated.axisZ) };
     }
 
-    // Touching now, or anywhere on the straight path from where the held box
-    // was last frame (relative to the seated one).
-    inline bool TouchingSwept(const Box& seated, const Box& held, const Vec3* previousRelativeOrigin,
-        float marginUnits, int steps = 6)
+    inline Box AtRelativeOrigin(const Box& seated, Box held, const Vec3& relative)
     {
-        if (OverlapWithMargin(seated, held, marginUnits))
-            return true;
-        if (!previousRelativeOrigin || !Finite(*previousRelativeOrigin))
-            return false;
-        const Vec3 now = RelativeOrigin(seated, held);
-        for (int k = 0; k < steps; ++k)
-        {
-            const float u = static_cast<float>(k) / static_cast<float>(steps);
-            const Vec3 local = Add(*previousRelativeOrigin, Scale(Sub(now, *previousRelativeOrigin), u));
-            Box at = held;
-            at.origin = Add(seated.origin, Add(Scale(seated.axisX, local.x),
-                Add(Scale(seated.axisY, local.y), Scale(seated.axisZ, local.z))));
-            if (OverlapWithMargin(seated, at, marginUnits))
-                return true;
-        }
-        return false;
+        held.origin = Add(seated.origin, Add(Scale(seated.axisX, relative.x),
+            Add(Scale(seated.axisY, relative.y), Scale(seated.axisZ, relative.z))));
+        return held;
     }
 
-    // Frame-by-frame slap detector: feed every frame while a fresh magazine is
-    // held for a slap.
-    class Detector
+    // First contact along the straight path from the previous relative origin
+    // to the current pose. started: in contact already at the start.
+    struct SweepResult
+    {
+        bool hit = false;
+        bool started = false;
+        float fraction = 0.0f;
+        Vec3 normal{};   // from the seated box toward the held one
+    };
+
+    inline SweepResult Sweep(const Box& seated, const Box& held, const Vec3* previousRelativeOrigin,
+        float contactUnits, int steps)
+    {
+        SweepResult out{};
+        const Vec3 now = RelativeOrigin(seated, held);
+        const Vec3 from = previousRelativeOrigin && Finite(*previousRelativeOrigin) ? *previousRelativeOrigin : now;
+        SatResult before = SatQuery(seated, AtRelativeOrigin(seated, held, from));
+        if (!before.valid)
+            return out;
+        if (before.separation <= contactUnits)
+        {
+            out.started = true;
+            out.normal = before.axis;
+            return out;
+        }
+        steps = std::max(1, steps);
+        for (int k = 1; k <= steps; ++k)
+        {
+            const float u = static_cast<float>(k) / static_cast<float>(steps);
+            const SatResult at = SatQuery(seated, AtRelativeOrigin(seated, held, Add(from, Scale(Sub(now, from), u))));
+            if (!at.valid)
+                return out;
+            if (at.separation <= contactUnits)
+            {
+                out.hit = true;
+                out.fraction = u;
+                out.normal = before.axis;   // the face that was still apart a step ago
+                return out;
+            }
+            before = at;
+        }
+        return out;
+    }
+
+    // The release directions of a seated magazine: out of the well, rocked
+    // toward the muzzle (gun forward square to the magazine), and halfway.
+    inline int ReleaseDirections(const Vec3& outwardAxis, const Vec3& gunForward, Vec3 out[3])
+    {
+        int count = 0;
+        Vec3 outward{};
+        if (!Normalize(outwardAxis, outward))
+            return 0;
+        out[count++] = outward;
+        Vec3 forward{};
+        if (Finite(gunForward) && Normalize(Sub(gunForward, Scale(outward, Dot(gunForward, outward))), forward))
+        {
+            out[count++] = forward;
+            Vec3 between{};
+            if (Normalize(Add(outward, forward), between))
+                out[count++] = between;
+        }
+        return count;
+    }
+
+    // What one strike velocity does to the seated magazine through a contact
+    // with this normal (from seated toward held): m/s.
+    struct Impulse
+    {
+        float approach = 0.0f;   // closing speed into the face
+        float release = 0.0f;    // speed it gives the seated magazine along its best release direction
+        float intoWell = 0.0f;   // the strike's direction along the insert axis
+        Vec3 releaseDirection{};
+    };
+
+    inline Impulse StrikeImpulse(const PhysicsParams& p, const Vec3& velocity, const Vec3& normal,
+        const Vec3& outwardAxis, const Vec3& gunForward)
+    {
+        Impulse out{};
+        Vec3 n{}, outward{};
+        if (!Finite(velocity) || !Normalize(normal, n) || !Normalize(outwardAxis, outward))
+            return out;
+        const float speed = Length(velocity);
+        if (speed > 1e-4f)
+            out.intoWell = -Dot(velocity, outward) / speed;
+        out.approach = std::max(0.0f, -Dot(velocity, n));
+        if (out.approach <= 0.0f)
+            return out;
+        const Vec3 tangential = Sub(velocity, Scale(n, Dot(velocity, n)));
+        Vec3 dirs[3];
+        const int count = ReleaseDirections(outward, gunForward, dirs);
+        for (int i = 0; i < count; ++i)
+        {
+            const float push = out.approach * std::max(0.0f, -Dot(n, dirs[i]));
+            const float drag = std::min(p.friction * out.approach, std::max(0.0f, Dot(tangential, dirs[i])));
+            if (push + drag > out.release)
+            {
+                out.release = push + drag;
+                out.releaseDirection = dirs[i];
+            }
+        }
+        return out;
+    }
+
+    // Feed every frame while a fresh magazine is held for a slap.
+    class Collider
     {
     public:
-        struct Sample
-        {
-            float time = 0.0f;
-            float speed = 0.0f;
-            DirectionMatch direction{};
-            bool qualifies = false;
-        };
         struct Outcome
         {
-            bool hit = false;
-            bool touchBegan = false;   // a new touch this frame
-            bool nearMiss = false;     // a touch began with no qualifying strike
-            Sample strike{};           // the qualifying strike (hit) or the fastest recent one
+            bool hit = false;          // slap: knock the seated magazine out
+            bool contactBegan = false; // a new touch this frame (hit or not)
+            bool touching = false;     // in contact now (hit or not)
+            Impulse impulse{};         // the strongest strike sample at the touch
+            Vec3 normal{};             // contact normal, seated toward held
+            Vec3 clampOffset{};        // add to the held box so it rests on the surface (units)
         };
 
         void Reset()
         {
+            m_InContact = false;
+            m_Embedded = false;
+            m_ContactFree = false;
             m_Count = 0;
             m_Head = 0;
-            m_WasTouching = false;
-            m_WasOverlapping = false;
-            m_TouchBeganAt = -1e9f;
+            m_HavePrevious = false;
         }
 
-        // strikes: one or more velocity estimates for this frame (m/s, world).
-        // touching: within contactMeters; overlapping: within overlapMeters.
-        Outcome Update(const ForgivingParams& p, float time, const Vec3* strikes, int strikeCount,
-            const Vec3& outwardAxis, const Vec3& gunForward, bool touching, bool overlapping = false)
+        // velocities: strike estimates for this frame (m/s, world, held relative
+        // to the gun); unitsPerMeter converts box units.
+        Outcome Update(const PhysicsParams& p, float time, const Box& seated, const Box& held,
+            const Vec3* velocities, int velocityCount, const Vec3& outwardAxis, const Vec3& gunForward,
+            float unitsPerMeter)
         {
             Outcome o{};
-            Sample best{};
-            best.time = time;
-            for (int i = 0; i < strikeCount; ++i)
+            for (int i = 0; i < velocityCount; ++i)
+                Push(time, velocities[i]);
+            const float contactUnits = p.contactMeters * unitsPerMeter;
+            const SweepResult sweep = Sweep(seated, held, m_HavePrevious ? &m_PreviousRelative : nullptr,
+                contactUnits, p.sweepSteps);
+            m_PreviousRelative = RelativeOrigin(seated, held);
+            m_HavePrevious = Finite(m_PreviousRelative);
+            const SatResult now = SatQuery(seated, held);
+            if (m_Embedded)
             {
-                Sample s{};
-                s.time = time;
-                s.speed = Finite(strikes[i]) ? Length(strikes[i]) : 0.0f;
-                s.direction = MatchDirection(strikes[i], outwardAxis, gunForward);
-                s.qualifies = StrikeQualifies(p, s.speed, s.direction);
-                if (i == 0 || (s.qualifies && !best.qualifies) ||
-                    (s.qualifies == best.qualifies && s.speed > best.speed))
-                    best = s;
+                if (now.valid && now.separation > contactUnits)
+                {
+                    m_Embedded = false;
+                    m_ContactFree = true;
+                }
+                return o;
             }
-            Push(best);
-            overlapping = overlapping && touching;
-            o.touchBegan = touching && !m_WasTouching;
-            const bool overlapBegan = overlapping && !m_WasOverlapping;
-            m_WasTouching = touching;
-            m_WasOverlapping = overlapping;
-            const bool began = o.touchBegan || overlapBegan;
-            if (began)
-                m_TouchBeganAt = time;
-            // A touch just began: any qualifying strike within the window before it.
-            // A qualifying strike now: a touch that began a moment ago.
-            const bool touchRecent = touching && time - m_TouchBeganAt <= p.lateSeconds + 1e-4f;
-            if (began || (touchRecent && best.qualifies))
+            auto keepNormal = [&](const Vec3& normal)
             {
-                const Sample* found = nullptr;
-                const Sample* fastest = nullptr;
+                m_InContact = true;
+                m_NormalLocal = { Dot(normal, Unit(seated.axisX)), Dot(normal, Unit(seated.axisY)),
+                    Dot(normal, Unit(seated.axisZ)) };
+            };
+            if (!m_InContact && sweep.started)
+            {
+                // Taken already overlapping the old magazine: nothing until it
+                // has been apart once. Back within reach of it: resting contact.
+                if (!m_ContactFree)
+                {
+                    m_Embedded = true;
+                    return o;
+                }
+                keepNormal(sweep.normal);
+            }
+            else if (!m_InContact)
+            {
+                if (!sweep.hit)
+                {
+                    m_ContactFree = true;
+                    return o;
+                }
+                o.contactBegan = true;
+                o.normal = sweep.normal;
                 for (int i = 0; i < m_Count; ++i)
                 {
                     const Sample& s = m_Samples[(m_Head + kCapacity - 1 - i) % kCapacity];
-                    if (s.time < m_TouchBeganAt - p.windowSeconds - 1e-4f)
+                    if (s.time < time - p.lagSeconds - 1e-4f)
                         break;
-                    if (!fastest || s.speed > fastest->speed)
-                        fastest = &s;
-                    if (s.qualifies && (!found || s.speed > found->speed))
-                        found = &s;
+                    const float speed = Length(s.velocity);
+                    if (!std::isfinite(speed) || speed > p.maxSpeedMetersPerSecond)
+                        continue;
+                    const Impulse impulse = StrikeImpulse(p, s.velocity, sweep.normal, outwardAxis, gunForward);
+                    if (impulse.release > o.impulse.release || o.impulse.approach <= 0.0f)
+                        o.impulse = impulse;
                 }
-                if (found)
-                {
-                    o.hit = true;
-                    o.strike = *found;
-                }
-                else if (began)
-                {
-                    o.nearMiss = true;
-                    if (fastest)
-                        o.strike = *fastest;
-                }
+                o.hit = o.impulse.release >= p.releaseSpeedMetersPerSecond &&
+                    o.impulse.intoWell <= p.maxIntoWellDot;
+                if (o.hit)
+                    return o;
+                keepNormal(sweep.normal);
             }
-            else
+            // Resting on the surface: in contact until the hand draws back.
+            if (now.valid && now.separation > contactUnits * 2.0f)
             {
-                o.strike = best;
+                m_InContact = false;
+                return o;
             }
+            o.touching = true;
+            o.normal = Add(Scale(Unit(seated.axisX), m_NormalLocal.x),
+                Add(Scale(Unit(seated.axisY), m_NormalLocal.y), Scale(Unit(seated.axisZ), m_NormalLocal.z)));
+            const float depth = PenetrationAlong(seated, held, o.normal);
+            if (depth > 0.0f)
+                o.clampOffset = Scale(o.normal, depth);
             return o;
         }
 
-    private:
-        static constexpr int kCapacity = 48;
-        void Push(const Sample& s)
+        // How far b reaches into a along unit axis n (from a toward b), 0 when apart.
+        static float PenetrationAlong(const Box& a, const Box& b, const Vec3& n)
         {
-            m_Samples[m_Head] = s;
+            const Vec3* aAxes[3] = { &a.axisX, &a.axisY, &a.axisZ };
+            const Vec3* bAxes[3] = { &b.axisX, &b.axisY, &b.axisZ };
+            const float aExt[3] = { a.maxs.x - a.mins.x, a.maxs.y - a.mins.y, a.maxs.z - a.mins.z };
+            const float bExt[3] = { b.maxs.x - b.mins.x, b.maxs.y - b.mins.y, b.maxs.z - b.mins.z };
+            float ra = 0.0f, rb = 0.0f;
+            for (int i = 0; i < 3; ++i)
+            {
+                ra += std::fabs(Dot(*aAxes[i], n)) * 0.5f * aExt[i];
+                rb += std::fabs(Dot(*bAxes[i], n)) * 0.5f * bExt[i];
+            }
+            const float depth = ra + rb - Dot(Sub(Center(b), Center(a)), n);
+            return std::isfinite(depth) ? std::max(0.0f, depth) : 0.0f;
+        }
+
+    private:
+        struct Sample
+        {
+            float time = 0.0f;
+            Vec3 velocity{};
+        };
+        static constexpr int kCapacity = 32;
+        static Vec3 Unit(const Vec3& v)
+        {
+            Vec3 out{};
+            return Normalize(v, out) ? out : v;
+        }
+        void Push(float time, const Vec3& velocity)
+        {
+            m_Samples[m_Head] = { time, velocity };
             m_Head = (m_Head + 1) % kCapacity;
             if (m_Count < kCapacity)
                 ++m_Count;
@@ -444,9 +558,12 @@ namespace l4d2vr_mag_slap
         Sample m_Samples[kCapacity]{};
         int m_Count = 0;
         int m_Head = 0;
-        bool m_WasTouching = false;
-        bool m_WasOverlapping = false;
-        float m_TouchBeganAt = -1e9f;
+        bool m_InContact = false;
+        bool m_Embedded = false;
+        bool m_ContactFree = false;
+        bool m_HavePrevious = false;
+        Vec3 m_PreviousRelative{};
+        Vec3 m_NormalLocal{};
     };
 
     // Letting go must last this long before the spare goes back, so a hand that

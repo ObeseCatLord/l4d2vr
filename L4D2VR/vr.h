@@ -2417,10 +2417,10 @@ public:
     std::chrono::steady_clock::time_point m_MagazineInteractionSlapAt{};
     float m_MagazineInteractionSlapReinsertSeconds = 0.0f;
     Vector m_MagazineInteractionSlapDropVelocity{0.0f, 0.0f, 0.0f};
-    // The forgiving slap (vr_mag_slap.h Detector): recent strikes, where the
-    // spare was last frame relative to the seated magazine, both hands'
-    // tracking positions for a second velocity estimate, and when the hand let go.
-    l4d2vr_mag_slap::Detector m_MagazineSlapDetector;
+    // The physical slap (vr_mag_slap.h Collider): the swept contact state,
+    // where the spare was last frame relative to the seated magazine, both
+    // hands' tracking positions for the velocity estimates, and when the hand let go.
+    l4d2vr_mag_slap::Collider m_MagazineSlapCollider;
     // Where the held old magazine sat against the well when the hand took it.
     Vector m_MagazineInteractionOldPullBaseline{0.0f, 0.0f, 0.0f};
     bool m_MagazineInteractionOldPullBaselineValid = false;

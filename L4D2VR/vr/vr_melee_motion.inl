@@ -47,8 +47,20 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     const float dt = m_MeleeMotionLastUpdate.time_since_epoch().count() == 0 ? 0.0f :
         std::clamp(std::chrono::duration<float>(now - m_MeleeMotionLastUpdate).count(), 0.0f, 0.1f);
     m_MeleeMotionLastUpdate = now;
-    const float sampleTime = std::chrono::duration<float>(now.time_since_epoch()).count();
     const float scale = std::max(0.001f, m_VRScale);
+    // Seconds since the session clock's epoch: a float of the raw steady clock
+    // (seconds since boot) is quantised to 1/32 s after a few days of uptime.
+    float sampleTime = 0.0f;
+    if (!m_GestureSessionClock.Seconds(std::chrono::duration<double>(now.time_since_epoch()).count(), sampleTime))
+    {
+        m_GestureSampler.Reset();
+        m_MeleeSwing.Reset();
+        m_MeleeThrust.Reset();
+        m_GunBash.Reset();
+        m_PillsGesture.Reset();
+        m_AdrenalineGesture.Reset();
+        m_HandoverGesture.Reset();
+    }
 
     C_WeaponCSBase* const weapon = localPlayer ? static_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon()) : nullptr;
     const int weaponId = weapon ? static_cast<int>(weapon->GetWeaponID()) : 0;
@@ -70,16 +82,31 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     // The chainsaw runs while the trigger is held; it never swing-triggers.
     m_MeleeMotionSwingEligible = meleeActive && params.motionMelee;
 
-    // Body frame: world minus the camera anchor, un-rotated by the stick-turn
-    // offset. Turning, walking and teleports move the whole frame, so neither
-    // the inertia spring nor the gesture detectors see them as hand motion.
-    const Vector worldUp(0.0f, 0.0f, 1.0f);
-    const float bodyYaw = m_RotationOffset;
-    const Vector bodyAnchor = m_CameraAnchor;
-    auto toBodyP = [&](const Vector& p) { return VectorRotate(p - bodyAnchor, worldUp, -bodyYaw); };
-    auto toWorldP = [&](const Vector& p) { return VectorRotate(p, worldUp, bodyYaw) + bodyAnchor; };
-    auto toBodyD = [&](const Vector& d) { return VectorRotate(d, worldUp, -bodyYaw); };
-    auto toWorldD = [&](const Vector& d) { return VectorRotate(d, worldUp, bodyYaw); };
+    // Tracking frame (metres): the game's placement of tracked devices,
+    // inverted. Smooth and snap turning pivot the world about the head, and
+    // walking, teleports, ladders and pushes move the camera anchor; none of it
+    // moves a point here, so neither the inertia spring nor the gesture
+    // detectors see artificial locomotion as hand motion. (The old frame
+    // pivoted about the camera anchor: turning swept hand and head round a
+    // circle as large as the player's room offset.)
+    l4d2vr_gesture::TrackingFrame trackingFrame{};
+    trackingFrame.origin = m_CameraAnchor - Vector(0.0f, 0.0f, 64.0f);
+    trackingFrame.yawDeg = m_RotationOffset;
+    trackingFrame.hmdCorrected = m_HmdPosSmoothed;
+    trackingFrame.hmdLocal = m_HmdPosLocalPrev;
+    trackingFrame.scale = scale;
+    auto toBodyP = [&](const Vector& p) { return trackingFrame.ToTrackingPoint(p); };
+    auto toWorldP = [&](const Vector& p) { return trackingFrame.ToWorldPoint(p); };
+    auto toBodyD = [&](const Vector& d) { return trackingFrame.ToTrackingDirection(d); };
+    auto toWorldD = [&](const Vector& d) { return trackingFrame.ToWorldDirection(d); };
+    float stickYawRate = 0.0f;
+    if (dt > 0.0005f)
+    {
+        float yawStep = trackingFrame.yawDeg - m_GestureLastYawDeg;
+        yawStep -= 360.0f * std::floor((yawStep + 180.0f) / 360.0f);
+        stickYawRate = yawStep / dt;
+    }
+    m_GestureLastYawDeg = trackingFrame.yawDeg;
 
     // Inertia on the viewmodel pose (main thread copy; render re-applies the delta).
     bool lagValid = false;
@@ -90,7 +117,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         const Vector viewmodelPos = GetRightControllerViewmodelAbsPos() - m_ViewmodelForward * m_ViewmodelPosOffset.x -
             m_ViewmodelRight * m_ViewmodelPosOffset.y - m_ViewmodelUp * m_ViewmodelPosOffset.z;
         l4d2vr_melee_inertia::Pose target{};
-        if (l4d2vr_melee_inertia::PoseFromAxes(toBodyP(viewmodelPos) * (1.0f / scale), toBodyD(m_ViewmodelForward),
+        if (l4d2vr_melee_inertia::PoseFromAxes(toBodyP(viewmodelPos), toBodyD(m_ViewmodelForward),
                 toBodyD(m_ViewmodelRight), toBodyD(m_ViewmodelUp), target) && m_MeleeInertiaSpring.Step(target, dt))
         {
             lagged = m_MeleeInertiaSpring.Lagged();
@@ -103,7 +130,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
                 m_ViewmodelForward = toWorldD(laggedForward);
                 m_ViewmodelRight = toWorldD(laggedRight);
                 m_ViewmodelUp = toWorldD(laggedUp);
-                m_MeleeInertiaPosOffsetWorld = toWorldP(lagged.position * scale) - viewmodelPos;
+                m_MeleeInertiaPosOffsetWorld = toWorldP(lagged.position) - viewmodelPos;
                 // Rotation from the controller to the lagged weapon (body frame), for
                 // the usercmd pose the server's melee sweep uses.
                 const l4d2vr_melee_inertia::Quat bodyRotation = l4d2vr_melee_inertia::QuatMultiply(
@@ -130,29 +157,24 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     }
     m_MeleeLaggedPoseValid = lagValid;
 
-    // Gesture sample from the weapon hand (the lagged pose when it exists).
-    l4d2vr_gesture::Sample sample{};
-    sample.time = sampleTime;
-    const Vector handPos = lagValid ? m_MeleeLaggedControllerPos : GetRightControllerViewmodelAbsPos();
+    // Gesture sample from the weapon hand (the lagged pose when it exists), in
+    // tracking space. Without a lag the hand and head come straight from the
+    // tracked poses this frame used; velocities of both are differentiated
+    // over the same interval.
     Vector handForward = m_RightControllerForward;
     if (lagValid)
         QAngle::AngleVectors(m_MeleeLaggedControllerAng, &handForward, nullptr, nullptr);
-    sample.handPosition = toBodyP(handPos) * (1.0f / scale);
-    sample.handForward = toBodyD(handForward);
-    if (m_MeleeMotionPrevValid && dt > 0.0005f)
-        sample.handVelocity = (sample.handPosition - m_MeleeMotionPrevHand) * (1.0f / dt);
-    m_MeleeMotionPrevHand = sample.handPosition;
-    m_MeleeMotionPrevValid = true;
+    Vector handAngularDeg{};
     if (lagValid)
-        sample.handAngularVelocityDeg = m_MeleeInertiaSpring.GetState().angularVelocity * 57.29577951f;
+        handAngularDeg = m_MeleeInertiaSpring.GetState().angularVelocity * 57.29577951f;
     else
     {
         const QAngle av = m_RightControllerPose.TrackedDeviceAngVel;
-        sample.handAngularVelocityDeg = Vector(av.x, av.y, av.z);
+        handAngularDeg = Vector(av.x, av.y, av.z);
     }
-    sample.hmdPosition = toBodyP(m_HmdPosAbs) * (1.0f / scale);
-    sample.hmdForward = toBodyD(m_HmdForward);
-    sample.hmdUp = toBodyD(m_HmdUp);
+    const l4d2vr_gesture::Sample sample = m_GestureSampler.Build(sampleTime,
+        lagValid ? toBodyP(m_MeleeLaggedControllerPos) : m_RightControllerPosSmoothed, toBodyD(handForward),
+        handAngularDeg, m_HmdPosLocalPrev, toBodyD(m_HmdForward), toBodyD(m_HmdUp));
 
     bool swingStarted = false;
     if (m_MeleeMotionSwingEligible)
@@ -204,7 +226,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
                     continue;
                 const Vector chest = origin + Vector(0.0f, 0.0f, 46.0f);
                 targets[count].id = i;
-                targets[count].point = toBodyP(chest) * (1.0f / scale);
+                targets[count].point = toBodyP(chest);
                 targetsWorld[count] = chest;
                 ++count;
             }
@@ -237,11 +259,11 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
             l4d2vr_holster::BodyFrame frame{};
             if (GetHolsterBodyFrame(frame))
             {
-                targets.chest = toBodyP(l4d2vr_holster::ToWorld(frame, Vector(0.12f, 0.0f, -0.30f))) * (1.0f / scale);
+                targets.chest = toBodyP(l4d2vr_holster::ToWorld(frame, Vector(0.12f, 0.0f, -0.30f)));
                 targets.chestValid = true;
             }
             Vector arm{};
-            if (l4d2vr_gesture::ArmTargetPoint(toBodyP(m_LeftControllerPosAbs) * (1.0f / scale),
+            if (l4d2vr_gesture::ArmTargetPoint(toBodyP(m_LeftControllerPosAbs),
                     toBodyD(m_LeftControllerForward), 0.15f, arm))
             {
                 targets.arm = arm;
@@ -291,20 +313,39 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
             GetHolsterBodyFrame(holsterFrame) &&
             l4d2vr_holster::NearAnyZone(holsterFrame, m_HolsterLayout, m_RightControllerPosAbs, 0.05f))
             bashAllowed = false;
+        l4d2vr_gesture::GunBashParams bashParams = m_GunBash.GetParams();
+        if (bashParams.sweepEnabled != m_GunBashSweepEnabled)
+        {
+            bashParams.sweepEnabled = m_GunBashSweepEnabled;
+            m_GunBash.SetParams(bashParams);
+        }
         const l4d2vr_gesture::GunBashEvent bash = m_GunBash.Update(sample, bashAllowed);
-        if (GetTickCount64() < m_VmAnimTraceUntilMs.load(std::memory_order_acquire))
-            Game::logMsg("[VR][Melee] bash trace: hand=(%.3f %.3f %.3f) vel=(%.2f %.2f %.2f) hmd=(%.3f %.3f %.3f) dt=%.4f forward=%.2f allowed=%d",
+        const uint64_t nowMs = GetTickCount64();
+        if (nowMs < m_VmAnimTraceUntilMs.load(std::memory_order_acquire))
+            Game::logMsg("[VR][Melee] bash trace: hand=(%.3f %.3f %.3f) vel=(%.2f %.2f %.2f) hmd=(%.3f %.3f %.3f) dt=%.4f forward=%.2f level=%.2f stickYaw=%.0f allowed=%d",
                 sample.handPosition.x, sample.handPosition.y, sample.handPosition.z,
                 sample.handVelocity.x, sample.handVelocity.y, sample.handVelocity.z,
-                sample.hmdPosition.x, sample.hmdPosition.y, sample.hmdPosition.z, dt, bash.speed, bashAllowed ? 1 : 0);
-        if (bash.speed > 1.2f && l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
-            Game::logMsg("[VR][Melee] bash candidate: forward %.2f m/s fraction %.2f barrel %.2f travel %.2f m angular %.0f reach %.2f m allowed=%d armed=%d fired=%d",
+                sample.hmdPosition.x, sample.hmdPosition.y, sample.hmdPosition.z, dt, bash.speed, bash.levelSpeed,
+                stickYawRate, bashAllowed ? 1 : 0);
+        // Near misses (fast, but a gate said no), rate limited, so a headset
+        // session shows why a strike did not count.
+        const bool fast = bash.speed > 1.2f || bash.levelSpeed > 1.8f;
+        if (fast && !bash.fired &&
+            (l4d2vr_selftest::Get().active.load(std::memory_order_acquire) || nowMs - m_GunBashNearMissLogMs >= 1000u))
+        {
+            m_GunBashNearMissLogMs = nowMs;
+            Game::logMsg("[VR][Melee] bash candidate: forward %.2f m/s fraction %.2f barrel %.2f travel %.2f m angular %.0f reach %.2f m | level %.2f m/s lateral %.2f sweep travel %.2f m height %.2f m headYaw %.0f | stickYaw %.0f deg/s allowed=%d armed=%d",
                 bash.speed, bash.forwardFraction, bash.barrelDot, bash.travel, bash.peakAngular, bash.reach,
-                bashAllowed ? 1 : 0, bash.armed ? 1 : 0, bash.fired ? 1 : 0);
+                bash.levelSpeed, bash.lateralFraction, bash.sweepTravel, bash.height, bash.headYawRate, stickYawRate,
+                bashAllowed ? 1 : 0, bash.armed ? 1 : 0);
+        }
         if (bash.fired && !IsMagazineInteractionManualActive())
         {
             shove = true;
             shoveDirection = toWorldD(bash.direction);
+            Game::logMsg("[VR][Melee] gun bash %s: forward %.2f m/s level %.2f m/s travel %.2f/%.2f m reach %.2f m (stick turn %.0f deg/s)",
+                bash.sweep ? "sweep" : "push", bash.speed, bash.levelSpeed, bash.travel, bash.sweepTravel, bash.reach,
+                stickYawRate);
         }
     }
     if (shove)

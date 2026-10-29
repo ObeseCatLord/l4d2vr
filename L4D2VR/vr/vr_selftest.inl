@@ -1107,6 +1107,23 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         Game::logMsg("[VR][SelfTest] turn rate %.0f deg/s", m_SelfTestTurnRate);
         return true;
     }
+    // turnstick=<x> holds the right stick at x (-1..1, positive turns right)
+    // through the game's own turn input (smooth or snap, TurnSpeed); "off"
+    // releases it. snapturn=on|off switches snap turning.
+    if (step.rfind("turnstick=", 0) == 0)
+    {
+        const std::string value = step.substr(10);
+        m_SelfTestTurnStickActive = value != "off";
+        m_SelfTestTurnStickX = m_SelfTestTurnStickActive ? std::clamp(static_cast<float>(std::atof(value.c_str())), -1.0f, 1.0f) : 0.0f;
+        Game::logMsg("[VR][SelfTest] turn stick %s", value.c_str());
+        return true;
+    }
+    if (step.rfind("snapturn=", 0) == 0)
+    {
+        m_SnapTurning = step.substr(9) == "on";
+        Game::logMsg("[VR][SelfTest] snap turning %s", m_SnapTurning ? "on" : "off");
+        return true;
+    }
     if (step.rfind("turn=", 0) == 0)
     {
         m_RotationOffset += static_cast<float>(std::atof(step.c_str() + 5));
@@ -1353,7 +1370,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     }
 
     if (step == "reach" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim" ||
-        step == "bashanimraw" || step == "swinganimraw")
+        step == "bashanimraw" || step == "swinganimraw" || step == "bashmotion")
         return RunSelfTestRealisticStep(step, t, player);
 
     SelfTestReport(step.c_str(), false, "unknown step");
@@ -1376,6 +1393,13 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
     static std::vector<Action> s_Script;
     static bool s_SavedToggle = true;
     static bool s_SavedContact = false;
+    static bool s_SavedSnap = false;
+    // bashmotion: degrees turned, snap turns and distance walked while measuring.
+    static float s_TurnedDeg = 0.0f, s_LastYaw = 0.0f, s_Walked = 0.0f;
+    static int s_Snaps = 0;
+    static bool s_Measure = false;
+    static bool s_OwnsLocomotion = false;
+    static Vector s_LastOrigin{};
     static uint32_t s_ShoveBaseline = 0u;
     static float s_WorldReachStart = -1.0f;
     // Script actions run in later frames: they capture only `this` and values.
@@ -1394,6 +1418,15 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
     {
         m_GripToggleEnabled = s_SavedToggle;
         m_GripReleaseDropEnabled = s_SavedContact;
+        if (s_OwnsLocomotion)
+        {
+            m_SnapTurning = s_SavedSnap;
+            m_SelfTestTurnStickActive = false;
+            m_SelfTestTurnStickX = 0.0f;
+            m_SelfTestWalkActive = false;
+        }
+        s_OwnsLocomotion = false;
+        s_Measure = false;
         m_SelfTestHeadDrop = 0.0f;
         m_VmStrikeHoldDisabled = false;
         s_WorldReachStart = -1.0f;
@@ -1404,6 +1437,9 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
         s_Script.clear();
         s_SavedToggle = m_GripToggleEnabled;
         s_SavedContact = m_GripReleaseDropEnabled;
+        s_SavedSnap = m_SnapTurning;
+        s_Measure = false;
+        s_OwnsLocomotion = false;
         s_WorldReachStart = -1.0f;
         // A real grip action is always active: register both grips as released
         // before the first press (a press arriving with activation is ignored).
@@ -1671,10 +1707,129 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 restore();
                 return true; });
         }
+        else if (step == "bashmotion")
+        {
+            // Artificial locomotion through the real input paths (the right
+            // stick at full deflection, smooth then snap turning, the walk
+            // stick) with the gun held still must never bash; real pushes and
+            // sideways sweeps during it must, once each.
+            cmd("give rifle");
+            auto stick = [this](float x) { m_SelfTestTurnStickActive = true; m_SelfTestTurnStickX = x; };
+            auto walk = [this](float y) { m_SelfTestWalkActive = y != 0.0f; m_SelfTestWalkX = 0.0f; m_SelfTestWalkY = y; };
+            auto measure = [this](C_BasePlayer* player, bool on) {
+                s_Measure = on;
+                s_OwnsLocomotion = true;
+                s_LastYaw = m_RotationOffset;
+                if (player) s_LastOrigin = player->GetAbsOrigin();
+                if (on) { s_TurnedDeg = 0.0f; s_Walked = 0.0f; s_Snaps = 0; }
+            };
+            add(1.2f, [this, cmd](C_BasePlayer*, float) {
+                cmd("use weapon_rifle");
+                m_SnapTurning = false;
+                SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));
+                return false; });
+            // Negatives: 2.5 s of full right stick, 2.5 s of full left stick,
+            // ten snap turns, 3 s of walking at full speed while turning, aiming.
+            add(2.5f, [this, measure, stick](C_BasePlayer* player, float) {
+                s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);
+                measure(player, true);
+                stick(1.0f);
+                return false; });
+            add(4.0f, [this](C_BasePlayer*, float) { SelfTestRequestShot("bashmotion_turning", 1); return false; });
+            add(5.0f, [stick](C_BasePlayer*, float) { stick(-1.0f); return false; });
+            add(7.5f, [this, stick](C_BasePlayer*, float) { stick(0.0f); m_SnapTurning = true; return false; });
+            for (int i = 0; i < 10; ++i)
+            {
+                const float at = 7.8f + 0.3f * i;
+                const float x = (i % 4 < 2) ? 1.0f : -1.0f;
+                add(at, [stick, x](C_BasePlayer*, float) { stick(x); return false; });
+                add(at + 0.15f, [stick](C_BasePlayer*, float) { stick(0.0f); return false; });
+            }
+            add(10.8f, [this, stick, walk](C_BasePlayer*, float) {
+                m_SnapTurning = false;
+                stick(0.7f);
+                walk(1.0f);
+                return false; });
+            add(12.3f, [stick](C_BasePlayer*, float) { stick(-0.7f); return false; });
+            add(12.8f, [this](C_BasePlayer*, float) { SelfTestRequestShot("bashmotion_walkturn", 1); return false; });
+            add(13.8f, [this, stick, walk, level](C_BasePlayer*, float) {
+                stick(0.0f);
+                walk(0.0f);
+                // Aim sweeps: slow tracking left, then a quicker re-aim right.
+                SelfTestReachRight(body::V(0.42f, -0.10f, -0.33f), level(0.0f, 25.0f), 0.6f);
+                return false; });
+            add(15.0f, [this, level](C_BasePlayer*, float) {
+                SelfTestReachRight(body::V(0.42f, 0.40f, -0.33f), level(0.0f, -30.0f), 1.0f); return false; });
+            add(15.9f, [this, level](C_BasePlayer*, float) { SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.8f); return false; });
+            add(17.0f, [this, measure](C_BasePlayer* player, float) {
+                char detail[256];
+                const uint32_t shoves = m_PhysicalShoveSerial.load(std::memory_order_acquire) - s_ShoveBaseline;
+                std::snprintf(detail, sizeof(detail), "%u shove(s) while turning %.0f deg with the stick (%d snap turns), walking %.1f m and aiming",
+                    shoves, s_TurnedDeg, s_Snaps, s_Walked / 43.2f);
+                SelfTestReport("bashmotion: no bash from stick turning, snap turning, walking or aiming",
+                    shoves == 0u && s_TurnedDeg > 900.0f && s_Snaps >= 8 && s_Walked > 43.2f * 2.0f, detail);
+                measure(player, true);
+                s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);
+                return false; });
+            // Positives: a push while smooth turning at full stick, a sweep while
+            // turning, a push while walking and snap turning, a sweep while walking.
+            add(17.2f, [stick](C_BasePlayer*, float) { stick(1.0f); return false; });
+            add(18.2f, [this, level](C_BasePlayer*, float) {
+                SelfTestReachRight(body::Push(), level(0.0f, 0.0f), 2.0f); return false; });
+            add(18.7f, [this, level](C_BasePlayer*, float) {
+                SelfTestReachRight(body::V(0.38f, 0.30f, -0.30f), level(0.0f, -35.0f), 0.6f); return false; });
+            add(20.0f, [this, level](C_BasePlayer*, float) {
+                // 0.45 m right to left in 0.25 s (peak about 3.4 m/s).
+                SelfTestReachRight(body::V(0.42f, -0.15f, -0.32f), level(0.0f, 35.0f), 1.8f); return false; });
+            add(20.6f, [this, stick, walk, level](C_BasePlayer*, float) {
+                stick(0.0f);
+                m_SnapTurning = true;
+                walk(1.0f);
+                SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.6f);
+                return false; });
+            for (int i = 0; i < 4; ++i)
+            {
+                const float at = 21.5f + 0.5f * i;
+                add(at, [stick](C_BasePlayer*, float) { stick(1.0f); return false; });
+                add(at + 0.15f, [stick](C_BasePlayer*, float) { stick(0.0f); return false; });
+            }
+            add(22.2f, [this, level](C_BasePlayer*, float) {
+                SelfTestReachRight(body::Push(), level(0.0f, 0.0f), 2.0f); return false; });
+            add(22.7f, [this, level](C_BasePlayer*, float) {
+                SelfTestReachRight(body::V(0.40f, -0.15f, -0.30f), level(0.0f, 35.0f), 0.6f); return false; });
+            add(24.0f, [this, level](C_BasePlayer*, float) {
+                // Left to right, 0.50 m in 0.25 s.
+                SelfTestReachRight(body::V(0.38f, 0.35f, -0.35f), level(0.0f, -35.0f), 2.0f); return false; });
+            add(25.0f, [this, restore, level](C_BasePlayer*, float) {
+                char detail[256];
+                const uint32_t shoves = m_PhysicalShoveSerial.load(std::memory_order_acquire) - s_ShoveBaseline;
+                std::snprintf(detail, sizeof(detail), "%u bash(es) for 4 strikes (2 pushes, 2 sweeps) while turning %.0f deg (%d snap turns) and walking %.1f m",
+                    shoves, s_TurnedDeg, s_Snaps, s_Walked / 43.2f);
+                SelfTestReport("bashmotion: pushes and sweeps during locomotion bash once each", shoves == 4u, detail);
+                SelfTestReachRight(body::RightReady(), level(0.0f, 0.0f), 0.6f);
+                restore();
+                return true; });
+        }
         // Actions run in time order, whatever order they were added in.
         std::stable_sort(s_Script.begin(), s_Script.end(),
             [](const Action& a, const Action& b) { return a.at < b.at; });
         m_SelfTestStage = 1;
+    }
+
+    // bashmotion: measure the turning and walking that really happened.
+    if (s_Measure && player)
+    {
+        float step = m_RotationOffset - s_LastYaw;
+        step -= 360.0f * std::floor((step + 180.0f) / 360.0f);
+        s_TurnedDeg += std::fabs(step);
+        if (std::fabs(step) >= 20.0f)
+            ++s_Snaps;
+        s_LastYaw = m_RotationOffset;
+        const Vector origin = player->GetAbsOrigin();
+        const float moved = (origin - s_LastOrigin).Length();
+        if (moved < 100.0f)
+            s_Walked += moved;
+        s_LastOrigin = origin;
     }
 
     // Crouched world reach toward the dropped kit (pickup step).

@@ -322,8 +322,8 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_action_frame_grip.inl" "${action_fram
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_action_frame_curl_edges.inl" "${action_frame_curl_edges}")
 extract_mirrored_analog_fixture("${action_frame_bridge_text}"
     "    bool ReadOpenVRSkeletalFingerCurls(" "    constexpr std::uint32_t kVrHandsLeftTargetDebugBoxMaxAgeMs" action_frame_curls)
-string(REPLACE "vr::IVRInput* input" "ScriptedInput* input" action_frame_curls "${action_frame_curls}")
-string(REPLACE "vr::IVRSystem* system" "ScriptedSystem* system" action_frame_curls "${action_frame_curls}")
+string(REPLACE "l4d2vr_backend::IVrInput* input" "ScriptedInput* input" action_frame_curls "${action_frame_curls}")
+string(REPLACE "l4d2vr_backend::IVrSystem* system" "ScriptedSystem* system" action_frame_curls "${action_frame_curls}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_action_frame_curls.inl" "${action_frame_curls}")
 extract_mirrored_analog_fixture("${custom_action_text}"
     "    auto originMatchesRole =" "    auto roleForGameplayHand =" action_frame_origin)
@@ -921,3 +921,10 @@ if(MSVC)
     target_compile_options(vr_item_hand_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME vr_item_hand COMMAND vr_item_hand_tests)
+
+add_executable(vr_runtime_select_tests vr_runtime_select_tests.cpp)
+target_compile_features(vr_runtime_select_tests PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(vr_runtime_select_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME vr_runtime_select COMMAND vr_runtime_select_tests)

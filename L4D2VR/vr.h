@@ -11,6 +11,8 @@
 #undef max
 #endif
 #include "openvr.h"
+#include "vr_backend/vr_backend.h"
+#include "vr_runtime_select.h"
 #include "vr_controller_identity.h"
 #include "vr_weapon_calibration.h"
 #include "vr_scope_optics.h"
@@ -406,10 +408,14 @@ class VR
 public:
 	Game* m_Game = nullptr;
 
-	vr::IVRSystem* m_System = nullptr;
-	vr::IVRInput* m_Input = nullptr;
-	vr::IVROverlay* m_Overlay = nullptr;
-	vr::IVRCompositor* m_Compositor = nullptr;
+	// VR runtime seam (vr_backend/vr_backend.h). The interface members are the
+	// backend's facades, published at the same points of VR::VR as before;
+	// nullptr in desktop mode or when the runtime lacks the interface.
+	l4d2vr_backend::IVrBackend* m_Backend = nullptr;
+	l4d2vr_backend::IVrSystem* m_System = nullptr;
+	l4d2vr_backend::IVrInput* m_Input = nullptr;
+	l4d2vr_backend::IVrOverlay* m_Overlay = nullptr;
+	l4d2vr_backend::IVrCompositor* m_Compositor = nullptr;
 
 	vr::VROverlayHandle_t m_MainMenuHandle;
 	vr::VROverlayHandle_t m_HUDTopHandle;
@@ -749,6 +755,10 @@ public:
 	// loading screen. Shares a frame mutex with VR::Update.
 	bool m_LoadingFramePumpEnabled = true;
 	bool m_BackgroundAudioEnabled = true;
+	// VrRuntime=auto|openxr|openvr (vr_runtime_select.h). Read at startup by
+	// L4D2VR_SelectedVrRuntime() before Direct3DCreate9; this copy is the
+	// normalized config value, for display only (changes need a restart).
+	std::string m_VrRuntime = "auto";
 	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
 	bool m_ScopePictureInPictureLens = true;
 	float m_ScopeParallaxStrength = 1.0f;
@@ -4841,7 +4851,7 @@ public:
 	bool WaitForQueuedCompositorSubmit(DWORD timeoutMs = INFINITE);
 	void QueuedCompositorSubmitThreadMain();
 	vr::EVROverlayError SetOverlayTextureSynchronized(
-		vr::IVROverlay* overlay,
+		l4d2vr_backend::IVrOverlay* overlay,
 		vr::VROverlayHandle_t overlayHandle,
 		const vr::Texture_t* texture,
 		bool producerPrepared);

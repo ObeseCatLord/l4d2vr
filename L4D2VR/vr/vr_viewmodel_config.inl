@@ -3226,6 +3226,13 @@ void VR::ParseConfigFile()
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
     m_BackgroundAudioEnabled = getBool("BackgroundAudio", true);
+    {
+        // VrRuntime=auto|openxr|openvr. The runtime itself is chosen once at
+        // startup (L4D2VR_SelectedVrRuntime); unknown values read as auto.
+        l4d2vr_runtime_select::Preference runtime = l4d2vr_runtime_select::Preference::Auto;
+        l4d2vr_runtime_select::ParsePreference(getString(l4d2vr_runtime_select::kConfigKey, m_VrRuntime), runtime);
+        m_VrRuntime = l4d2vr_runtime_select::Name(runtime);
+    }
     m_ScopePictureInPictureLens = getBool("ScopePictureInPictureLens", true);
     m_ScopeParallaxStrength = std::clamp(getFloat("ScopeParallaxStrength", 1.0f), 0.0f, 4.0f);
     m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 8.0f), 1.0f, 45.0f);

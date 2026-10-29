@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openvr.h"
+#include "../vr_backend/vr_backend.h"
 #include "vr_hand_types.h"
 #include "../vr_input_recovery.h"
 
@@ -17,9 +18,9 @@ public:
     VrHandSkeletonRuntime(const VrHandSkeletonRuntime&) = delete;
     VrHandSkeletonRuntime& operator=(const VrHandSkeletonRuntime&) = delete;
 
-    bool Initialize(vr::IVRInput* input, vr::VRActionHandle_t action, std::string& outError);
-    bool Update(vr::IVRInput* input, const l4d2vr_input::ActionFrame& actionFrame,
-        vr::IVRSystem* system, vr::VRInputValueHandle_t expectedSource,
+    bool Initialize(l4d2vr_backend::IVrInput* input, vr::VRActionHandle_t action, std::string& outError);
+    bool Update(l4d2vr_backend::IVrInput* input, const l4d2vr_input::ActionFrame& actionFrame,
+        l4d2vr_backend::IVrSystem* system, vr::VRInputValueHandle_t expectedSource,
         vr::TrackedDeviceIndex_t expectedDevice,
         vr::EVRSkeletalMotionRange motionRange, std::string& outError);
     bool BuildSkinningPalette(

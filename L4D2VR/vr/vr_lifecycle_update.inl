@@ -3215,7 +3215,7 @@ uint32_t VR::PublishRenderCompletedFrame(
 }
 
 vr::EVROverlayError VR::SetOverlayTextureSynchronized(
-    vr::IVROverlay* overlay,
+    l4d2vr_backend::IVrOverlay* overlay,
     vr::VROverlayHandle_t overlayHandle,
     const vr::Texture_t* texture,
     bool producerPrepared)
@@ -3631,23 +3631,23 @@ void VR::SubmitVRTextures()
         if (!RefreshBackBufferTexture(false))
             return;
 
-        if (!vr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
+        if (!l4d2vr_backend::Overlay()->IsOverlayVisible(m_MainMenuHandle))
             RepositionOverlays();
 
         SetOverlayTextureSynchronized(
-            vr::VROverlay(),
+            l4d2vr_backend::Overlay(),
             m_MainMenuHandle,
             &m_VKBackBuffer.m_VRTexture,
             false);
-        vr::VROverlay()->ShowOverlay(m_MainMenuHandle);
-        vr::VROverlay()->HideOverlay(m_HUDTopHandle);
+        l4d2vr_backend::Overlay()->ShowOverlay(m_MainMenuHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_HUDTopHandle);
         for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-            vr::VROverlay()->HideOverlay(overlay);
-        vr::VROverlay()->HideOverlay(m_ScopeHandle);
-        vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(overlay);
+        l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(false);
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
         m_CompositorNeedsHandoff = false;
         return;
     }
@@ -4379,7 +4379,7 @@ void VR::SubmitVRTextures()
             const auto overlayBindStart = profilePresentSpikeSubmit
                 ? std::chrono::steady_clock::now()
                 : std::chrono::steady_clock::time_point{};
-            if (vr::IVROverlay* overlayApi = vr::VROverlay())
+            if (l4d2vr_backend::IVrOverlay* overlayApi = l4d2vr_backend::Overlay())
             {
                 for (size_t i = 0; i < pendingOverlayTextureBinds.count; ++i)
                 {
@@ -4487,22 +4487,22 @@ void VR::SubmitVRTextures()
 
     auto hideHudOverlays = [&]()
         {
-            vr::VROverlay()->HideOverlay(m_HUDTopHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_HUDTopHandle);
             for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-                vr::VROverlay()->HideOverlay(overlay);
+                l4d2vr_backend::Overlay()->HideOverlay(overlay);
         };
 
     const vr::VRTextureBounds_t topBounds{ 0.0f, 0.0f, 1.0f, 1.0f };
     auto applyHudTexture = [&](vr::VROverlayHandle_t overlay, const vr::VRTextureBounds_t& bounds)
         {
-            vr::VROverlay()->SetOverlayTextureBounds(overlay, &bounds);
+            l4d2vr_backend::Overlay()->SetOverlayTextureBounds(overlay, &bounds);
             stageOverlayTextureBind(overlay, &m_VKHUD.m_VRTexture, m_D9HUDSurface);
         };
 
     auto applyScopeTexture = [&](vr::VROverlayHandle_t overlay) -> bool
         {
             static const vr::VRTextureBounds_t full{ 0.0f, 0.0f, 1.0f, 1.0f };
-            vr::VROverlay()->SetOverlayTextureBounds(overlay, &full);
+            l4d2vr_backend::Overlay()->SetOverlayTextureBounds(overlay, &full);
             if (m_ScopeLensOverlayReady.load(std::memory_order_acquire) == 0 ||
                 !m_VKScopeLens.m_VRTexture.handle)
             {
@@ -4516,7 +4516,7 @@ void VR::SubmitVRTextures()
             vr::VRTextureBounds_t bounds{ 0.0f, 0.0f, 1.0f, 1.0f };
             if (m_RearMirrorFlipHorizontal)
                 std::swap(bounds.uMin, bounds.uMax);
-            vr::VROverlay()->SetOverlayTextureBounds(overlay, &bounds);
+            l4d2vr_backend::Overlay()->SetOverlayTextureBounds(overlay, &bounds);
             stageOverlayTextureBind(overlay, &m_VKRearMirror.m_VRTexture, m_D9RearMirrorSurface);
         };
 
@@ -4529,8 +4529,8 @@ void VR::SubmitVRTextures()
         if (sceneReadyForStaleResubmit)
         {
             // Ensure the menu overlay is not left visible while in-game.
-            if (vr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
-                vr::VROverlay()->HideOverlay(m_MainMenuHandle);
+            if (l4d2vr_backend::Overlay()->IsOverlayVisible(m_MainMenuHandle))
+                l4d2vr_backend::Overlay()->HideOverlay(m_MainMenuHandle);
 
             // During map load we can be in-game before fresh VR render targets are recreated.
             // Do not submit stale menu/blank Vulkan handles here; wait for the first rendered frame.
@@ -4549,21 +4549,21 @@ void VR::SubmitVRTextures()
         if (!RefreshBackBufferTexture(false))
             return;
 
-        if (!vr::VROverlay()->IsOverlayVisible(m_MainMenuHandle))
+        if (!l4d2vr_backend::Overlay()->IsOverlayVisible(m_MainMenuHandle))
             RepositionOverlays();
 
         SetOverlayTextureSynchronized(
-            vr::VROverlay(),
+            l4d2vr_backend::Overlay(),
             m_MainMenuHandle,
             &m_VKBackBuffer.m_VRTexture,
             false);
-        vr::VROverlay()->ShowOverlay(m_MainMenuHandle);
+        l4d2vr_backend::Overlay()->ShowOverlay(m_MainMenuHandle);
         hideHudOverlays();
-        vr::VROverlay()->HideOverlay(m_ScopeHandle);
-        vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(false);
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
 
         if (!sceneReadyForStaleResubmit)
         {
@@ -4594,7 +4594,7 @@ void VR::SubmitVRTextures()
     }
 
 
-    vr::VROverlay()->HideOverlay(m_MainMenuHandle);
+    l4d2vr_backend::Overlay()->HideOverlay(m_MainMenuHandle);
     const bool focusedVguiHud =
         (m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
         (m_Game && m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
@@ -4602,21 +4602,21 @@ void VR::SubmitVRTextures()
     if (wantsTopHudOverlay)
     {
         applyHudTexture(m_HUDTopHandle, topBounds);
-        vr::VROverlay()->ShowOverlay(m_HUDTopHandle);
+        l4d2vr_backend::Overlay()->ShowOverlay(m_HUDTopHandle);
     }
     else
     {
-        vr::VROverlay()->HideOverlay(m_HUDTopHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_HUDTopHandle);
     }
     for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-        vr::VROverlay()->HideOverlay(overlay);
+        l4d2vr_backend::Overlay()->HideOverlay(overlay);
 
     // Scope overlay independent of HUD cursor mode
     if (m_ScopeTexture && m_ScopeEnabled && !IsPhysicalScopeMode())
     {
         const bool scopeOverlayTextureReady = applyScopeTexture(m_ScopeHandle);
         const float alpha = IsScopeActive() ? 1.0f : std::clamp(m_ScopeOverlayIdleAlpha, 0.0f, 1.0f);
-        vr::VROverlay()->SetOverlayAlpha(m_ScopeHandle, alpha);
+        l4d2vr_backend::Overlay()->SetOverlayAlpha(m_ScopeHandle, alpha);
 
         vr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
         vr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
@@ -4635,13 +4635,13 @@ void VR::SubmitVRTextures()
             && ShouldRenderScope()
             && (m_MouseModeEnabled || useThirdPersonBodyAnchor || gunControllerIndex != vr::k_unTrackedDeviceIndexInvalid);
         if (canShowScope)
-            vr::VROverlay()->ShowOverlay(m_ScopeHandle);
+            l4d2vr_backend::Overlay()->ShowOverlay(m_ScopeHandle);
         else
-            vr::VROverlay()->HideOverlay(m_ScopeHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
     }
     else
     {
-        vr::VROverlay()->HideOverlay(m_ScopeHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
     }
 
     if (m_RearMirrorTexture && (m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled))
@@ -4649,7 +4649,7 @@ void VR::SubmitVRTextures()
         if (m_RearMirrorEnabled)
         {
             applyRearMirrorTexture(m_RearMirrorHandle);
-            vr::VROverlay()->SetOverlayAlpha(m_RearMirrorHandle, std::clamp(m_RearMirrorAlpha, 0.0f, 1.0f));
+            l4d2vr_backend::Overlay()->SetOverlayAlpha(m_RearMirrorHandle, std::clamp(m_RearMirrorAlpha, 0.0f, 1.0f));
 
             // Body-anchored rear mirror: update absolute transform every frame.
             UpdateRearMirrorOverlayTransform();
@@ -4817,14 +4817,14 @@ void VR::SubmitVRTextures()
         const bool rearMirrorContentVisible = ShouldRenderRearMirror();
         const bool showVrRearMirror = m_RearMirrorEnabled && rearMirrorContentVisible && !shouldHideRearMirrorDueToAimLine();
         if (showVrRearMirror)
-            vr::VROverlay()->ShowOverlay(m_RearMirrorHandle);
+            l4d2vr_backend::Overlay()->ShowOverlay(m_RearMirrorHandle);
         else
-            vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(m_DesktopRearMirrorWindowEnabled && rearMirrorContentVisible);
     }
     else
     {
-        vr::VROverlay()->HideOverlay(m_RearMirrorHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
         UpdateDesktopRearMirrorWindow(false);
     }
 
@@ -5002,12 +5002,12 @@ void VR::UpdateRearMirrorOverlayTransform()
         Rworld[2][0], Rworld[2][1], Rworld[2][2], mirrorPos.z
     };
 
-    const vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
+    const vr::ETrackingUniverseOrigin trackingOrigin = l4d2vr_backend::Compositor()->GetTrackingSpace();
     L4D2VRSetOverlayTransformAbsolute(m_RearMirrorHandle, trackingOrigin, &mirrorAbs, __LINE__);
     float mirrorWidth = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
     if (m_RearMirrorSpecialWarningDistance > 0.0f && m_RearMirrorSpecialEnlargeActive)
         mirrorWidth *= 2.0f;
-    vr::VROverlay()->SetOverlayWidthInMeters(m_RearMirrorHandle, mirrorWidth);
+    l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_RearMirrorHandle, mirrorWidth);
 }
 
 void VR::UpdateScopeOverlayTransform()
@@ -5150,9 +5150,9 @@ void VR::UpdateScopeOverlayTransform()
         R10, R11, R12, overlayPos.y,
         R20, R21, R22, overlayPos.z
     };
-    const vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
+    const vr::ETrackingUniverseOrigin trackingOrigin = l4d2vr_backend::Compositor()->GetTrackingSpace();
     L4D2VRSetOverlayTransformAbsolute(m_ScopeHandle, trackingOrigin, &scopeAbs, __LINE__);
-    vr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, scopeWidth);
+    l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_ScopeHandle, scopeWidth);
 }
 
 bool VR::ShouldRenderRearMirror() const
@@ -5261,7 +5261,7 @@ void VR::RepositionOverlays()
         0.0f, 0.0f, 1.0f, 1.0f
     };
 
-    vr::ETrackingUniverseOrigin trackingOrigin = vr::VRCompositor()->GetTrackingSpace();
+    vr::ETrackingUniverseOrigin trackingOrigin = l4d2vr_backend::Compositor()->GetTrackingSpace();
 
     // Reposition main menu overlay
     if (!RefreshBackBufferTexture(false))
@@ -5297,7 +5297,7 @@ void VR::RepositionOverlays()
 
     L4D2VRSetOverlayTransformAbsolute(m_MainMenuHandle, trackingOrigin, &menuTransform, __LINE__);
     const float menuWidthMeters = static_cast<float>(1.5 * (1.0 / heightRatio));
-    vr::VROverlay()->SetOverlayWidthInMeters(m_MainMenuHandle, menuWidthMeters);
+    l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_MainMenuHandle, menuWidthMeters);
     StoreMenuPointerGeometry(false, menuTransform, menuWidthMeters, renderHeight / renderWidth);
 
     auto buildFacingTransform = [&](const Vector& position)
@@ -5351,14 +5351,14 @@ void VR::RepositionOverlays()
     vr::HmdMatrix34_t hudTopTransform = hudFollowHmdMovement ? buildHmdFollowTransform(hudNewPos) : buildFacingTransform(hudNewPos);
 
     L4D2VRSetOverlayTransformAbsolute(m_HUDTopHandle, trackingOrigin, &hudTopTransform, __LINE__);
-    vr::VROverlay()->SetOverlayWidthInMeters(m_HUDTopHandle, m_HudSize);
+    l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_HUDTopHandle, m_HudSize);
     {
         // The HUD texture is the window-sized vrHUD render target.
         const float hudTexW = static_cast<float>(m_VKHUD.m_VulkanData.m_nWidth > 0 ? m_VKHUD.m_VulkanData.m_nWidth : static_cast<uint32_t>(windowWidth));
         const float hudTexH = static_cast<float>(m_VKHUD.m_VulkanData.m_nHeight > 0 ? m_VKHUD.m_VulkanData.m_nHeight : static_cast<uint32_t>(windowHeight));
         StoreMenuPointerGeometry(true, hudTopTransform, m_HudSize, hudTexH / (std::max)(1.0f, hudTexW));
     }
-    L4D2VRSetOverlayCurvature(vr::VROverlay(), m_HUDTopHandle, m_TopHudCurvature);
+    L4D2VRSetOverlayCurvature(l4d2vr_backend::Overlay(), m_HUDTopHandle, m_TopHudCurvature);
 
     // Place the intent-sense panel in the upper-right area of the same in-game HUD plane.
     if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
@@ -5375,14 +5375,14 @@ void VR::RepositionOverlays()
         Vector panelPos = hudNewPos + hudRight * xOff + hudUp * yOff;
         vr::HmdMatrix34_t intentHudTransform = hudFollowHmdMovement ? buildHmdFollowTransform(panelPos) : buildFacingTransform(panelPos);
         L4D2VRSetOverlayTransformAbsolute(m_SpecialInfectedIntentSenseHudHandle, trackingOrigin, &intentHudTransform, __LINE__);
-        vr::VROverlay()->SetOverlayWidthInMeters(m_SpecialInfectedIntentSenseHudHandle, panelWidth);
+        l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_SpecialInfectedIntentSenseHudHandle, panelWidth);
         // Intent-sense HUD is an independent flat overlay. Do not inherit the main game HUD curvature.
-        L4D2VRSetOverlayCurvature(vr::VROverlay(), m_SpecialInfectedIntentSenseHudHandle, 0.0f);
+        L4D2VRSetOverlayCurvature(l4d2vr_backend::Overlay(), m_SpecialInfectedIntentSenseHudHandle, 0.0f);
     }
 
     for (size_t i = 0; i < m_HUDBottomHandles.size(); ++i)
     {
-        vr::VROverlay()->HideOverlay(m_HUDBottomHandles[i]);
+        l4d2vr_backend::Overlay()->HideOverlay(m_HUDBottomHandles[i]);
     }
 
     // Scope overlay placement:
@@ -5412,7 +5412,7 @@ void VR::RepositionOverlays()
             if (!gunPoseUsable)
             {
                 // OpenXR runtimes reject frames with an invalid layer pose.
-                vr::VROverlay()->HideOverlay(m_ScopeHandle);
+                l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
             }
             else
             {
@@ -5464,7 +5464,7 @@ void VR::RepositionOverlays()
                 };
 
                 L4D2VRSetOverlayTransformTrackedDeviceRelative(m_ScopeHandle, gunControllerIndex, &scopeRelative, __LINE__);
-                vr::VROverlay()->SetOverlayWidthInMeters(m_ScopeHandle, (std::max)(0.01f, m_ScopeOverlayWidthMeters));
+                l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_ScopeHandle, (std::max)(0.01f, m_ScopeOverlayWidthMeters));
             }
         }
     }

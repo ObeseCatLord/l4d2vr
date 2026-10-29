@@ -6,8 +6,6 @@
 #include "d3d9_bridge.h"
 #include "d3d9_vr.h"
 
-#include <openvr.h>
-
 #include "../util/util_singleton.h"
 
 #include <algorithm>
@@ -16,6 +14,9 @@
 extern "C" bool L4D2VR_DesktopModeActive();
 extern "C" bool L4D2VR_DesktopFallbackAllowed();
 extern "C" void L4D2VR_EnterDesktopFallback(const char* reason);
+// The mod's VR runtime seam (L4D2VR/vr_backend): starts the selected runtime
+// and reports its recommended per-eye render size.
+extern "C" bool L4D2VR_VrBackendInitForDevice(uint32_t* renderWidth, uint32_t* renderHeight, char* errorString, uint32_t errorStringSize);
 
 namespace dxvk {
 
@@ -326,22 +327,17 @@ namespace dxvk {
       return D3DERR_INVALIDCALL;
 
     const bool noHmd = IsNoHmdLaunchArgPresent();
-    // Desktop mode (no headset, or requested): run without OpenVR instead of
+    // Desktop mode (no headset, or requested): run without VR instead of
     // failing VR_Init and exiting.
     if (!noHmd && !L4D2VR_DesktopModeActive()) {
-      vr::HmdError error = vr::VRInitError_None;
-      vr::IVRSystem* system = vr::VR_Init(&error, vr::VRApplication_Scene);
-
-      if (error == vr::VRInitError_None) {
+      uint32_t renderWidth;
+      uint32_t renderHeight;
+      char errorString[256];
+      if (L4D2VR_VrBackendInitForDevice(&renderWidth, &renderHeight, errorString, 256)) {
         // Override viewport size.
-        uint32_t renderWidth;
-        uint32_t renderHeight;
-        system->GetRecommendedRenderTargetSize(&renderWidth, &renderHeight);
         pPresentationParameters->BackBufferWidth = renderWidth;
         pPresentationParameters->BackBufferHeight = renderHeight;
       } else {
-        char errorString[256];
-        std::snprintf(errorString, 256, "VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
         if (L4D2VR_DesktopFallbackAllowed()) {
           L4D2VR_EnterDesktopFallback(errorString);
         } else {

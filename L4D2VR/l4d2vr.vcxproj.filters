@@ -22,6 +22,9 @@
     <Filter Include="Source Files\hook">
       <UniqueIdentifier>{01923248-f7c8-42a6-bc85-a1e8cb5f8a54}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\vr_backend">
+      <UniqueIdentifier>{6f0b8e2c-4d1a-4c3e-9a57-2b3f1c8d9e10}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\vr_hands">
       <UniqueIdentifier>{BC1A353A-568B-48A0-9B4A-7334169BEFEB}</UniqueIdentifier>
     </Filter>
@@ -31,6 +34,12 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="vr_pose_protocol.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_backend\vr_backend.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_runtime_select.h">
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="vr_hands\vr_hand_asset_loader.h">
@@ -889,6 +898,9 @@
     </ClCompile>
     <ClCompile Include="vr_hands\vr_hand_system.cpp">
       <Filter>Source Files\vr_hands</Filter>
+    </ClCompile>
+    <ClCompile Include="vr_backend\vr_backend_openvr.cpp">
+      <Filter>Source Files\vr_backend</Filter>
     </ClCompile>
     <ClCompile Include="vr_hands\vr_hand_vm_pose.cpp">
       <Filter>Source Files\vr_hands</Filter>

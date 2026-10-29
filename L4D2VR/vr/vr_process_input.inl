@@ -111,9 +111,9 @@ void VR::ProcessInput()
     m_ScopeFovAdjustSuppressWalk = false;
     m_ScopeFovAdjustingThisFrame = false;
 
-    vr::VROverlay()->SetOverlayFlag(m_HUDTopHandle, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
+    l4d2vr_backend::Overlay()->SetOverlayFlag(m_HUDTopHandle, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
     for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-        vr::VROverlay()->SetOverlayFlag(overlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
+        l4d2vr_backend::Overlay()->SetOverlayFlag(overlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
 
     typedef std::chrono::duration<float, std::milli> duration;
     auto currentTime = std::chrono::steady_clock::now();
@@ -2628,18 +2628,18 @@ void VR::ProcessInput()
 
     auto showTopHud = [&]()
         {
-            vr::VROverlay()->ShowOverlay(m_HUDTopHandle);
+            l4d2vr_backend::Overlay()->ShowOverlay(m_HUDTopHandle);
         };
 
     auto hideTopHud = [&]()
         {
-            vr::VROverlay()->HideOverlay(m_HUDTopHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_HUDTopHandle);
         };
 
     auto hideBottomHud = [&]()
         {
             for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
-                vr::VROverlay()->HideOverlay(overlay);
+                l4d2vr_backend::Overlay()->HideOverlay(overlay);
         };
 
     const bool menuActive = m_Game->m_EngineClient->IsPaused();

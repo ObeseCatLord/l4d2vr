@@ -3058,7 +3058,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	bool firstPersonBodyQueuedPlayerSnapshotValid = false;
 	bool firstPersonBodyQueuedPlayerEligible = false;
 
-	if (queueMode != 0 && m_VR && m_VR->m_System && vr::VRCompositor())
+	if (queueMode != 0 && m_VR && m_VR->m_System && l4d2vr_backend::Compositor())
 	{
 		// Remember which thread is producing render snapshots (used by other render-time hooks).
 		m_VR->m_RenderThreadId.store(static_cast<uint32_t>(GetCurrentThreadId()), std::memory_order_relaxed);

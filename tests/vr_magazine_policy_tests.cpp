@@ -195,7 +195,15 @@ int main()
         Check(!host.HasEmptyChamber(100u, 10u, 0x1005u, 5), "No rack is demanded for a round the host kept");
         Check(host.Observe(10u, 0x1005u, 5, 0, 360, false, 1500u), "Firing that round empties the chamber again");
         Check(host.Observe(10u, 0x1005u, 5, 0, 360, false, 2600u), "An empty gun stays empty");
-        Check(host.Observe(10u, 0x1005u, 5, 50, 360, false, 2700u), "Rounds after the overturn window are a refill: the chamber still needs a rack");
+        Check(host.Observe(10u, 0x1005u, 5, 50, 310, false, 2700u), "Rounds taken from the reserve are a refill: the chamber still needs a rack");
+
+        // The last shot is predicted while the hand switches to another item;
+        // the host's correction is only seen when the gun is drawn again.
+        ChamberHistory swapped;
+        swapped.ObserveOwner(true, 100u);
+        Check(swapped.Observe(10u, 0x1005u, 5, 0, 360, false, 1000u), "A last shot predicted on the way out empties the chamber");
+        Check(!swapped.Observe(20u, 0x2002u, 12, 1, 0, false, 1100u), "Another item in the hand");
+        Check(!swapped.Observe(10u, 0x1005u, 5, 1, 360, false, 5000u), "Drawn seconds later with the round back and the reserve unchanged: no rack");
 
         ChamberHistory insert;
         insert.ObserveOwner(true, 100u);

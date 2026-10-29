@@ -28,6 +28,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
     static uint32_t s_gripDrawSerial = 0u;
     static uintptr_t s_previousGripWeapon = 0u;
     static uintptr_t s_pendingGripAdoption = 0u;
+    static l4d2vr_grip::DropReturn s_gripDropReturn;
     static l4d2vr_dual::TriggerRouter s_dualPistolTriggers;
     static l4d2vr_pistol::Ownership s_pistolOwnership;
     static l4d2vr_physical::PickupIntent s_leftPistolPickup;
@@ -133,6 +134,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             s_gripPickup.Reset(); s_holsterDrawPickup.Reset(); s_leftPistolPickup.Reset();
             s_rightGripReservation.Reset(); s_leftGripReservation.Reset();
             s_pendingGripAdoption = 0u;
+            s_gripDropReturn.Reset();
             s_pistolOwnership.CancelInteractions();
         }
         if (!session.liveInventory) s_pistolOwnership.Reset();
@@ -2002,6 +2004,17 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                 s_pendingGripAdoption = 0u;
                 Game::logMsg("[VR][GripPickup] confirmed weaponId=%d; held grip adopted", activeWeaponId);
             }
+            // The item the grip let go of is back in the hand (the host kept it,
+            // or picked it straight back up from the feet): the grip owns it
+            // again, so the next squeeze lets it go instead of doing nothing.
+            if (s_gripDropReturn.Returned(gripDropEligible && !pistolGripMode ? activeWeaponTag : 0u,
+                    weaponGripActionActive && weaponGripDown, gripNowMs) && !s_weaponGripRelease.Owns())
+            {
+                s_weaponGripRelease.ReclaimWeapon(activeWeaponTag);
+                m_VR->m_GripDropReclaims.fetch_add(1u, std::memory_order_acq_rel);
+                Game::logMsg("[VR][GripDrop] the dropped item is back in the hand weaponId=%d; the grip owns it again",
+                    activeWeaponId);
+            }
             // Diagnostics: did the grip own the held item before this sample's release?
             const bool gripOwnedBeforeRelease = s_weaponGripRelease.Owns() ||
                 (pistolGripMode && s_pistolOwnership.Owns(l4d2vr_dual::Hand::Right));
@@ -2018,6 +2031,10 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				weaponGripDown,
 				activeWeaponTag, l4d2vr_input::GripSample::Generation(weaponGripInputState), gripDropHere) ||
                 pistolDropHand != l4d2vr_dual::Hand::None;
+            // Sent below with the release command (not for a carried prop or a
+            // pistol hand): watch whether the item comes back to the hand.
+            if (gripDropRequested && manualThrowInputActive && !carriedProp && pistolDropHand == l4d2vr_dual::Hand::None)
+                s_gripDropReturn.Dropped(activeWeaponTag, gripNowMs);
 			{
 				// One line per weapon-grip release: why it did or did not drop.
 				static bool s_prevGripDownForDropLog = false;

@@ -10,6 +10,8 @@ Pavlov Shack style body holsters and reloading, Half-Life 2 VR style melee, gren
 
 Desktop players running the mod are unaffected; they can join VR servers and play alongside VR players. Without a headset the mod starts in desktop mode by itself: with no OpenVR runtime installed it never tries VR, and if VR fails to start it continues on the desktop instead of showing an error (`DesktopModeAuto=true`; `-nohmd` still runs the game fully vanilla). Desktop players with the mod see VR players' bodies.
 
+The VR runtime is chosen at startup with `VrRuntime=auto|openxr|openvr` in `vr/config.txt`, or the `-l4d2vr_openxr` / `-l4d2vr_openvr` launch options, which override the key (if both are given, `-l4d2vr_openvr` wins). The mod talks to the runtime through one backend seam (`L4D2VR/vr_backend/`). Only the OpenVR backend is built so far: `auto` means OpenVR, and `openxr` logs "OpenXR backend not built yet" and uses OpenVR. Desktop mode ignores the setting. The choice is logged as `[VR] VR runtime: ...` in `vrmod_log.txt`.
+
 ## Holsters
 
 Reach to a holster with either hand and squeeze its grip: the item is in that hand immediately, with a haptic pulse, and the hovered item glows.

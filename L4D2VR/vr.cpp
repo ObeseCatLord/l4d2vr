@@ -648,7 +648,7 @@ namespace
     // Curvature 0 is the OpenVR default. Never send it explicitly: XRizer turns
     // any SetOverlayCurvature call into a cylinder layer and divides by the
     // curvature, producing a NaN layer pose that aborts the frame.
-    void L4D2VRSetOverlayCurvature(vr::IVROverlay* overlay, vr::VROverlayHandle_t handle, float curvature)
+    void L4D2VRSetOverlayCurvature(l4d2vr_backend::IVrOverlay* overlay, vr::VROverlayHandle_t handle, float curvature)
     {
         if (overlay && std::isfinite(curvature) && curvature > 0.001f)
             overlay->SetOverlayCurvature(handle, (std::min)(curvature, 1.0f));
@@ -684,7 +684,7 @@ namespace
             L4D2VRLogRejectedOverlayTransform(handle, line);
             return vr::VROverlayError_InvalidParameter;
         }
-        return vr::VROverlay()->SetOverlayTransformAbsolute(handle, origin, transform);
+        return l4d2vr_backend::Overlay()->SetOverlayTransformAbsolute(handle, origin, transform);
     }
 
 }
@@ -717,7 +717,7 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
             absolute.m[r][c] = value;
         }
     }
-    return L4D2VRSetOverlayTransformAbsolute(handle, vr::VRCompositor()->GetTrackingSpace(), &absolute, line);
+    return L4D2VRSetOverlayTransformAbsolute(handle, l4d2vr_backend::Compositor()->GetTrackingSpace(), &absolute, line);
 }
 
 #include "vr/vr_lifecycle_init.inl"
@@ -7994,7 +7994,7 @@ void VR::DestroyKillIndicatorOverlay(ActiveKillIndicator& indicator)
     KillIndicatorOverlaySlot& slot = m_KillIndicatorOverlaySlots[indicator.overlaySlot];
     if (slot.overlayHandle != vr::k_ulOverlayHandleInvalid)
     {
-        vr::IVROverlay* overlay = m_Overlay ? m_Overlay : vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* overlay = m_Overlay ? m_Overlay : l4d2vr_backend::Overlay();
         if (overlay)
         {
             std::lock_guard<std::mutex> lock(m_VROverlayMutex);
@@ -8015,7 +8015,7 @@ bool VR::EnsureKillIndicatorOverlaySlot(int slotIndex)
     if (slot.overlayHandle != vr::k_ulOverlayHandleInvalid)
         return true;
 
-    vr::IVROverlay* overlay = m_Overlay ? m_Overlay : vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlay = m_Overlay ? m_Overlay : l4d2vr_backend::Overlay();
     if (!overlay)
         return false;
 
@@ -8287,11 +8287,11 @@ void VR::UpdateKillIndicatorOverlays()
 
     {
         std::lock_guard<std::mutex> lock(m_VROverlayMutex);
-        if (vr::IVROverlay* current = vr::VROverlay())
+        if (l4d2vr_backend::IVrOverlay* current = l4d2vr_backend::Overlay())
             m_Overlay = current;
     }
 
-    vr::IVROverlay* overlay = m_Overlay ? m_Overlay : vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlay = m_Overlay ? m_Overlay : l4d2vr_backend::Overlay();
     if (!overlay || !m_Compositor)
         return;
 
@@ -11212,7 +11212,7 @@ void VR::DrawKillIndicators(IMatRenderContext* renderContext, ITexture* hudTextu
     if (!m_KillIndicatorEnabled || m_ActiveKillIndicators.empty() || !hudTexture)
         return;
 
-    if (m_IsVREnabled && (m_Overlay || vr::VROverlay()))
+    if (m_IsVREnabled && (m_Overlay || l4d2vr_backend::Overlay()))
         return;
 
     if (!m_Game || !m_Game->m_EngineClient || !m_Game->m_EngineClient->IsInGame())

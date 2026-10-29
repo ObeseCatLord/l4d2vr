@@ -10,6 +10,11 @@
 #include <algorithm>
 #include <sstream>
 
+// L4D2VR/vr_backend: the VR runtime the mod selected for this process
+// (1 = OpenVR, 2 = OpenXR), decided once before it is first needed here.
+extern "C" int L4D2VR_SelectedVrRuntime();
+static constexpr int L4D2VR_RUNTIME_OPENVR = 1;
+
 namespace dxvk {
   
   DxvkInstance::DxvkInstance(DxvkInstanceFlags flags)
@@ -40,7 +45,11 @@ namespace dxvk {
     // Initialize extension providers
     m_extProviders.push_back(&DxvkPlatformExts::s_instance);
 #ifdef _WIN32
-    m_extProviders.push_back(&VrInstance::s_instance);
+    // The OpenVR provider loads openvr_api and starts OpenVR to ask for its
+    // Vulkan extensions, so it only runs when the mod selected OpenVR
+    // (L4D2VR/vr_backend; decided before Direct3DCreate9 gets here).
+    if (L4D2VR_SelectedVrRuntime() == L4D2VR_RUNTIME_OPENVR)
+      m_extProviders.push_back(&VrInstance::s_instance);
     m_extProviders.push_back(&DxvkXrProvider::s_instance);
 #endif
 

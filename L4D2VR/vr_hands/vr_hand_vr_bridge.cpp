@@ -48,7 +48,7 @@ namespace
     int MagazineInteractionFindClientEntityIndex(Game* game, const void* entity);
 
     bool TryReadOpenVRSkeletalSummary(
-        vr::IVRInput* input,
+        l4d2vr_backend::IVrInput* input,
         vr::VRActionHandle_t action,
         vr::EVRSummaryType summaryType,
         vr::VRSkeletalSummaryData_t& outSummary,
@@ -87,8 +87,8 @@ namespace
     }
 
     bool ReadOpenVRSkeletalFingerCurls(
-        vr::IVRInput* input,
-        vr::IVRSystem* system,
+        l4d2vr_backend::IVrInput* input,
+        l4d2vr_backend::IVrSystem* system,
         const l4d2vr_input::ActionFrame& actionFrame,
         vr::TrackedDeviceIndex_t expectedDevice,
         const char* sourcePath,

@@ -1274,7 +1274,7 @@ vr::HmdMatrix34_t VR::VMatrixToHmdMatrix(const VMatrix& vMat)
 vr::HmdMatrix34_t VR::GetControllerTipMatrix(vr::ETrackedControllerRole controllerRole)
 {
     const auto result = l4d2vr_controller_tip::Lookup(
-        m_System, m_Input, vr::VRRenderModels(), controllerRole);
+        m_System, m_Input, l4d2vr_backend::RenderModels(), controllerRole);
     // Log state changes only. Missing optional tip data uses the controller origin.
     if (controllerRole == vr::TrackedControllerRole_LeftHand ||
         controllerRole == vr::TrackedControllerRole_RightHand)

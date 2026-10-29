@@ -406,6 +406,9 @@ LoadingFramePumpStallMs=150
 IntermissionHudEnabled=true
 // Keep game audio playing when the desktop window is not focused.
 BackgroundAudio=true
+// VR runtime: auto, openxr or openvr. auto uses OpenVR for now. OpenXR is not built yet, so openxr
+// falls back to OpenVR. The -l4d2vr_openxr / -l4d2vr_openvr launch options override this. Restart to apply.
+VrRuntime=auto
 // Picture-in-picture scope lens: the scope image shifts with your eye (parallax) and darkens toward the
 // edge as your eye leaves the eyebox, like a real optic.
 ScopePictureInPictureLens=true

@@ -18,7 +18,55 @@ extern "C" void L4D2VR_EnterDesktopFallback(const char* reason);
 // and reports its recommended per-eye render size.
 extern "C" bool L4D2VR_VrBackendInitForDevice(uint32_t* renderWidth, uint32_t* renderHeight, char* errorString, uint32_t errorStringSize);
 
+// Same layout as L4D2VR/vr_backend/vr_backend.h. The OpenXR backend creates its
+// session on DXVK's device and takes DXVK's queue lock around every xr call
+// that may use the queue.
+struct L4D2VR_VkDeviceInfo {
+  uint32_t size;
+  void* instance;
+  void* physicalDevice;
+  void* device;
+  void* queue;
+  uint32_t queueFamilyIndex;
+  uint32_t queueIndex;
+  void* getInstanceProcAddr;
+  void (*lockQueue)(void* context);
+  void (*unlockQueue)(void* context);
+  void* queueContext;
+};
+extern "C" void L4D2VR_VrBackendDeviceCreated(const L4D2VR_VkDeviceInfo* info);
+
 namespace dxvk {
+
+  static void L4D2VRLockDxvkQueue(void* context) {
+    static_cast<DxvkDevice*>(context)->lockSubmission();
+  }
+
+  static void L4D2VRUnlockDxvkQueue(void* context) {
+    static_cast<DxvkDevice*>(context)->unlockSubmission();
+  }
+
+  // Hands the new device to the VR backend (OpenXR: session creation; OpenVR:
+  // nothing). The DxvkDevice outlives the session: L4D2 keeps its D3D9
+  // device for the whole process.
+  static void L4D2VRPublishDevice(IDirect3DDevice9* pDevice) {
+    const Rc<DxvkDevice>& device = static_cast<D3D9DeviceEx*>(pDevice)->GetDXVKDevice();
+    if (device == nullptr)
+      return;
+    L4D2VR_VkDeviceInfo info = { };
+    info.size = sizeof(info);
+    info.instance = device->instance()->handle();
+    info.physicalDevice = device->adapter()->handle();
+    info.device = device->handle();
+    info.queue = device->queues().graphics.queueHandle;
+    info.queueFamilyIndex = device->queues().graphics.queueFamily;
+    info.queueIndex = device->queues().graphics.queueIndex;
+    info.getInstanceProcAddr = reinterpret_cast<void*>(device->instance()->vki()->getLoaderProc());
+    info.lockQueue = &L4D2VRLockDxvkQueue;
+    info.unlockQueue = &L4D2VRUnlockDxvkQueue;
+    info.queueContext = device.ptr();
+    L4D2VR_VrBackendDeviceCreated(&info);
+  }
 
   static bool IsNoHmdLaunchArgPresent() {
 #ifdef _WIN32
@@ -355,6 +403,12 @@ namespace dxvk {
       pPresentationParameters,
       nullptr, // <-- pFullscreenDisplayMode
       reinterpret_cast<IDirect3DDevice9Ex**>(ppReturnedDeviceInterface));
+
+    if (SUCCEEDED(result)
+     && ppReturnedDeviceInterface != nullptr
+     && *ppReturnedDeviceInterface != nullptr
+     && !noHmd && !L4D2VR_DesktopModeActive())
+      L4D2VRPublishDevice(*ppReturnedDeviceInterface);
 
     if (SUCCEEDED(result)
      && ppReturnedDeviceInterface != nullptr

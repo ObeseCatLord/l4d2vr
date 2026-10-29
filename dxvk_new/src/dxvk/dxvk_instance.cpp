@@ -4,6 +4,7 @@
 #include "dxvk_instance.h"
 #include "dxvk_openvr.h"
 #include "dxvk_openxr.h"
+#include "dxvk_openxr_native.h"
 #include "dxvk_platform_exts.h"
 #include "../wsi/wsi_platform.h"
 
@@ -13,7 +14,15 @@
 // L4D2VR/vr_backend: the VR runtime the mod selected for this process
 // (1 = OpenVR, 2 = OpenXR), decided once before it is first needed here.
 extern "C" int L4D2VR_SelectedVrRuntime();
+extern "C" bool L4D2VR_DesktopModeActive();
 static constexpr int L4D2VR_RUNTIME_OPENVR = 1;
+static constexpr int L4D2VR_RUNTIME_OPENXR = 2;
+
+// The mod's OpenXR backend needs its runtime's Vulkan extensions and adapter,
+// but never in desktop mode (no VR) or with -nohmd.
+static bool L4D2VRUsesOpenXr() {
+  return L4D2VR_SelectedVrRuntime() == L4D2VR_RUNTIME_OPENXR && !L4D2VR_DesktopModeActive();
+}
 
 namespace dxvk {
   
@@ -50,6 +59,10 @@ namespace dxvk {
     // (L4D2VR/vr_backend; decided before Direct3DCreate9 gets here).
     if (L4D2VR_SelectedVrRuntime() == L4D2VR_RUNTIME_OPENVR)
       m_extProviders.push_back(&VrInstance::s_instance);
+    // The OpenXR backend asks its own XrInstance (xrGetVulkan*ExtensionsKHR),
+    // which works on Windows runtimes and under wineopenxr alike.
+    if (L4D2VRUsesOpenXr())
+      m_extProviders.push_back(&DxvkXrNativeProvider::s_instance);
     m_extProviders.push_back(&DxvkXrProvider::s_instance);
 #endif
 
@@ -318,7 +331,28 @@ namespace dxvk {
     } else if (numDGPU == 1 && numIGPU == 1) {
       result[1]->linkToDGPU(result[0]);
     }
-    
+
+#ifdef _WIN32
+    // OpenXR: the session must live on the runtime's GPU, and L4D2 creates its
+    // device on adapter 0, so move that GPU to the front.
+    if (L4D2VRUsesOpenXr() && !result.empty()) {
+      const VkPhysicalDevice runtimeDevice = L4D2VRGetOpenXrPhysicalDevice(m_vki->instance());
+      auto it = std::find_if(result.begin(), result.end(),
+        [runtimeDevice] (const Rc<DxvkAdapter>& adapter) { return adapter->handle() == runtimeDevice; });
+      if (runtimeDevice == VK_NULL_HANDLE) {
+        Logger::err("OpenXR (L4D2VR): the runtime named no Vulkan device; keeping the adapter order");
+      } else if (it == result.end()) {
+        Logger::err("OpenXR (L4D2VR): the runtime's Vulkan device is not among DXVK's adapters (device filter?)");
+      } else {
+        const size_t index = size_t(it - result.begin());
+        if (index != 0)
+          std::rotate(result.begin(), it, it + 1);
+        Logger::info(str::format("OpenXR (L4D2VR): runtime GPU ", result[0]->deviceProperties().deviceName,
+          " is adapter 0 (was ", index, ")"));
+      }
+    }
+#endif
+
     return result;
   }
   

@@ -10,12 +10,16 @@
 //   * A launch option beats the config key. With both options present,
 //     -l4d2vr_openvr wins (the runtime that works everywhere today).
 //   * auto = OpenVR, until the OpenXR backend reaches parity.
-//   * openxr without an OpenXR backend in this build falls back to OpenVR and
-//     says so in the log.
+//   * openxr without an OpenXR backend in this build, or without a usable
+//     OpenXR runtime (no loader next to d3d9.dll, no active runtime, no HMD,
+//     no XR_KHR_vulkan_enable, Proton without 32-bit wineopenxr), falls back
+//     to OpenVR and says why in the log. The runtime is only probed when
+//     OpenXR was explicitly requested (DecideWithProbe).
 //   * An unknown config value is treated as auto and logged.
 
 #include <cctype>
 #include <cwctype>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -136,6 +140,8 @@ namespace l4d2vr_runtime_select
         bool conflictingSwitches = false;          // both launch options given
         bool unknownConfigValue = false;
         bool openXrUnavailable = false;            // openxr requested, fell back to OpenVR
+        bool openXrProbed = false;                 // the OpenXR runtime probe ran
+        std::string openXrUnavailableReason;       // empty = backend not built
     };
 
     // configValueValid=false means the config held an unknown value (treated as auto).
@@ -187,6 +193,29 @@ namespace l4d2vr_runtime_select
         return decision;
     }
 
+    // Decide() plus the OpenXR runtime probe, which runs only when the request
+    // resolves to OpenXR (auto and openvr never touch the OpenXR loader). The
+    // probe returns true when the runtime is usable, else false and a reason.
+    using OpenXrProbe = std::function<bool(std::string& reason)>;
+
+    inline Decision DecideWithProbe(Preference config, bool configValueValid, Switch commandLine,
+        bool openXrBackendBuilt, const OpenXrProbe& probe)
+    {
+        Decision decision = Decide(config, configValueValid, commandLine, openXrBackendBuilt);
+        if (decision.runtime != Runtime::OpenXR)
+            return decision;
+        std::string reason;
+        decision.openXrProbed = true;
+        const bool usable = probe ? probe(reason) : false;
+        if (!usable)
+        {
+            decision.runtime = Runtime::OpenVR;
+            decision.openXrUnavailable = true;
+            decision.openXrUnavailableReason = reason.empty() ? std::string("unknown error") : reason;
+        }
+        return decision;
+    }
+
     // One log line describing the decision (without the "[VR] " prefix).
     inline std::string Describe(const Decision& decision, std::string_view rawConfigValue)
     {
@@ -216,7 +245,12 @@ namespace l4d2vr_runtime_select
             text += "' treated as auto";
         }
         if (decision.openXrUnavailable)
-            text += "; OpenXR backend not built yet, falling back to OpenVR";
+        {
+            if (decision.openXrUnavailableReason.empty())
+                text += "; OpenXR backend not built yet, falling back to OpenVR";
+            else
+                text += "; OpenXR runtime unavailable (" + decision.openXrUnavailableReason + "), falling back to OpenVR";
+        }
         return text;
     }
 }

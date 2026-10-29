@@ -3381,6 +3381,13 @@ extern "C" int L4D2VR_SelectedVrRuntime()
     {
         if (IsNoHmdLaunchArgPresent())
             return;
+        if (IsDesktopModeRequested())
+        {
+            // Desktop mode never starts a VR runtime; keep the OpenVR default
+            // (which it has always used) and never probe OpenXR.
+            Game::logMsg("[VR] VR runtime: OpenVR (desktop mode requested; %s not used)", sel::kConfigKey);
+            return;
+        }
 
         std::string rawValue;
         sel::Preference config = sel::Preference::Auto;
@@ -3398,9 +3405,12 @@ extern "C" int L4D2VR_SelectedVrRuntime()
             LocalFree(szArglist);
         }
 
-        // M1: only the OpenVR backend is built.
-        constexpr bool kOpenXrBackendAvailable = false;
-        const sel::Decision decision = sel::Decide(config, configValid, commandLine, kOpenXrBackendAvailable);
+        // The OpenXR runtime is probed (loader, instance, HMD system) only when
+        // OpenXR was asked for; without a usable one the game stays in VR on
+        // OpenVR and the log says why.
+        constexpr bool kOpenXrBackendBuilt = true;
+        const sel::Decision decision = sel::DecideWithProbe(config, configValid, commandLine, kOpenXrBackendBuilt,
+            [](std::string& reason) { return l4d2vr_backend::OpenXrProbeRuntime(reason); });
         selected = static_cast<int>(decision.runtime);
         Game::logMsg("[VR] %s", sel::Describe(decision, TrimAsciiWhitespace(rawValue)).c_str());
     });

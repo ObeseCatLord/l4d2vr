@@ -23,6 +23,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 KEY_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*\s*=")
 
+# The OpenXR backend loads openxr_loader.dll from d3d9.dll's folder
+# (thirdparty/openxr/README.md: Khronos OpenXR-SDK release-1.1.65, Win32).
+OPENXR_RUNTIME_FILES = {"openxr_loader.dll": "thirdparty/openxr/bin/win32/openxr_loader.dll"}
+
 DROP_FROM_BASE = {"SHOTGUN-SHELL-FIX.txt", "patch-shotgun-shell-release.py", "updatelog.txt"}
 
 CHANGES = [
@@ -76,6 +80,10 @@ def main() -> None:
 
     src = REPO / "L4D2VR"
     files["d3d9.dll"] = args.dll.read_bytes()
+    # VR runtime files shipped next to d3d9.dll. openvr_api.dll still comes from
+    # BASE.zip (OpenVR backend); the 32-bit Khronos OpenXR loader is tracked here.
+    for name, path in OPENXR_RUNTIME_FILES.items():
+        files[name] = (REPO / path).read_bytes()
     for manifest in sorted((src / "SteamVRActionManifest").glob("*.json")):
         files[f"vr/SteamVRActionManifest/{manifest.name}"] = manifest.read_bytes()
     for name in ("haptics_config.txt", "local_client_convars.nut", "manifest.vrmanifest"):

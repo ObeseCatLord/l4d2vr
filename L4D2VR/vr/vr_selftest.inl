@@ -2498,6 +2498,30 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 m_SelfTestValueD = 1;
             }
             slapShots();
+            if (slaps() == 0u && m_SelfTestGlideMs && nowMs - m_MagazineSlapCentersAtMs < 200u &&
+                meters(m_MagazineSlapHeldCenter, m_MagazineSlapSeatedCenter) > 0.15f)
+            {
+                // Keep the strike on line, as a hand watching the magazine does:
+                // correct only the sideways miss (the held pose trails the hand
+                // along the motion), keeping the speed.
+                const Vector dir = strikeDirection();
+                Vector across = CrossProduct(dir, g.gunUp);
+                if (across.Length() < 0.2f) across = CrossProduct(dir, g.gunForward);
+                across = across * (1.0f / (std::max)(0.001f, across.Length()));
+                const float side = motion == "wide" ? 0.30f : 0.0f;
+                const Vector target = m_MagazineSlapSeatedCenter + across * (side * scale);
+                Vector miss = (target - m_MagazineSlapHeldCenter);
+                miss = miss - dir * DotProduct(miss, dir);
+                const Vector planned = m_SelfTestGlideTo - leftNow();
+                Vector plannedSide = planned - dir * DotProduct(planned, dir);
+                const Vector correction = miss - plannedSide;
+                if (correction.Length() > 0.005f * scale)
+                {
+                    const Vector end = m_SelfTestGlideTo + correction;
+                    m_SelfTestSlapEnd = m_SelfTestSlapEnd + correction;
+                    glide(end, meters(end, leftNow()) / m->speed);
+                }
+            }
             if (!glideDone(0.05f)) return false;
             if (m->hit)
                 glide(m_SelfTestSlapEnd + m_SelfTestSlapPark + (g.magazineCenter - m_SelfTestPoint), 0.15f);

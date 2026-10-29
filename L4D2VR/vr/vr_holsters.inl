@@ -117,6 +117,8 @@ bool VR::BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::It
     if (m_SelfTestEnabled && m_SelfTestBackPreviewMeters > 0.0f &&
         l4d2vr_holster::IsBackZone(static_cast<l4d2vr_holster::Zone>(item.slot)))
         pose.origin += frame.forward * (m_SelfTestBackPreviewMeters * frame.unitsPerMeter);
+    if (m_SelfTestEnabled && m_SelfTestAllPreviewMeters > 0.0f)
+        pose.origin += frame.forward * (m_SelfTestAllPreviewMeters * frame.unitsPerMeter);
     return pose.valid;
 }
 

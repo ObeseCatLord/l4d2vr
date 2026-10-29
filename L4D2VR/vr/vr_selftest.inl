@@ -2423,11 +2423,25 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 m_SelfTestMeasureB = error;
                 return false;
             }
+            // Hold still a moment: the held pose trails the scripted hand, so
+            // the strike is planned from a settled pose (a few centimetres off
+            // to the side turns it into a glancing blow).
+            stopGlide();
+            go(613);
+            return false;
+        }
+        case 613:
+        {
+            if (inPhase < 0.35f) return false;
+            const Vector dir = strikeDirection();
+            Vector across = CrossProduct(dir, g.gunUp);
+            if (across.Length() < 0.2f) across = CrossProduct(dir, g.gunForward);
+            across = across * (1.0f / (std::max)(0.001f, across.Length()));
+            m_SelfTestPoint = g.magazineCenter;
             if (!g.heldValid)
                 return fail("slap motion", "no held spare pose");
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
-            // Wide: 30 cm beside, clear of the magazine box along any axis (a
-            // pass within 4 cm counts as a touch).
+            // Wide: 30 cm beside, clear of the magazine box along any axis.
             const float side = motion == "wide" ? 0.30f : 0.0f;
             // The AK-47's curved magazine box is about 25 cm long and 18 cm
             // deep: every strike starts clear of it, so the strike itself

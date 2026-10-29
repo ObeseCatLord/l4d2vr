@@ -161,7 +161,9 @@ int main()
     overturn.NotifyShot(10u, 3, 7, 0u, 72, 1000u);
     Check(overturn.Observe(10u, 3, 7, 0u, 72, 1100u));
     Check(!overturn.TakeOverturned());
-    Check(!overturn.Observe(10u, 3, 8, 0u, 72, 1300u));
+    Check(overturn.Observe(10u, 3, 8, 0u, 72, 1300u));  // the count is back: wait for it to stay
+    Check(!overturn.TakeOverturned());
+    Check(!overturn.Observe(10u, 3, 8, 0u, 72, 1650u));
     Check(overturn.TakeOverturned());
     Check(!overturn.TakeOverturned());
     // A shell loaded (reserve down) while the pump waits keeps the cycle.
@@ -174,8 +176,18 @@ int main()
     // it is drawn again, seconds later. The reserve is unchanged: no pump.
     overturn.NotifyShot(20u, 3, 7, 0u, 72, 3000u);
     Check(!overturn.Observe(40u, 12, 1, 0u, 1, 3100u)); // the first aid kit in the hand
-    Check(!overturn.Observe(20u, 3, 8, 0u, 72, 6000u));
+    Check(overturn.Observe(20u, 3, 8, 0u, 72, 6000u));
+    Check(!overturn.Observe(20u, 3, 8, 0u, 72, 6400u));
     Check(overturn.TakeOverturned());
+    // Prediction flicker: the pre-shot count for a frame, then the shot again.
+    // The shot stands and the pump is still needed.
+    overturn.NotifyShot(60u, 3, 7, 0u, 72, 8000u);
+    Check(overturn.Observe(60u, 3, 8, 0u, 72, 8016u));
+    Check(overturn.Observe(60u, 3, 7, 0u, 72, 8033u));
+    Check(overturn.Observe(60u, 3, 8, 0u, 72, 8200u));
+    Check(overturn.Observe(60u, 3, 7, 0u, 72, 8216u));
+    Check(overturn.Observe(60u, 3, 7, 0u, 72, 9000u));
+    Check(!overturn.TakeOverturned());
     // A real shot stays spent however long the gun is away.
     overturn.NotifyShot(20u, 3, 7, 0u, 72, 7000u);
     Check(overturn.Observe(20u, 3, 7, 0u, 72, 7100u));

@@ -13,6 +13,7 @@
 #include "vr_hands/vr_hand_system.h"
 #include "vr_hands/vr_hand_math.h"
 #include "vr_controller_tip.h"
+#include "vr_backend/openxr_input_profiles.h"
 #include "vr_mag_slap.h"
 #include "vr_reload_tuning.h"
 #include "sdk/ivdebugoverlay.h"

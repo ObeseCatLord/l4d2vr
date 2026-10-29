@@ -4329,7 +4329,7 @@ vr::TrackedDeviceIndex_t VR::GetPhysicalControllerIndexForHand(bool leftHand) co
         m_PhysicalControllerIndexPair.load(std::memory_order_acquire), leftHand);
 }
 
-void VR::TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude) const
+void VR::TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude, float frequency) const
 {
     if (!m_System || deviceIndex == vr::k_unTrackedDeviceIndexInvalid || !m_System->IsTrackedDeviceConnected(deviceIndex))
         return;
@@ -4337,6 +4337,10 @@ void VR::TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float du
     const float safeAmplitude = std::clamp(amplitude, 0.0f, 1.0f);
     const float safeDuration = std::clamp(durationSeconds, 0.0f, 0.5f);
     if (safeAmplitude <= 0.0f || safeDuration <= 0.0f)
+        return;
+
+    // Runtimes with real vibration control (OpenXR) get the profile as is.
+    if (m_System->TriggerHapticVibration(deviceIndex, safeDuration, std::clamp(frequency, 0.0f, 320.0f), safeAmplitude))
         return;
 
     // Legacy pulses only expose width, so fold the higher-level profile into a 0.5-4.0ms pulse.
@@ -4424,7 +4428,8 @@ void VR::FlushHapticMixer()
             TriggerLegacyHapticPulse(
                 GetPhysicalControllerIndexForHand(leftHand),
                 mix.durationSeconds,
-                mix.amplitude);
+                mix.amplitude,
+                mix.frequency);
 
             mix.pending = false;
             mix.weight = 0.0f;

@@ -106,6 +106,9 @@ namespace l4d2vr_linux
               Strategy::Inline, nullptr, "55 89 E5 57 56 53 83 EC 4C 8B 55 08 C7 04 24 ?? ?? ?? ??", kGroupThrow },
             { "CVomitJarProjectile::Create", "_ZN19CVomitJarProjectile6CreateERK6VectorRK6QAngleS2_S2_P20CBaseCombatCharacter",
               Strategy::Inline, nullptr, "55 89 E5 57 56 53 83 EC 4C 8B 55 08 C7 04 24 ?? ?? ?? ??", kGroupThrow },
+            // Optional (no group): puts a dropped item at the releasing hand.
+            { "CBaseAnimating::Teleport", "_ZN14CBaseAnimating8TeleportEPK6VectorPK6QAngleS2_", Strategy::Call, nullptr,
+              "55 89 E5 53 83 EC 14 8B 45 14 8B 5D 08 89 44 24 0C 8B 45 10", 0u },
             { "Clip1", "_ZNK17CBaseCombatWeapon5Clip1Ev", Strategy::Call, nullptr,
               "55 89 E5 8B 45 08 5D 8B 80 ?? ?? ?? ?? C3", kGroupAmmo },
             { "GetOwner", "_ZNK17CBaseCombatWeapon8GetOwnerEv", Strategy::Call, nullptr,

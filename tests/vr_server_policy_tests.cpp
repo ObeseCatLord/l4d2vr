@@ -451,7 +451,8 @@ namespace
         ctx = PreExecute(p, &drop4, 503, 0, Input(weapon::kMelee, kFeatureAllMask), c);
         Check(!PostExecute(p, &drop4, ctx, disabled, c).drop);
 
-        // Grip release of an inventory item: zero velocity.
+        // Grip release of an inventory item: the hand's own motion (none here),
+        // from the hand's position.
         PlayerVRState grip{};
         grip.isUsingVR = true;
         CommandPose release = Pose(600, Intent::GripRelease);
@@ -460,6 +461,7 @@ namespace
         ctx = PreExecute(grip, &release, 600, 0, Input(weapon::kPistol, kFeatureAllMask), c);
         a = PostExecute(grip, &release, ctx, Post(weapon::kPistol, 0x2000, 0x2000), c);
         Check(a.drop && a.dropRequest.gripRelease && a.dropRequest.velocity == Vec3());
+        Check(a.dropRequest.haveOrigin && a.dropRequest.origin == ctx.position);
         CommandPose mismatch = release;
         mismatch.command = 601;
         mismatch.carryWeaponId = weapon::kMelee;

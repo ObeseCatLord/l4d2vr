@@ -9020,6 +9020,7 @@ namespace
         int numBones = 0;
         int rootBone = -1;
         bool valid = false;
+        bool anyFrame = false; // captured in the self-test's old-behaviour comparison
         std::vector<vr_vm_stabilize::Mat3x4> frozenLocalBones;
     };
 
@@ -23587,6 +23588,7 @@ namespace
                 frozenPose.modelName != modelName ||
                 frozenPose.numBones != numBones ||
                 frozenPose.rootBone != rootBone ||
+                frozenPose.anyFrame != vr->m_SelfTestFreezeAnyFrame ||
                 static_cast<int>(frozenPose.frozenLocalBones.size()) != numBones;
 
             if (needCapture)
@@ -23603,6 +23605,7 @@ namespace
                     ? nullptr : FindViewmodelIdlePose(vr, lowerModel, numBones);
                 const bool nativeResting = !idle && (nativeKind == Kind::Unknown || vr->m_SelfTestFreezeAnyFrame);
                 frozenPose = {};
+                frozenPose.anyFrame = vr->m_SelfTestFreezeAnyFrame;
                 if (nativeResting || idle)
                 {
                     frozenPose.modelName = modelName;

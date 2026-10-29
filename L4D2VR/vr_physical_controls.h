@@ -278,6 +278,7 @@ namespace l4d2vr_physical
         // was at the shot, a higher count means the shot never happened. Any
         // reserve change (a shell loaded, ammo picked up) or a completed pump
         // ends that: the cycle then stays until the pump is worked.
+        static constexpr std::uint64_t kOverturnSettleMs = 300u;
         bool Observe(std::uintptr_t weapon, int weaponId, int clip, std::uint32_t handle,
             int reserve, std::uint64_t nowMs)
         {
@@ -292,9 +293,22 @@ namespace l4d2vr_physical
                 }
                 else if (clip > entry.shotClip)
                 {
-                    entry.needsCycle = entry.provisional = false;
-                    m_Overturned = true;
-                    return false;
+                    // Prediction can show the pre-shot count for a frame or two
+                    // before it replays the shot: only a count that stays up
+                    // is the host's answer.
+                    if (!entry.backSince || nowMs < entry.backSince)
+                        entry.backSince = nowMs ? nowMs : 1u;
+                    else if (nowMs - entry.backSince >= kOverturnSettleMs)
+                    {
+                        entry.needsCycle = entry.provisional = false;
+                        entry.backSince = 0u;
+                        m_Overturned = true;
+                        return false;
+                    }
+                }
+                else
+                {
+                    entry.backSince = 0u;
                 }
             }
             return needsCycle;
@@ -322,6 +336,7 @@ namespace l4d2vr_physical
                     entry.shotClip = clip;
                     entry.shotReserve = reserve;
                     entry.shotAt = nowMs;
+                    entry.backSince = 0u;
                 }
         }
 
@@ -358,6 +373,7 @@ namespace l4d2vr_physical
             int shotClip = -1;
             int shotReserve = -1;
             std::uint64_t shotAt = 0u;
+            std::uint64_t backSince = 0u; // the count has been back above the shot since then
         };
         std::array<Entry, 16> m_Entries{};
         std::uintptr_t m_Owner = 0u;

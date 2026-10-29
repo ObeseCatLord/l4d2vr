@@ -204,4 +204,71 @@ namespace l4d2vr_ammo_grip
         VrHandMath::Set(world, 2, 3, origin.z);
         result = world; return true;
     }
+
+    // Where a closed hand holds a spare magazine or shell: the hole between
+    // the palm and the curled fingers. Built from the drawn hand's rigid
+    // bones only (the wrist, the four knuckles, the thumb root), so it does
+    // not move while the fingers curl around the spare.
+    struct HandBones
+    {
+        Vector wrist{0.0f, 0.0f, 0.0f};
+        Vector knuckles[4]{};       // index, middle, ring, little finger roots
+        bool knuckleValid[4]{};
+        Vector thumbRoot{0.0f, 0.0f, 0.0f};
+        bool thumbValid = false;
+    };
+    // `along`: from the wrist toward the knuckles, as a fraction of the
+    // wrist-to-knuckle length; `depth`: off the palm, toward the side the
+    // thumb root lies on, same unit.
+    inline bool FistCenter(const HandBones& hand, float along, float depth, Vector& result)
+    {
+        if (!Finite(hand.wrist) || !std::isfinite(along) || !std::isfinite(depth)) return false;
+        Vector sum(0.0f, 0.0f, 0.0f);
+        int count = 0, first = -1, last = -1;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (!hand.knuckleValid[i] || !Finite(hand.knuckles[i])) continue;
+            sum = sum + hand.knuckles[i];
+            ++count;
+            if (first < 0) first = i;
+            last = i;
+        }
+        if (count < 2 || first == last) return false;
+        const Vector knuckles = sum * (1.0f / static_cast<float>(count));
+        Vector toKnuckles = knuckles - hand.wrist;
+        const float length = toKnuckles.Length();
+        if (!(length > 0.0001f)) return false;
+        toKnuckles = toKnuckles * (1.0f / length);
+        Vector across = hand.knuckles[last] - hand.knuckles[first];
+        Vector normal;
+        CrossProduct(toKnuckles, across, normal);
+        const float normalLength = normal.Length();
+        if (!(normalLength > 0.0001f)) return false;
+        normal = normal * (1.0f / normalLength);
+        // The palm faces the side the thumb root sits on.
+        if (!hand.thumbValid || !Finite(hand.thumbRoot)) return false;
+        const float side = VrHandMath::Dot(hand.thumbRoot - hand.wrist, normal);
+        if (std::fabs(side) < 0.02f * length) return false;
+        if (side < 0.0f) normal = normal * -1.0f;
+        result = hand.wrist + toKnuckles * (along * length) + normal * (depth * length);
+        return Finite(result);
+    }
+    // The point of a spare (in its box frame) the fist closes around: on the
+    // long axis, `fromBase` of its length from the end that stays outside
+    // the gun (the end along `outwardLocal`, the insertion line pointing out
+    // of the well).
+    inline Vector SpareGripPoint(const Vector& mins, const Vector& maxs, const Vector& outwardLocal, float fromBase)
+    {
+        Vector point = (mins + maxs) * 0.5f;
+        const float ax = std::fabs(outwardLocal.x), ay = std::fabs(outwardLocal.y), az = std::fabs(outwardLocal.z);
+        const int axis = (ay >= ax && ay >= az) ? 1 : (az >= ax && az >= ay) ? 2 : 0;
+        const float toward = axis == 0 ? outwardLocal.x : axis == 1 ? outwardLocal.y : outwardLocal.z;
+        const float base = toward < 0.0f ? (axis == 0 ? mins.x : axis == 1 ? mins.y : mins.z)
+                                         : (axis == 0 ? maxs.x : axis == 1 ? maxs.y : maxs.z);
+        const float top = toward < 0.0f ? (axis == 0 ? maxs.x : axis == 1 ? maxs.y : maxs.z)
+                                        : (axis == 0 ? mins.x : axis == 1 ? mins.y : mins.z);
+        const float value = base + (top - base) * fromBase;
+        if (axis == 0) point.x = value; else if (axis == 1) point.y = value; else point.z = value;
+        return point;
+    }
 }

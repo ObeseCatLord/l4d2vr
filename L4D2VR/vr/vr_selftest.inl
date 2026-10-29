@@ -194,6 +194,11 @@ void VR::ApplySelfTestPoses()
     m_SelfTestPrevHmd = head;
     m_SelfTestPrevValid = true;
 
+    if (m_SelfTestSceneRightAngValid && m_SelfTestSceneRightValid && !m_SelfTestRightWorldValid && !m_SelfTestPathActive)
+        rightAng = SelfTestVec(m_SelfTestSceneRightAng.x, m_SelfTestSceneRightAng.y, m_SelfTestSceneRightAng.z);
+    if (m_SelfTestSceneLeftAngValid && m_SelfTestSceneLeftValid && !m_SelfTestLeftWorldValid && !m_SelfTestLeftPathActive &&
+        !m_SelfTestLeftAngWorldValid)
+        leftAng = SelfTestVec(m_SelfTestSceneLeftAng.x, m_SelfTestSceneLeftAng.y, m_SelfTestSceneLeftAng.z);
     m_RightControllerPose.TrackedDevicePos = rightPos;
     m_RightControllerPose.TrackedDeviceAng = QAngle(rightAng.x, yaw + rightAng.y, rightAng.z);
     m_RightControllerPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
@@ -999,6 +1004,70 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return false;
     }
 
+    if (step == "dropreturn")
+    {
+        // Toggle grips: draw the pump shotgun from the back, hold it close to
+        // the body and squeeze to let it go. It lands at the feet, where L4D2
+        // may pick it straight back up. If it comes back it is in the hand
+        // again and the grip must own it: the next squeeze lets it go.
+        static bool s_savedToggle = true;
+        static uint32_t s_reclaims = 0u;
+        static float s_backAt = -1.0f;
+        auto squeeze = [&](bool down) { button(m_ActionWeaponGrip, down); };
+        if (at(0, 0.0f))
+        {
+            s_savedToggle = m_GripToggleEnabled; m_GripToggleEnabled = true; s_backAt = -1.0f;
+            cmd("give pumpshotgun"); button(m_ActionWeaponGrip, false);
+        }
+        if (at(1, 1.0f)) cmd("use weapon_pistol");
+        if (m_SelfTestStage >= 2 && m_SelfTestStage <= 4) SelfTestReachHolster(0);
+        if (at(2, 1.6f)) {}
+        if (at(3, 2.4f)) squeeze(true);
+        if (at(4, 2.6f)) squeeze(false);
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.22f, 0.12f, -0.38f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(6, 4.5f))
+        {
+            const int slot = SelfTestActiveSlot(player);
+            std::snprintf(detail, sizeof(detail), "active slot %d, toggle %s", slot + 1, m_GripToggle.Held() ? "held" : "released");
+            SelfTestReport("drop return: the grip holds the drawn shotgun", slot == 0 && m_GripToggle.Held(), detail);
+            s_reclaims = m_GripDropReclaims.load(std::memory_order_acquire);
+        }
+        if (at(7, 4.8f)) squeeze(true);
+        if (at(8, 5.0f)) squeeze(false);
+        if (at(9, 5.4f))
+        {
+            void* const primary = player->Weapon_GetSlot(0);
+            std::snprintf(detail, sizeof(detail), "primary slot %s after the squeeze", primary ? "still occupied" : "empty");
+            SelfTestReport("drop return: the squeeze drops the shotgun", primary == nullptr, detail);
+        }
+        if (m_SelfTestStage == 10 && s_backAt < 0.0f && player->Weapon_GetSlot(0) != nullptr)
+            s_backAt = t;
+        if (at(10, 9.5f))
+        {
+            const bool back = player->Weapon_GetSlot(0) != nullptr;
+            const uint32_t reclaims = m_GripDropReclaims.load(std::memory_order_acquire) - s_reclaims;
+            std::snprintf(detail, sizeof(detail), "%s; the grip took it back %u time(s), active slot %d",
+                back ? "the host put the shotgun back in the hand" : "the shotgun stayed on the floor",
+                reclaims, SelfTestActiveSlot(player) + 1);
+            if (back)
+                Game::logMsg("[VR][SelfTest] drop return: back %.1f s after the drop", s_backAt - 5.0f);
+            SelfTestReport("drop return: a returned shotgun is owned by the grip", !back || (reclaims >= 1u && SelfTestActiveSlot(player) == 0), detail);
+            if (back) SelfTestRequestShot("dropreturn_back", 1);
+        }
+        if (at(11, 10.0f)) squeeze(true);
+        if (at(12, 10.2f)) squeeze(false);
+        if (at(13, 10.6f))
+        {
+            void* const primary = player->Weapon_GetSlot(0);
+            std::snprintf(detail, sizeof(detail), "primary slot %s after squeezing again", primary ? "still occupied" : "empty");
+            if (s_backAt >= 0.0f)
+                SelfTestReport("drop return: squeezing again lets the returned shotgun go", primary == nullptr, detail);
+            m_GripToggleEnabled = s_savedToggle;
+            return true;
+        }
+        return false;
+    }
+
     if (step == "holsterdrop")
     {
         // Hold-to-grip mode.
@@ -1278,6 +1347,45 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         m_LeftHanded = step.size() > 11 && step[11] == '1';
         Game::logMsg("[VR][SelfTest] left-handed %d", m_LeftHanded ? 1 : 0);
         return true;
+    }
+
+    // leftang=pitch,yaw,roll / rightang=pitch,yaw,roll: turn a scripted hand
+    // (degrees; yaw relative to the head's). Holds like lefthand=/righthand=.
+    if (step.rfind("leftang=", 0) == 0 || step.rfind("rightang=", 0) == 0)
+    {
+        const bool leftHand = step[0] == 'l';
+        if (at(0, 0.0f))
+        {
+            const std::string value = step.substr(leftHand ? 8 : 9);
+            l4d2vr_selftest::Vec3 angles{};
+            const bool valid = value != "off" && l4d2vr_selftest::ParseVec3(value, angles);
+            if (value != "off" && !valid)
+            {
+                SelfTestReport(step.c_str(), false, "expected pitch,yaw,roll in degrees or off");
+                return true;
+            }
+            (leftHand ? m_SelfTestSceneLeftAng : m_SelfTestSceneRightAng) = QAngle(angles.x, angles.y, angles.z);
+            (leftHand ? m_SelfTestSceneLeftAngValid : m_SelfTestSceneRightAngValid) = valid;
+        }
+        return t >= 1.0f;
+    }
+
+    // freezeanyframe=on|off: comparison runs; on pauses the viewmodel for a
+    // reload or pump on whatever frame it shows, as before the resting-pose fix.
+    if (step.rfind("freezeanyframe=", 0) == 0)
+    {
+        m_SelfTestFreezeAnyFrame = step.substr(15) == "on";
+        Game::logMsg("[VR][SelfTest] viewmodel pause on any frame: %s", m_SelfTestFreezeAnyFrame ? "on" : "off");
+        return true;
+    }
+
+    // handdump=<seconds>: log the drawn off hand's bones and its fist in the
+    // hand bone's frame ([VR][HandDump]).
+    if (step.rfind("handdump=", 0) == 0)
+    {
+        const float seconds = std::clamp(static_cast<float>(std::atof(step.c_str() + 9)), 0.5f, 60.0f);
+        m_SelfTestHandDumpUntilMs.store(GetTickCount64() + static_cast<uint64_t>(seconds * 1000.0f), std::memory_order_release);
+        return true; // runs on beside the following steps
     }
 
     // glowmat=<material>: use this material for every glow from now on ("off"
@@ -2071,7 +2179,11 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     char detail[320];
     char name[96];
 
-    const bool shells = step.rfind("shellse2e=", 0) == 0;
+    // pumpredrawe2e=<pumpshotgun|shotgun_chrome>: fire one, switch to the
+    // pistol and back with the pump still waiting; the drawn gun must stay in
+    // the hand with its pump where it was, the pump must cycle and it must fire.
+    const bool redraw = step.rfind("pumpredrawe2e=", 0) == 0;
+    const bool shells = step.rfind("shellse2e=", 0) == 0 || redraw;
     // emptywatche2e=<gun>: run dry, then leave the gun alone and watch for a
     // refill nobody made (the host's stock auto reload).
     const bool watch = step.rfind("emptywatche2e=", 0) == 0;
@@ -2229,7 +2341,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         m_SelfTestValueD = 0;
         Game::logMsg("[VR][SelfTest] %s: clip=%d reserve=%d box age=%.3fs model=%s", step.c_str(), g.clip, g.reserve,
             g.magazineBoxAge, g.modelName.c_str());
-        go(hold ? 300 : magazine ? 10 : shells ? 100 : 200);
+        go(hold ? 300 : magazine ? 10 : redraw ? 400 : shells ? 100 : 200);
         return false;
     }
 
@@ -2247,15 +2359,16 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     // straight in without turning and it must seat (<gun>_natural_seated).
     if (hold)
     {
-        auto naturalAngles = [&]()
+        // extraRaiseDeg / rollDeg turn the hand further for the hand-pose photos.
+        auto naturalAngles = [&](float extraRaiseDeg = 0.0f, float rollDeg = 0.0f)
         {
-            constexpr float kRaiseDeg = 10.0f;
+            const float kRaiseDeg = 10.0f + extraRaiseDeg;
             // vr_tracking.inl: the off hand's pointing direction is the
             // controller's raw pose pitched 45 degrees down.
             constexpr float kOffHandCalibrationDeg = 45.0f;
-            const Vector right = g.gunRight;
+            const Vector right = VectorRotate(g.gunRight, g.gunForward, rollDeg);
             const Vector forward = VectorRotate(g.gunForward, right, kRaiseDeg);
-            const Vector up = VectorRotate(g.gunUp, right, kRaiseDeg);
+            const Vector up = VectorRotate(VectorRotate(g.gunUp, g.gunForward, rollDeg), right, kRaiseDeg);
             QAngle angles{};
             QAngle::VectorAngles(VectorRotate(forward, right, kOffHandCalibrationDeg),
                 VectorRotate(up, right, kOffHandCalibrationDeg), angles);
@@ -2389,6 +2502,53 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 gun.c_str(), g.socketCenter.x, g.socketCenter.y, g.socketCenter.z, g.socketOutward.x, g.socketOutward.y,
                 g.socketOutward.z, g.spareLength, g.heldCenter.x, g.heldCenter.y, g.heldCenter.z,
                 g.gunForward.x, g.gunForward.y, g.gunForward.z);
+            m_SelfTestPoint = leftNow(); // where the spare was taken: the poses return here
+            go(330);
+            return false;
+        // The spare in the hand, held up in view at three hand poses (the
+        // insert pose, palm turned up, raised toward the face): the drawn
+        // fist must close around it (<gun>_spare_pose1..3).
+        case 330: case 332: case 334:
+        {
+            if (m_SelfTestPhase != 330 && inPhase < 0.4f) return false;
+            const int pose = (m_SelfTestPhase - 330) / 2;
+            // Glide there (no faster than a hand moves): a jump across the
+            // seated AK magazine would strike it like a slap.
+            if (pose == 0)
+                glide(m_HmdPosAbs + m_HmdForward * (0.34f * scale) + m_HmdRight * (-0.05f * scale) +
+                    m_HmdUp * (-0.04f * scale), 1.0f);
+            m_SelfTestLeftAngWorld = pose == 0 ? naturalAngles() : pose == 1 ? naturalAngles(0.0f, -70.0f)
+                : naturalAngles(35.0f, -25.0f);
+            m_SelfTestLeftAngWorldValid = true;
+            go(m_SelfTestPhase + 1);
+            return false;
+        }
+        case 331: case 333: case 335:
+        {
+            if (!glideDone(0.6f) || inPhase < 1.0f) return false;
+            const int pose = (m_SelfTestPhase - 331) / 2;
+            SelfTestSpareInFist f{};
+            const bool measured = SelfTestMeasureSpareInFist(f);
+            const bool inFist = measured && f.lateralMeters <= f.halfThicknessMeters + 0.01f &&
+                f.alongFromBase >= -0.05f && f.alongFromBase <= (shellGun ? 1.0f : 0.75f);
+            std::snprintf(detail, sizeof(detail),
+                "pose %d: fist %.3f m off the spare's long axis (half thickness %.3f m), %.2f of its %.3f m length from the base%s",
+                pose + 1, f.lateralMeters, f.halfThicknessMeters, f.alongFromBase, f.lengthMeters,
+                measured ? "" : " (no drawn fist or held spare)");
+            SelfTestReport(label("spare sits in the drawn fist"), inFist, detail);
+            char shotName[64] = {};
+            std::snprintf(shotName, sizeof(shotName), "%s_spare_pose%d", gun.c_str(), pose + 1);
+            SelfTestRequestShot(shotName, 1);
+            go(m_SelfTestPhase == 335 ? 336 : m_SelfTestPhase + 1);
+            return false;
+        }
+        case 336:
+            if (inPhase < 0.4f) return false;
+            glide(m_SelfTestPoint, 1.0f);
+            go(337);
+            return false;
+        case 337:
+            if (!glideDone(0.3f)) return false;
             go(306);
             return false;
         case 306: // natural pose short of the well
@@ -2944,9 +3104,103 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             SelfTestReport(label("pump cycled"), cycled, detail);
             if (!cycled)
                 return finish();
-            go(m_SelfTestValueD && m_SelfTestCycle == 1 ? 140 : 120);
+            go(redraw ? 410 : m_SelfTestValueD && m_SelfTestCycle == 1 ? 140 : 120);
             return false;
         }
+        // ---- pumpredrawe2e ----
+        case 400: // fire one once the gun has finished deploying
+            if (inPhase < 1.5f) return false;
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            button(m_ActionPrimaryAttack, true);
+            go(401);
+            return false;
+        case 401:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(402);
+            return false;
+        case 402:
+        {
+            if (inPhase < 1.5f) return false;
+            const bool pumpWaits = g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab);
+            if (g.clip == m_SelfTestClip0 && !pumpWaits && m_SelfTestValueC < 2)
+            {
+                ++m_SelfTestValueC;
+                go(400);
+                return false;
+            }
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d, state %s, pump stage %d", m_SelfTestClip0, g.clip, state(),
+                g.boltStage ? 1 : 0);
+            SelfTestReport(label("fire one: the pump waits"), g.clip == m_SelfTestClip0 - 1 && pumpWaits && g.boltStage, detail);
+            if (!pumpWaits || !g.boltStage)
+                return finish();
+            // The pump in the gun hand's frame (the gun follows that hand).
+            const Vector d = g.boltGrabCenter - m_RightControllerPosAbs;
+            m_SelfTestPumpInGun = Vector(DotProduct(d, g.gunForward), DotProduct(d, g.gunRight), DotProduct(d, g.gunUp)) * (1.0f / scale);
+            SelfTestRequestShot((m_SelfTestFreezeAnyFrame ? "anyframe_" : "") + gun + "_pump_waits", 1);
+            go(403);
+            return false;
+        }
+        case 403:
+        {
+            if (inPhase < 0.5f) return false;
+            const Vector d = g.boltGrabCenter - m_RightControllerPosAbs;
+            const Vector now = Vector(DotProduct(d, g.gunForward), DotProduct(d, g.gunRight), DotProduct(d, g.gunUp)) * (1.0f / scale);
+            Game::logMsg("[VR][SelfTest] %s pump before the switch: (%.3f %.3f %.3f) m, at the shot +1.5 s (%.3f %.3f %.3f) m",
+                gun.c_str(), now.x, now.y, now.z, m_SelfTestPumpInGun.x, m_SelfTestPumpInGun.y, m_SelfTestPumpInGun.z);
+            m_SelfTestPumpInGun = now;
+            cmd("use weapon_pistol");
+            go(404);
+            return false;
+        }
+        case 404:
+            if (inPhase < 1.5f) return false;
+            std::snprintf(detail, sizeof(detail), "use weapon_%s", gun.c_str());
+            cmd(detail);
+            go(405);
+            return false;
+        case 405: // drawn again: the pump still waits
+            if (g.weaponId != expectedId || !g.boltStage)
+            {
+                if (inPhase < 3.0f) return false;
+                std::snprintf(detail, sizeof(detail), "weapon %d, state %s, pump stage %d", g.weaponId, state(), g.boltStage ? 1 : 0);
+                return fail("drawn again with the pump waiting", detail);
+            }
+            if (inPhase < 0.3f) return false;
+            SelfTestRequestShot((m_SelfTestFreezeAnyFrame ? "anyframe_" : "") + gun + "_redraw_early", 1);
+            go(406);
+            return false;
+        case 406:
+        {
+            if (inPhase < 1.7f) return false;
+            const Vector d = g.boltGrabCenter - m_RightControllerPosAbs;
+            const Vector now = Vector(DotProduct(d, g.gunForward), DotProduct(d, g.gunRight), DotProduct(d, g.gunUp)) * (1.0f / scale);
+            const float moved = (now - m_SelfTestPumpInGun).Length();
+            std::snprintf(detail, sizeof(detail),
+                "pump in the gun hand's frame (%.3f %.3f %.3f) m before the switch, (%.3f %.3f %.3f) m after: %.3f m apart, state %s",
+                m_SelfTestPumpInGun.x, m_SelfTestPumpInGun.y, m_SelfTestPumpInGun.z, now.x, now.y, now.z, moved, state());
+            SelfTestReport(label("the redrawn gun sits in the hand, pump where it was"), moved < 0.03f, detail);
+            SelfTestRequestShot((m_SelfTestFreezeAnyFrame ? "anyframe_" : "") + gun + "_redraw", 1);
+            go(110);
+            return false;
+        }
+        case 410: // pumped: it fires
+            if (inPhase < 0.3f) return false;
+            m_SelfTestClip0 = g.clip;
+            button(m_ActionPrimaryAttack, true);
+            go(411);
+            return false;
+        case 411:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(412);
+            return false;
+        case 412:
+            if (inPhase < 0.8f) return false;
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d, state %s", m_SelfTestClip0, g.clip, state());
+            SelfTestReport(label("fires after the pump"), g.clip == m_SelfTestClip0 - 1, detail);
+            return finish();
         case 120: // a shell from the waist
             if (!g.pickupValid || (g.state != static_cast<int>(MagazineInteractionManualState::WaitingForFreshMagazine) &&
                 g.state != static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab)))

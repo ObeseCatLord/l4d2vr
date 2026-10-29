@@ -265,11 +265,20 @@ namespace l4d2vr_physical
         }
 
         // The client predicts each shot. A shot the host never fires (the
-        // trigger right after a draw the host has not finished) comes back:
-        // the shells return above the predicted count with the reserve
-        // untouched. Nothing was fired, so nothing needs pumping. A reserve
-        // change (a shell loaded) or the window running out keeps the cycle.
-        static constexpr std::uint64_t kHostOverturnWindowMs = 1000u;
+        // trigger right after a draw the host has not finished, or while the
+        // hand switches to another item) comes back: the shells return above
+        // the predicted count with the reserve untouched. Nothing was fired,
+        // so nothing needs pumping.
+        //
+        // There is no time limit. The correction can arrive while another item
+        // is in the hand, and the gun is only observed again when it is drawn,
+        // seconds later. A shell count can only rise by loading (which takes
+        // the shell from the reserve), by a native reload (likewise) or by the
+        // host undoing the prediction; so while the reserve is exactly what it
+        // was at the shot, a higher count means the shot never happened. Any
+        // reserve change (a shell loaded, ammo picked up) or a completed pump
+        // ends that: the cycle then stays until the pump is worked.
+        static constexpr std::uint64_t kOverturnSettleMs = 300u;
         bool Observe(std::uintptr_t weapon, int weaponId, int clip, std::uint32_t handle,
             int reserve, std::uint64_t nowMs)
         {
@@ -278,16 +287,28 @@ namespace l4d2vr_physical
             {
                 if (entry.weapon != weapon || entry.weaponId != weaponId || entry.handle != handle || !entry.provisional)
                     continue;
-                if (!entry.needsCycle || reserve != entry.shotReserve || nowMs < entry.shotAt ||
-                    nowMs - entry.shotAt > kHostOverturnWindowMs)
+                if (!entry.needsCycle || reserve < 0 || reserve != entry.shotReserve || nowMs < entry.shotAt)
                 {
                     entry.provisional = false;
                 }
                 else if (clip > entry.shotClip)
                 {
-                    entry.needsCycle = entry.provisional = false;
-                    m_Overturned = true;
-                    return false;
+                    // Prediction can show the pre-shot count for a frame or two
+                    // before it replays the shot: only a count that stays up
+                    // is the host's answer.
+                    if (!entry.backSince || nowMs < entry.backSince)
+                        entry.backSince = nowMs ? nowMs : 1u;
+                    else if (nowMs - entry.backSince >= kOverturnSettleMs)
+                    {
+                        entry.needsCycle = entry.provisional = false;
+                        entry.backSince = 0u;
+                        m_Overturned = true;
+                        return false;
+                    }
+                }
+                else
+                {
+                    entry.backSince = 0u;
                 }
             }
             return needsCycle;
@@ -315,6 +336,7 @@ namespace l4d2vr_physical
                     entry.shotClip = clip;
                     entry.shotReserve = reserve;
                     entry.shotAt = nowMs;
+                    entry.backSince = 0u;
                 }
         }
 
@@ -351,6 +373,7 @@ namespace l4d2vr_physical
             int shotClip = -1;
             int shotReserve = -1;
             std::uint64_t shotAt = 0u;
+            std::uint64_t backSince = 0u; // the count has been back above the shot since then
         };
         std::array<Entry, 16> m_Entries{};
         std::uintptr_t m_Owner = 0u;

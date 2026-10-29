@@ -169,10 +169,26 @@ int main()
     Check(overturn.Observe(10u, 3, 8, 0u, 71, 2200u));
     Check(overturn.Observe(10u, 3, 8, 0u, 71, 2300u));
     Check(!overturn.TakeOverturned());
-    // Shells coming back after the window keep it too.
-    overturn.NotifyShot(20u, 3, 5, 0u, 60, 3000u);
-    Check(overturn.Observe(20u, 3, 5, 0u, 60, 4200u));
-    Check(overturn.Observe(20u, 3, 6, 0u, 60, 4300u));
+    // The shot is predicted while the hand switches to another item: the
+    // correction arrives while the shotgun is holstered and is only seen when
+    // it is drawn again, seconds later. The reserve is unchanged: no pump.
+    overturn.NotifyShot(20u, 3, 7, 0u, 72, 3000u);
+    Check(!overturn.Observe(40u, 12, 1, 0u, 1, 3100u)); // the first aid kit in the hand
+    Check(!overturn.Observe(20u, 3, 8, 0u, 72, 6000u));
+    Check(overturn.TakeOverturned());
+    // A real shot stays spent however long the gun is away.
+    overturn.NotifyShot(20u, 3, 7, 0u, 72, 7000u);
+    Check(overturn.Observe(20u, 3, 7, 0u, 72, 7100u));
+    Check(overturn.Observe(20u, 3, 7, 0u, 72, 20000u));
+    // Picking up shotgun ammo (reserve up) ends the provisional state: a
+    // later count change is loading, not an overturn.
+    Check(overturn.Observe(20u, 3, 7, 0u, 120, 20100u));
+    Check(overturn.Observe(20u, 3, 8, 0u, 120, 20200u));
+    Check(!overturn.TakeOverturned());
+    // A failed reserve reading never overturns either.
+    overturn.NotifyShot(50u, 3, 5, 0u, 60, 30000u);
+    Check(overturn.Observe(50u, 3, 6, 0u, -1, 30100u));
+    Check(overturn.Observe(50u, 3, 6, 0u, 60, 30200u));
     Check(!overturn.TakeOverturned());
     // Without a reserve reading the shot is never treated as overturned.
     overturn.NotifyShot(30u, 3, 5);

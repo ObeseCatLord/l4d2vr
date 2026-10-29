@@ -13910,6 +13910,92 @@ namespace
         return false;
     }
 
+    // The drawn off hand's fist (where it holds a spare magazine or shell),
+    // from its rigid bones; see l4d2vr_ammo_grip::FistCenter.
+    constexpr float kNativeFistAlong = 0.80f;
+    constexpr float kNativeFistDepth = 0.45f;
+    inline void HooksNativeViewmodelHandsOnlyPublishLeftFist(
+        VR* vr,
+        const std::vector<std::string>& boneNames,
+        int numBones,
+        const vr_vm_stabilize::Mat3x4* currentBones)
+    {
+        static const char* const kNames[] = {
+            "bip01_l_hand", "bip01_l_finger0", "bip01_l_finger1", "bip01_l_finger2", "bip01_l_finger3",
+            "bip01_l_finger4", "bip01_l_finger01", "bip01_l_finger11", "bip01_l_finger21", "bip01_l_finger31",
+            "bip01_l_finger41", "bip01_l_finger02", "bip01_l_finger12", "bip01_l_finger22", "bip01_l_finger32",
+            "bip01_l_finger42", "bip01_l_wrist" };
+        constexpr int kCount = static_cast<int>(sizeof(kNames) / sizeof(kNames[0]));
+        static std::vector<std::string> s_names;
+        static int s_index[kCount] = {};
+        if (s_names != boneNames)
+        {
+            s_names = boneNames;
+            for (int i = 0; i < kCount; ++i)
+                if (!HooksNativeViewmodelHandsOnlyFindBoneByLowerSuffix(boneNames, kNames[i], s_index[i]))
+                    s_index[i] = -1;
+        }
+        Vector at[kCount] = {};
+        bool valid[kCount] = {};
+        for (int i = 0; i < kCount; ++i)
+        {
+            vr_vm_stabilize::Mat3x4 bone{};
+            valid[i] = s_index[i] >= 0 && s_index[i] < numBones &&
+                vr_vm_stabilize::SafeRead(currentBones + s_index[i], bone) &&
+                HooksNativeViewmodelHandsOnlyMatrixFinite(bone);
+            if (valid[i])
+                at[i] = vr_vm_stabilize::GetOrigin(bone);
+        }
+        if (!valid[0])
+            return;
+        l4d2vr_ammo_grip::HandBones hand{};
+        hand.wrist = at[0];
+        for (int finger = 0; finger < 4; ++finger)
+        {
+            hand.knuckles[finger] = at[2 + finger];
+            hand.knuckleValid[finger] = valid[2 + finger];
+        }
+        hand.thumbRoot = at[1];
+        hand.thumbValid = valid[1];
+        Vector fist{};
+        const bool fistValid = l4d2vr_ammo_grip::FistCenter(hand, kNativeFistAlong, kNativeFistDepth, fist);
+        if (fistValid)
+            vr->PublishMagazineInteractionNativeLeftFist(fist);
+
+        const uint64_t nowMs = GetTickCount64();
+        static uint64_t s_lastDumpMs = 0u;
+        if (nowMs < vr->m_SelfTestHandDumpUntilMs.load(std::memory_order_acquire) && nowMs - s_lastDumpMs >= 500u)
+        {
+            s_lastDumpMs = nowMs;
+            // Every bone in the hand bone's frame (unit axes), in units.
+            vr_vm_stabilize::Mat3x4 handBone{};
+            vr_vm_stabilize::SafeRead(currentBones + s_index[0], handBone);
+            Vector axes[3] = { HooksMatrixAxis(handBone, 0), HooksMatrixAxis(handBone, 1), HooksMatrixAxis(handBone, 2) };
+            for (Vector& axis : axes)
+            {
+                const float length = axis.Length();
+                if (length > 0.0001f) axis = axis * (1.0f / length);
+            }
+            char line[1600] = {};
+            int used = std::snprintf(line, sizeof(line), "[VR][HandDump] left fist=%d", fistValid ? 1 : 0);
+            auto local = [&](const Vector& world, const char* name)
+            {
+                const Vector d = world - at[0];
+                if (used > 0 && used < static_cast<int>(sizeof(line)))
+                    used += std::snprintf(line + used, sizeof(line) - used, " %s=(%.2f %.2f %.2f)", name,
+                        DotProduct(d, axes[0]), DotProduct(d, axes[1]), DotProduct(d, axes[2]));
+            };
+            for (int i = 1; i < kCount; ++i)
+                if (valid[i])
+                    local(at[i], kNames[i] + 6);
+            if (fistValid)
+                local(fist, "fist");
+            Vector controller = vr->m_LeftHanded ? vr->m_RightControllerPosAbs : vr->m_LeftControllerPosAbs;
+            local(controller, "controller");
+            Game::logMsg("%s", line);
+        }
+    }
+
     inline void HooksNativeViewmodelHandsOnlyPublishLeftWristAnchor(
         VR* vr,
         const std::vector<std::string>& boneNames,
@@ -13953,6 +14039,7 @@ namespace
             HooksMatrixAxis(anchorWorld, 0),
             HooksMatrixAxis(anchorWorld, 1),
             HooksMatrixAxis(anchorWorld, 2));
+        HooksNativeViewmodelHandsOnlyPublishLeftFist(vr, boneNames, numBones, currentBones);
     }
 
     inline vr_vm_stabilize::Mat3x4 HooksNativeViewmodelHandsOnlyMakeLocalAxisRotation(
@@ -14037,10 +14124,16 @@ namespace
         std::array<float, 5>& outCurls)
     {
         outCurls = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-        if (!vr || !vr->m_NativeViewmodelLeftHandOpenVRSkeleton ||
-            !vr->GetNativeViewmodelLeftHandOpenVRFingerCurls(outCurls))
-        {
+        if (!vr || !vr->m_NativeViewmodelLeftHandOpenVRSkeleton)
             return false;
+        // Without finger tracking (a controller or runtime with no skeletal
+        // input) the hand still closes around a held spare below.
+        const bool magazineGrip = (vr->MagazineGripPhysicalMask() & 1u) != 0u;
+        if (!vr->GetNativeViewmodelLeftHandOpenVRFingerCurls(outCurls))
+        {
+            if (!magazineGrip)
+                return false;
+            outCurls = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
         }
 
         constexpr float kOpenVRThumbMinCurl = 0.0f;
@@ -14060,7 +14153,7 @@ namespace
             outCurls[static_cast<size_t>(finger)] = std::clamp(baseCurl + initialCurl, minCurl, maxCurl);
         }
 
-        if ((vr->MagazineGripPhysicalMask() & 1u) != 0u)
+        if (magazineGrip)
         {
             static const float kMagazineGripMinCurl[5] =
             {
@@ -23199,6 +23292,157 @@ namespace
         return true;
     }
 
+    // The last settled idle pose of each viewmodel (and of the arms drawn with
+    // it), relative to the model's render origin, which the VR code keeps at
+    // the controller. A reload or pump that pauses the viewmodel freezes this
+    // pose instead of whatever frame the native animation is in: freezing the
+    // first frame of a draw (the gun still swinging up from below) left the
+    // gun hanging away from the hand, with the pump out of reach.
+    struct ViewmodelIdlePoseEntry
+    {
+        int numBones = 0;
+        bool valid = false;
+        bool candidateValid = false;
+        uint64_t sampledMs = 0u;
+        std::vector<vr_vm_stabilize::Mat3x4> local;
+        std::vector<vr_vm_stabilize::Mat3x4> candidate;
+    };
+
+    struct ViewmodelIdlePoseCache
+    {
+        VR* owner = nullptr;
+        std::unordered_map<std::string, ViewmodelIdlePoseEntry> poses;
+        std::string weaponModel;          // the weapon viewmodel drawn last
+        l4d2vr_vm_anim::Kind weaponKind = l4d2vr_vm_anim::Kind::Unknown;
+        uint64_t weaponKindMs = 0u;
+    };
+
+    inline ViewmodelIdlePoseCache& GetViewmodelIdlePoseCache()
+    {
+        static ViewmodelIdlePoseCache cache;
+        return cache;
+    }
+
+    inline float ViewmodelPoseMaxDeviation(
+        const std::vector<vr_vm_stabilize::Mat3x4>& a,
+        const std::vector<vr_vm_stabilize::Mat3x4>& b)
+    {
+        if (a.size() != b.size() || a.empty())
+            return 1.0e9f;
+        float worst = 0.0f;
+        for (size_t bone = 0; bone < a.size(); ++bone)
+        {
+            const auto& c = a[bone].m;
+            const auto& p = b[bone].m;
+            // Bones parked far away (hidden arms, camera helpers) are not part
+            // of the visible hand and gun.
+            const float cl = c[0][3] * c[0][3] + c[1][3] * c[1][3] + c[2][3] * c[2][3];
+            const float pl = p[0][3] * p[0][3] + p[1][3] * p[1][3] + p[2][3] * p[2][3];
+            if (cl > 80.0f * 80.0f || pl > 80.0f * 80.0f)
+                continue;
+            const float dx = c[0][3] - p[0][3], dy = c[1][3] - p[1][3], dz = c[2][3] - p[2][3];
+            worst = (std::max)(worst, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        return worst;
+    }
+
+    // Classifies what the viewmodel (or the arms drawn with it) is playing and
+    // records its pose while it rests in an idle sequence. Returns the kind;
+    // Unknown when it cannot tell.
+    inline l4d2vr_vm_anim::Kind ObserveViewmodelIdlePose(
+        VR* vr,
+        void* drawState,
+        const std::string& lowerModel,
+        const ModelRenderInfo_t& info,
+        const void* bones)
+    {
+        using l4d2vr_vm_anim::Kind;
+        if (!vr || !drawState || !bones)
+            return Kind::Unknown;
+        const bool armsModel = HooksModelNameIsArmsOrHands(lowerModel);
+        if (!armsModel && !HooksModelNameIsViewmodel(lowerModel))
+            return Kind::Unknown;
+        // Holstered items are weapon entities drawn with their v_ models on
+        // the body; they are not the hand's viewmodel.
+        if (!armsModel && HooksDrawIsHolsteredItem(vr, info))
+            return Kind::Unknown;
+        ViewmodelIdlePoseCache& cache = GetViewmodelIdlePoseCache();
+        if (cache.owner != vr)
+        {
+            cache = {};
+            cache.owner = vr;
+        }
+        const uint64_t nowMs = GetTickCount64();
+        Kind kind = Kind::Unknown;
+        std::string key;
+        if (!armsModel)
+        {
+            const uint8_t* studioHdr = nullptr;
+            int sequence = -1;
+            float cycle = -1.0f;
+            const char* activity = "";
+            if (vr_vm_stabilize::TryGetStudioHdrFromDrawState(drawState, studioHdr))
+                kind = ClassifyViewmodelSequence(vr, info.entity_index, studioHdr,
+                    l4d2vr_vm_anim::IsSwungMeleeModel(lowerModel.c_str()), sequence, cycle, activity);
+            cache.weaponModel = lowerModel;
+            cache.weaponKind = kind;
+            cache.weaponKindMs = nowMs;
+            key = lowerModel;
+        }
+        else
+        {
+            // The arms are bone-merged to the weapon and share its animation.
+            if (cache.weaponModel.empty() || nowMs - cache.weaponKindMs > 250u)
+                return Kind::Unknown;
+            kind = cache.weaponKind;
+            key = lowerModel + "|" + cache.weaponModel;
+        }
+        if (kind != Kind::Idle)
+            return kind;
+
+        ViewmodelIdlePoseEntry& entry = cache.poses[key];
+        if (nowMs - entry.sampledMs < 50u)
+            return kind;
+        int numBones = 0;
+        if (!vr_vm_stabilize::TryGetNumBonesFromDrawState(drawState, numBones) || numBones <= 0 || numBones > 512)
+            return kind;
+        vr_vm_stabilize::Mat3x4 modelAnchor{};
+        if (!TryGetMagazineInteractionModelAnchor(info, modelAnchor))
+            return kind;
+        std::vector<vr_vm_stabilize::Mat3x4> current;
+        if (!BuildMagazineInteractionLocalBones(modelAnchor,
+            reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(bones), numBones, current))
+            return kind;
+        entry.sampledMs = nowMs;
+        // Settled: two idle samples in a row that agree (a recoil or other
+        // gesture layered over the idle base moves between them).
+        if (entry.candidateValid && entry.numBones == numBones &&
+            ViewmodelPoseMaxDeviation(entry.candidate, current) < 0.5f)
+        {
+            entry.local = current;
+            entry.valid = true;
+        }
+        entry.numBones = numBones;
+        entry.candidate = std::move(current);
+        entry.candidateValid = true;
+        return kind;
+    }
+
+    // The settled idle pose for this model (relative to the model anchor).
+    inline const ViewmodelIdlePoseEntry* FindViewmodelIdlePose(VR* vr, const std::string& lowerModel, int numBones)
+    {
+        ViewmodelIdlePoseCache& cache = GetViewmodelIdlePoseCache();
+        if (cache.owner != vr)
+            return nullptr;
+        const std::string key = HooksModelNameIsArmsOrHands(lowerModel)
+            ? lowerModel + "|" + cache.weaponModel : lowerModel;
+        const auto found = cache.poses.find(key);
+        if (found == cache.poses.end() || !found->second.valid || found->second.numBones != numBones ||
+            static_cast<int>(found->second.local.size()) != numBones)
+            return nullptr;
+        return &found->second;
+    }
+
     inline void ApplyMagazineInteractionViewmodelOverride(
         VR* vr,
         void* drawState,
@@ -23208,6 +23452,12 @@ namespace
     {
         MagazineInteractionRenderSnapshotScope reloadSnapshot(vr && vr->m_Game && vr->m_Game->GetMatQueueMode() != 0);
         MagazineInteractionFrozenViewmodelPoseCache& frozenCache = GetMagazineInteractionFrozenViewmodelPoseCache();
+
+        // What the native viewmodel plays, and its idle pose while it rests.
+        l4d2vr_vm_anim::Kind nativeKind = l4d2vr_vm_anim::Kind::Unknown;
+        if (vr && vr->m_IsVREnabled && drawState && pCustomBoneToWorld && !modelName.empty())
+            nativeKind = ObserveViewmodelIdlePose(vr, drawState, vr_vm_stabilize::ToLowerAscii(modelName), info,
+                pCustomBoneToWorld);
 
         const bool magazineInteractionActive = vr && vr->IsMagazineInteractionViewmodelOverrideActive();
         if (!vr || !magazineInteractionActive)
@@ -23334,22 +23584,50 @@ namespace
 
             if (needCapture)
             {
+                // Freeze a resting pose only: the last settled idle pose seen
+                // for this model. The frame the pause starts on can be the
+                // first of a draw (the sequence may still read idle there) or
+                // of the shot that started it. With no idle pose seen yet,
+                // keep the native frames until the viewmodel has rested (two
+                // matching idle samples). A model whose sequences cannot be
+                // read is paused on its current frame, as before.
+                using l4d2vr_vm_anim::Kind;
+                const ViewmodelIdlePoseEntry* idle = vr->m_SelfTestFreezeAnyFrame
+                    ? nullptr : FindViewmodelIdlePose(vr, lowerModel, numBones);
+                const bool nativeResting = !idle && (nativeKind == Kind::Unknown || vr->m_SelfTestFreezeAnyFrame);
                 frozenPose = {};
-                frozenPose.modelName = modelName;
-                frozenPose.numBones = numBones;
-                frozenPose.rootBone = rootBone;
-                frozenPose.valid = BuildMagazineInteractionLocalBones(
-                    modelAnchor,
-                    sourceBones,
-                    numBones,
-                    frozenPose.frozenLocalBones);
-                if (frozenPose.valid)
+                if (nativeResting || idle)
                 {
+                    frozenPose.modelName = modelName;
+                    frozenPose.numBones = numBones;
+                    frozenPose.rootBone = rootBone;
+                    if (idle)
+                    {
+                        frozenPose.frozenLocalBones = idle->local;
+                        frozenPose.valid = true;
+                    }
+                    else
+                    {
+                        frozenPose.valid = BuildMagazineInteractionLocalBones(
+                            modelAnchor,
+                            sourceBones,
+                            numBones,
+                            frozenPose.frozenLocalBones);
+                    }
+                }
+                static uint64_t s_LastFreezeLogMs = 0u;
+                const uint64_t freezeLogMs = GetTickCount64();
+                if (freezeLogMs - s_LastFreezeLogMs >= 1000u || frozenPose.valid)
+                {
+                    s_LastFreezeLogMs = freezeLogMs;
                     Game::logMsg(
-                        "[VR][MagazineInteraction] cached frozen viewmodel pose model=%s bones=%d root=%d",
+                        "[VR][ViewmodelFreeze] %s model=%s bones=%d root=%d native=%d",
+                        frozenPose.valid ? (idle ? "froze the last idle pose" : "froze the current frame (sequence unknown)")
+                                         : "waiting for the viewmodel to come to rest",
                         modelName.c_str(),
                         numBones,
-                        rootBone);
+                        rootBone,
+                        static_cast<int>(nativeKind));
                 }
             }
 

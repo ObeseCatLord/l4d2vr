@@ -526,10 +526,10 @@ namespace
 #endif
 	}
 
-	static void HandThrowNoteSpawn(const Vector& origin, const Vector& velocity, int command)
+	static void HandThrowNoteSpawn(const Vector& origin, const Vector& velocity, const Vector& body, int command)
 	{
 		if (Hooks::m_VR)
-			Hooks::m_VR->NoteHandThrowServerSpawn(origin, velocity, command);
+			Hooks::m_VR->NoteHandThrowServerSpawn(origin, velocity, body, command);
 	}
 
 	static void* ManualThrowProjectileCreate(
@@ -572,7 +572,7 @@ namespace
 		if (pending.hand)
 		{
 			player.handThrowSpawnedCommand = pending.handCommand;
-			HandThrowNoteSpawn(finalPosition, finalVelocity, pending.handCommand);
+			HandThrowNoteSpawn(finalPosition, finalVelocity, pending.handBodyVelocity, pending.handCommand);
 			const unsigned long long nowMs = GetTickCount64();
 			Game::logMsg(
 				"[VR][HandThrow] spawn type=%s player=%d command=%d origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f) speed=%.1f nativeVel=(%.1f %.1f %.1f) receiveToSpawnMs=%llu ticksAfterRelease=0",
@@ -4687,30 +4687,40 @@ namespace
 #endif
     }
 
-    // The body's own velocity from the decoded pose history (origin = hand - hand relative to the body).
+    // The body's own velocity: a fit through the server origins of the last
+    // four executed commands of this player (one source, one tick apart).
+    static void HandThrowRecordBody(Player& player, void* owner, int tick)
+    {
+        Vector origin{};
+        if (tick <= 0 || tick == player.handThrowBodyLastTick || !ManualThrowGetPlayerOrigin(owner, origin))
+            return;
+        if (player.handThrowBodyLastTick > 0 && (tick < player.handThrowBodyLastTick || tick > player.handThrowBodyLastTick + 8))
+            player.handThrowBodyCount = 0;
+        player.handThrowBodyLastTick = tick;
+        if (player.handThrowBodyCount == 4)
+        {
+            for (int i = 1; i < 4; ++i)
+            {
+                player.handThrowBodyTimes[static_cast<size_t>(i - 1)] = player.handThrowBodyTimes[static_cast<size_t>(i)];
+                player.handThrowBodyOrigins[static_cast<size_t>(i - 1)] = player.handThrowBodyOrigins[static_cast<size_t>(i)];
+            }
+            --player.handThrowBodyCount;
+        }
+        player.handThrowBodyTimes[static_cast<size_t>(player.handThrowBodyCount)] = static_cast<float>(tick) / 30.0f;
+        player.handThrowBodyOrigins[static_cast<size_t>(player.handThrowBodyCount)] = origin;
+        ++player.handThrowBodyCount;
+    }
+
     static Vector HandThrowBodyVelocity(const Player& player)
     {
-        int picked[4]{};
-        int count = 0;
-        for (int i = player.manualThrowPoseCount - 1; i >= 0 && count < 4; --i)
-        {
-            const ManualThrowPoseSample& s = player.manualThrowPoseSamples[static_cast<size_t>(i)];
-            if (s.valid && s.hasPlayerRelativePosition)
-                picked[count++] = i;
-        }
-        if (count < 2)
-            return {};
-        std::array<float, 4> t{};
         std::array<l4d2vr_hand_throw::V3, 4> p{};
-        for (int k = 0; k < count; ++k)
+        for (int i = 0; i < player.handThrowBodyCount; ++i)
         {
-            const ManualThrowPoseSample& s = player.manualThrowPoseSamples[static_cast<size_t>(picked[count - 1 - k])];
-            const Vector o = s.position - s.playerRelativePosition;
-            t[static_cast<size_t>(k)] = static_cast<float>(s.tick) / 30.0f;
-            p[static_cast<size_t>(k)] = l4d2vr_hand_throw::V3(o.x, o.y, o.z);
+            const Vector& o = player.handThrowBodyOrigins[static_cast<size_t>(i)];
+            p[static_cast<size_t>(i)] = l4d2vr_hand_throw::V3(o.x, o.y, o.z);
         }
         l4d2vr_hand_throw::V3 v{};
-        if (!l4d2vr_hand_throw::OriginVelocity(t, p, count, v))
+        if (!l4d2vr_hand_throw::OriginVelocity(player.handThrowBodyTimes, p, player.handThrowBodyCount, v))
             return {};
         // A respawn or teleport inside the window is not a velocity.
         if (v.Length() > 2000.0f)
@@ -4739,6 +4749,8 @@ namespace
         if (!Hooks::m_Game->IsValidPlayerIndex(index))
             return e;
         Player& player = Hooks::m_Game->m_PlayersVRInfo[static_cast<size_t>(index)];
+        if (player.isUsingVR)
+            HandThrowRecordBody(player, owner, command->tick_count);
         HandThrowRequest& request = player.handThrowRequest;
         if (!request.valid || request.command != command->command_number)
         {
@@ -4801,6 +4813,7 @@ namespace
         pending.origin = origin;
         pending.angles = r.angles;
         pending.velocity = Vector(v.x, v.y, v.z);
+        pending.handBodyVelocity = bodyVelocity;
         player.manualThrowPending = pending;
         player.handThrowSpawnedCommand = 0;
 

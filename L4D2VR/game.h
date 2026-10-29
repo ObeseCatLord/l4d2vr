@@ -84,6 +84,7 @@ struct ManualThrowPending
     bool hand = false;               // hand throw: spawn inside its release command
     int handCommand = 0;
     std::uint64_t handDecodedAtMs = 0u;
+    Vector handBodyVelocity = { 0.f, 0.f, 0.f };
     bool inventoryDrop = false;
     bool inventoryDropExecuted = false;
     unsigned pistolDropHand = 0u;
@@ -190,6 +191,11 @@ struct Player
     ManualThrowPending manualThrowPending{};
     HandThrowRequest handThrowRequest{};
     int handThrowSpawnedCommand = 0;
+    // Server origins of the last executed commands (hand throws add the body's velocity).
+    std::array<float, 4> handThrowBodyTimes{};
+    std::array<Vector, 4> handThrowBodyOrigins{};
+    int handThrowBodyCount = 0;
+    int handThrowBodyLastTick = 0;
     ObjectPullServerState objectPull{};
     // Source re-decodes backup CUserCmds on later packets. Keep this wire
     // sequence watermark outside ObjectPullServerState so Cancel cannot erase

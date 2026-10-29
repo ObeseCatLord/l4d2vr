@@ -2994,10 +2994,11 @@ void VR::SelfTestListProjectiles(std::vector<std::pair<int, Vector>>& out)
 // A screenshot is taken ~70 ms after each release (l4d2vr_selftest_ht_*.png).
 bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player)
 {
+    (void)t;
     using l4d2vr_selftest::Key;
     auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
     auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
-    char detail[320];
+    char detail[360];
 
     const std::string item = step.substr(10);
     const bool pipe = item == "pipe", molotov = item == "molotov", bile = item == "bile";
@@ -3017,6 +3018,8 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         uint64_t releaseMs = 0u;
         Vector releaseHand{};
         Vector swingStart{};
+        Vector swingDir{};            // scripted hand direction in the world
+        bool drawn = false;
         uint32_t serverSpawns = 0u;
         uint32_t clientThrows = 0u;
         bool seen = false;
@@ -3025,6 +3028,7 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         Vector seenPos2{};
         uint64_t seenMs2 = 0u;
         bool shot = false;
+        bool shot2 = false;
         bool watching = false;
         uint64_t pinMs = 0u;
         std::unordered_set<int> before;
@@ -3032,6 +3036,26 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
     static Throw s{};
     static bool s_savedToggle = true;
     static bool s_handMode = false;
+    // Stage timing is relative to the previous stage and needs a few game
+    // frames, so a game-thread stall (content loading) cannot skip a stage.
+    static int s_stage = -1;
+    static uint64_t s_stageMs = 0u;
+    static int s_stageFrames = 0;
+    const uint64_t nowMs = GetTickCount64();
+    if (m_SelfTestStage != s_stage)
+    {
+        s_stage = m_SelfTestStage;
+        s_stageMs = nowMs;
+        s_stageFrames = 0;
+    }
+    ++s_stageFrames;
+    auto next = [&](uint64_t minMs, int minFrames = 4) -> bool
+    {
+        if (nowMs - s_stageMs < minMs || s_stageFrames < minFrames)
+            return false;
+        ++m_SelfTestStage;
+        return true;
+    };
 
     const int throwIndex = m_SelfTestStage / 100;
     const int stage = m_SelfTestStage % 100;
@@ -3040,16 +3064,6 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         m_GripToggleEnabled = s_savedToggle;
         return true;
     }
-    const float t0 = throwIndex * 8.0f;
-    const float tt = t - t0;
-    auto next = [&](float when) -> bool
-    {
-        if (tt < when)
-            return false;
-        ++m_SelfTestStage;
-        return true;
-    };
-    auto projectiles = [&](std::vector<std::pair<int, Vector>>& out) { SelfTestListProjectiles(out); };
     const char* const style = kStyles[throwIndex];
     const bool drop = throwIndex == 2;
 
@@ -3057,8 +3071,7 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
     if (s.watching)
     {
         std::vector<std::pair<int, Vector>> now;
-        projectiles(now);
-        const uint64_t ms = GetTickCount64();
+        SelfTestListProjectiles(now);
         for (const auto& p : now)
         {
             if (s.before.count(p.first))
@@ -3066,21 +3079,32 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
             if (!s.seen)
             {
                 s.seen = true;
-                s.seenMs = ms;
+                s.seenMs = nowMs;
                 s.seenPos = p.second;
             }
-            else if (!s.seenMs2 && ms - s.seenMs >= 60u)
+            else if (!s.seenMs2 && nowMs - s.seenMs >= 60u)
             {
-                s.seenMs2 = ms;
+                s.seenMs2 = nowMs;
                 s.seenPos2 = p.second;
             }
         }
-        if (s.released && !s.shot && ms - s.releaseMs >= 70u)
+        // The hand right after the release, then the grenade in flight (the
+        // client draws new entities one interpolation interval late).
+        if (s.released && !s.shot && nowMs - s.releaseMs >= 70u)
         {
             s.shot = true;
             SelfTestRequestShot(std::string("ht_") + item + "_" + style, 1);
         }
+        if (s.released && !s.shot2 && nowMs - s.releaseMs >= 220u)
+        {
+            s.shot2 = true;
+            SelfTestRequestShot(std::string("ht_") + item + "_" + style + "_flight", 1);
+        }
     }
+
+    // Head-local swing keys (x forward, y toward the weapon hand, z up).
+    static const l4d2vr_selftest::Vec3 kWind[3] = { { -0.15f, 0.25f, 0.10f }, { -0.05f, 0.22f, -0.62f }, { 0.35f, 0.20f, -0.30f } };
+    static const l4d2vr_selftest::Vec3 kEnd[3] = { { 0.60f, 0.15f, 0.25f }, { 0.45f, 0.18f, -0.20f }, { 0.35f, 0.20f, -0.30f } };
 
     switch (stage)
     {
@@ -3097,40 +3121,48 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         ++m_SelfTestStage;
         return false;
     case 1:
-        if (next(1.0f)) {}
+        next(1000u);
         return false;
     case 2:
         SelfTestReachHolster(2);
-        if (next(2.0f)) button(m_ActionWeaponGrip, true);
+        if (next(1000u, 20)) button(m_ActionWeaponGrip, true);
         return false;
     case 3:
         SelfTestReachHolster(2);
-        if (next(2.5f))
+        if (next(500u, 10))
         {
             const int id = SelfTestActiveWeaponId(player);
+            s.drawn = id == expectedId;
             std::snprintf(detail, sizeof(detail), "%s: active weapon id=%d (grip draw from the chest)", style, id);
-            SelfTestReport("hand throw: grip draws the grenade", id == expectedId, detail);
-            if (id != expectedId)
+            SelfTestReport("hand throw: grip draws the grenade", s.drawn, detail);
+            if (!s.drawn)
                 cmd(use);
-            // Wind-up pose for the swing.
-            if (throwIndex == 0) SelfTestHoldRight(SelfTestVec(-0.15f, 0.25f, 0.10f), QAngle(-20.0f, 0.0f, 0.0f));
-            else if (throwIndex == 1) SelfTestHoldRight(SelfTestVec(-0.05f, 0.22f, -0.62f), QAngle(30.0f, 0.0f, 0.0f));
-            else SelfTestHoldRight(SelfTestVec(0.35f, 0.20f, -0.30f), QAngle(0.0f, 0.0f, 0.0f));
+            const l4d2vr_selftest::Vec3& w = kWind[throwIndex];
+            SelfTestHoldRight(w, QAngle(throwIndex == 0 ? -20.0f : throwIndex == 1 ? 30.0f : 0.0f, 0.0f, 0.0f));
         }
         return false;
     case 4:
-        if (next(3.2f)) { button(m_ActionPrimaryAttack, true); s.pinMs = GetTickCount64(); }   // pull the pin
+        if (next(700u, 10)) { button(m_ActionPrimaryAttack, true); s.pinMs = nowMs; }   // pull the pin
         return false;
     case 5:
-        if (next(3.3f)) button(m_ActionPrimaryAttack, false);
+        if (next(100u, 3)) button(m_ActionPrimaryAttack, false);
         return false;
     case 6:
-        if (next(3.8f))
+        if (next(500u, 10))
         {
             s_handMode = HandThrowServerReady();
             s.swingStart = GetRightControllerViewmodelAbsPos();
+            // The scripted direction in the world: head-local -> tracking -> world.
+            const l4d2vr_selftest::Vec3 d{ kEnd[throwIndex].x - kWind[throwIndex].x, kEnd[throwIndex].y - kWind[throwIndex].y,
+                kEnd[throwIndex].z - kWind[throwIndex].z };
+            const l4d2vr_selftest::Vec3 tr = l4d2vr_selftest::HeadLocalToTracking(SelfTestVec(0.0f, 0.0f, 0.0f),
+                m_HmdPose.TrackedDeviceAng.y, d);
+            const l4d2vr_hand_throw::V3 wd = l4d2vr_hand_throw::TrackingToWorld(l4d2vr_hand_throw::V3(tr.x, tr.y, tr.z),
+                m_RotationOffset, 1.0f);
+            s.swingDir = Vector(wd.x, wd.y, wd.z);
+            VectorNormalize(s.swingDir);
             std::vector<std::pair<int, Vector>> now;
-            projectiles(now);
+            SelfTestListProjectiles(now);
             for (const auto& p : now)
                 s.before.insert(p.first);
             s.watching = true;
@@ -3138,31 +3170,26 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
             s.clientThrows = m_HandThrowCount.load(std::memory_order_acquire);
             if (throwIndex == 0)
                 SelfTestStartPath(
-                    { Key{ 0.0f, SelfTestVec(-0.15f, 0.25f, 0.10f) }, Key{ 0.22f, SelfTestVec(0.60f, 0.15f, 0.25f), false },
-                      Key{ 0.40f, SelfTestVec(0.72f, 0.10f, 0.0f) } },
+                    { Key{ 0.0f, kWind[0] }, Key{ 0.22f, kEnd[0], false }, Key{ 0.40f, SelfTestVec(0.72f, 0.10f, 0.0f) } },
                     { Key{ 0.0f, SelfTestVec(-20.0f, 0.0f, 0.0f) }, Key{ 0.22f, SelfTestVec(-35.0f, 0.0f, 0.0f), false } });
             else if (throwIndex == 1)
                 SelfTestStartPath(
-                    { Key{ 0.0f, SelfTestVec(-0.05f, 0.22f, -0.62f) }, Key{ 0.30f, SelfTestVec(0.45f, 0.18f, -0.20f), false },
-                      Key{ 0.50f, SelfTestVec(0.55f, 0.15f, 0.0f) } },
+                    { Key{ 0.0f, kWind[1] }, Key{ 0.30f, kEnd[1], false }, Key{ 0.50f, SelfTestVec(0.55f, 0.15f, 0.0f) } },
                     { Key{ 0.0f, SelfTestVec(30.0f, 0.0f, 0.0f) }, Key{ 0.30f, SelfTestVec(-10.0f, 0.0f, 0.0f), false } });
         }
         return false;
     case 7:
-    {
         // Let go while the hand still moves (drop: the hand is still).
-        const float releaseAt = throwIndex == 0 ? 3.8f + 0.15f : throwIndex == 1 ? 3.8f + 0.22f : 3.8f + 0.3f;
-        if (next(releaseAt))
+        if (next(throwIndex == 0 ? 150u : throwIndex == 1 ? 220u : 300u, 2))
         {
             button(m_ActionWeaponGrip, false);
             s.released = true;
-            s.releaseMs = GetTickCount64();
+            s.releaseMs = nowMs;
             s.releaseHand = GetRightControllerViewmodelAbsPos();
         }
         return false;
-    }
     case 8:
-        if (!next(6.5f))
+        if (!next(2500u, 20))
             return false;
         break;
     default:
@@ -3188,14 +3215,14 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
     }
     else
     {
-        Vector releaseVelocity{};
-        Vector spawnOrigin{}, spawnVelocity{};
+        Vector releaseVelocity{}, spawnOrigin{}, spawnVelocity{}, spawnBody{};
         int spawnCommand = 0;
         {
             std::lock_guard<std::mutex> lock(m_HandThrowMutex);
             releaseVelocity = m_HandThrowLastReleaseVelocity;
             spawnOrigin = m_HandThrowServerSpawnOrigin;
             spawnVelocity = m_HandThrowServerSpawnVelocity;
+            spawnBody = m_HandThrowServerSpawnBody;
             spawnCommand = m_HandThrowServerSpawnCommand;
         }
         const bool released = m_HandThrowCount.load(std::memory_order_acquire) == s.clientThrows + 1u;
@@ -3204,41 +3231,43 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         const double releaseToSpawn = serverSeen
             ? static_cast<double>(m_HandThrowServerSpawnMs.load(std::memory_order_acquire)) - static_cast<double>(releaseMs)
             : -1.0;
-        const float releaseSpeedMps = releaseVelocity.Length() / (std::max)(1.0f, m_VRScale);
-        std::snprintf(detail, sizeof(detail), "%s: release sent=%d hand speed %.2f m/s", style, released ? 1 : 0, releaseSpeedMps);
+        const float handSpeed = releaseVelocity.Length();
+        const float releaseSpeedMps = handSpeed / (std::max)(1.0f, m_VRScale);
+        const float handAlong = handSpeed > 1.0f ? DotProduct(releaseVelocity, s.swingDir) / handSpeed : 0.0f;
+        std::snprintf(detail, sizeof(detail), "%s: release by %s, hand %.2f m/s (%.0f %.0f %.0f), %.2f of it along the scripted swing",
+            style, s.drawn ? "grip" : "trigger", releaseSpeedMps, releaseVelocity.x, releaseVelocity.y, releaseVelocity.z, handAlong);
         SelfTestReport("hand throw: release with the measured hand velocity", released &&
-            (drop ? releaseSpeedMps < 0.3f : releaseSpeedMps > 1.0f), detail);
+            (drop ? releaseSpeedMps < 0.3f : releaseSpeedMps > 1.0f && handAlong > 0.9f), detail);
 
-        Vector swing = s.releaseHand - s.swingStart;
-        const float swingLength = VectorNormalize(swing);
-        const Vector velocity = serverSeen ? spawnVelocity : seenVelocity;
-        const Vector origin = serverSeen ? spawnOrigin : s.seenPos;
-        const float speed = velocity.Length();
-        const float along = swingLength > 1.0f ? DotProduct(velocity, swing) : 0.0f;
         if (serverSeen)
         {
             std::snprintf(detail, sizeof(detail),
-                "%s: server spawn %.0f ms after the release (command %d), %.1f units from the release hand, velocity (%.0f %.0f %.0f) speed %.0f",
-                style, releaseToSpawn, spawnCommand, (origin - s.releaseHand).Length(), velocity.x, velocity.y, velocity.z, speed);
+                "%s: server spawn %.0f ms after the release (command %d), %.1f units from the release hand",
+                style, releaseToSpawn, spawnCommand, (spawnOrigin - s.releaseHand).Length());
             // One frame to send, the host's next tick, and the command itself.
             SelfTestReport("hand throw: spawned from the hand without delay", releaseToSpawn >= 0.0 &&
-                releaseToSpawn <= 50.0 + 34.0 && (origin - s.releaseHand).Length() < 12.0f, detail);
+                releaseToSpawn <= 50.0 + 34.0 && (spawnOrigin - s.releaseHand).Length() < 12.0f, detail);
+            // The server applied exactly hand * scale + body (below the clamp).
+            const Vector handPart = spawnVelocity - spawnBody;
+            const Vector expected = releaseVelocity * m_ManualThrowHandVelocityScale;
+            const float error = (handPart - expected).Length();
+            std::snprintf(detail, sizeof(detail),
+                "%s: velocity (%.0f %.0f %.0f) speed %.0f = body (%.0f %.0f %.0f) + hand x%.1f (%.0f %.0f %.0f), error %.1f",
+                style, spawnVelocity.x, spawnVelocity.y, spawnVelocity.z, spawnVelocity.Length(), spawnBody.x, spawnBody.y,
+                spawnBody.z, m_ManualThrowHandVelocityScale, expected.x, expected.y, expected.z, error);
+            SelfTestReport(drop ? "hand throw: a drop falls from the hand with the body" :
+                throwIndex == 0 ? "hand throw: overhand gets the hand's velocity" : "hand throw: underhand gets the hand's velocity",
+                error < 3.0f + 0.02f * expected.Length() && (drop ? handPart.Length() < 30.0f : handPart.Length() > 150.0f), detail);
         }
         else
         {
             std::snprintf(detail, sizeof(detail),
-                "%s: dedicated server, projectile seen %.0f ms after the release %.1f units from the release hand (server log: 'hand throw spawn')",
-                style, seenAfter, seenFromHand);
+                "%s: projectile seen %.0f ms after the release, %.1f units from the release hand, moving (%.0f %.0f %.0f) "
+                "(dedicated server: its log has 'hand throw spawn')", style, seenAfter, seenFromHand,
+                seenVelocity.x, seenVelocity.y, seenVelocity.z);
             SelfTestReport("hand throw: spawned from the hand without delay", s.seen && seenAfter <= 400.0 &&
                 seenFromHand >= 0.0f && seenFromHand < 60.0f, detail);
         }
-        std::snprintf(detail, sizeof(detail), "%s: velocity (%.0f %.0f %.0f) speed %.0f, %.0f along the swing (seen %.0f %.0f %.0f)",
-            style, velocity.x, velocity.y, velocity.z, speed, along, seenVelocity.x, seenVelocity.y, seenVelocity.z);
-        if (drop)
-            SelfTestReport("hand throw: a drop falls from the hand", (serverSeen || s.seen) && speed < 80.0f, detail);
-        else
-            SelfTestReport(throwIndex == 0 ? "hand throw: overhand follows the swing" : "hand throw: underhand follows the swing",
-                (serverSeen || s.seen) && along > 0.8f * speed && speed > (throwIndex == 0 ? 250.0f : 120.0f), detail);
         std::snprintf(detail, sizeof(detail), "%s: grenade slot %s, active weapon id %d", style,
             slotEmpty ? "empty" : "occupied", activeId);
         SelfTestReport("hand throw: the hand is empty after the throw", slotEmpty && activeId != expectedId, detail);
@@ -3248,6 +3277,7 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
     if (throwIndex + 1 >= 3)
     {
         m_GripToggleEnabled = s_savedToggle;
+        s_stage = -1;
         return true;
     }
     return false;

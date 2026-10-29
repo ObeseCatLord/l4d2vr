@@ -1563,8 +1563,9 @@ public:
 	std::atomic<uint64_t> m_HandThrowServerSpawnMs{ 0u };
 	Vector m_HandThrowServerSpawnOrigin = { 0.0f, 0.0f, 0.0f };     // m_HandThrowMutex
 	Vector m_HandThrowServerSpawnVelocity = { 0.0f, 0.0f, 0.0f };   // m_HandThrowMutex
+	Vector m_HandThrowServerSpawnBody = { 0.0f, 0.0f, 0.0f };       // m_HandThrowMutex
 	int m_HandThrowServerSpawnCommand = 0;                          // m_HandThrowMutex
-	void NoteHandThrowServerSpawn(const Vector& origin, const Vector& velocity, int command);
+	void NoteHandThrowServerSpawn(const Vector& origin, const Vector& velocity, const Vector& body, int command);
 	double HandThrowNowSeconds() const;
 	void UpdateHandThrowTracking();
 	bool HandThrowServerReady() const;

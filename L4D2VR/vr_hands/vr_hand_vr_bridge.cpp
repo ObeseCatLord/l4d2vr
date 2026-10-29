@@ -9365,6 +9365,17 @@ bool VR::UpdateMagazineInteraction(
             VrHandMath::Set(clamped, 2, 3, origin.z);
             setDetachedMagazineWorld(clamped);
         }
+        if (result.contactBegan)
+        {
+            // Every strike estimate at the touch (diagnostics): runtime velocity,
+            // tracked positions, the held box against the seated one.
+            const l4d2vr_mag_slap::Vec3 rel = l4d2vr_mag_slap::RelativeOrigin(seated, held);
+            Game::logMsg("[VR][MagazineSlap] touch: estimates (%.2f %.2f %.2f) (%.2f %.2f %.2f) (%.2f %.2f %.2f) m/s, spare at (%.3f %.3f %.3f) m in the old magazine's frame",
+                strikes[0].x, strikes[0].y, strikes[0].z,
+                strikeCount > 1 ? strikes[1].x : 0.0f, strikeCount > 1 ? strikes[1].y : 0.0f, strikeCount > 1 ? strikes[1].z : 0.0f,
+                strikeCount > 2 ? strikes[2].x : 0.0f, strikeCount > 2 ? strikes[2].y : 0.0f, strikeCount > 2 ? strikes[2].z : 0.0f,
+                rel.x / unitsPerMeter, rel.y / unitsPerMeter, rel.z / unitsPerMeter);
+        }
         if (result.contactBegan && !result.hit)
         {
             m_MagazineSlapNearMissSerial.fetch_add(1u, std::memory_order_acq_rel);

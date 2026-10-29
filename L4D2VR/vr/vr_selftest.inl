@@ -2464,9 +2464,24 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 606:
             if (!glideDone(0.4f)) return false;
             m_SelfTestMeasure = m->speed;
-            // The run-up plus 5 cm past the magazine at the motion's speed
-            // against a still gun hand.
-            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), (m_SelfTestMeasureB + 0.05f) / m->speed);
+            {
+                // Aim from where the spare really is now (its pose trails the
+                // hand): through the old magazine's centre to 5 cm past it,
+                // keeping only the planned sideways offset (wide).
+                const Vector dir = strikeDirection();
+                Vector across = CrossProduct(dir, g.gunUp);
+                if (across.Length() < 0.2f) across = CrossProduct(dir, g.gunForward);
+                across = across * (1.0f / (std::max)(0.001f, across.Length()));
+                const float side = motion == "wide" ? 0.30f : 0.0f;
+                const Vector target = g.magazineCenter + dir * (0.05f * scale) + across * (side * scale);
+                const Vector end = g.heldValid ? leftNow() + (target - g.heldCenter)
+                    : m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint);
+                m_SelfTestSlapEnd = end;
+                m_SelfTestPoint = g.magazineCenter;
+                // The run-up plus 5 cm past the magazine at the motion's speed
+                // against a still gun hand.
+                glide(end, meters(end, leftNow()) / m->speed);
+            }
             go(607);
             return false;
         case 607:

@@ -2319,8 +2319,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         static const Motion kMotions[] = {
             { "down", 1.2f, false, true }, { "forward", 1.0f, false, true }, { "diag", 0.9f, false, true },
             { "fast", 2.5f, false, true }, { "cant", 1.0f, true, true }, { "cantalong", 0.8f, true, true },
-            { "slowinsert", 0.3f, false, false }, { "slowdown", 0.35f, false, false },
-            { "up", 1.5f, false, false }, { "wide", 1.5f, false, false },
+            { "slowinsert", 0.3f, false, false }, { "slowdown", 0.25f, false, false },
+            { "up", 1.5f, false, false }, { "wide", 1.5f, false, false }, { "stock", 1.5f, false, false },
         };
         const Motion* m = nullptr;
         for (const Motion& candidate : kMotions)
@@ -2337,6 +2337,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             if (forward.Length() > 0.001f) forward = forward * (1.0f / forward.Length());
             Vector dir = out;
             if (motion == "forward") dir = forward;
+            else if (motion == "stock") dir = forward * -1.0f;
             else if (motion == "diag") dir = out + forward;
             else if (motion == "cant") dir = Vector(0.0f, 0.0f, -1.0f);
             else if (motion == "slowinsert" || motion == "up") dir = out * -1.0f;
@@ -2363,6 +2364,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
             m_SelfTestValueA = static_cast<int>(m_MagazineSlapSerial.load(std::memory_order_acquire));
             m_SelfTestValueB = static_cast<int>(m_MagazineSlapNearMissSerial.load(std::memory_order_acquire));
+            m_SelfTestValueD = 0; // screenshots of the slapped magazine taken
             m_SelfTestClip0 = g.clip;
             m_SelfTestReserve0 = g.reserve;
             glide(g.pickupCenter, 0.5f);
@@ -2433,6 +2435,11 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             go(607);
             return false;
         case 607:
+            if (slaps() > 0u && m_SelfTestValueD == 0)
+            {
+                SelfTestRequestShot(gun + "_slap_" + motion + "_hit", 1);
+                m_SelfTestValueD = 1;
+            }
             if (!glideDone(0.05f)) return false;
             if (m->hit)
                 glide(m_SelfTestSlapEnd + m_SelfTestSlapPark + (g.magazineCenter - m_SelfTestPoint), 0.15f);
@@ -2440,6 +2447,12 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 608:
         {
+            // The old magazine on its way out (it drops when the host confirms).
+            if (slaps() > 0u && m_SelfTestValueD < 2 && inPhase >= 0.12f)
+            {
+                SelfTestRequestShot(gun + "_slap_" + motion + "_flying", 1);
+                m_SelfTestValueD = 2;
+            }
             if (inPhase < 1.2f) return false;
             const uint32_t nearMisses = m_MagazineSlapNearMissSerial.load(std::memory_order_acquire) -
                 static_cast<uint32_t>(m_SelfTestValueB);

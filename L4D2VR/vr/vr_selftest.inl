@@ -1377,6 +1377,17 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return true;
     }
 
+    // ambidextrous=1|0: item hands follow the grabbing hand (AmbidextrousItemHands)
+    // or stay in the dominant hand, for the following steps. The holster
+    // geometry steps (reach, reachlh) expect off-hand draws to go to the
+    // dominant hand; ambie2e and ambimedkit need it on.
+    if (step.rfind("ambidextrous=", 0) == 0)
+    {
+        m_AmbidextrousItemHands = step.size() > 13 && step[13] == '1';
+        Game::logMsg("[VR][SelfTest] ambidextrous item hands %d", m_AmbidextrousItemHands ? 1 : 0);
+        return true;
+    }
+
     // lefthanded=1|0: switch the left-handed layout (dominant hand = the left
     // controller) for the following steps. The self-test drives buttons by
     // action, so m_ActionWeaponGrip is then the left hand's grip.

@@ -2459,12 +2459,32 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 605:
             if (!glideDone(0.2f)) return false;
             glide(m_SelfTestSlapStart + (g.magazineCenter - m_SelfTestPoint), 0.6f);
+            m_SelfTestStrikeCorrections = 0;
             go(606);
             return false;
         case 606:
             if (!glideDone(0.4f)) return false;
-            m_SelfTestStrikeCorrections = 0;
             m_SelfTestMeasure = m->speed;
+            if (nowMs - m_MagazineSlapCentersAtMs < 200u && m_SelfTestStrikeCorrections < 6)
+            {
+                // Line the still spare up with the old magazine across the
+                // strike before it starts (a strike that starts off line grazes
+                // the side and rests there, which never slaps).
+                const Vector dir = strikeDirection();
+                Vector across = CrossProduct(dir, g.gunUp);
+                if (across.Length() < 0.2f) across = CrossProduct(dir, g.gunForward);
+                across = across * (1.0f / (std::max)(0.001f, across.Length()));
+                const float side = motion == "wide" ? 0.30f : 0.0f;
+                Vector miss = m_MagazineSlapSeatedCenter + across * (side * scale) - m_MagazineSlapHeldCenter;
+                miss = miss - dir * DotProduct(miss, dir);
+                if (miss.Length() > 0.008f * scale)
+                {
+                    ++m_SelfTestStrikeCorrections;
+                    glide(leftNow() + miss, 0.15f);
+                    return false;
+                }
+            }
+            m_SelfTestStrikeCorrections = 0;
             {
                 // Aim from where the spare really is now (its pose trails the
                 // hand): through the old magazine's centre to 5 cm past it,

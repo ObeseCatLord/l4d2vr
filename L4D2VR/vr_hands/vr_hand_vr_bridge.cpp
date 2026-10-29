@@ -7949,6 +7949,7 @@ bool VR::UpdateMagazineInteraction(
         m_RetainedMagazineCatchHandLocal = leftControllerPosRelativeToWeapon();
         m_RetainedMagazineInsertGate.Reset();
         m_RetainedMagazineHandPulled = anywhere;
+        m_RetainedPullMaxDepth = -1e9f;
         m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazine;
         m_MagazineInteractionLeftHandHolding = true;
         m_MagazineInteractionFreshGrabbedAt = now;
@@ -9126,12 +9127,38 @@ bool VR::UpdateMagazineInteraction(
         {
             // Catching while the hand is still under the well must not insert
             // the old magazine immediately. Withdraw it, then return it.
-            const float travel = (leftControllerPosRelativeToWeapon() - m_RetainedMagazineCatchHandLocal).Length();
-            // A magazine the hand pulled out itself is already withdrawn: once it is
-            // clear of the well it may go straight back in.
-            const float required = m_RetainedMagazineHandPulled ? 0.001f
-                : std::max(0.03f, m_MagazineInteractionPullTriggerMeters) * m_VRScale;
-            if (!m_RetainedMagazineInsertGate.Update(fitsSocket, travel, required)) return false;
+            if (m_RetainedMagazineHandPulled)
+            {
+                // A magazine the hand pulled out goes back in when it was
+                // pulled clear (6 cm out along the well) and is then pushed
+                // back in (3 cm from the furthest point), never while it is
+                // still being pulled out. (The well catches a magazine a long
+                // way out, so leaving its catch zone is no test.)
+                if (!inputSocketValid)
+                    rebuildInputSocketFromSessionBox();
+                const MagazineInteractionBoxSnapshot& depthBox = inputSocketValid ? inputSocketBox : m_MagazineInteractionSocketBox;
+                const VrHandMatrix4& depthWorld = inputSocketValid ? inputSocketWorld : m_MagazineInteractionSocketWorld;
+                const Vector centerLocal = MagazineInteractionBoxCenterLocal(depthBox);
+                const Vector held = MagazineInteractionMatrixPointWorld(m_MagazineInteractionDetachedMagazineWorld, centerLocal);
+                const Vector socket = MagazineInteractionMatrixPointWorld(depthWorld, centerLocal);
+                l4d2vr_mag_slap::Vec3 outward{};
+                if (!l4d2vr_mag_slap::OutwardAxis(MagazineSlapBox(depthBox),
+                        MagazineSlapVec(m_MagazineInteractionMagazineInsertionAxisLocal), outward))
+                    return false;
+                const float depth = DotProduct(held - socket, MagazineSlapVector(outward));
+                if (!std::isfinite(depth))
+                    return false;
+                m_RetainedPullMaxDepth = std::max(m_RetainedPullMaxDepth, depth);
+                const bool pulledClear = m_RetainedPullMaxDepth >= 0.06f * m_VRScale;
+                const bool pushedBack = depth <= m_RetainedPullMaxDepth - 0.03f * m_VRScale;
+                if (!(fitsSocket && pulledClear && pushedBack)) return false;
+            }
+            else
+            {
+                const float travel = (leftControllerPosRelativeToWeapon() - m_RetainedMagazineCatchHandLocal).Length();
+                const float required = std::max(0.03f, m_MagazineInteractionPullTriggerMeters) * m_VRScale;
+                if (!m_RetainedMagazineInsertGate.Update(fitsSocket, travel, required)) return false;
+            }
         }
         else if (!freshGateOpen)
         {

@@ -2436,6 +2436,7 @@ public:
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
     // The held old magazine was pulled out by hand (not caught as it fell).
     bool m_RetainedMagazineHandPulled = false;
+    float m_RetainedPullMaxDepth = -1e9f; // furthest it has been out of the well since
     // Fresh ammo seats only after leaving the well once since it was taken.
     l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;
     // A shell was taken while the pump waited to be cycled; the pump stage

@@ -2177,7 +2177,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             SelfTestSpareInFist f{};
             const bool measured = SelfTestMeasureSpareInFist(f);
             const bool inFist = measured && f.lateralMeters <= f.halfThicknessMeters + 0.01f &&
-                f.alongFromBase >= -0.05f && f.alongFromBase <= 0.75f;
+                f.alongFromBase >= -0.05f && f.alongFromBase <= (shellGun ? 1.0f : 0.75f);
             std::snprintf(detail, sizeof(detail),
                 "pose %d: fist %.3f m off the spare's long axis (half thickness %.3f m), %.2f of its %.3f m length from the base%s",
                 pose + 1, f.lateralMeters, f.halfThicknessMeters, f.alongFromBase, f.lengthMeters,
@@ -2785,10 +2785,17 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         }
         case 403:
+        {
             if (inPhase < 0.5f) return false;
+            const Vector d = g.boltGrabCenter - m_RightControllerPosAbs;
+            const Vector now = Vector(DotProduct(d, g.gunForward), DotProduct(d, g.gunRight), DotProduct(d, g.gunUp)) * (1.0f / scale);
+            Game::logMsg("[VR][SelfTest] %s pump before the switch: (%.3f %.3f %.3f) m, at the shot +1.5 s (%.3f %.3f %.3f) m",
+                gun.c_str(), now.x, now.y, now.z, m_SelfTestPumpInGun.x, m_SelfTestPumpInGun.y, m_SelfTestPumpInGun.z);
+            m_SelfTestPumpInGun = now;
             cmd("use weapon_pistol");
             go(404);
             return false;
+        }
         case 404:
             if (inPhase < 1.5f) return false;
             std::snprintf(detail, sizeof(detail), "use weapon_%s", gun.c_str());

@@ -23313,6 +23313,7 @@ namespace
         VR* owner = nullptr;
         std::unordered_map<std::string, ViewmodelIdlePoseEntry> poses;
         std::string weaponModel;          // the weapon viewmodel drawn last
+        uint64_t weaponSinceMs = 0u;      // when it replaced the one before
         l4d2vr_vm_anim::Kind weaponKind = l4d2vr_vm_anim::Kind::Unknown;
         uint64_t weaponKindMs = 0u;
     };
@@ -23384,6 +23385,8 @@ namespace
             if (vr_vm_stabilize::TryGetStudioHdrFromDrawState(drawState, studioHdr))
                 kind = ClassifyViewmodelSequence(vr, info.entity_index, studioHdr,
                     l4d2vr_vm_anim::IsSwungMeleeModel(lowerModel.c_str()), sequence, cycle, activity);
+            if (cache.weaponModel != lowerModel)
+                cache.weaponSinceMs = nowMs;
             cache.weaponModel = lowerModel;
             cache.weaponKind = kind;
             cache.weaponKindMs = nowMs;
@@ -23397,7 +23400,11 @@ namespace
             kind = cache.weaponKind;
             key = lowerModel + "|" + cache.weaponModel;
         }
-        if (kind != Kind::Idle)
+        // Right after a switch the viewmodel can still report the previous
+        // gun's sequence (read as idle) while the new one swings up: no
+        // samples until the draw has had time to start.
+        constexpr uint64_t kSwitchSettleMs = 750u;
+        if (kind != Kind::Idle || nowMs - cache.weaponSinceMs < kSwitchSettleMs)
             return kind;
 
         ViewmodelIdlePoseEntry& entry = cache.poses[key];

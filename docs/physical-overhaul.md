@@ -71,7 +71,14 @@ With dual pistols, each trigger fires its own pistol along its own hand. On serv
 
 ## Grenades
 
-Pull the trigger to arm (pin haptic), release to throw with your hand's motion (`ManualThrowEnabled`, `ManualThrowVelocityScale`). On servers that can't take a custom velocity, the native throw is aimed so it lands where your hand throw would have.
+Molotovs, pipe bombs and bile jars are thrown like in Pavlov on a listen server hosted with this build and on the dedicated plugin (feature `HandThrow`, 0x400):
+
+- The grip holds the grenade (draw it from its holster). The trigger pulls the pin (haptic tick). Letting go of the grip throws it from your hand; in toggle-grip mode the next squeeze is the release. Holding the trigger through the swing and letting go of it throws too. Without the pin, letting go drops the grenade as an item (`ManualThrowPinRequired`, on by default).
+- The grenade leaves exactly where your hand is, in the command you let go. There is no pin-pull or throw animation. The native grenade waits 0.5 s after the press for its pin animation, and then another 0.2 s after the release (`CBaseCSGrenade::StartGrenadeThrow`) before it appears at your eye; none of that happens here.
+- The speed is your hand's own: the last ~80 ms of tracked controller motion before release (`ManualThrowVelocityWindowMs`, blended toward the fastest part by `ManualThrowPeakVelocityBlend`). It is measured at headset frame rate in tracking space, so stick turning can't add to it. That speed is multiplied by 3, Pavlov's grenade speed multiplier (`ManualThrowHandVelocityScale` when you host; `ThrowHandVelocityScale` on the plugin). Your own walking or running speed is added unscaled. The server caps the result at `ManualThrowMaxVelocity` / `ThrowMaxSpeed` (1400 units/s). Overhand throws, underhand tosses and plain drops all work.
+- The thrown grenade disappears from your hand at once, and the hand switches to your next item.
+
+On other servers the old path stays: pull the trigger to arm, release to throw with your hand's motion (`ManualThrowEnabled`, `ManualThrowVelocityScale`). Plugins without `HandThrow` replace the native projectile's velocity. On servers that can't take a custom velocity, the native throw is aimed so it lands where your hand throw would have.
 
 ## Pills and adrenaline
 
@@ -101,7 +108,7 @@ Build `l4d2vr_server.so` (Linux, 32-bit) with `L4D2VR/server/build_release_linux
 
 1. Stop the server. Move any old `l4d2vr_pose_server` files out of `left4dead2/addons`.
 2. Copy `l4d2vr_server.so` (or `.dll`) and `l4d2vr_server.vdf` into `left4dead2/addons/`. Optionally copy `l4d2vr_server_config.example.txt` there as `l4d2vr_server_config.txt`.
-3. Start the server. After the map loads, the log shows `L4D2VR server: map: ... features=0x3FF`. A `target X rejected` line names a feature that a game update broke; only that feature turns off.
+3. Start the server. After the map loads, the log shows `L4D2VR server: map: ... features=0x7FF`. A `target X rejected` line names a feature that a game update broke; only that feature turns off.
 
 Before trusting a new game build, run `l4d2vr_server_symcheck <path to server_srv.so>` (built by `run_server_tests.sh`).
 
@@ -111,7 +118,7 @@ Both grips are used only for gripping: they draw from holsters and hold magazine
 
 ## Self-test (developers)
 
-`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `reach` (both hands reach every holster from a human body model at human speeds; checks draws, hover pulses and no gun bash), `emptysqueeze` (squeezing the grip in the air never drops the gun), `pickup` (grip contact pickup of a first aid kit keeps the gun), `bashanim` and `swinganim` (the strike registers and the viewmodel never shows the native shove or swing animation, `[VR][VmAnim]` lines), `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server.
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `reach` (both hands reach every holster from a human body model at human speeds; checks draws, hover pulses and no gun bash), `emptysqueeze` (squeezing the grip in the air never drops the gun), `pickup` (grip contact pickup of a first aid kit keeps the gun), `bashanim` and `swinganim` (the strike registers and the viewmodel never shows the native shove or swing animation, `[VR][VmAnim]` lines), `throwpipe`, `throwbile` (trigger-held throw; logs the release-to-projectile time as `INFO`), `handthrow=pipe|molotov|bile` (grip draw from the chest, pin, then an overhand throw, an underhand toss and a drop, each releasing the grip mid-swing. Checks the measured hand speed, the spawn at the hand in the release command (on a listen host: the release-to-spawn time and the spawn position; on the plugin: the projectile seen near the hand, with the server log's `hand throw spawn` lines), the velocity along the swing, and the empty hand afterwards. Screenshots `ht_<item>_<style>.png` are taken 70 ms after each release), `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server.
 
 Render checks photograph the VR eye images instead of trusting the log:
 
@@ -139,7 +146,7 @@ Test on a listen server you host, on Marmot Cafe with the plugin, and on a serve
 - Sights: the crosshair sits on the front sight for every gun; the crosshair gap grows while moving and firing.
 - Akimbo: each trigger hits where its own pistol points.
 - Melee: heavy weapons lag a little, hits land where the blade goes, no hits while walking, thrust and gun bash shove.
-- Grenades: throw distance follows your arm; arc lands near the target on plain servers.
+- Grenades: hold with the grip, pull the pin with the trigger, let go mid-swing. It should leave the hand at once with no animation, and overhand, underhand and drop should all feel right. Throw distance follows your arm; the arc lands near the target on plain servers.
 - Pills to the mouth, adrenaline to the chest and arm.
 - Loading screens and chapter transitions stay live; stats show at chapter end.
 - Scopes: parallax and edge darkening as your eye moves.

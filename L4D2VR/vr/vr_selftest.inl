@@ -1898,6 +1898,10 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         m_SelfTestLeftAngWorldValid = false;
         if (gun != "pistol")
         {
+            // Another gun first, so the step always starts with a new gun of its
+            // kind (a magazine an earlier step left out stays with the old one).
+            std::snprintf(detail, sizeof(detail), "give %s", gun == "smg" ? "rifle" : "smg");
+            cmd(detail);
             std::snprintf(detail, sizeof(detail), "give %s", gun.c_str());
             cmd(detail);
         }
@@ -1998,8 +2002,10 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             button(m_ActionOffHandGrip, false);
             std::snprintf(detail, sizeof(detail), "hand %.3f m from the magazine, gripped and pulled 0.15 m: %u ejection(s), clip %d -> %d, state %s, foregrip=%d",
                 m_SelfTestMeasure, ejects(), m_SelfTestClip0, g.clip, state(), m_VrHandsTwoHandedGripActive ? 1 : 0);
+            // (Holding the gun at the magazine well with the grip may take the
+            // two-handed grip; it must never take or pull the magazine.)
             SelfTestReport(label("the grip does not take the seated magazine (trigger interactions)"),
-                ejects() == 0u && g.clip == m_SelfTestClip0 && g.state == idleState && !m_VrHandsTwoHandedGripActive, detail);
+                ejects() == 0u && g.clip == m_SelfTestClip0 && g.state == idleState, detail);
             m_SelfTestValueD = m_VrHandsTwoHandedGripActive ? 1 : 0;
             if (m_SelfTestValueD)
                 button(m_ActionOffHandGrip, true); // toggle the foregrip off again

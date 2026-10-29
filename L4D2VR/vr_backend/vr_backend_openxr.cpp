@@ -25,14 +25,18 @@
 //     it (LockPreparedSubmissionQueue / LockSubmissionQueue); WaitGetPoses and
 //     the event thread take it themselves through DXVK's callbacks. Lock order:
 //     DXVK queue lock, then m_Mutex.
-//   * M2 scope: HMD pose only. Controllers report "not connected", input
-//     actions are inactive (valid handles, no data) and overlays are kept as
-//     state but not composited (M3/M4).
+//   * Controllers and input (M3): openxr_input_runtime.inl. Controllers are
+//     pseudo devices 1 (left) and 2 (right) whose poses are the OpenVR raw
+//     pose rebuilt from the grip pose; the IVRInput facade maps the mod's
+//     actions onto OpenXR actions with per-profile suggested bindings.
+//   * Overlays are kept as state but not composited yet (M4).
 
 #include "vr_backend.h"
 #include "openxr_frame_ring.h"
 #include "openxr_pose_math.h"
 #include "openxr_loader_probe.h"
+#include "openxr_input_profiles.h"
+#include "openxr_input_logic.h"
 
 #include "../game.h"
 
@@ -82,7 +86,11 @@ namespace
     X(xrEnumerateSwapchainImages) X(xrAcquireSwapchainImage) X(xrWaitSwapchainImage) X(xrReleaseSwapchainImage) \
     X(xrWaitFrame) X(xrBeginFrame) X(xrEndFrame) X(xrLocateViews) \
     X(xrGetVulkanInstanceExtensionsKHR) X(xrGetVulkanDeviceExtensionsKHR) X(xrGetVulkanGraphicsDeviceKHR) \
-    X(xrGetVulkanGraphicsRequirementsKHR)
+    X(xrGetVulkanGraphicsRequirementsKHR) \
+    X(xrStringToPath) X(xrPathToString) X(xrCreateActionSet) X(xrCreateAction) \
+    X(xrSuggestInteractionProfileBindings) X(xrAttachSessionActionSets) X(xrCreateActionSpace) X(xrSyncActions) \
+    X(xrGetActionStateFloat) X(xrGetActionStateVector2f) X(xrApplyHapticFeedback) X(xrGetCurrentInteractionProfile) \
+    X(xrEnumerateBoundSourcesForAction)
 
     struct XrApi
     {
@@ -114,6 +122,8 @@ namespace
     };
 
     constexpr uint32_t kHmd = vr::k_unTrackedDeviceIndex_Hmd;
+    constexpr uint32_t kLeftHand = 1;   // pseudo device indices (XrInputRuntime::kDeviceLeft/Right)
+    constexpr uint32_t kRightHand = 2;
 
     const char* SessionStateName(XrSessionState state)
     {
@@ -175,6 +185,8 @@ namespace
         return (n > 0 && n < sizeof(buffer)) ? std::string(buffer, n) : std::string();
     }
 
+#include "openxr_input_runtime.inl"
+
     // ---- The runtime ---------------------------------------------------------
     class OpenXrRuntime;
 
@@ -187,28 +199,18 @@ namespace
         vr::HmdMatrix34_t GetEyeToHeadTransform(vr::EVREye eEye) override;
         void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin eOrigin, float fPredictedSecondsToPhotonsFromNow,
             vr::TrackedDevicePose_t* pTrackedDevicePoseArray, uint32_t unTrackedDevicePoseArrayCount) override;
-        vr::TrackedDeviceIndex_t GetTrackedDeviceIndexForControllerRole(vr::ETrackedControllerRole) override
-        { return vr::k_unTrackedDeviceIndexInvalid; }  // controllers arrive in M3
-        vr::ETrackedDeviceClass GetTrackedDeviceClass(vr::TrackedDeviceIndex_t unDeviceIndex) override
-        { return unDeviceIndex == kHmd ? vr::TrackedDeviceClass_HMD : vr::TrackedDeviceClass_Invalid; }
+        vr::TrackedDeviceIndex_t GetTrackedDeviceIndexForControllerRole(vr::ETrackedControllerRole unDeviceType) override;
+        vr::ETrackedDeviceClass GetTrackedDeviceClass(vr::TrackedDeviceIndex_t unDeviceIndex) override;
         bool IsTrackedDeviceConnected(vr::TrackedDeviceIndex_t unDeviceIndex) override;
         float GetFloatTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
             vr::ETrackedPropertyError* pError) override;
-        int32_t GetInt32TrackedDeviceProperty(vr::TrackedDeviceIndex_t, vr::ETrackedDeviceProperty,
-            vr::ETrackedPropertyError* pError) override
-        {
-            if (pError) *pError = vr::TrackedProp_UnknownProperty;
-            return 0;
-        }
-        uint32_t GetStringTrackedDeviceProperty(vr::TrackedDeviceIndex_t, vr::ETrackedDeviceProperty,
-            char* pchValue, uint32_t unBufferSize, vr::ETrackedPropertyError* pError) override
-        {
-            if (pchValue && unBufferSize)
-                pchValue[0] = '\0';
-            if (pError) *pError = vr::TrackedProp_UnknownProperty;
-            return 0;
-        }
-        void TriggerHapticPulse(vr::TrackedDeviceIndex_t, uint32_t, unsigned short) override {}
+        int32_t GetInt32TrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
+            vr::ETrackedPropertyError* pError) override;
+        uint32_t GetStringTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
+            char* pchValue, uint32_t unBufferSize, vr::ETrackedPropertyError* pError) override;
+        void TriggerHapticPulse(vr::TrackedDeviceIndex_t unControllerDeviceIndex, uint32_t unAxisId, unsigned short usDurationMicroSec) override;
+        bool TriggerHapticVibration(vr::TrackedDeviceIndex_t unControllerDeviceIndex, float durationSeconds, float frequency,
+            float amplitude) override;
 
     private:
         OpenXrRuntime& m_Rt;
@@ -232,103 +234,6 @@ namespace
 
     private:
         OpenXrRuntime& m_Rt;
-    };
-
-    // M2: actions exist (stable handles, so the self-test and the mod's
-    // acquisition path work) but are inactive. M3 replaces this with the
-    // OpenXR action table.
-    class XrInputFacade final : public IVrInput
-    {
-    public:
-        vr::EVRInputError SetActionManifestPath(const char*) override { return vr::VRInputError_None; }
-        vr::EVRInputError GetActionSetHandle(const char* pchActionSetName, vr::VRActionSetHandle_t* pHandle) override
-        {
-            if (!pchActionSetName || !pHandle) return vr::VRInputError_InvalidParam;
-            *pHandle = HandleFor(std::string("set:") + pchActionSetName);
-            return vr::VRInputError_None;
-        }
-        vr::EVRInputError GetActionHandle(const char* pchActionName, vr::VRActionHandle_t* pHandle) override
-        {
-            if (!pchActionName || !pHandle) return vr::VRInputError_InvalidParam;
-            *pHandle = HandleFor(std::string("action:") + pchActionName);
-            return vr::VRInputError_None;
-        }
-        vr::EVRInputError GetInputSourceHandle(const char* pchInputSourcePath, vr::VRInputValueHandle_t* pHandle) override
-        {
-            if (!pchInputSourcePath || !pHandle) return vr::VRInputError_InvalidParam;
-            *pHandle = HandleFor(std::string("source:") + pchInputSourcePath);
-            return vr::VRInputError_None;
-        }
-        vr::EVRInputError UpdateActionState(vr::VRActiveActionSet_t*, uint32_t, uint32_t) override { return vr::VRInputError_None; }
-        vr::EVRInputError GetDigitalActionData(vr::VRActionHandle_t, vr::InputDigitalActionData_t* pActionData,
-            uint32_t unActionDataSize, vr::VRInputValueHandle_t) override
-        {
-            if (pActionData && unActionDataSize >= sizeof(*pActionData))
-                *pActionData = {};
-            return vr::VRInputError_None;
-        }
-        vr::EVRInputError GetAnalogActionData(vr::VRActionHandle_t, vr::InputAnalogActionData_t* pActionData,
-            uint32_t unActionDataSize, vr::VRInputValueHandle_t) override
-        {
-            if (pActionData && unActionDataSize >= sizeof(*pActionData))
-                *pActionData = {};
-            return vr::VRInputError_None;
-        }
-        vr::EVRInputError GetSkeletalActionData(vr::VRActionHandle_t, vr::InputSkeletalActionData_t* pActionData,
-            uint32_t unActionDataSize) override
-        {
-            if (pActionData && unActionDataSize >= sizeof(*pActionData))
-                *pActionData = {};
-            return vr::VRInputError_NoData;
-        }
-        vr::EVRInputError GetBoneCount(vr::VRActionHandle_t, uint32_t* pBoneCount) override
-        {
-            if (pBoneCount) *pBoneCount = 0;
-            return vr::VRInputError_NoData;
-        }
-        vr::EVRInputError GetBoneHierarchy(vr::VRActionHandle_t, vr::BoneIndex_t*, uint32_t) override { return vr::VRInputError_NoData; }
-        vr::EVRInputError GetBoneName(vr::VRActionHandle_t, vr::BoneIndex_t, char* pchBoneName, uint32_t unNameBufferSize) override
-        {
-            if (pchBoneName && unNameBufferSize) pchBoneName[0] = '\0';
-            return vr::VRInputError_NoData;
-        }
-        vr::EVRInputError GetSkeletalReferenceTransforms(vr::VRActionHandle_t, vr::EVRSkeletalTransformSpace,
-            vr::EVRSkeletalReferencePose, vr::VRBoneTransform_t*, uint32_t) override { return vr::VRInputError_NoData; }
-        vr::EVRInputError GetSkeletalBoneData(vr::VRActionHandle_t, vr::EVRSkeletalTransformSpace,
-            vr::EVRSkeletalMotionRange, vr::VRBoneTransform_t*, uint32_t) override { return vr::VRInputError_NoData; }
-        vr::EVRInputError GetSkeletalSummaryData(vr::VRActionHandle_t, vr::EVRSummaryType,
-            vr::VRSkeletalSummaryData_t*) override { return vr::VRInputError_NoData; }
-        vr::EVRInputError GetOriginTrackedDeviceInfo(vr::VRInputValueHandle_t, vr::InputOriginInfo_t* pOriginInfo,
-            uint32_t unOriginInfoSize) override
-        {
-            if (pOriginInfo && unOriginInfoSize >= sizeof(*pOriginInfo))
-            {
-                *pOriginInfo = {};
-                pOriginInfo->trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;
-            }
-            return vr::VRInputError_InvalidHandle;
-        }
-        vr::EVRInputError GetActionBindingInfo(vr::VRActionHandle_t, vr::InputBindingInfo_t*, uint32_t, uint32_t,
-            uint32_t* punReturnedBindingInfoCount) override
-        {
-            if (punReturnedBindingInfoCount) *punReturnedBindingInfoCount = 0;
-            return vr::VRInputError_NoData;
-        }
-
-    private:
-        uint64_t HandleFor(const std::string& key)
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            auto it = m_Handles.find(key);
-            if (it != m_Handles.end())
-                return it->second;
-            const uint64_t handle = 0x10000u + m_Handles.size() + 1u;
-            m_Handles.emplace(key, handle);
-            return handle;
-        }
-
-        std::mutex m_Mutex;
-        std::map<std::string, uint64_t> m_Handles;
     };
 
     // M2: overlays keep their OpenVR-shaped state (so visibility checks and
@@ -479,11 +384,31 @@ namespace
         vr::VROverlayHandle_t m_NextHandle = 0;
     };
 
+    // The controller tip component (vr_controller_tip.h): the aim pose in the
+    // raw frame (SteamVR derives its OpenXR aim pose from the same component).
     class XrRenderModelsFacade final : public IVrRenderModels
     {
     public:
-        bool GetComponentStateForDevicePath(const char*, const char*, vr::VRInputValueHandle_t,
-            const vr::RenderModel_ControllerMode_State_t*, vr::RenderModel_ComponentState_t*) override { return false; }
+        explicit XrRenderModelsFacade(XrInputRuntime& input) : m_Input(input) {}
+        bool GetComponentStateForDevicePath(const char* pchRenderModelName, const char* pchComponentName,
+            vr::VRInputValueHandle_t devicePath, const vr::RenderModel_ControllerMode_State_t*,
+            vr::RenderModel_ComponentState_t* pComponentState) override
+        {
+            if (!pchRenderModelName || !pchComponentName || !pComponentState ||
+                std::strcmp(pchComponentName, vr::k_pch_Controller_Component_Tip) != 0)
+                return false;
+            const int hand = devicePath == XrInputRuntime::kSourceLeft ? 0 : devicePath == XrInputRuntime::kSourceRight ? 1 : -1;
+            vr::HmdMatrix34_t tip{};
+            if (hand < 0 || !m_Input.TipLocal(hand, tip))
+                return false;
+            *pComponentState = {};
+            pComponentState->mTrackingToComponentLocal = tip;
+            pComponentState->mTrackingToComponentRenderModel = tip;
+            pComponentState->uProperties = vr::VRComponentProperty_IsVisible | vr::VRComponentProperty_IsStatic;
+            return true;
+        }
+    private:
+        XrInputRuntime& m_Input;
     };
 
     class XrApplicationsFacade final : public IVrApplications
@@ -496,7 +421,7 @@ namespace
     {
     public:
         OpenXrRuntime()
-            : m_SystemFacade(*this), m_CompositorFacade(*this)
+            : m_Input(m_Xr), m_SystemFacade(*this), m_CompositorFacade(*this), m_RenderModelsFacade(m_Input)
         {
             m_Ring.SetAssertHook(&OpenXrRuntime::OnRingViolation, this);
         }
@@ -625,6 +550,7 @@ namespace
                 return;
             }
             CreateSpacesLocked();
+            m_Input.SessionCreated(m_Session);
             uint32_t n = 0;
             m_Xr.xrEnumerateSwapchainFormats(m_Session, 0, &n, nullptr);
             m_SwapchainFormats.assign(n, 0);
@@ -873,6 +799,11 @@ namespace
             vr::TrackedDevicePose_t hmd{};
             if (LocateHmd(time, hmd))
                 poses[kHmd] = hmd;
+            if (count > kRightHand)
+            {
+                m_Input.LocateHand(0, m_BaseSpace, time, poses[kLeftHand]);
+                m_Input.LocateHand(1, m_BaseSpace, time, poses[kRightHand]);
+            }
         }
 
         bool HmdConnected() const { return m_Session != XR_NULL_HANDLE; }
@@ -903,7 +834,8 @@ namespace
 
         IVrSystem* SystemFacade() { return &m_SystemFacade; }
         IVrCompositor* CompositorFacade() { return &m_CompositorFacade; }
-        IVrInput* InputFacade() { return &m_InputFacade; }
+        IVrInput* InputFacade() { return &m_Input; }
+        XrInputRuntime& Input() { return m_Input; }
         IVrOverlay* OverlayFacade() { return &m_OverlayFacade; }
         IVrRenderModels* RenderModelsFacade() { return &m_RenderModelsFacade; }
         IVrApplications* ApplicationsFacade() { return &m_ApplicationsFacade; }
@@ -1084,6 +1016,15 @@ namespace
                     m_Extensions.insert(name);
                 }
             }
+            // Controller profiles that need an extension (Cosmos, Quest Pro/3, Pico, ...).
+            for (const char* name : XrInputRuntime::WantedExtensions())
+            {
+                if (available.count(name))
+                {
+                    enable.push_back(name);
+                    m_Extensions.insert(name);
+                }
+            }
 
             XrInstanceCreateInfo ci{ XR_TYPE_INSTANCE_CREATE_INFO };
             strncpy_s(ci.applicationInfo.applicationName, "Left 4 Dead 2 VR", _TRUNCATE);
@@ -1141,6 +1082,9 @@ namespace
             }
             m_ViewConfig.assign(2, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
             m_Xr.xrEnumerateViewConfigurationViews(m_Instance, m_SystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &views, m_ViewConfig.data());
+
+            // Input: action sets, actions and suggested bindings (before any session).
+            m_Input.CreateActions(m_Instance, m_Extensions, m_RuntimeName);
 
             std::string enabledList;
             for (const char* name : enable)
@@ -1285,7 +1229,8 @@ namespace
                     Game::logMsg("[VR][OpenXR] reference space change pending (recentre)");
                     break;
                 case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
-                    Game::logMsg("[VR][OpenXR] interaction profile changed (controllers arrive in M3)");
+                    Game::logMsg("[VR][OpenXR] interaction profile changed");
+                    m_Input.NotifyProfileChanged();
                     break;
                 case XR_TYPE_EVENT_DATA_EVENTS_LOST:
                     Game::logMsg("[VR][OpenXR] %u events lost", reinterpret_cast<const XrEventDataEventsLost&>(event).lostEventCount);
@@ -1355,6 +1300,7 @@ namespace
             XrResult lastEndError = XR_SUCCESS;
             float hz = 0.0f;
             vr::TrackedDevicePose_t hmd{};
+            vr::TrackedDevicePose_t hands[2]{};
             {
                 std::lock_guard<std::mutex> lock(m_Mutex);
                 stats = m_Ring.Stats();
@@ -1370,6 +1316,8 @@ namespace
                 dropped = m_DroppedSubmits;
                 hz = xrm::DisplayHzFromPeriod(m_LastDisplayPeriod, 0.0f);
                 hmd = m_LastHmdPose;
+                hands[0] = m_LastHandPose[0];
+                hands[1] = m_LastHandPose[1];
             }
             // HMD pose (tracking space): position and yaw/pitch of the view direction.
             const vr::HmdMatrix34_t& m = hmd.mDeviceToAbsoluteTracking;
@@ -1386,6 +1334,12 @@ namespace
                 static_cast<unsigned long long>(stats.violations), static_cast<unsigned long long>(eyes),
                 static_cast<unsigned long long>(dropped), waitAvg, waitMax,
                 hmd.bPoseIsValid ? 1 : 0, m.m[0][3], m.m[1][3], m.m[2][3], yawDeg, pitchDeg);
+            const vr::HmdMatrix34_t& l = hands[0].mDeviceToAbsoluteTracking;
+            const vr::HmdMatrix34_t& r = hands[1].mDeviceToAbsoluteTracking;
+            Game::logMsg("[VR][OpenXR][Controllers] %s | left valid=%d pos=(%.3f %.3f %.3f) fwd=(%.2f %.2f %.2f) | right valid=%d pos=(%.3f %.3f %.3f) fwd=(%.2f %.2f %.2f)",
+                m_Input.StatsLine().c_str(),
+                hands[0].bPoseIsValid ? 1 : 0, l.m[0][3], l.m[1][3], l.m[2][3], -l.m[0][2], -l.m[1][2], -l.m[2][2],
+                hands[1].bPoseIsValid ? 1 : 0, r.m[0][3], r.m[1][3], r.m[2][3], -r.m[0][2], -r.m[1][2], -r.m[2][2]);
         }
 
         // ---- Frame helpers (m_Mutex held) -----------------------------------
@@ -1537,6 +1491,9 @@ namespace
         {
             vr::TrackedDevicePose_t hmd{};
             const bool haveHmd = LocateHmd(time, hmd);
+            vr::TrackedDevicePose_t hands[2];
+            for (int h = 0; h < 2; ++h)
+                m_Input.LocateHand(h, m_BaseSpace, time, hands[h]);
 
             XrViewLocateInfo li{ XR_TYPE_VIEW_LOCATE_INFO };
             li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -1554,6 +1511,8 @@ namespace
                 std::lock_guard<std::mutex> lock(m_Mutex);
                 if (haveHmd)
                     m_LastHmdPose = hmd;
+                m_LastHandPose[0] = hands[0];
+                m_LastHandPose[1] = hands[1];
                 if (haveViews)
                 {
                     for (int e = 0; e < 2; ++e)
@@ -1591,6 +1550,16 @@ namespace
                 renderPoses[kHmd] = m_LastHmdPose;
             if (gamePoses && gameCount > kHmd)
                 gamePoses[kHmd] = m_LastHmdPose;
+            if (renderPoses && renderCount > kRightHand)
+            {
+                renderPoses[kLeftHand] = m_LastHandPose[0];
+                renderPoses[kRightHand] = m_LastHandPose[1];
+            }
+            if (gamePoses && gameCount > kRightHand)
+            {
+                gamePoses[kLeftHand] = m_LastHandPose[0];
+                gamePoses[kRightHand] = m_LastHandPose[1];
+            }
         }
 
         // GetProjectionRaw / GetEyeToHeadTransform need a located view, which
@@ -1989,6 +1958,7 @@ namespace
         float m_RefreshRateHz = 0.0f;
 
         vr::TrackedDevicePose_t m_LastHmdPose{};
+        vr::TrackedDevicePose_t m_LastHandPose[2]{};
         vr::HmdMatrix34_t m_EyeToHead[2] = {
             { { { 1, 0, 0, -0.032f }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } } },
             { { { 1, 0, 0, 0.032f }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } } } };
@@ -2010,9 +1980,9 @@ namespace
         uint64_t m_StatsPrevWaits = 0;
         double m_WaitMsSum = 0.0, m_WaitMsMax = 0.0;
 
+        XrInputRuntime m_Input;
         XrSystemFacade m_SystemFacade;
         XrCompositorFacade m_CompositorFacade;
-        XrInputFacade m_InputFacade;
         XrOverlayFacade m_OverlayFacade;
         XrRenderModelsFacade m_RenderModelsFacade;
         XrApplicationsFacade m_ApplicationsFacade;
@@ -2033,7 +2003,92 @@ namespace
         vr::TrackedDevicePose_t* pTrackedDevicePoseArray, uint32_t unTrackedDevicePoseArrayCount)
     { m_Rt.PredictPoses(fPredictedSecondsToPhotonsFromNow, pTrackedDevicePoseArray, unTrackedDevicePoseArrayCount); }
     bool XrSystemFacade::IsTrackedDeviceConnected(vr::TrackedDeviceIndex_t unDeviceIndex)
-    { return unDeviceIndex == kHmd && m_Rt.HmdConnected(); }
+    {
+        if (unDeviceIndex == kHmd)
+            return m_Rt.HmdConnected();
+        return m_Rt.Input().Connected(XrInputRuntime::HandOfDevice(unDeviceIndex));
+    }
+    vr::TrackedDeviceIndex_t XrSystemFacade::GetTrackedDeviceIndexForControllerRole(vr::ETrackedControllerRole role)
+    {
+        const int hand = role == vr::TrackedControllerRole_LeftHand ? 0 : role == vr::TrackedControllerRole_RightHand ? 1 : -1;
+        if (hand < 0 || !m_Rt.Input().Connected(hand))
+            return vr::k_unTrackedDeviceIndexInvalid;
+        return hand == 0 ? kLeftHand : kRightHand;
+    }
+    vr::ETrackedDeviceClass XrSystemFacade::GetTrackedDeviceClass(vr::TrackedDeviceIndex_t unDeviceIndex)
+    {
+        if (unDeviceIndex == kHmd)
+            return vr::TrackedDeviceClass_HMD;
+        return m_Rt.Input().Connected(XrInputRuntime::HandOfDevice(unDeviceIndex)) ? vr::TrackedDeviceClass_Controller : vr::TrackedDeviceClass_Invalid;
+    }
+    int32_t XrSystemFacade::GetInt32TrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
+        vr::ETrackedPropertyError* pError)
+    {
+        const int hand = XrInputRuntime::HandOfDevice(unDeviceIndex);
+        if (hand >= 0 && m_Rt.Input().Connected(hand))
+        {
+            if (prop == vr::Prop_ControllerRoleHint_Int32)
+            {
+                if (pError) *pError = vr::TrackedProp_Success;
+                return hand == 0 ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand;
+            }
+            if (prop == vr::Prop_DeviceClass_Int32)
+            {
+                if (pError) *pError = vr::TrackedProp_Success;
+                return vr::TrackedDeviceClass_Controller;
+            }
+        }
+        if (pError) *pError = vr::TrackedProp_UnknownProperty;
+        return 0;
+    }
+    uint32_t XrSystemFacade::GetStringTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
+        char* pchValue, uint32_t unBufferSize, vr::ETrackedPropertyError* pError)
+    {
+        if (pchValue && unBufferSize)
+            pchValue[0] = '\0';
+        const int hand = XrInputRuntime::HandOfDevice(unDeviceIndex);
+        std::string value;
+        if (hand >= 0 && m_Rt.Input().Connected(hand))
+        {
+            const l4d2vr_openxr_input::Profile* p = m_Rt.Input().RuntimeProfile(hand);
+            if (prop == vr::Prop_RenderModelName_String)
+                value = p ? p->renderModel[hand] : "generic_controller";
+            else if (prop == vr::Prop_ControllerType_String)
+                value = p ? p->controllerType : "generic";
+            else if (prop == vr::Prop_ModelNumber_String)
+                value = p ? p->path : "unknown";
+            else if (prop == vr::Prop_TrackingSystemName_String)
+                value = "openxr";
+        }
+        else if (unDeviceIndex == kHmd && prop == vr::Prop_TrackingSystemName_String)
+            value = "openxr";
+        if (value.empty())
+        {
+            if (pError) *pError = vr::TrackedProp_UnknownProperty;
+            return 0;
+        }
+        const uint32_t needed = static_cast<uint32_t>(value.size() + 1);
+        if (!pchValue || unBufferSize < needed)
+        {
+            if (pError) *pError = vr::TrackedProp_BufferTooSmall;
+            return needed;
+        }
+        std::memcpy(pchValue, value.c_str(), needed);
+        if (pError) *pError = vr::TrackedProp_Success;
+        return needed;
+    }
+    void XrSystemFacade::TriggerHapticPulse(vr::TrackedDeviceIndex_t unControllerDeviceIndex, uint32_t, unsigned short usDurationMicroSec)
+    {
+        // Legacy width-only pulse: SteamVR controllers buzz harder for longer
+        // pulses (0.5-4 ms in the mod); keep that feel with a short vibration.
+        const float strength = std::clamp(static_cast<float>(usDurationMicroSec) / 4000.0f, 0.0f, 1.0f);
+        m_Rt.Input().Vibrate(XrInputRuntime::HandOfDevice(unControllerDeviceIndex), 0.01f + 0.02f * strength, 0.0f, 0.25f + 0.75f * strength);
+    }
+    bool XrSystemFacade::TriggerHapticVibration(vr::TrackedDeviceIndex_t unControllerDeviceIndex, float durationSeconds, float frequency,
+        float amplitude)
+    {
+        return m_Rt.Input().Vibrate(XrInputRuntime::HandOfDevice(unControllerDeviceIndex), durationSeconds, frequency, amplitude);
+    }
     float XrSystemFacade::GetFloatTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
         vr::ETrackedPropertyError* pError)
     {
@@ -2068,7 +2123,7 @@ namespace
 
         Caps GetCaps() const override
         {
-            Caps caps;  // M2: no overlay mouse, intersection, keyboard, bones or runtime assets
+            Caps caps;  // no overlay mouse, intersection or keyboard (M4), no skeletal bones (M5), no runtime assets
             caps.maxOverlayLayers = Runtime().MaxLayers();
             return caps;
         }
@@ -2104,6 +2159,16 @@ namespace
         IVrRenderModels* RenderModels() override { return Runtime().InstanceReady() ? Runtime().RenderModelsFacade() : nullptr; }
         IVrApplications* Applications() override { return Runtime().InstanceReady() ? Runtime().ApplicationsFacade() : nullptr; }
         bool RequestSubmittedEyeDump(const char* path) override { return Runtime().RequestEyeDump(path); }
+        bool SetFakeInput(const char* spec, std::string& error) override
+        {
+            if (!Runtime().InstanceReady())
+            {
+                error = "OpenXR is not running";
+                return false;
+            }
+            return Runtime().Input().SetFake(spec, error);
+        }
+        std::string DescribeControllers() override { return Runtime().InstanceReady() ? Runtime().Input().Describe() : std::string(); }
     };
 }
 

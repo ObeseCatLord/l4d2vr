@@ -93,6 +93,15 @@ void VR::ApplySelfTestPoses()
     const float dt = m_SelfTestPrevPoseMs ? std::clamp((nowMs - m_SelfTestPrevPoseMs) / 1000.0f, 0.001f, 0.1f) : 0.011f;
     m_SelfTestPrevPoseMs = nowMs;
 
+    if (m_SelfTestFreezeHead)
+    {
+        // A fixed head (tracking (0, 1.6, 0), facing -Z) so frames from two
+        // runs (OpenVR / OpenXR) compare pixel for pixel; look= sets the pitch.
+        m_HmdPose.TrackedDevicePos = Vector(0.0f, 0.0f, 1.6f);
+        m_HmdPose.TrackedDeviceAng = QAngle(0.0f, 0.0f, 0.0f);
+        m_HmdPose.TrackedDeviceVel = Vector(0.0f, 0.0f, 0.0f);
+        m_HmdPose.TrackedDeviceAngVel = QAngle(0.0f, 0.0f, 0.0f);
+    }
     Vector head = m_HmdPose.TrackedDevicePos;
     const float yaw = m_HmdPose.TrackedDeviceAng.y;
     head.z -= m_SelfTestHeadDrop;
@@ -120,6 +129,30 @@ void VR::ApplySelfTestPoses()
     {
         m_RotationOffset += m_SelfTestTurnRate * dt;
         m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
+    }
+    // runtimehands=1: the controllers stay where the runtime reports them
+    // (GetPoseData), so the real pose path (backend offsets, roles, tip) is
+    // what the frames show.
+    if (m_SelfTestRuntimeHands)
+        return;
+    if (m_SelfTestSimHands)
+    {
+        // The raw OpenVR poses a backend must produce for Monado's simulated
+        // controllers (STAGE (-+0.2, 1.3, -0.5), no rotation, WMR/simple grip =
+        // raw): the reference frames for runtimehands=1 on either backend.
+        for (int h = 0; h < 2; ++h)
+        {
+            vr::TrackedDevicePose_t raw{};
+            raw.bDeviceIsConnected = true;
+            raw.bPoseIsValid = true;
+            raw.eTrackingResult = vr::TrackingResult_Running_OK;
+            raw.mDeviceToAbsoluteTracking = { { { 1.0f, 0.0f, 0.0f, h == 0 ? -0.2f : 0.2f },
+                { 0.0f, 1.0f, 0.0f, 1.3f }, { 0.0f, 0.0f, 1.0f, -0.5f } } };
+            GetPoseData(raw, h == 0 ? m_LeftControllerPose : m_RightControllerPose);
+        }
+        if (m_ItemHandSwapped.load(std::memory_order_acquire))
+            std::swap(m_RightControllerPose, m_LeftControllerPose);
+        return;
     }
     // Scene hands (lefthand=/righthand=) in the holster body frame. A step's own
     // world target or scripted path still wins while it runs.
@@ -1177,18 +1210,39 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 
     if (step.rfind("handthrow=", 0) == 0)
         return RunHandThrowStep(step, t, player);
-    if (step == "flashlight")
+    if (step == "flashlight" || step == "flashlight=xr")
     {
         // The flashlight action (right stick click in every default binding)
         // toggles the light on and off again; the server's EF_DIMLIGHT shows it.
+        // flashlight=xr clicks the right stick through the OpenXR backend's
+        // fake input instead (binding table + thresholds + facade).
+        const bool viaXr = step == "flashlight=xr";
+        auto press = [&](bool down)
+        {
+            if (!viaXr)
+            {
+                button(m_ActionFlashlight, down);
+                return;
+            }
+            std::string error;
+            if (!l4d2vr_backend::Active().SetFakeInput(down ? "/user/hand/right/input/thumbstick/click=1"
+                : "/user/hand/right/input/thumbstick/click=0", error))
+                Game::logMsg("[VR][SelfTest] fake input refused: %s", error.c_str());
+        };
         auto lightOn = [&](bool& on) { return QueryFlashlightState(player, on); };
         if (at(0, 0.5f))
         {
+            if (viaXr)
+            {
+                l4d2vr_selftest::ForgetAll();
+                std::string error;
+                l4d2vr_backend::Active().SetFakeInput("profile=runtime", error);
+            }
             bool on = false;
             m_SelfTestValueA = lightOn(on) ? (on ? 1 : 0) : -1;
-            button(m_ActionFlashlight, true);
+            press(true);
         }
-        if (at(1, 0.65f)) button(m_ActionFlashlight, false);
+        if (at(1, 0.65f)) press(false);
         if (at(2, 2.0f))
         {
             bool on = false;
@@ -1198,9 +1252,9 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
                 (on ? 1 : 0) != m_SelfTestValueA, detail);
             m_SelfTestValueB = known ? (on ? 1 : 0) : -1;
             if (m_SelfTestValueB == 1) SelfTestRequestShot("flashlight_on", 1);
-            button(m_ActionFlashlight, true);
+            press(true);
         }
-        if (at(3, 2.15f)) button(m_ActionFlashlight, false);
+        if (at(3, 2.15f)) press(false);
         if (at(4, 3.5f))
         {
             bool on = false;
@@ -1208,6 +1262,11 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             std::snprintf(detail, sizeof(detail), "before %d, after the second press %d", m_SelfTestValueB, known ? (on ? 1 : 0) : -1);
             SelfTestReport("flashlight action toggles the light back", m_SelfTestValueB >= 0 && known &&
                 (on ? 1 : 0) == m_SelfTestValueA, detail);
+            if (viaXr)
+            {
+                std::string error;
+                l4d2vr_backend::Active().SetFakeInput("clear", error);
+            }
             return true;
         }
         return false;
@@ -1418,10 +1477,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     // lefthanded=1|0: switch the left-handed layout (dominant hand = the left
     // controller) for the following steps. The self-test drives buttons by
     // action, so m_ActionWeaponGrip is then the left hand's grip.
+    // lefthanded=2: left-handed with LeftHandedSwapInputActions (the bindings
+    // mirrored by GetActionBindingInfo) for the following steps.
     if (step.rfind("lefthanded=", 0) == 0)
     {
-        m_LeftHanded = step.size() > 11 && step[11] == '1';
-        Game::logMsg("[VR][SelfTest] left-handed %d", m_LeftHanded ? 1 : 0);
+        m_LeftHanded = step.size() > 11 && (step[11] == '1' || step[11] == '2');
+        m_LeftHandedSwapInputActions = step.size() > 11 && step[11] == '2';
+        Game::logMsg("[VR][SelfTest] left-handed %d (input swap %d)", m_LeftHanded ? 1 : 0, m_LeftHandedSwapInputActions ? 1 : 0);
         return true;
     }
 
@@ -1579,6 +1641,142 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             m_NativeWristHudTexReady[0].load() ? 1 : 0, m_NativeWristHudShown[0].load() ? 1 : 0,
             usedR >> 16, usedR & 0xFFFFu, m_NativeWristHudTexReady[1].load() ? 1 : 0, m_NativeWristHudShown[1].load() ? 1 : 0);
         SelfTestReport("native wrist HUD dump", dumped && m_NativeWristHudTexReady[0].load() && m_NativeWristHudTexReady[1].load(), detail);
+        return true;
+    }
+
+    // ---- Input backend checks (OpenXR port M3) -----------------------------------
+    // runtimehands=1|0: controller poses from the runtime instead of the script.
+    if (step.rfind("runtimehands=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            m_SelfTestRuntimeHands = step.size() > 13 && step[13] == '1';
+            m_SelfTestSimHands = step.substr(13) == "sim";
+            Game::logMsg("[VR][SelfTest] runtime hands %d (%s)", m_SelfTestRuntimeHands ? 1 : 0,
+                l4d2vr_backend::Active().DescribeControllers().c_str());
+        }
+        if (t < 1.0f)
+            return false;
+        if (m_SelfTestRuntimeHands || m_SelfTestSimHands)
+            SelfTestLogRuntimeHands(m_SelfTestSimHands ? "simulated raw hands" : "runtime hands");
+        return true;
+    }
+    // freezehead=1|0: fixed head pose (see ApplySelfTestPoses).
+    if (step.rfind("freezehead=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            m_SelfTestFreezeHead = step.size() > 11 && step[11] == '1';
+            Game::logMsg("[VR][SelfTest] frozen head %d", m_SelfTestFreezeHead ? 1 : 0);
+        }
+        return t >= 0.5f;
+    }
+    // xrinput=<spec>: the backend's fake action source (openxr_input_logic.h
+    // FakeInput: profile=index, /user/hand/right/input/squeeze/value=0.9,
+    // /user/hand/left/input/thumbstick=0:0.8, clear). Waits 0.3 s so several
+    // action syncs see the new value.
+    if (step.rfind("xrinput=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            // Scripted button overrides would hide the backend's answer.
+            l4d2vr_selftest::ForgetAll();
+            std::string error;
+            if (!l4d2vr_backend::Active().SetFakeInput(step.c_str() + 8, error))
+            {
+                std::snprintf(detail, sizeof(detail), "%s: %s", step.c_str() + 8, error.c_str());
+                SelfTestReport("fake input", false, detail);
+                return true;
+            }
+        }
+        return t >= 0.3f;
+    }
+    // xrcheck=<Action>[@left|@right]=<expect>: the IVRInput facade's answer
+    // (expect 1/0 = pressed/released, '-' = inactive, x:y for sticks).
+    // xrmod=<Action>=<expect>: the same through the mod's own reader
+    // (left-handed mirror and item-hand roles included).
+    if (step.rfind("xrcheck=", 0) == 0 || step.rfind("xrmod=", 0) == 0)
+    {
+        const bool ok = SelfTestCheckInputStep(step, detail, sizeof(detail));
+        SelfTestReport(step.c_str(), ok, detail);
+        return true;
+    }
+    // xrbound: every action the current profile binds is active on that hand
+    // through the facade (and inactive where it is not bound): proves the
+    // runtime accepted the suggested bindings and real controller inputs feed them.
+    // xrfire: the right trigger through the backend's fake input on the
+    // runtime's profile: a light touch below the click threshold must not
+    // fire, a full pull must (clip goes down).
+    if (step == "xrfire")
+    {
+        auto fake = [&](const char* spec)
+        {
+            std::string error;
+            if (!l4d2vr_backend::Active().SetFakeInput(spec, error))
+                Game::logMsg("[VR][SelfTest] fake input refused: %s", error.c_str());
+        };
+        auto ammo = [&](int& clip, int& reserve) { SelfTestAmmoTransaction(player, 3, false, clip, reserve); };
+        const l4d2vr_openxr_input::Profile* profile = nullptr;
+        {
+            const std::string controllers = l4d2vr_backend::Active().DescribeControllers();
+            const size_t r = controllers.find("right=");
+            if (r != std::string::npos)
+                profile = l4d2vr_openxr_input::FindProfileByKey(controllers.substr(r + 6, controllers.find(' ', r) - r - 6).c_str());
+        }
+        std::string trigger = "/user/hand/right/input/trigger/value";
+        if (profile)
+            for (const auto& b : profile->bindings)
+                if (b.action == l4d2vr_openxr_input::Action::PrimaryAttack && b.hand == l4d2vr_openxr_input::Hand::Right)
+                    trigger = std::string("/user/hand/right") + b.input;
+        if (at(0, 0.0f)) { l4d2vr_selftest::ForgetAll(); fake("profile=runtime"); cmd("give rifle"); }
+        if (at(1, 1.0f)) { cmd("use weapon_rifle"); SelfTestHoldRight(SelfTestVec(0.4f, 0.2f, -0.25f), QAngle(0.0f, 0.0f, 0.0f)); }
+        if (at(2, 3.0f))
+        {
+            ammo(m_SelfTestValueB, m_SelfTestValueC);
+            fake((trigger + "=0.2").c_str());
+        }
+        if (at(3, 3.6f)) fake((trigger + "=0").c_str());
+        if (at(4, 4.4f))
+        {
+            int clip = -1, reserve = -1;
+            ammo(clip, reserve);
+            std::snprintf(detail, sizeof(detail), "%s=0.2: clip %d -> %d", trigger.c_str(), m_SelfTestValueB, clip);
+            SelfTestReport("light trigger touch does not fire", clip >= 0 && clip == m_SelfTestValueB, detail);
+            m_SelfTestValueB = clip;
+            fake((trigger + "=1").c_str());
+        }
+        if (at(5, 4.7f)) fake((trigger + "=0").c_str());
+        if (at(6, 5.6f))
+        {
+            int clip = -1, reserve = -1;
+            ammo(clip, reserve);
+            std::snprintf(detail, sizeof(detail), "%s=1 for 0.3 s: clip %d -> %d", trigger.c_str(), m_SelfTestValueB, clip);
+            SelfTestReport("full trigger pull fires", clip >= 0 && m_SelfTestValueB > 0 && clip < m_SelfTestValueB, detail);
+            fake("clear");
+            return true;
+        }
+        return false;
+    }
+    // xrhaptic: one pulse per hand through the backend's vibration path.
+    if (step == "xrhaptic")
+    {
+        bool ok[2] = { false, false };
+        for (int h = 0; h < 2; ++h)
+        {
+            const vr::TrackedDeviceIndex_t device = m_System ? m_System->GetTrackedDeviceIndexForControllerRole(
+                h == 0 ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand) : vr::k_unTrackedDeviceIndexInvalid;
+            ok[h] = m_System && device < vr::k_unMaxTrackedDeviceCount && m_System->TriggerHapticVibration(device, 0.05f, 160.0f, 0.6f);
+        }
+        std::snprintf(detail, sizeof(detail), "left %d right %d (OpenVR has no vibration path and reports 0)", ok[0] ? 1 : 0, ok[1] ? 1 : 0);
+        SelfTestReport("haptic vibration", ok[0] && ok[1], detail);
+        return true;
+    }
+    if (step == "xrbound")
+    {
+        if (t < 0.5f)
+            return false;
+        const bool ok = SelfTestBoundStep(detail, sizeof(detail));
+        SelfTestReport("bound actions", ok, detail);
         return true;
     }
 
@@ -4864,4 +5062,165 @@ void VR::SelfTestTrackHolsterDraw(int slot, const Vector& itemOrigin, const Vect
     Vector& mx = track.mx[eye][slot];
     mn.x = (std::min)(mn.x, local.x); mn.y = (std::min)(mn.y, local.y); mn.z = (std::min)(mn.z, local.z);
     mx.x = (std::max)(mx.x, local.x); mx.y = (std::max)(mx.y, local.y); mx.z = (std::max)(mx.z, local.z);
+}
+
+
+// ---- Input backend checks (OpenXR port M3) ---------------------------------------
+namespace
+{
+    std::string SelfTestActionPath(const std::string& name)
+    {
+        return name.find('/') == std::string::npos ? "/actions/main/in/" + name : name;
+    }
+}
+
+bool VR::SelfTestCheckInputStep(const std::string& step, char* detail, size_t detailSize)
+{
+    const bool viaMod = step.rfind("xrmod=", 0) == 0;
+    const std::string body = step.substr(viaMod ? 6 : 8);
+    const size_t eq = body.rfind('=');
+    if (eq == std::string::npos || !m_Input)
+    {
+        std::snprintf(detail, detailSize, "expected <action>[@hand]=<expect>");
+        return false;
+    }
+    std::string name = body.substr(0, eq);
+    const std::string expect = body.substr(eq + 1);
+    int hand = -1;
+    const size_t at = name.find('@');
+    if (at != std::string::npos)
+    {
+        const std::string h = name.substr(at + 1);
+        hand = h == "left" ? 0 : h == "right" ? 1 : -2;
+        name.resize(at);
+    }
+    if (hand == -2 || (viaMod && hand >= 0))
+    {
+        std::snprintf(detail, detailSize, "bad hand (xrcheck only: @left/@right)");
+        return false;
+    }
+    vr::VRActionHandle_t action = vr::k_ulInvalidActionHandle;
+    m_Input->GetActionHandle(SelfTestActionPath(name).c_str(), &action);
+    vr::VRInputValueHandle_t restrict = vr::k_ulInvalidInputValueHandle;
+    if (hand >= 0)
+        m_Input->GetInputSourceHandle(hand == 0 ? "/user/hand/left" : "/user/hand/right", &restrict);
+    const bool analog = expect.find(':') != std::string::npos;
+    if (analog)
+    {
+        vr::InputAnalogActionData_t data{};
+        bool read = false;
+        if (viaMod)
+            read = GetAnalogActionData(action, data);
+        else
+            read = m_Input->GetAnalogActionData(action, &data, sizeof(data), restrict) == vr::VRInputError_None;
+        const float ex = static_cast<float>(std::atof(expect.c_str()));
+        const float ey = static_cast<float>(std::atof(expect.c_str() + expect.find(':') + 1));
+        const bool ok = read && data.bActive && std::fabs(data.x - ex) <= 0.05f && std::fabs(data.y - ey) <= 0.05f;
+        std::snprintf(detail, detailSize, "read=%d active=%d x=%.3f y=%.3f (want %.3f %.3f) controllers %s", read ? 1 : 0,
+            data.bActive ? 1 : 0, data.x, data.y, ex, ey, l4d2vr_backend::Active().DescribeControllers().c_str());
+        return ok;
+    }
+    vr::InputDigitalActionData_t data{};
+    bool read = false;
+    if (viaMod)
+        read = GetDigitalActionData(action, data);
+    else
+        read = m_Input->GetDigitalActionData(action, &data, sizeof(data), restrict) == vr::VRInputError_None;
+    // The origin must name the hand that produced the state (ValidateOrigin).
+    vr::InputOriginInfo_t origin{};
+    origin.trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;
+    if (data.bActive && data.activeOrigin != vr::k_ulInvalidInputValueHandle)
+        m_Input->GetOriginTrackedDeviceInfo(data.activeOrigin, &origin, sizeof(origin));
+    const vr::TrackedDeviceIndex_t expectedDevice = hand < 0 ? vr::k_unTrackedDeviceIndexInvalid
+        : m_System->GetTrackedDeviceIndexForControllerRole(hand == 0 ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand);
+    const bool originOk = viaMod || !data.bActive || hand < 0 || (origin.devicePath == restrict && origin.trackedDeviceIndex == expectedDevice);
+    bool ok = read && originOk;
+    if (expect == "-")
+        ok = ok && !data.bActive;
+    else
+        ok = ok && data.bActive && data.bState == (expect == "1");
+    std::snprintf(detail, detailSize, "read=%d active=%d state=%d changed=%d origin device=%u (want %u) controllers %s",
+        read ? 1 : 0, data.bActive ? 1 : 0, data.bState ? 1 : 0, data.bChanged ? 1 : 0, origin.trackedDeviceIndex,
+        expectedDevice, l4d2vr_backend::Active().DescribeControllers().c_str());
+    return ok;
+}
+
+bool VR::SelfTestBoundStep(char* detail, size_t detailSize)
+{
+    if (!m_Input || !m_System)
+    {
+        std::snprintf(detail, detailSize, "no input interface");
+        return false;
+    }
+    struct Expect { const char* name; int hand; };
+    // The microsoft/motion_controller layout (openxr_input_profiles.h), which the
+    // headless simulator uses; any other profile only reports.
+    const Expect wmr[] = {
+        { "Walk", 0 }, { "ResetPosition", 0 }, { "Turn", 1 }, { "Flashlight", 1 }, { "OffHandGrip", 0 }, { "WeaponGrip", 1 },
+        { "PrimaryAttack", 1 }, { "SecondaryAttack", 0 }, { "ActivateVR", 1 }, { "MagazineRelease", 1 }, { "MenuSelect", 1 },
+        { "Use", 1 }, { "MenuBack", 1 }, { "Pause", 0 }, { "Scoreboard", 0 }, { "MenuUp", 0 }, { "MenuDown", 0 },
+        { "MenuLeft", 0 }, { "MenuRight", 0 } };
+    const std::string controllers = l4d2vr_backend::Active().DescribeControllers();
+    std::string bad, good;
+    int checked = 0;
+    for (const Expect& e : wmr)
+    {
+        vr::VRActionHandle_t action = vr::k_ulInvalidActionHandle;
+        m_Input->GetActionHandle(SelfTestActionPath(e.name).c_str(), &action);
+        const bool analog = std::strcmp(e.name, "Walk") == 0 || std::strcmp(e.name, "Turn") == 0;
+        for (int h = 0; h < 2; ++h)
+        {
+            vr::VRInputValueHandle_t source = vr::k_ulInvalidInputValueHandle;
+            m_Input->GetInputSourceHandle(h == 0 ? "/user/hand/left" : "/user/hand/right", &source);
+            bool active = false;
+            if (analog)
+            {
+                vr::InputAnalogActionData_t data{};
+                active = m_Input->GetAnalogActionData(action, &data, sizeof(data), source) == vr::VRInputError_None && data.bActive;
+            }
+            else
+            {
+                vr::InputDigitalActionData_t data{};
+                active = m_Input->GetDigitalActionData(action, &data, sizeof(data), source) == vr::VRInputError_None && data.bActive;
+            }
+            ++checked;
+            if (active != (h == e.hand))
+                bad += std::string(e.name) + (h == 0 ? "@L" : "@R") + (active ? "+ " : "- ");
+            else if (active)
+                good += std::string(e.name) + (h == 0 ? "@L " : "@R ");
+        }
+    }
+    const bool wmrProfile = controllers.find("left=wmr right=wmr") != std::string::npos;
+    Game::logMsg("[VR][SelfTest] bound actions (%s): active %s", controllers.c_str(), good.c_str());
+    std::snprintf(detail, detailSize, "%s: %d hand checks, wrong: %s", controllers.c_str(), checked, bad.empty() ? "none" : bad.c_str());
+    return wmrProfile && bad.empty();
+}
+
+void VR::SelfTestLogRuntimeHands(const char* label)
+{
+    if (!m_System)
+        return;
+    for (int role = 0; role < 2; ++role)
+    {
+        const vr::ETrackedControllerRole r = role == 0 ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand;
+        const vr::TrackedDeviceIndex_t index = m_System->GetTrackedDeviceIndexForControllerRole(r);
+        const vr::TrackedDeviceIndex_t physical = GetPhysicalControllerIndexForHand(role == 0);
+        const auto tip = l4d2vr_controller_tip::Lookup(m_System, m_Input, l4d2vr_backend::RenderModels(), r);
+        if (index >= vr::k_unMaxTrackedDeviceCount)
+        {
+            Game::logMsg("[VR][SelfTest] %s %s: no device", label, role == 0 ? "left" : "right");
+            continue;
+        }
+        const vr::HmdMatrix34_t& m = m_Poses[index].mDeviceToAbsoluteTracking;
+        const TrackedDevicePoseData& pose = role == 0 ? m_LeftControllerPose : m_RightControllerPose;
+        Game::logMsg("[VR][SelfTest] %s %s: device %u (physical %u) connected=%d valid=%d raw pos=(%.4f %.4f %.4f) "
+            "x=(%.3f %.3f %.3f) y=(%.3f %.3f %.3f) z=(%.3f %.3f %.3f) game pos=(%.3f %.3f %.3f) ang=(%.1f %.1f %.1f) tip=%s "
+            "tip pos=(%.4f %.4f %.4f) tip fwd=(%.3f %.3f %.3f)",
+            label, role == 0 ? "left" : "right", index, physical, m_Poses[index].bDeviceIsConnected ? 1 : 0,
+            m_Poses[index].bPoseIsValid ? 1 : 0, m.m[0][3], m.m[1][3], m.m[2][3], m.m[0][0], m.m[1][0], m.m[2][0],
+            m.m[0][1], m.m[1][1], m.m[2][1], m.m[0][2], m.m[1][2], m.m[2][2], pose.TrackedDevicePos.x, pose.TrackedDevicePos.y,
+            pose.TrackedDevicePos.z, pose.TrackedDeviceAng.x, pose.TrackedDeviceAng.y, pose.TrackedDeviceAng.z,
+            l4d2vr_controller_tip::StatusName(tip.status), tip.matrix.m[0][3], tip.matrix.m[1][3], tip.matrix.m[2][3],
+            -tip.matrix.m[0][2], -tip.matrix.m[1][2], -tip.matrix.m[2][2]);
+    }
 }

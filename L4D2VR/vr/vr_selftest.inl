@@ -1686,14 +1686,18 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4)", SelfTestActiveSlot(player) + 1);
                 SelfTestReport("pickup: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
-                // From over the shoulder: be still in front before letting go.
-                SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 1.6f);
+                // From over the shoulder down in front of the chest, then out to
+                // where the kit is let go (still for half a second before that).
+                SelfTestReachRight(body::CentreChest(), level(30.0f, 40.0f), 1.2f);
                 return false; });
-            add(4.3f, [this](C_BasePlayer* player, float) {
+            add(4.0f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+                SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 0.8f);
+                return false; });
+            add(4.9f, [this](C_BasePlayer* player, float) {
                 m_SelfTestKitEntity = player->Weapon_GetSlot(3);
                 return false; });
-            squeeze(4.4f, false, 0.15f);
-            add(5.6f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+            squeeze(5.0f, false, 0.15f);
+            add(6.2f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "kit slot %s after letting go of the kit the grip took",
                     (player->Weapon_GetSlot(3) != nullptr) ? "still occupied" : "empty");
@@ -1725,8 +1729,8 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 s_WorldReachStart = t + 0.6f;
                 m_SelfTestValueA = static_cast<int>(best / (std::max)(1.0f, m_VRScale) * 100.0f);
                 return false; });
-            squeeze(7.4f, false, 0.15f);
-            add(9.5f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
+            squeeze(8.0f, false, 0.15f);
+            add(10.1f, [this, cmd, level, restore](C_BasePlayer* player, float t) {
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "kit %s (was %.2f m from the hand), rifle %s, active slot %d",
                     (player->Weapon_GetSlot(3) != nullptr) ? "in slot 4" : "not picked up", m_SelfTestValueA / 100.0f, (player->Weapon_GetSlot(0) != nullptr) ? "kept" : "DROPPED",

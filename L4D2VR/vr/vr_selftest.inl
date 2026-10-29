@@ -786,8 +786,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             Vec3 outward{};
             l4d2vr_mag_slap::OutwardAxis(seated, { insertionAxis.x, insertionAxis.y, insertionAxis.z }, outward);
             const Vector contact = m_LeftControllerPosAbs + (toVector(l4d2vr_mag_slap::Center(seated)) - held);
-            // 30 cm back: clear of the 25 cm magazine, so the strike makes the touch.
-            m_SelfTestSlapStart = contact - toVector(outward) * (0.30f * scale);
+            // 35 cm back: clear of the 25 cm magazine, so the strike makes the touch.
+            m_SelfTestSlapStart = contact - toVector(outward) * (0.35f * scale);
             m_SelfTestSlapEnd = contact + toVector(outward) * (0.04f * scale);
             m_SelfTestLeftWorld = m_SelfTestSlapStart + toVector(sideOf(seated, outward)) * (0.30f * scale);
         }
@@ -799,7 +799,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(6, 6.4f)) {}
         if (m_SelfTestStage == 7)
         {
-            // 34 cm in 0.25 s: 1.4 m/s relative to the still gun hand.
+            // 39 cm in 0.25 s: 1.6 m/s relative to the still gun hand.
             const float u = std::clamp((t - 6.4f) / 0.25f, 0.0f, 1.0f);
             m_SelfTestLeftWorld = m_SelfTestSlapStart + (m_SelfTestSlapEnd - m_SelfTestSlapStart) * u;
         }
@@ -2346,6 +2346,27 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         };
         auto slaps = [&]() { return m_MagazineSlapSerial.load(std::memory_order_acquire) - static_cast<uint32_t>(m_SelfTestValueA); };
         auto ejects = [&]() { return m_MagazineEjectSerial.load(std::memory_order_acquire) - m_SelfTestSerial; };
+        // The old magazine on its way out: it drops when the host confirms the
+        // ejection; photographed 0.05 s and 0.2 s later.
+        auto slapShots = [&]()
+        {
+            if (m_SelfTestValueD == 1 && ejects() > 0u)
+            {
+                m_SelfTestSerialB = static_cast<uint32_t>(nowMs);
+                m_SelfTestValueD = 2;
+            }
+            const uint32_t since = static_cast<uint32_t>(nowMs) - m_SelfTestSerialB;
+            if (m_SelfTestValueD == 2 && since >= 50u)
+            {
+                SelfTestRequestShot(gun + "_slap_" + motion + "_flying1", 1);
+                m_SelfTestValueD = 3;
+            }
+            else if (m_SelfTestValueD == 3 && since >= 200u)
+            {
+                SelfTestRequestShot(gun + "_slap_" + motion + "_flying2", 1);
+                m_SelfTestValueD = 4;
+            }
+        };
         switch (m_SelfTestPhase)
         {
         case 600:
@@ -2440,6 +2461,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 SelfTestRequestShot(gun + "_slap_" + motion + "_hit", 1);
                 m_SelfTestValueD = 1;
             }
+            slapShots();
             if (!glideDone(0.05f)) return false;
             if (m->hit)
                 glide(m_SelfTestSlapEnd + m_SelfTestSlapPark + (g.magazineCenter - m_SelfTestPoint), 0.15f);
@@ -2447,12 +2469,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 608:
         {
-            // The old magazine on its way out (it drops when the host confirms).
-            if (slaps() > 0u && m_SelfTestValueD < 2 && inPhase >= 0.12f)
-            {
-                SelfTestRequestShot(gun + "_slap_" + motion + "_flying", 1);
-                m_SelfTestValueD = 2;
-            }
+            slapShots();
             if (inPhase < 1.2f) return false;
             const uint32_t nearMisses = m_MagazineSlapNearMissSerial.load(std::memory_order_acquire) -
                 static_cast<uint32_t>(m_SelfTestValueB);
@@ -2601,7 +2618,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             if (m_SelfTestCycle == 0)
                 m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
-            m_SelfTestSlapStart = contact - g.socketOutward * (0.30f * scale); // clear of the magazine
+            m_SelfTestSlapStart = contact - g.socketOutward * (0.35f * scale); // clear of the magazine
             m_SelfTestSlapEnd = contact + g.socketOutward * (0.04f * scale);
             m_SelfTestSlapPark = g.gunRight * (-0.30f * scale);
             m_SelfTestPoint = g.magazineCenter; // the strike rides with the gun
@@ -2616,7 +2633,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 324:
             if (!glideDone(0.4f)) return false;
-            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), 0.25f); // 34 cm in 0.25 s
+            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), 0.25f); // 39 cm in 0.25 s
             go(325);
             return false;
         case 325:
@@ -3463,8 +3480,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         }
         const Vector contact = m_LeftControllerPosAbs + (center - held);
-        // 30 cm back: clear of the 25 cm magazine, so the strike makes the touch.
-        m_SelfTestSlapStart = contact - out * (0.30f * scale);
+        // 35 cm back: clear of the 25 cm magazine, so the strike makes the touch.
+        m_SelfTestSlapStart = contact - out * (0.35f * scale);
         m_SelfTestSlapEnd = contact + out * (0.04f * scale);
         m_SelfTestSlapPark = across * (0.30f * scale);
         // The strike points ride with the gun: the body can drift a few cm
@@ -3483,7 +3500,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         return false;
     case 204:
         if (!glideDone(0.4f)) return false;
-        glide(m_SelfTestSlapEnd + gunDrift(), 0.25f); // 34 cm in 0.25 s: 1.4 m/s against a still gun hand
+        glide(m_SelfTestSlapEnd + gunDrift(), 0.25f); // 39 cm in 0.25 s: 1.6 m/s against a still gun hand
         go(205);
         return false;
     case 205:

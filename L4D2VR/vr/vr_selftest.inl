@@ -2476,11 +2476,15 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 across = across * (1.0f / (std::max)(0.001f, across.Length()));
                 const float side = motion == "wide" ? 0.30f : 0.0f;
                 Vector miss = m_MagazineSlapSeatedCenter + across * (side * scale) - m_MagazineSlapHeldCenter;
-                miss = miss - dir * DotProduct(miss, dir);
-                if (miss.Length() > 0.008f * scale)
+                const float along = DotProduct(miss, dir);
+                miss = miss - dir * along;
+                // And clear of it: at least 30 cm back along the strike (the
+                // boxes are 25 cm long), never resting against it.
+                const float backMissing = (std::max)(0.0f, 0.30f * scale - along);
+                if (miss.Length() > 0.008f * scale || backMissing > 0.01f * scale)
                 {
                     ++m_SelfTestStrikeCorrections;
-                    glide(leftNow() + miss, 0.15f);
+                    glide(leftNow() + miss - dir * (backMissing > 0.01f * scale ? backMissing + 0.04f * scale : 0.0f), 0.2f);
                     return false;
                 }
             }

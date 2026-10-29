@@ -1207,6 +1207,15 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return true;
     }
 
+    // allpreview=<metres>: the same for every holster item (hips and chest
+    // too), to check how each one is turned from a normal viewing angle.
+    if (step.rfind("allpreview=", 0) == 0)
+    {
+        m_SelfTestAllPreviewMeters = std::clamp(static_cast<float>(std::atof(step.c_str() + 11)), 0.0f, 2.0f);
+        Game::logMsg("[VR][SelfTest] holster preview %.2f m", m_SelfTestAllPreviewMeters);
+        return true;
+    }
+
     // lefthanded=1|0: switch the left-handed layout (dominant hand = the left
     // controller) for the following steps. The self-test drives buttons by
     // action, so m_ActionWeaponGrip is then the left hand's grip.
@@ -1557,6 +1566,8 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             // left shoulder (rifle), left chest (pills), across to over the
             // right shoulder (kit). Off-hand (right) reaches: over the left
             // shoulder (rifle), over the right shoulder (kit), right chest (pipe).
+            // The self-test poses gameplay hands (Right = dominant, now the
+            // physical left hand); the targets are physical body points.
             m_LeftHanded = true;
             m_GripToggleEnabled = true;
             auto M = [](Vec3 v) { v.y = -v.y; return v; };
@@ -1564,8 +1575,8 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             add(1.2f, [this, cmd](C_BasePlayer* player, float t) {
                 cmd("use weapon_rifle");
                 s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);
-                SelfTestReachLeft(body::V(0.40f, -0.15f, -0.35f), body::V(0.0f, 0.0f, 0.0f), 0.8f);
-                SelfTestReachRight(body::V(0.32f, 0.18f, -0.42f), body::V(0.0f, 0.0f, 0.0f), 0.8f);
+                SelfTestReachRight(body::V(0.40f, -0.15f, -0.35f), body::V(0.0f, 0.0f, 0.0f), 0.8f);
+                SelfTestReachLeft(body::V(0.32f, 0.18f, -0.42f), body::V(0.0f, 0.0f, 0.0f), 0.8f);
                 return false; });
             struct Reach { bool dominant; std::vector<Vec3> path; int slot; const char* name; };
             const std::vector<Reach> reaches = {
@@ -1587,8 +1598,8 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 for (const Vec3& point : reach.path)
                 {
                     add(at, [this, dominant, point](C_BasePlayer*, float) {
-                        if (dominant) SelfTestReachLeft(point, body::V(-40.0f, 0.0f, 0.0f), 0.9f);
-                        else SelfTestReachRight(point, body::V(-40.0f, 0.0f, 0.0f), 0.9f);
+                        if (dominant) SelfTestReachRight(point, body::V(-40.0f, 0.0f, 0.0f), 0.9f);
+                        else SelfTestReachLeft(point, body::V(-40.0f, 0.0f, 0.0f), 0.9f);
                         return false; });
                     at += 0.8f;
                 }
@@ -1605,8 +1616,8 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                         SelfTestActiveSlot(player) + 1, slot + 1, dominant ? "dominant" : "off-hand", m_SelfTestValueB, pulses,
                         m_LeftHanded ? 1 : 0);
                     SelfTestReport(name, SelfTestActiveSlot(player) == slot && static_cast<int>(pulses) > m_SelfTestValueB, detail);
-                    if (dominant) SelfTestReachLeft(body::V(0.40f, -0.15f, -0.35f), body::V(0.0f, 0.0f, 0.0f), 1.0f);
-                    else SelfTestReachRight(body::V(0.32f, 0.18f, -0.42f), body::V(0.0f, 0.0f, 0.0f), 1.0f);
+                    if (dominant) SelfTestReachRight(body::V(0.40f, -0.15f, -0.35f), body::V(0.0f, 0.0f, 0.0f), 1.0f);
+                    else SelfTestReachLeft(body::V(0.32f, 0.18f, -0.42f), body::V(0.0f, 0.0f, 0.0f), 1.0f);
                     return false; });
                 at += 1.0f;
             }
@@ -1675,7 +1686,8 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 char detail[256];
                 std::snprintf(detail, sizeof(detail), "active slot %d (medkit is slot 4)", SelfTestActiveSlot(player) + 1);
                 SelfTestReport("pickup: right hand draws the kit over the left shoulder", SelfTestActiveSlot(player) == 3, detail);
-                SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 0.8f);
+                // From over the shoulder: be still in front before letting go.
+                SelfTestReachRight(body::V(0.45f, 0.10f, -0.55f), level(30.0f, 0.0f), 1.6f);
                 return false; });
             add(4.3f, [this](C_BasePlayer* player, float) {
                 m_SelfTestKitEntity = player->Weapon_GetSlot(3);

@@ -89,6 +89,34 @@ int main()
     d = sel::Decide(Preference::OpenXR, false, Switch::None, true);
     Check(d.runtime == Runtime::OpenVR, "an invalid parse never selects OpenXR");
 
+    // M2: the OpenXR runtime probe runs only for an explicit OpenXR request.
+    int probes = 0;
+    auto usable = [&](std::string& reason) { ++probes; reason.clear(); return true; };
+    auto noRuntime = [&](std::string& reason) { ++probes; reason = "no active OpenXR runtime with a 32-bit manifest"; return false; };
+    d = sel::DecideWithProbe(Preference::Auto, true, Switch::None, true, noRuntime);
+    Check(d.runtime == Runtime::OpenVR && !d.openXrProbed && probes == 0, "auto never probes OpenXR");
+    d = sel::DecideWithProbe(Preference::OpenVR, true, Switch::None, true, noRuntime);
+    Check(d.runtime == Runtime::OpenVR && probes == 0, "openvr never probes OpenXR");
+    d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::OpenVR, true, noRuntime);
+    Check(d.runtime == Runtime::OpenVR && probes == 0, "-l4d2vr_openvr over VrRuntime=openxr never probes OpenXR");
+    d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::None, true, usable);
+    Check(d.runtime == Runtime::OpenXR && d.openXrProbed && !d.openXrUnavailable && probes == 1, "openxr with a usable runtime selects OpenXR");
+    d = sel::DecideWithProbe(Preference::Auto, true, Switch::OpenXR, true, usable);
+    Check(d.runtime == Runtime::OpenXR && d.fromCommandLine && probes == 2, "-l4d2vr_openxr with a usable runtime selects OpenXR");
+    Check(sel::Describe(d, "") == "VR runtime: OpenXR (-l4d2vr_openxr)", "the OpenXR selection log line");
+    d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::None, true, noRuntime);
+    Check(d.runtime == Runtime::OpenVR && d.openXrUnavailable && d.openXrProbed && probes == 3,
+        "openxr without a runtime declines to OpenVR");
+    Check(Contains(sel::Describe(d, "openxr"), "OpenXR runtime unavailable (no active OpenXR runtime with a 32-bit manifest), falling back to OpenVR"),
+        "the decline reason is logged");
+    d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::None, true, [](std::string&) { return false; });
+    Check(d.runtime == Runtime::OpenVR && Contains(sel::Describe(d, ""), "(unknown error)"), "a silent probe failure still declines with a reason");
+    d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::None, false, usable);
+    Check(d.runtime == Runtime::OpenVR && probes == 3 && Contains(sel::Describe(d, ""), "not built yet"),
+        "a build without the backend never probes");
+    d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::None, true, sel::OpenXrProbe());
+    Check(d.runtime == Runtime::OpenVR && d.openXrUnavailable, "no probe function declines");
+
     // Published values are stable (DXVK compares against 1 = OpenVR).
     Check(static_cast<int>(Runtime::OpenVR) == 1 && static_cast<int>(Runtime::OpenXR) == 2, "published runtime values");
     Check(std::string(sel::Name(Runtime::OpenXR)) == "OpenXR" && std::string(sel::Name(Preference::OpenVR)) == "openvr", "names");

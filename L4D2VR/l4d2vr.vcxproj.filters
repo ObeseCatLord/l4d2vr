@@ -36,6 +36,18 @@
     <ClInclude Include="vr_pose_protocol.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="vr_backend\openxr_frame_ring.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_backend\openxr_loader_probe.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_backend\openxr_pose_math.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_openxr_native.h">
+      <Filter>dxvk</Filter>
+    </ClInclude>
     <ClInclude Include="vr_backend\vr_backend.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>
@@ -898,6 +910,12 @@
     </ClCompile>
     <ClCompile Include="vr_hands\vr_hand_system.cpp">
       <Filter>Source Files\vr_hands</Filter>
+    </ClCompile>
+    <ClCompile Include="vr_backend\vr_backend_openxr.cpp">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClCompile>
+    <ClCompile Include="..\dxvk_new\src\dxvk\dxvk_openxr_native.cpp">
+      <Filter>dxvk</Filter>
     </ClCompile>
     <ClCompile Include="vr_backend\vr_backend_openvr.cpp">
       <Filter>Source Files\vr_backend</Filter>

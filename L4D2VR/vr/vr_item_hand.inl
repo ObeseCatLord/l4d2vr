@@ -252,7 +252,9 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             std::snprintf(detail, sizeof(detail), "item hand %s, active slot %d", hand, SelfTestActiveSlot(player) + 1);
             SelfTestReport("ambidextrous: starts in the right hand", !ItemHandIsPhysicalLeft() &&
                 SelfTestActiveSlot(player) == 1, detail);
-            SelfTestReachLeft(body::OverLeftShoulder(), SelfTestVec(-60.0f, 0.0f, 0.0f), 1.0f);
+            // The rifle hangs on the dominant (right) half of the back; the left
+            // hand reaches it over the right shoulder.
+            SelfTestReachLeft(body::OverRightShoulder(), SelfTestVec(-60.0f, 0.0f, 0.0f), 1.0f);
         }
         if (at(3, 4.4f)) { button(m_ActionOffHandGrip, true); }
         if (at(4, 4.6f)) { button(m_ActionOffHandGrip, false); }
@@ -444,7 +446,7 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
 
     if (step == "ambimedkit")
     {
-        // The left hand takes the medkit from the chest and heals with the left
+        // The left hand takes the medkit from the back and heals with the left
         // trigger, then takes adrenaline and stabs it into the chest.
         auto health = [&]() { int value = -1; if (player) VR_TryReadI32(reinterpret_cast<const unsigned char*>(player), kHealthOffset, value); return value; };
         if (at(0, 0.0f))
@@ -457,7 +459,8 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             holdLeft(body::LeftReady(), QAngle(0.0f, 0.0f, 0.0f));
         }
         if (at(1, 1.2f)) { cmd("use weapon_rifle"); }
-        if (at(2, 2.0f)) { SelfTestReachLeft(body::CentreChest(), SelfTestVec(30.0f, -20.0f, 0.0f), 0.5f); }
+        // The kit hangs on the off (left) half of the back.
+        if (at(2, 2.0f)) { SelfTestReachLeft(body::OverLeftShoulder(), SelfTestVec(-60.0f, 0.0f, 0.0f), 1.0f); }
         if (at(3, 3.4f)) { button(m_ActionOffHandGrip, true); }
         if (at(4, 3.6f)) { button(m_ActionOffHandGrip, false); }
         if (at(5, 4.4f))

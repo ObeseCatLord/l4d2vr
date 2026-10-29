@@ -2151,6 +2151,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 gun.c_str(), g.socketCenter.x, g.socketCenter.y, g.socketCenter.z, g.socketOutward.x, g.socketOutward.y,
                 g.socketOutward.z, g.spareLength, g.heldCenter.x, g.heldCenter.y, g.heldCenter.z,
                 g.gunForward.x, g.gunForward.y, g.gunForward.z);
+            m_SelfTestPoint = leftNow(); // where the spare was taken: the poses return here
             go(330);
             return false;
         // The spare in the hand, held up in view at three hand poses (the
@@ -2160,10 +2161,11 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         {
             if (m_SelfTestPhase != 330 && inPhase < 0.4f) return false;
             const int pose = (m_SelfTestPhase - 330) / 2;
-            stopGlide();
-            m_SelfTestLeftWorld = m_HmdPosAbs + m_HmdForward * (0.34f * scale) + m_HmdRight * (-0.05f * scale) +
-                m_HmdUp * (-0.04f * scale);
-            m_SelfTestLeftWorldValid = true;
+            // Glide there (no faster than a hand moves): a jump across the
+            // seated AK magazine would strike it like a slap.
+            if (pose == 0)
+                glide(m_HmdPosAbs + m_HmdForward * (0.34f * scale) + m_HmdRight * (-0.05f * scale) +
+                    m_HmdUp * (-0.04f * scale), 1.0f);
             m_SelfTestLeftAngWorld = pose == 0 ? naturalAngles() : pose == 1 ? naturalAngles(0.0f, -70.0f)
                 : naturalAngles(35.0f, -25.0f);
             m_SelfTestLeftAngWorldValid = true;
@@ -2172,7 +2174,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         }
         case 331: case 333: case 335:
         {
-            if (inPhase < 1.0f) return false;
+            if (!glideDone(0.6f) || inPhase < 1.0f) return false;
             const int pose = (m_SelfTestPhase - 331) / 2;
             SelfTestSpareInFist f{};
             const bool measured = SelfTestMeasureSpareInFist(f);
@@ -2191,6 +2193,11 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         }
         case 336:
             if (inPhase < 0.4f) return false;
+            glide(m_SelfTestPoint, 1.0f);
+            go(337);
+            return false;
+        case 337:
+            if (!glideDone(0.3f)) return false;
             go(306);
             return false;
         case 306: // natural pose short of the well

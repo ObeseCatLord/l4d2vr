@@ -2389,7 +2389,11 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 return fail("slap motion", "no held spare pose");
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
             const float side = motion == "wide" ? 0.12f : 0.0f;
-            m_SelfTestSlapStart = contact - dir * (0.12f * scale) + across * (side * scale);
+            // The AK-47's curved magazine is about 18 cm deep along the barrel:
+            // a strike toward the muzzle starts behind all of it.
+            const float back = motion == "forward" ? 0.25f : 0.12f;
+            m_SelfTestMeasureB = back;
+            m_SelfTestSlapStart = contact - dir * (back * scale) + across * (side * scale);
             m_SelfTestSlapEnd = contact + dir * (0.05f * scale) + across * (side * scale);
             m_SelfTestSlapPark = across * (0.30f * scale);
             glide(m_SelfTestSlapStart + m_SelfTestSlapPark, 0.2f);
@@ -2404,8 +2408,9 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 606:
             if (!glideDone(0.4f)) return false;
             m_SelfTestMeasure = m->speed;
-            // 17 cm at the motion's speed against a still gun hand.
-            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), 0.17f / m->speed);
+            // The run-up plus 5 cm past the magazine at the motion's speed
+            // against a still gun hand.
+            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), (m_SelfTestMeasureB + 0.05f) / m->speed);
             go(607);
             return false;
         case 607:

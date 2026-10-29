@@ -25,7 +25,8 @@
 #include <mutex>
 #include <atomic>
 #include "game.h"
-#include "openvr.h"
+#include "vr_backend/vr_backend.h"
+#include "vr_runtime_select.h"
 #include "hooks.h"
 #include "sdk.h"
 #include "vr_weapon_calibration.h"
@@ -1038,16 +1039,18 @@ namespace
         return value == "1" || value == "true" || value == "yes" || value == "on";
     }
 
-    bool ReadConfigBoolFromFile(const char* configKey, bool defaultValue)
+    // Raw value of the first "key=value" line for configKey in VR/config.txt
+    // (comments stripped, value untrimmed). False when the file or key is missing.
+    bool ReadConfigValueFromFile(const char* configKey, std::string& outValue)
     {
         const std::filesystem::path gameRootPath = GetGameRootPath();
         if (gameRootPath.empty())
-            return defaultValue;
+            return false;
 
         const std::filesystem::path configPath = gameRootPath / L"VR" / L"config.txt";
         std::ifstream input(configPath);
         if (!input.is_open())
-            return defaultValue;
+            return false;
 
         std::string line;
         while (std::getline(input, line))
@@ -1074,10 +1077,19 @@ namespace
             if (_stricmp(key.c_str(), configKey) != 0)
                 continue;
 
-            return ConfigValueIsEnabled(line.substr(equals + 1));
+            outValue = line.substr(equals + 1);
+            return true;
         }
 
-        return defaultValue;
+        return false;
+    }
+
+    bool ReadConfigBoolFromFile(const char* configKey, bool defaultValue)
+    {
+        std::string value;
+        if (!ReadConfigValueFromFile(configKey, value))
+            return defaultValue;
+        return ConfigValueIsEnabled(value);
     }
 
     bool IsConfigBoolEnabledInConfig(const char* configKey)
@@ -1105,7 +1117,7 @@ namespace
         return requested || IsConfigBoolEnabledInConfig("DesktopModeEnabled");
     }
 
-    // With the mod installed but no OpenVR runtime at all, start on the desktop
+    // With the mod installed but no VR runtime at all, start on the desktop
     // directly (DesktopModeAuto=true). With a runtime, VR starts as usual and a
     // failed VR_Init falls back to desktop mode instead of exiting (see
     // L4D2VR_EnterDesktopFallback). Headset presence is not probed up front:
@@ -1119,9 +1131,10 @@ namespace
         if (GetEnvironmentVariableA("VR_OVERRIDE", value, sizeof(value)) > 0 ||
             GetEnvironmentVariableA("XR_RUNTIME_JSON", value, sizeof(value)) > 0)
             return false;
-        if (!vr::VR_IsRuntimeInstalled())
+        l4d2vr_backend::IVrBackend& backend = l4d2vr_backend::Active();
+        if (!backend.IsRuntimeInstalled())
         {
-            reason = "no OpenVR runtime installed";
+            reason = std::string("no ") + backend.Name() + " runtime installed";
             return true;
         }
         return false;
@@ -3198,6 +3211,7 @@ namespace
         sampleKeys.insert("LoadingFramePumpStallMs");
         sampleKeys.insert("IntermissionHudEnabled");
         sampleKeys.insert("BackgroundAudio");
+        sampleKeys.insert("VrRuntime");
         sampleKeys.insert("ScopePictureInPictureLens");
         sampleKeys.insert("ScopeParallaxStrength");
         sampleKeys.insert("ScopeEyeboxDeg");
@@ -3353,6 +3367,46 @@ extern "C" void L4D2VR_EnterDesktopFallback(const char* reason)
             reason ? reason : "VR unavailable");
 }
 
+// The VR runtime for this process (VrRuntime=auto|openxr|openvr, overridden by
+// -l4d2vr_openxr / -l4d2vr_openvr). Decided once, on first use: DXVK asks
+// inside Direct3DCreate9 (its Vulkan extension provider depends on it), and
+// InitL4D2VR asks early to log the choice. Desktop mode ignores it, and -nohmd
+// stays on the plain OpenVR default without reading the config or logging.
+extern "C" int L4D2VR_SelectedVrRuntime()
+{
+    namespace sel = l4d2vr_runtime_select;
+    static std::once_flag once;
+    static int selected = static_cast<int>(sel::Runtime::OpenVR);
+    std::call_once(once, []()
+    {
+        if (IsNoHmdLaunchArgPresent())
+            return;
+
+        std::string rawValue;
+        sel::Preference config = sel::Preference::Auto;
+        bool configValid = true;
+        if (ReadConfigValueFromFile(sel::kConfigKey, rawValue))
+            configValid = sel::ParsePreference(rawValue, config);
+
+        sel::Switch commandLine = sel::Switch::None;
+        int nArgs = 0;
+        LPWSTR* szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
+        if (szArglist)
+        {
+            for (int i = 0; i < nArgs; ++i)
+                commandLine = sel::AccumulateSwitch(commandLine, szArglist[i]);
+            LocalFree(szArglist);
+        }
+
+        // M1: only the OpenVR backend is built.
+        constexpr bool kOpenXrBackendAvailable = false;
+        const sel::Decision decision = sel::Decide(config, configValid, commandLine, kOpenXrBackendAvailable);
+        selected = static_cast<int>(decision.runtime);
+        Game::logMsg("[VR] %s", sel::Describe(decision, TrimAsciiWhitespace(rawValue)).c_str());
+    });
+    return selected;
+}
+
 extern "C" bool L4D2VR_DesktopModeActive()
 {
     if (g_L4D2VRDesktopFallback.load(std::memory_order_acquire))
@@ -3407,6 +3461,7 @@ DWORD WINAPI InitL4D2VR(HMODULE hModule)
     MigrateExistingConfigOnce();
     EnsureVrConfigTxtFromSample();
     EnsureUiFontFixVpkAndConfig();
+    L4D2VR_SelectedVrRuntime();
     if (IsNoHmdLaunchArgPresent())
     {
         EnsureNoHmdAutoexecCrosshair();

@@ -812,7 +812,7 @@ void VR::ProcessMenuInput()
     const bool inGame = m_Game->m_EngineClient->IsInGame();
     vr::VROverlayHandle_t currentOverlay = inGame ? m_HUDTopHandle : m_MainMenuHandle;
 
-    vr::IVROverlay* overlayApi = vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlayApi = l4d2vr_backend::Overlay();
     if (!overlayApi)
         return;
 
@@ -923,10 +923,10 @@ void VR::ProcessMenuInput()
     // only activate laser if a controller is pointing at the overlay
     if (isHoveringOverlay)
     {
-        vr::VROverlay()->SetOverlayFlag(currentOverlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, true);
+        l4d2vr_backend::Overlay()->SetOverlayFlag(currentOverlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, true);
 
         vr::VREvent_t vrEvent;
-        while (vr::VROverlay()->PollNextOverlayEvent(currentOverlay, &vrEvent, sizeof(vrEvent)))
+        while (l4d2vr_backend::Overlay()->PollNextOverlayEvent(currentOverlay, &vrEvent, sizeof(vrEvent)))
         {
             int button = vrEvent.data.controller.button;
             
@@ -988,7 +988,7 @@ void VR::ProcessMenuInput()
     }
     else
     {
-        vr::VROverlay()->SetOverlayFlag(currentOverlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
+        l4d2vr_backend::Overlay()->SetOverlayFlag(currentOverlay, vr::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
 
         if (PressedDigitalAction(m_MenuSelect, true))
         {
@@ -1168,7 +1168,7 @@ bool VR::ProbeNativeOverlayIntersection(vr::VROverlayHandle_t overlay)
 bool VR::UpdateMenuLaserPointer(bool inGame, int windowWidth, int windowHeight)
 {
     namespace op = l4d2vr_overlay_pointer;
-    vr::IVROverlay* overlayApi = vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlayApi = l4d2vr_backend::Overlay();
     const vr::VROverlayHandle_t panelHandle = inGame ? m_HUDTopHandle : m_MainMenuHandle;
     if (!overlayApi || !m_System || !m_Game || !m_Game->m_VguiInput ||
         panelHandle == vr::k_ulOverlayHandleInvalid || windowWidth <= 0 || windowHeight <= 0 ||
@@ -1409,7 +1409,7 @@ bool VR::EnsureMenuPointerOverlays()
         m_MenuPointerBeamHandle != vr::k_ulOverlayHandleInvalid)
         return true;
 
-    vr::IVROverlay* overlayApi = vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlayApi = l4d2vr_backend::Overlay();
     if (!overlayApi)
         return false;
 
@@ -1459,7 +1459,7 @@ void VR::HideMenuPointerVisuals()
     if (!m_MenuPointerVisualsShown)
         return;
     m_MenuPointerVisualsShown = false;
-    vr::IVROverlay* overlayApi = vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlayApi = l4d2vr_backend::Overlay();
     if (!overlayApi)
         return;
     if (m_MenuPointerDotHandle != vr::k_ulOverlayHandleInvalid)
@@ -1474,7 +1474,7 @@ void VR::ShowMenuPointerVisuals(const l4d2vr_overlay_pointer::Panel& panel, cons
     namespace op = l4d2vr_overlay_pointer;
     if (!EnsureMenuPointerOverlays())
         return;
-    vr::IVROverlay* overlayApi = vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* overlayApi = l4d2vr_backend::Overlay();
     if (!overlayApi || !m_Compositor)
         return;
     const vr::ETrackingUniverseOrigin origin = m_Compositor->GetTrackingSpace();
@@ -1527,7 +1527,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     // Some runtimes keep the old pointer non-null but make calls fail with VROverlayError_RequestFailed.
     {
         std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-        if (vr::IVROverlay* cur = vr::VROverlay())
+        if (l4d2vr_backend::IVrOverlay* cur = l4d2vr_backend::Overlay())
             m_Overlay = cur;
     }
 
@@ -1883,12 +1883,12 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         resetHandHudCache();
         m_HandHudLeftConsecutiveRawFails = 0;
         m_HandHudRightConsecutiveRawFails = 0;
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         leftVisible = false;
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
         rightVisible = false;
         if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
-            vr::VROverlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
         UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
         m_LastSpecialInfectedIntentSenseHudVisible = false;
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
@@ -1903,12 +1903,12 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if (dbgTick)
             Game::logMsg("[VR][HandHUD] tick: localPlayer null (idx=%d) -> hide overlays", playerIndex);
         resetHandHudCache();
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         leftVisible = false;
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
         rightVisible = false;
         if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
-            vr::VROverlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
         UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
         m_LastSpecialInfectedIntentSenseHudVisible = false;
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
@@ -1925,12 +1925,12 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if (dbgTick)
             Game::logMsg("[VR][HandHUD] tick: localPlayer dead lifeState=%u -> hide overlays", (unsigned)lifeState);
         resetHandHudCache();
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         leftVisible = false;
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
         rightVisible = false;
         if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
-            vr::VROverlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
         UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
         m_LastSpecialInfectedIntentSenseHudVisible = false;
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
@@ -1947,7 +1947,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 return true;
 
             std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-            vr::IVROverlay* ov = vr::VROverlay();
+            l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
             if (!ov)
                 ov = m_Overlay;
             if (!ov)
@@ -2002,7 +2002,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
             {
                 std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-                if (vr::IVROverlay* ov = vr::VROverlay())
+                if (l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay())
                     ov->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
             }
             UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
@@ -2050,7 +2050,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             {
                 {
                     std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-                    vr::IVROverlay* ov = vr::VROverlay();
+                    l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
                     if (!ov)
                         ov = m_Overlay;
                     if (ov)
@@ -2339,7 +2339,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             if (left)
                 m_LeftWristHudExtraHeightMeters = extraHeight;
 
-            vr::IVROverlay* ov = vr::VROverlay();
+            l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
             if (!ov)
                 return false;
             ov->SetOverlayWidthInMeters(handle, widthMeters);
@@ -2376,21 +2376,21 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     {
         leftVisible = showNativeWristHud(0);
         if (!leftVisible)
-            vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
     }
     else if (canShowLeft)
     {
         const unsigned char bgA = (unsigned char)std::round((std::max)(0.0f, (std::min)(1.0f, m_LeftWristHudBgAlpha)) * 255.0f);
 
-        vr::VROverlay()->SetOverlayWidthInMeters(m_LeftWristHudHandle, (std::max)(0.01f, m_LeftWristHudWidthMeters));
+        l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_LeftWristHudHandle, (std::max)(0.01f, m_LeftWristHudWidthMeters));
         // Texel aspect is per-texel pixel aspect, not texture aspect ratio. Our pixels are square.
-        vr::VROverlay()->SetOverlayTexelAspect(m_LeftWristHudHandle, 1.0f);
+        l4d2vr_backend::Overlay()->SetOverlayTexelAspect(m_LeftWristHudHandle, 1.0f);
         float leftCurv = (std::max)(0.0f, m_LeftWristHudCurvature);
         if (worldQuad && !worldQuadAttachControllers)
             leftCurv = 0.0f;
-        L4D2VRSetOverlayCurvature(vr::VROverlay(), m_LeftWristHudHandle, leftCurv);
+        L4D2VRSetOverlayCurvature(l4d2vr_backend::Overlay(), m_LeftWristHudHandle, leftCurv);
         // Opacity applies to background only; keep overlay alpha at 1 so text/bars stay readable.
-        vr::VROverlay()->SetOverlayAlpha(m_LeftWristHudHandle, 1.0f);
+        l4d2vr_backend::Overlay()->SetOverlayAlpha(m_LeftWristHudHandle, 1.0f);
 
         int hp = 0;
         TryReadInt(pBase, kHealthOffset, hp);
@@ -2808,7 +2808,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             vr::EVROverlayError err = vr::VROverlayError_None;
             {
                 std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-                vr::IVROverlay* ov = vr::VROverlay();
+                l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
                 if (!ov) ov = m_Overlay;
                 if (worldQuad)
                 {
@@ -2883,7 +2883,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         }
         m_LeftWristHudPixelsFront = backIdx;
         {
-            const vr::EVROverlayError err = vr::VROverlay()->ShowOverlay(m_LeftWristHudHandle);
+            const vr::EVROverlayError err = l4d2vr_backend::Overlay()->ShowOverlay(m_LeftWristHudHandle);
             m_HandHudDebugLastLeftShowErr = (int)err;
             if (worldQuad && (err == vr::VROverlayError_InvalidHandle || err == vr::VROverlayError_RequestFailed))
             {
@@ -2914,7 +2914,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         m_LastHudAimTargetPct = -1;
         m_LastHudAimTargetNameHash = 0;
         m_LastHudTeammatesHash = 0;
-        vr::VROverlay()->HideOverlay(m_LeftWristHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         leftVisible = false;
     }
 
@@ -2923,7 +2923,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     {
         rightVisible = showNativeWristHud(1);
         if (!rightVisible)
-            vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
     }
     else if (canShowRight)
     {
@@ -2935,10 +2935,10 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             L4D2VRSetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, gunHandIndex, &rel, __LINE__);
         }
         // Opacity applies to background only; keep overlay alpha at 1 so text/bars stay readable.
-        vr::VROverlay()->SetOverlayAlpha(m_RightAmmoHudHandle, 1.0f);
+        l4d2vr_backend::Overlay()->SetOverlayAlpha(m_RightAmmoHudHandle, 1.0f);
 
         // Texel aspect is per-texel pixel aspect, not texture aspect ratio. Our pixels are square.
-        vr::VROverlay()->SetOverlayTexelAspect(m_RightAmmoHudHandle, 1.0f);
+        l4d2vr_backend::Overlay()->SetOverlayTexelAspect(m_RightAmmoHudHandle, 1.0f);
 
         int clip = 0;
         int reserve = 0;
@@ -2996,7 +2996,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             m_LastHudReserve = -9999;
             m_LastHudUpg = -9999;
             m_LastHudUpgBits = 0;
-            vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+            l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
             rightVisible = false;
             goto after_right;
         }
@@ -3065,8 +3065,8 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         bounds.vMin = 0.0f;
         bounds.uMax = uMax;
         bounds.vMax = 1.0f;
-        vr::VROverlay()->SetOverlayTextureBounds(m_RightAmmoHudHandle, &bounds);
-        vr::VROverlay()->SetOverlayWidthInMeters(m_RightAmmoHudHandle, (std::max)(0.01f, m_RightAmmoHudWidthMeters) * uMax);
+        l4d2vr_backend::Overlay()->SetOverlayTextureBounds(m_RightAmmoHudHandle, &bounds);
+        l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_RightAmmoHudHandle, (std::max)(0.01f, m_RightAmmoHudWidthMeters) * uMax);
         const bool changed = (clip != m_LastHudClip) || (reserve != m_LastHudReserve) || (upg != m_LastHudUpg) || (upgBits != m_LastHudUpgBits);
         if (dbgTick)
         {
@@ -3191,7 +3191,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             vr::EVROverlayError err = vr::VROverlayError_None;
             {
                 std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-                vr::IVROverlay* ov = vr::VROverlay();
+                l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
                 if (!ov) ov = m_Overlay;
                 if (worldQuad)
                 {
@@ -3259,7 +3259,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         }
         m_RightAmmoHudPixelsFront = backIdx;
         {
-            const vr::EVROverlayError err = vr::VROverlay()->ShowOverlay(m_RightAmmoHudHandle);
+            const vr::EVROverlayError err = l4d2vr_backend::Overlay()->ShowOverlay(m_RightAmmoHudHandle);
             m_HandHudDebugLastRightShowErr = (int)err;
             if (worldQuad && (err == vr::VROverlayError_InvalidHandle || err == vr::VROverlayError_RequestFailed))
             {
@@ -3279,7 +3279,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         m_LastHudReserve = -9999;
         m_LastHudUpg = -9999;
         m_LastHudUpgBits = 0;
-        vr::VROverlay()->HideOverlay(m_RightAmmoHudHandle);
+        l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
         rightVisible = false;
     }
 
@@ -3297,7 +3297,7 @@ after_right:
 
             {
                 std::lock_guard<std::mutex> _lk(m_VROverlayMutex);
-                vr::IVROverlay* ov = vr::VROverlay();
+                l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
                 if (!ov) ov = m_Overlay;
                 if (ov) m_Overlay = ov;
 
@@ -3432,13 +3432,13 @@ after_right:
         auto getWidthMeters = [&](vr::VROverlayHandle_t h, float fallback) -> float
             {
                 float w = 0.0f;
-                if (vr::VROverlay()->GetOverlayWidthInMeters(h, &w) == vr::VROverlayError_None && w > 0.001f)
+                if (l4d2vr_backend::Overlay()->GetOverlayWidthInMeters(h, &w) == vr::VROverlayError_None && w > 0.001f)
                     return w;
                 return fallback;
             };
 
         float mirrorW = 0.0f;
-        if (vr::VROverlay()->GetOverlayWidthInMeters(m_RearMirrorHandle, &mirrorW) != vr::VROverlayError_None || mirrorW <= 0.001f)
+        if (l4d2vr_backend::Overlay()->GetOverlayWidthInMeters(m_RearMirrorHandle, &mirrorW) != vr::VROverlayError_None || mirrorW <= 0.001f)
             mirrorW = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
 
         const float wL = leftVisible ? getWidthMeters(m_LeftWristHudHandle, (std::max)(0.01f, m_LeftWristHudWidthMeters)) : 0.0f;
@@ -3463,14 +3463,14 @@ after_right:
         const float yRow = -(mirrorW * 0.5f + rowH * 0.5f + gapY);
 
         vr::VROverlayTransformType parentType{};
-        if (vr::VROverlay()->GetOverlayTransformType(m_RearMirrorHandle, &parentType) != vr::VROverlayError_None)
+        if (l4d2vr_backend::Overlay()->GetOverlayTransformType(m_RearMirrorHandle, &parentType) != vr::VROverlayError_None)
             parentType = vr::VROverlayTransform_Absolute;
 
         if (parentType == vr::VROverlayTransform_Absolute)
         {
             vr::ETrackingUniverseOrigin origin{};
             vr::HmdMatrix34_t originToMirror{};
-            if (vr::VROverlay()->GetOverlayTransformAbsolute(m_RearMirrorHandle, &origin, &originToMirror) == vr::VROverlayError_None)
+            if (l4d2vr_backend::Overlay()->GetOverlayTransformAbsolute(m_RearMirrorHandle, &origin, &originToMirror) == vr::VROverlayError_None)
             {
                 if (leftVisible)
                 {
@@ -3488,7 +3488,7 @@ after_right:
         {
             vr::TrackedDeviceIndex_t parentDev = vr::k_unTrackedDeviceIndexInvalid;
             vr::HmdMatrix34_t devToMirror{};
-            if (vr::VROverlay()->GetOverlayTransformTrackedDeviceRelative(m_RearMirrorHandle, &parentDev, &devToMirror) == vr::VROverlayError_None
+            if (l4d2vr_backend::Overlay()->GetOverlayTransformTrackedDeviceRelative(m_RearMirrorHandle, &parentDev, &devToMirror) == vr::VROverlayError_None
                 && parentDev != vr::k_unTrackedDeviceIndexInvalid)
             {
                 if (leftVisible)

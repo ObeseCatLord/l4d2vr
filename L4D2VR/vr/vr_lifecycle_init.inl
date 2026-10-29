@@ -1083,20 +1083,20 @@ VR::VR(Game* game)
 
     char errorString[MAX_STR_LEN];
 
-    vr::HmdError error = vr::VRInitError_None;
-    m_System = vr::VR_Init(&error, vr::VRApplication_Scene);
-
-    if (error != vr::VRInitError_None)
+    m_Backend = &l4d2vr_backend::Active();
+    const char* initError = nullptr;
+    if (!m_Backend->Init(initError))
     {
-        snprintf(errorString, MAX_STR_LEN, "VR_Init failed: %s", vr::VR_GetVRInitErrorAsEnglishDescription(error));
+        snprintf(errorString, MAX_STR_LEN, "VR_Init failed: %s", initError ? initError : "");
         if (L4D2VR_DesktopFallbackAllowed())
             L4D2VR_EnterDesktopFallback(errorString);
         else
             Game::errorMsg(errorString);
         return;
     }
+    m_System = m_Backend->System();
 
-    m_Compositor = vr::VRCompositor();
+    m_Compositor = m_Backend->Compositor();
     if (!m_Compositor)
     {
         if (L4D2VR_DesktopFallbackAllowed())
@@ -1115,8 +1115,8 @@ VR::VR(Game* game)
 
     ConfigureExplicitTiming();
 
-    m_Input = vr::VRInput();
-    m_System = vr::OpenVRInternal_ModuleContext().VRSystem();
+    m_Input = m_Backend->Input();
+    m_System = m_Backend->System();
 
     m_System->GetRecommendedRenderTargetSize(&m_RenderWidth, &m_RenderHeight);
     m_AntiAliasing = 0;
@@ -1245,7 +1245,7 @@ VR::VR(Game* game)
         m_ReShadeVRCompat = L4D2VR_InitializeReShadeVRBridge();
 
     RefreshBackBufferTexture(true);
-    m_Overlay = vr::VROverlay();
+    m_Overlay = m_Backend->Overlay();
     m_Overlay->CreateOverlay("MenuOverlayKey", "MenuOverlay", &m_MainMenuHandle);
     m_Overlay->CreateOverlay("HUDOverlayTopKey", "HUDOverlayTop", &m_HUDTopHandle);
 
@@ -1473,7 +1473,8 @@ void VR::InstallApplicationManifest(const char* fileName)
     char path[MAX_STR_LEN];
     sprintf_s(path, MAX_STR_LEN, "%s\\VR\\%s", currentDir, fileName);
 
-    vr::VRApplications()->AddApplicationManifest(path);
+    if (l4d2vr_backend::IVrApplications* applications = l4d2vr_backend::Applications())
+        applications->AddApplicationManifest(path);
 }
 
 

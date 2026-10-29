@@ -51,7 +51,7 @@ namespace
     }
 
     bool TryReadOpenVRSkeletalSummary(
-        vr::IVRInput* input,
+        l4d2vr_backend::IVrInput* input,
         vr::VRActionHandle_t action,
         vr::EVRSummaryType summaryType,
         vr::VRSkeletalSummaryData_t& outSummary)
@@ -299,7 +299,7 @@ VrHandSkeletonRuntime::VrHandSkeletonRuntime()
 
 VrHandSkeletonRuntime::~VrHandSkeletonRuntime() = default;
 
-bool VrHandSkeletonRuntime::Initialize(vr::IVRInput* input, vr::VRActionHandle_t action, std::string& outError)
+bool VrHandSkeletonRuntime::Initialize(l4d2vr_backend::IVrInput* input, vr::VRActionHandle_t action, std::string& outError)
 {
     outError.clear();
     m_Impl->hasPose = false;
@@ -436,8 +436,8 @@ bool VrHandSkeletonRuntime::Initialize(vr::IVRInput* input, vr::VRActionHandle_t
     return true;
 }
 
-bool VrHandSkeletonRuntime::Update(vr::IVRInput* input, const l4d2vr_input::ActionFrame& actionFrame,
-    vr::IVRSystem* system, vr::VRInputValueHandle_t expectedSource,
+bool VrHandSkeletonRuntime::Update(l4d2vr_backend::IVrInput* input, const l4d2vr_input::ActionFrame& actionFrame,
+    l4d2vr_backend::IVrSystem* system, vr::VRInputValueHandle_t expectedSource,
     vr::TrackedDeviceIndex_t expectedDevice,
     vr::EVRSkeletalMotionRange motionRange, std::string& outError)
 {

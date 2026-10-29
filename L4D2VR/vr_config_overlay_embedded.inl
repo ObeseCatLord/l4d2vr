@@ -363,6 +363,7 @@ namespace
         { "LoadingFramePumpEnabled", CfgOptionType::Bool, "Display", "Keep loading screens live", 0.0f, 0.0f, "true" },
         { "IntermissionHudEnabled", CfgOptionType::Bool, "Display", "Show HUD at intermissions", 0.0f, 0.0f, "true" },
         { "BackgroundAudio", CfgOptionType::Bool, "Display", "Audio when unfocused", 0.0f, 0.0f, "true" },
+        { "VrRuntime", CfgOptionType::String, "Display", "VR runtime (auto/openxr/openvr)", 0.0f, 0.0f, "auto" },
         { "ObjectPullEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE9\x9A\x94\xE7\xA9\xBA\xE6\x8A\x93\xE5\x8F\x96", "\xE9\x9A\x94\xE7\xA9\xBA\xE6\x8A\x93\xE5\x8F\x96", 0.00f, 0.00f, "true" },
         
         { "MotionGesturesEnabled", CfgOptionType::Bool, "\xE5\x8A\xA8\xE4\xBD\x9C\xE6\x89\x8B\xE5\x8A\xBF", "\xE5\x90\xAF\xE7\x94\xA8\xE4\xBD\x93\xE6\x84\x9F\xE6\x89\x8B\xE5\x8A\xBF", 0.0f, 0.0f, "true" },
@@ -947,11 +948,11 @@ namespace
 
     CfgOverlayState g_CfgOverlay;
 
-    static void CfgApplyOverlayPlacement(CfgOverlayState& s, vr::IVROverlay* ov = nullptr);
+    static void CfgApplyOverlayPlacement(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov = nullptr);
     static void CfgInvalidateFixedPlacement(CfgOverlayState& s);
-    static void CfgOpenPanelFromMenuButton(CfgOverlayState& s, vr::IVROverlay* ov = nullptr);
-    static void CfgOpenMaterialPanel(CfgOverlayState& s, vr::IVROverlay* ov = nullptr);
-    static void CfgCloseMaterialPanel(CfgOverlayState& s, bool reopenConfig, vr::IVROverlay* ov = nullptr);
+    static void CfgOpenPanelFromMenuButton(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov = nullptr);
+    static void CfgOpenMaterialPanel(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov = nullptr);
+    static void CfgCloseMaterialPanel(CfgOverlayState& s, bool reopenConfig, l4d2vr_backend::IVrOverlay* ov = nullptr);
     static vr::HmdMatrix34_t CfgMul34(const vr::HmdMatrix34_t& a, const vr::HmdMatrix34_t& b);
     static bool CfgGetCurrentDeviceAbsolutePose(vr::ETrackingUniverseOrigin& origin, vr::HmdMatrix34_t& deviceAbs, CfgDevice device);
 
@@ -1122,6 +1123,7 @@ namespace
         { "LoadingFramePumpEnabled", "Display", "Keep Loading Screens Live", "Keeps the headset updating during map loads and chapter transitions.", "" },
         { "IntermissionHudEnabled", "Display", "Show HUD At Intermissions", "Shows the HUD overlay automatically for end-of-chapter stats and the scoreboard.", "" },
         { "BackgroundAudio", "Display", "Audio When Unfocused", "Keeps game audio playing when the desktop window is not focused.", "Takes effect after a restart." },
+        { "VrRuntime", "Display", "VR Runtime", "Which VR interface the mod uses: auto, openxr or openvr. The -l4d2vr_openxr and -l4d2vr_openvr launch options override it.", "Takes effect after a restart. auto uses OpenVR for now; OpenXR is not built yet, so openxr falls back to OpenVR." },
         { "MagazineReleaseButtonRequired", "Hands / Manual Reload", "Button-controlled Magazine Release", "Requires Magazine Release to eject an attached magazine, including when it is empty.", "The off-hand grip handles support, loose magazines and the slide. Running out of ammunition does not eject the magazine." },
         { "VrHandsEnabled", "Hands / VR Hands", "Enable VR Hand System", "Enables VR hand tracking and hand rendering.", "Manual Reload is a separate child feature that requires VR Hands." },
         { "VrHandsGlovesEnabled", "Hands / VR Hands", "Use Separate VR Glove Models", "Uses separate GLB/SteamVR glove models instead of the game's built-in hand mesh.", "Requires VR Hands. Leave off for the simpler built-in hand path." },
@@ -5501,7 +5503,7 @@ FlashlightEnhancementEnabled=false
 
                 while (mouseDown)
                 {
-                    if (vr::IVROverlay* ov = vr::VROverlay())
+                    if (l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay())
                     {
                         vr::VREvent_t ev{};
                         while (ov->PollNextOverlayEvent(s.handle, &ev, sizeof(ev)))
@@ -6974,7 +6976,7 @@ FlashlightEnhancementEnabled=false
         return h != vr::k_ulOverlayHandleInvalid;
     }
 
-    static void CfgConfigurePanelOverlay(CfgOverlayState& s, vr::IVROverlay* ov, vr::VROverlayHandle_t h, bool active)
+    static void CfgConfigurePanelOverlay(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov, vr::VROverlayHandle_t h, bool active)
     {
         (void)s;
         if (!ov || !CfgIsValidOverlayHandle(h))
@@ -6989,10 +6991,10 @@ FlashlightEnhancementEnabled=false
         ov->SetOverlayMouseScale(h, &mouseScale);
     }
 
-    static void CfgHidePanelOverlays(CfgOverlayState& s, vr::IVROverlay* ov)
+    static void CfgHidePanelOverlays(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -7003,12 +7005,12 @@ FlashlightEnhancementEnabled=false
         s.panelOverlayShown = false;
     }
 
-    static void CfgSetBaseOverlaysBlocked(CfgOverlayState& s, bool blocked, vr::IVROverlay* ov = nullptr)
+    static void CfgSetBaseOverlaysBlocked(CfgOverlayState& s, bool blocked, l4d2vr_backend::IVrOverlay* ov = nullptr)
     {
         if (!g_Game || !g_Game->m_VR)
             return;
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -7172,7 +7174,7 @@ FlashlightEnhancementEnabled=false
         return true;
     }
 
-    static void CfgSetMenuButtonTransform(vr::IVROverlay* ov, vr::VROverlayHandle_t h)
+    static void CfgSetMenuButtonTransform(l4d2vr_backend::IVrOverlay* ov, vr::VROverlayHandle_t h)
     {
         if (!ov || !CfgIsValidOverlayHandle(h))
             return;
@@ -7241,7 +7243,7 @@ FlashlightEnhancementEnabled=false
 
     static bool CfgEnsureMenuButtonOverlay(CfgOverlayState& s)
     {
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return false;
 
@@ -7268,12 +7270,12 @@ FlashlightEnhancementEnabled=false
         return true;
     }
 
-    static void CfgSetMenuButtonInputGuard(CfgOverlayState& s, bool blocked, vr::IVROverlay* ov = nullptr)
+    static void CfgSetMenuButtonInputGuard(CfgOverlayState& s, bool blocked, l4d2vr_backend::IVrOverlay* ov = nullptr)
     {
         if (!g_Game || !g_Game->m_VR || s.baseOverlaysInputBlocked)
             return;
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -7314,7 +7316,7 @@ FlashlightEnhancementEnabled=false
 
     static void CfgHideMenuButton(CfgOverlayState& s)
     {
-        if (vr::IVROverlay* ov = vr::VROverlay())
+        if (l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay())
         {
             CfgSetMenuButtonInputGuard(s, false, ov);
             if (s.menuButtonHandle != vr::k_ulOverlayHandleInvalid)
@@ -7359,10 +7361,10 @@ FlashlightEnhancementEnabled=false
         return pressed;
     }
 
-    static void CfgOpenPanelFromMenuButton(CfgOverlayState& s, vr::IVROverlay* ov)
+    static void CfgOpenPanelFromMenuButton(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
 
         s.visible = true;
         s.resetConfirmVisible = false;
@@ -7390,7 +7392,7 @@ FlashlightEnhancementEnabled=false
         if (s.menuButtonHandle == vr::k_ulOverlayHandleInvalid)
             return;
 
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -7410,7 +7412,7 @@ FlashlightEnhancementEnabled=false
 
     static void CfgUpdateMenuButton(CfgOverlayState& s)
     {
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -7532,12 +7534,12 @@ FlashlightEnhancementEnabled=false
     static bool CfgGetCurrentDeviceAbsolutePose(vr::ETrackingUniverseOrigin& origin, vr::HmdMatrix34_t& deviceAbs, CfgDevice device)
     {
         origin = vr::TrackingUniverseStanding;
-        if (vr::IVRCompositor* comp = vr::VRCompositor())
+        if (l4d2vr_backend::IVrCompositor* comp = l4d2vr_backend::Compositor())
             origin = comp->GetTrackingSpace();
         else if (g_Game && g_Game->m_VR && g_Game->m_VR->m_Compositor)
             origin = g_Game->m_VR->m_Compositor->GetTrackingSpace();
 
-        vr::IVRSystem* sys = vr::VRSystem();
+        l4d2vr_backend::IVrSystem* sys = l4d2vr_backend::System();
         if (!sys)
             return false;
 
@@ -7604,13 +7606,13 @@ FlashlightEnhancementEnabled=false
         s.appliedOverlayDistanceMeters = distanceMeters;
     }
 
-    static void CfgApplyOverlayPlacement(CfgOverlayState& s, vr::IVROverlay* ov)
+    static void CfgApplyOverlayPlacement(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov)
     {
         if (!CfgIsValidOverlayHandle(s.handle) && !CfgIsValidOverlayHandle(s.backHandle))
             return;
 
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -7649,7 +7651,7 @@ FlashlightEnhancementEnabled=false
 
     static bool CfgEnsureOverlay(CfgOverlayState& s)
     {
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return false;
 
@@ -8270,12 +8272,12 @@ FlashlightEnhancementEnabled=false
 
     static void CfgApplyMaterialPlacement(
         CfgOverlayState& s,
-        vr::IVROverlay* ov = nullptr)
+        l4d2vr_backend::IVrOverlay* ov = nullptr)
     {
         if (!CfgIsValidOverlayHandle(s.materialHandle))
             return;
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -8331,7 +8333,7 @@ FlashlightEnhancementEnabled=false
 
     static bool CfgEnsureMaterialOverlay(CfgOverlayState& s)
     {
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return false;
         if (!CfgIsValidOverlayHandle(s.materialHandle))
@@ -8375,10 +8377,10 @@ FlashlightEnhancementEnabled=false
 
     static void CfgHideMaterialOverlay(
         CfgOverlayState& s,
-        vr::IVROverlay* ov = nullptr)
+        l4d2vr_backend::IVrOverlay* ov = nullptr)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (ov && CfgIsValidOverlayHandle(s.materialHandle))
             ov->HideOverlay(s.materialHandle);
         s.materialOverlayShown = false;
@@ -8614,10 +8616,10 @@ FlashlightEnhancementEnabled=false
 
     static bool CfgUploadMaterialPanel(
         CfgOverlayState& s,
-        vr::IVROverlay* ov = nullptr)
+        l4d2vr_backend::IVrOverlay* ov = nullptr)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov || !CfgIsValidOverlayHandle(s.materialHandle) ||
             s.materialRgba.empty())
         {
@@ -8640,10 +8642,10 @@ FlashlightEnhancementEnabled=false
 
     static void CfgShowMaterialPanelIfNeeded(
         CfgOverlayState& s,
-        vr::IVROverlay* ov = nullptr)
+        l4d2vr_backend::IVrOverlay* ov = nullptr)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov || !CfgIsValidOverlayHandle(s.materialHandle))
             return;
         CfgApplyMaterialPlacement(s, ov);
@@ -8860,7 +8862,7 @@ FlashlightEnhancementEnabled=false
     {
         if (!CfgIsValidOverlayHandle(s.materialHandle))
             return;
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -8923,10 +8925,10 @@ FlashlightEnhancementEnabled=false
 
     static void CfgOpenMaterialPanel(
         CfgOverlayState& s,
-        vr::IVROverlay* ov)
+        l4d2vr_backend::IVrOverlay* ov)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (g_Game && g_Game->m_VR)
             g_Game->m_VR->m_ClothingMaterials.store(true, std::memory_order_release);
         CfgLoadMaterialPanelConfig(s);
@@ -8961,10 +8963,10 @@ FlashlightEnhancementEnabled=false
     static void CfgCloseMaterialPanel(
         CfgOverlayState& s,
         bool reopenConfig,
-        vr::IVROverlay* ov)
+        l4d2vr_backend::IVrOverlay* ov)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         CfgPublishMaterialPreviewCamera(s, false);
         s.materialVisible = false;
         CfgHideMaterialOverlay(s, ov);
@@ -9097,7 +9099,7 @@ FlashlightEnhancementEnabled=false
         if (!CfgIsKeyboardEditable(spec))
             return;
 
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
         {
             s.status = s.useChinese ? "VR \xE9\x94\xAE\xE7\x9B\x98\xE4\xB8\x8D\xE5\x8F\xAF\xE7\x94\xA8\xE3\x80\x82" : "VR keyboard is unavailable.";
@@ -9142,7 +9144,7 @@ FlashlightEnhancementEnabled=false
         if (!s.keyboardActive || s.keyboardEditKey.empty())
             return;
 
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -9315,7 +9317,7 @@ FlashlightEnhancementEnabled=false
             {
                 if (s.keyboardActive)
                 {
-                    if (vr::IVROverlay* ov = vr::VROverlay())
+                    if (l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay())
                         ov->HideKeyboard();
                     s.keyboardActive = false;
                     s.keyboardEditKey.clear();
@@ -9356,7 +9358,7 @@ FlashlightEnhancementEnabled=false
         {
             if (s.keyboardActive)
             {
-                if (vr::IVROverlay* ov = vr::VROverlay())
+                if (l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay())
                     ov->HideKeyboard();
                 s.keyboardActive = false;
                 s.keyboardEditKey.clear();
@@ -9536,10 +9538,10 @@ FlashlightEnhancementEnabled=false
         }
     }
 
-    static bool CfgUploadPanelTexture(CfgOverlayState& s, vr::IVROverlay* ov)
+    static bool CfgUploadPanelTexture(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov || !CfgIsValidOverlayHandle(s.handle) || s.rgba.empty())
             return false;
 
@@ -9572,10 +9574,10 @@ FlashlightEnhancementEnabled=false
         return true;
     }
 
-    static void CfgShowPanelIfNeeded(CfgOverlayState& s, vr::IVROverlay* ov)
+    static void CfgShowPanelIfNeeded(CfgOverlayState& s, l4d2vr_backend::IVrOverlay* ov)
     {
         if (!ov)
-            ov = vr::VROverlay();
+            ov = l4d2vr_backend::Overlay();
         if (!ov || !CfgIsValidOverlayHandle(s.handle))
             return;
 
@@ -9594,7 +9596,7 @@ FlashlightEnhancementEnabled=false
         if (s.handle == vr::k_ulOverlayHandleInvalid)
             return;
 
-        vr::IVROverlay* ov = vr::VROverlay();
+        l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
         if (!ov)
             return;
 
@@ -9728,7 +9730,7 @@ FlashlightEnhancementEnabled=false
             if (!CfgEnsureOverlay(s))
                 continue;
 
-            vr::IVROverlay* ov = vr::VROverlay();
+            l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
             if (!ov)
                 continue;
 
@@ -9811,7 +9813,7 @@ void L4D2VRConfigOverlay_Open()
 
     CfgOverlayState& s = g_CfgOverlay;
     std::lock_guard<std::mutex> lock(s.mutex);
-    vr::IVROverlay* ov = vr::VROverlay();
+    l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
 
     if (s.materialVisible)
         CfgCloseMaterialPanel(s, false, ov);

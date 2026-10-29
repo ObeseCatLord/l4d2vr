@@ -3260,6 +3260,12 @@ public:
 	// across later steps, so a following shot= photographs that scene.
 	bool m_SelfTestLookActive = false;
 	float m_SelfTestLookPitch = 0.0f;           // degrees, positive looks down
+	bool m_SelfTestRuntimeHands = false;        // runtimehands=1: controllers from the runtime, not scripted
+	bool m_SelfTestSimHands = false;            // runtimehands=sim: OpenVR raw poses equal to Monado's static simulated controllers
+	bool m_SelfTestFreezeHead = false;          // freezehead=1: head fixed at tracking (0, 1.6, 0) facing -Z
+	bool SelfTestCheckInputStep(const std::string& step, char* detail, size_t detailSize);
+	bool SelfTestBoundStep(char* detail, size_t detailSize);
+	void SelfTestLogRuntimeHands(const char* label);
 	// backpreview=<m>: back holster items drawn this far forward of their real
 	// place (and with the body off), so a picture shows them as seen from behind.
 	float m_SelfTestBackPreviewMeters = 0.0f;
@@ -4990,7 +4996,7 @@ public:
 	bool IsGameplayHandLeftPhysical(bool leftHand) const;
 	// leftHand selects the physical OpenVR controller role.
 	vr::TrackedDeviceIndex_t GetPhysicalControllerIndexForHand(bool leftHand) const;
-	void TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude) const;
+	void TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t deviceIndex, float durationSeconds, float amplitude, float frequency = 0.0f) const;
 	void TriggerPhysicalHandHapticPulse(bool leftHand, float durationSeconds, float frequency, float amplitude, int priority = 1);
 	void FlushHapticMixer();
 	WeaponHapticsProfile GetWeaponHapticsProfile(int weaponId) const;

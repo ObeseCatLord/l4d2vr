@@ -13,10 +13,11 @@
 //
 // Backends:
 //   vr_backend_openvr.cpp  pass-through to openvr_api (today's behaviour).
-//   vr_backend_openxr.cpp  OpenXR on DXVK's Vulkan device (M2: HMD pose and
-//                          eye frames; controllers, input and overlays follow
-//                          in M3/M4). Selected by VrRuntime=openxr or
-//                          -l4d2vr_openxr (vr_runtime_select.h).
+//   vr_backend_openxr.cpp  OpenXR on DXVK's Vulkan device: HMD pose and eye
+//                          frames (M2), controllers and input (M3,
+//                          openxr_input_runtime.inl); overlays follow in M4.
+//                          Selected by VrRuntime=openxr or -l4d2vr_openxr
+//                          (vr_runtime_select.h).
 //
 // Every accessor returns nullptr when the runtime has no such interface (for
 // OpenVR: before VR_Init, or in desktop mode), exactly like the vr::VRxxx()
@@ -56,6 +57,16 @@ namespace l4d2vr_backend
         virtual uint32_t GetStringTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, vr::ETrackedDeviceProperty prop,
             char* pchValue, uint32_t unBufferSize, vr::ETrackedPropertyError* pError = nullptr) = 0;
         virtual void TriggerHapticPulse(vr::TrackedDeviceIndex_t unControllerDeviceIndex, uint32_t unAxisId, unsigned short usDurationMicroSec) = 0;
+        // A haptic pulse with its real duration, frequency (Hz, 0 = runtime
+        // default) and amplitude (0..1). False when the runtime only has the
+        // legacy width-only pulse (OpenVR); the caller then folds the profile
+        // into TriggerHapticPulse.
+        virtual bool TriggerHapticVibration(vr::TrackedDeviceIndex_t unControllerDeviceIndex, float durationSeconds, float frequency,
+            float amplitude)
+        {
+            (void)unControllerDeviceIndex; (void)durationSeconds; (void)frequency; (void)amplitude;
+            return false;
+        }
     };
 
     // IVRCompositor subset: frame pacing and eye submission.
@@ -209,6 +220,16 @@ namespace l4d2vr_backend
         // backend's own copy) as a BMP at `path`. False when unsupported
         // (OpenVR: the runtime owns that copy).
         virtual bool RequestSubmittedEyeDump(const char* path) { (void)path; return false; }
+
+        // Test only (self-test step xrinput=): replaces the controller input the
+        // runtime reports at the action-state boundary, so the backend's binding
+        // table, thresholds, dpad and per-hand facade can be exercised without
+        // hardware. Spec syntax: openxr_input_logic.h FakeInput. False with a
+        // reason when unsupported (OpenVR) or the spec is invalid.
+        virtual bool SetFakeInput(const char* spec, std::string& error) { (void)spec; error = "not supported by this runtime"; return false; }
+        // Short description of each hand's controller ("left=wmr right=wmr"),
+        // for logs and self-test reports.
+        virtual std::string DescribeControllers() { return std::string(); }
     };
 
     // The OpenXR backend (vr_backend_openxr.cpp).

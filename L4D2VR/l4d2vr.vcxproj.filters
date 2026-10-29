@@ -42,6 +42,12 @@
     <ClInclude Include="vr_backend\openxr_loader_probe.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>
+    <ClInclude Include="vr_backend\openxr_input_profiles.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_backend\openxr_input_logic.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
     <ClInclude Include="vr_backend\openxr_pose_math.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>

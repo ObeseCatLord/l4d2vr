@@ -9637,7 +9637,8 @@ namespace
             // pill / adrenaline use: the weapon is doing something, not drawing.
             if (vr->m_PrimaryAttackCmdOwned ||
                 (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & 2u) != 0u || // grenade trigger held
-                now < vr->m_ConsumableUseHoldUntil)
+                (now < vr->m_ConsumableUseHoldUntil && (lowerModel.find("painpills") != std::string::npos ||
+                    lowerModel.find("adrenaline") != std::string::npos)))
                 state.weaponActionAt = now;
             const bool acting = state.weaponActionAt.time_since_epoch().count() != 0 &&
                 std::chrono::duration<float>(now - state.weaponActionAt).count() < 0.6f;

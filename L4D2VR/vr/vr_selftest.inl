@@ -779,14 +779,15 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
                 button(slapHand, false);
                 return true;
             }
-            // Put the held magazine on the seated one, then strike 10 cm before
+            // Put the held magazine on the seated one, then strike 30 cm before
             // to 4 cm past it along the outward axis. Park it to the side first so
             // that moving into the start point is a sideways move (no slap).
             const l4d2vr_mag_slap::Box seated = slapBox(box);
             Vec3 outward{};
             l4d2vr_mag_slap::OutwardAxis(seated, { insertionAxis.x, insertionAxis.y, insertionAxis.z }, outward);
             const Vector contact = m_LeftControllerPosAbs + (toVector(l4d2vr_mag_slap::Center(seated)) - held);
-            m_SelfTestSlapStart = contact - toVector(outward) * (0.10f * scale);
+            // 30 cm back: clear of the 25 cm magazine, so the strike makes the touch.
+            m_SelfTestSlapStart = contact - toVector(outward) * (0.30f * scale);
             m_SelfTestSlapEnd = contact + toVector(outward) * (0.04f * scale);
             m_SelfTestLeftWorld = m_SelfTestSlapStart + toVector(sideOf(seated, outward)) * (0.30f * scale);
         }
@@ -798,11 +799,11 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(6, 6.4f)) {}
         if (m_SelfTestStage == 7)
         {
-            // 14 cm in 0.1 s: 1.4 m/s relative to the still gun hand.
-            const float u = std::clamp((t - 6.4f) / 0.1f, 0.0f, 1.0f);
+            // 34 cm in 0.25 s: 1.4 m/s relative to the still gun hand.
+            const float u = std::clamp((t - 6.4f) / 0.25f, 0.0f, 1.0f);
             m_SelfTestLeftWorld = m_SelfTestSlapStart + (m_SelfTestSlapEnd - m_SelfTestSlapStart) * u;
         }
-        if (at(7, 6.52f))
+        if (at(7, 6.67f))
         {
             // Sideways off the gun before SlapReinsertTime, so the spare stays in the hand.
             m_SelfTestLeftWorld = m_SelfTestSlapEnd + m_SelfTestSlapPark;
@@ -2396,10 +2397,11 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 return fail("slap motion", "no held spare pose");
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
             const float side = motion == "wide" ? 0.12f : 0.0f;
-            // The AK-47's curved magazine is about 18 cm deep along the barrel:
-            // a strike toward the muzzle, or straight down across a canted
-            // magazine, starts clear of all of it.
-            const float back = (motion == "forward" || motion == "cant") ? 0.25f : 0.12f;
+            // The AK-47's curved magazine box is about 25 cm long and 18 cm
+            // deep: every strike starts clear of it, so the strike itself
+            // makes the touch (a spare already overlapping the old magazine
+            // never slaps, as in Pavlov).
+            const float back = 0.35f;
             m_SelfTestMeasureB = back;
             m_SelfTestSlapStart = contact - dir * (back * scale) + across * (side * scale);
             m_SelfTestSlapEnd = contact + dir * (0.05f * scale) + across * (side * scale);
@@ -2567,7 +2569,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             if (m_SelfTestCycle == 0)
                 m_SelfTestSerial = m_MagazineEjectSerial.load(std::memory_order_acquire);
             const Vector contact = leftNow() + (g.magazineCenter - g.heldCenter);
-            m_SelfTestSlapStart = contact - g.socketOutward * (0.10f * scale);
+            m_SelfTestSlapStart = contact - g.socketOutward * (0.30f * scale); // clear of the magazine
             m_SelfTestSlapEnd = contact + g.socketOutward * (0.04f * scale);
             m_SelfTestSlapPark = g.gunRight * (-0.30f * scale);
             m_SelfTestPoint = g.magazineCenter; // the strike rides with the gun
@@ -2582,7 +2584,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 324:
             if (!glideDone(0.4f)) return false;
-            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), 0.1f); // 14 cm in 0.1 s
+            glide(m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint), 0.25f); // 34 cm in 0.25 s
             go(325);
             return false;
         case 325:
@@ -3396,7 +3398,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     }
     case 212:
     {
-        // Strike 10 cm before to 4 cm past the seated magazine along its
+        // Strike 30 cm before to 4 cm past the seated magazine along its
         // outward axis; reach the start sideways so only the strike counts.
         MagazineInteractionBoxSnapshot box{};
         Vector pouch{}, held{};
@@ -3429,7 +3431,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         }
         const Vector contact = m_LeftControllerPosAbs + (center - held);
-        m_SelfTestSlapStart = contact - out * (0.10f * scale);
+        // 30 cm back: clear of the 25 cm magazine, so the strike makes the touch.
+        m_SelfTestSlapStart = contact - out * (0.30f * scale);
         m_SelfTestSlapEnd = contact + out * (0.04f * scale);
         m_SelfTestSlapPark = across * (0.30f * scale);
         // The strike points ride with the gun: the body can drift a few cm
@@ -3448,7 +3451,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         return false;
     case 204:
         if (!glideDone(0.4f)) return false;
-        glide(m_SelfTestSlapEnd + gunDrift(), 0.1f); // 14 cm in 0.1 s: 1.4 m/s against a still gun hand
+        glide(m_SelfTestSlapEnd + gunDrift(), 0.25f); // 34 cm in 0.25 s: 1.4 m/s against a still gun hand
         go(205);
         return false;
     case 205:

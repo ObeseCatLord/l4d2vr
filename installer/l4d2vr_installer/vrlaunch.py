@@ -425,7 +425,7 @@ def launch_monado(config: MonadoConfig, server: Optional[str] = None, password: 
         log_dir.mkdir(parents=True, exist_ok=False)
         with open(log_dir / "binary-hashes.txt", "w") as report:
             for item in (config.path("game_dir") / "d3d9.dll", config.path("game_dir") / "openvr_api.dll",
-                         config.path("xrizer_dir") / "libxrizer.so"):
+                         config.path("game_dir") / "openxr_loader.dll", config.path("xrizer_dir") / "libxrizer.so"):
                 if item.is_file():
                     report.write(f"{sha256_file(item)}  {item.name}\n")
         output = open(log_dir / "launch.log", "w")

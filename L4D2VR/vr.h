@@ -3189,6 +3189,8 @@ public:
 	std::vector<std::string> m_SelfTestSteps;
 	size_t m_SelfTestIndex = 0;
 	uint64_t m_SelfTestReadySinceMs = 0;
+	// Last time the self-test saw no live local player (map loads); maploadwait uses it.
+	uint64_t m_SelfTestLastNotAliveMs = 0;
 	uint64_t m_SelfTestStepStartMs = 0;
 	int m_SelfTestStage = 0;
 	int m_SelfTestPass = 0;

@@ -279,6 +279,7 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
             }
         }
         m_SelfTestReadySinceMs = 0;
+        m_SelfTestLastNotAliveMs = nowMs;
         m_SelfTestPoseActive = false;
         l4d2vr_selftest::ReleaseAll();
         return;
@@ -314,7 +315,8 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
     }
     const float t = (nowMs - m_SelfTestStepStartMs) / 1000.0f;
     // Hand-driven reload steps run several full reloads.
-    const float stepLimit = m_SelfTestSteps[m_SelfTestIndex].find("e2e") != std::string::npos ? 100.0f : 40.0f;
+    const float stepLimit = m_SelfTestSteps[m_SelfTestIndex].find("e2e") != std::string::npos ? 100.0f
+        : m_SelfTestSteps[m_SelfTestIndex] == "maploadwait" ? 180.0f : 40.0f;
     if (RunSelfTestStep(m_SelfTestSteps[m_SelfTestIndex], t, localPlayer) || t > stepLimit)
     {
         if (t > stepLimit)
@@ -1216,6 +1218,26 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 
     if (step == "wait")
         return t >= 10.0f;
+
+    // maploadwait: waits (up to 170 s) for a map change started outside the
+    // self-test (the OpenXR runner's rcon changelevel) and passes once the
+    // player has been back in the game for 3 s.
+    if (step == "maploadwait")
+    {
+        const uint64_t nowMs = GetTickCount64();
+        if (m_SelfTestLastNotAliveMs > m_SelfTestStepStartMs && nowMs - m_SelfTestLastNotAliveMs >= 3000u)
+        {
+            std::snprintf(detail, sizeof(detail), "back in the game %.1f s after the step started", t);
+            SelfTestReport("map change", true, detail);
+            return true;
+        }
+        if (t > 170.0f)
+        {
+            SelfTestReport("map change", false, "no map change seen within 170 s");
+            return true;
+        }
+        return false;
+    }
 
     // ---- Motion scenes (hold until changed) -----------------------------------
     // walk=<forward>[,<right>] stick deflection -1..1 or walk=off; hold=<s>
@@ -4680,6 +4702,10 @@ void VR::SelfTestRequestShot(const std::string& name, int eyes)
         m_SelfTestShotEyes = eyes;
     }
     m_SelfTestShotRequest.fetch_add(1u, std::memory_order_acq_rel);
+    // OpenXR: also save the left eye exactly as the runtime receives it (the
+    // swapchain image after the backend's copy), l4d2vr_selftest_<name>_xr.bmp.
+    if (m_Backend && m_Backend->RequestSubmittedEyeDump(("l4d2vr_selftest_" + name + "_xr.bmp").c_str()))
+        Game::logMsg("[VR][SelfTest] OpenXR swapchain dump requested: l4d2vr_selftest_%s_xr.bmp", name.c_str());
 }
 
 // Render thread, after both eyes of a frame are complete and before they are

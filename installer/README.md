@@ -166,7 +166,7 @@ Attach to each GitHub release:
 
 | Asset | Purpose |
 |---|---|
-| `l4d2vr.zip` | Client package (root: `d3d9.dll`, `openvr_api.dll`, `manifest.json`, `vr/`, `left4dead2/`) |
+| `l4d2vr.zip` | Client package (root: `d3d9.dll`, `openvr_api.dll`, `openxr_loader.dll` (32-bit Khronos loader for `VrRuntime=openxr`), `manifest.json`, `vr/`, `left4dead2/`) |
 | `l4d2vr.sha256` | `sha256sum` line(s) for the zips (optional: GitHub's digest is used otherwise) |
 | `l4d2vr-server-linux.zip` / `l4d2vr-server-windows.zip` | Server plugin (`left4dead2/addons/...` or `addons/...`) |
 | `l4d2vr-installer-windows.exe`, `l4d2vr-installer-linux` | Installer builds; add `-v1.2.0` to the name (or ship `l4d2vr-manifest.json` with `installer.version`) so older installers can tell a newer one exists |

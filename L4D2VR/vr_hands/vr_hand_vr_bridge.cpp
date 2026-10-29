@@ -1862,6 +1862,7 @@ namespace
     // How far up a spare magazine the fist closes, from its base (Pavlov holds
     // magazines low, the feed end clear of the hand to go in).
     constexpr float kSpareGripFromBase = 0.30f;
+    constexpr float kShellBoxGripFromBase = 0.80f;
 
     Vector MagazineInteractionFreshMagazineHandAnchorLocal(
         const VR* vr,
@@ -1895,9 +1896,12 @@ namespace
         }
         // In the drawn fist: the magazine passes through it along its length,
         // held low on that length.
+        // The auto shotgun and SPAS draw their shell at the feed end of their
+        // larger clip box: the fist closes there.
         if (inFist)
             return l4d2vr_ammo_grip::SpareGripPoint(magazineBox.mins, magazineBox.maxs,
-                vr->m_MagazineInteractionMagazineInsertionAxisLocal, kSpareGripFromBase);
+                vr->m_MagazineInteractionMagazineInsertionAxisLocal,
+                vr->m_MagazineInteractionShotgunShellMode ? kShellBoxGripFromBase : kSpareGripFromBase);
         const Vector freshHalf = MagazineInteractionFreshMagazineHalfExtentsSourceUnits(vr);
         const float configuredHeight = freshHalf.z * 2.0f;
         const float fallbackHeight = std::max(0.0f, magazineBox.maxs.z - magazineBox.mins.z);

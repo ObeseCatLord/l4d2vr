@@ -9636,7 +9636,7 @@ namespace
             // Firing (recoil is layered over idle too), reloading, a throw or a
             // pill / adrenaline use: the weapon is doing something, not drawing.
             if (vr->m_PrimaryAttackCmdOwned ||
-                (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & 3u) != 0u ||
+                (vr->m_ManualThrowViewmodelInputState.load(std::memory_order_acquire) & 2u) != 0u || // grenade trigger held
                 now < vr->m_ConsumableUseHoldUntil)
                 state.weaponActionAt = now;
             const bool acting = state.weaponActionAt.time_since_epoch().count() != 0 &&

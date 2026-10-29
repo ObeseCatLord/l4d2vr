@@ -5,28 +5,7 @@ namespace
 {
     l4d2vr_holster::ItemShape HolsterShapeForWeaponId(int weaponId)
     {
-        using W = C_WeaponCSBase::WeaponID;
-        switch (static_cast<W>(weaponId))
-        {
-        case W::PISTOL:
-        case W::MAGNUM:
-            return l4d2vr_holster::ItemShape::Pistol;
-        case W::MELEE:
-        case W::CHAINSAW:
-            return l4d2vr_holster::ItemShape::Melee;
-        case W::FIRST_AID_KIT:
-        case W::DEFIBRILLATOR:
-        case W::INCENDIARY_AMMO:
-        case W::FRAG_AMMO:
-        case W::MOLOTOV:
-        case W::PIPE_BOMB:
-        case W::VOMITJAR:
-        case W::PAIN_PILLS:
-        case W::ADRENALINE:
-            return l4d2vr_holster::ItemShape::Equipment;
-        default:
-            return l4d2vr_holster::ItemShape::LongGun;
-        }
+        return l4d2vr_holster::ItemShapeForWeaponId(weaponId);
     }
 
     int HolsterReadWeaponId(void* weapon)
@@ -135,6 +114,11 @@ bool VR::BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::It
         return false;
     pose = l4d2vr_holster::BuildItemPose(frame, m_HolsterLayout,
         static_cast<l4d2vr_holster::Zone>(item.slot), item.shape);
+    if (m_SelfTestEnabled && m_SelfTestBackPreviewMeters > 0.0f &&
+        l4d2vr_holster::IsBackZone(static_cast<l4d2vr_holster::Zone>(item.slot)))
+        pose.origin += frame.forward * (m_SelfTestBackPreviewMeters * frame.unitsPerMeter);
+    if (m_SelfTestEnabled && m_SelfTestAllPreviewMeters > 0.0f)
+        pose.origin += frame.forward * (m_SelfTestAllPreviewMeters * frame.unitsPerMeter);
     return pose.valid;
 }
 

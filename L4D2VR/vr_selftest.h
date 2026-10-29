@@ -77,6 +77,17 @@ namespace l4d2vr_selftest
             slot->edgeFrame.store(r.frame.load(std::memory_order_acquire), std::memory_order_release);
     }
 
+    // Frees every override slot, so the actions read the runtime (or the
+    // OpenXR backend's fake input) again instead of a released override.
+    inline void ForgetAll()
+    {
+        for (ButtonOverride& b : Get().buttons)
+        {
+            b.down.store(false, std::memory_order_release);
+            b.action.store(0u, std::memory_order_release);
+        }
+    }
+
     inline void ReleaseAll()
     {
         for (ButtonOverride& b : Get().buttons)

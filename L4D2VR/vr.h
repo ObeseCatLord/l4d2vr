@@ -2434,6 +2434,8 @@ public:
     std::chrono::steady_clock::time_point m_MagazineSlapNearMissLogAt{};
     l4d2vr_magazine::RetainedInsertGate m_RetainedMagazineInsertGate;
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
+    // The held old magazine was pulled out by hand (not caught as it fell).
+    bool m_RetainedMagazineHandPulled = false;
     // Fresh ammo seats only after leaving the well once since it was taken.
     l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;
     // A shell was taken while the pump waited to be cycled; the pump stage

@@ -7948,6 +7948,7 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionRetainedMagazineHeld = true;
         m_RetainedMagazineCatchHandLocal = leftControllerPosRelativeToWeapon();
         m_RetainedMagazineInsertGate.Reset();
+        m_RetainedMagazineHandPulled = anywhere;
         m_MagazineInteractionState = MagazineInteractionManualState::HoldingFreshMagazine;
         m_MagazineInteractionLeftHandHolding = true;
         m_MagazineInteractionFreshGrabbedAt = now;
@@ -9126,7 +9127,10 @@ bool VR::UpdateMagazineInteraction(
             // Catching while the hand is still under the well must not insert
             // the old magazine immediately. Withdraw it, then return it.
             const float travel = (leftControllerPosRelativeToWeapon() - m_RetainedMagazineCatchHandLocal).Length();
-            const float required = std::max(0.03f, m_MagazineInteractionPullTriggerMeters) * m_VRScale;
+            // A magazine the hand pulled out itself is already withdrawn: once it is
+            // clear of the well it may go straight back in.
+            const float required = m_RetainedMagazineHandPulled ? 0.001f
+                : std::max(0.03f, m_MagazineInteractionPullTriggerMeters) * m_VRScale;
             if (!m_RetainedMagazineInsertGate.Update(fitsSocket, travel, required)) return false;
         }
         else if (!freshGateOpen)

@@ -287,9 +287,8 @@ namespace
 
     IVrBackend& CreateBackend(int selected)
     {
-        // M1 builds only the OpenVR backend; the selection policy already turns
-        // an OpenXR request into OpenVR, so `selected` is always OpenVR here.
-        (void)selected;
+        if (selected == static_cast<int>(RuntimeKind::OpenXR))
+            return OpenXrBackendInstance();
         static OpenVrBackend openVr;
         return openVr;
     }
@@ -312,6 +311,13 @@ extern "C" bool L4D2VR_VrBackendInitForDevice(uint32_t* renderWidth, uint32_t* r
             std::snprintf(errorString, errorStringSize, "VR_Init failed: %s", initError ? initError : "");
         return false;
     }
-    backend.System()->GetRecommendedRenderTargetSize(renderWidth, renderHeight);
+    l4d2vr_backend::IVrSystem* system = backend.System();
+    if (!system)
+    {
+        if (errorString && errorStringSize)
+            std::snprintf(errorString, errorStringSize, "VR_Init failed: %s runtime has no system interface", backend.Name());
+        return false;
+    }
+    system->GetRecommendedRenderTargetSize(renderWidth, renderHeight);
     return true;
 }

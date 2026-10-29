@@ -13,8 +13,10 @@
 //
 // Backends:
 //   vr_backend_openvr.cpp  pass-through to openvr_api (today's behaviour).
-//   OpenXR                 not built yet (M2+); selecting it falls back to
-//                          OpenVR (see vr_runtime_select.h).
+//   vr_backend_openxr.cpp  OpenXR on DXVK's Vulkan device (M2: HMD pose and
+//                          eye frames; controllers, input and overlays follow
+//                          in M3/M4). Selected by VrRuntime=openxr or
+//                          -l4d2vr_openxr (vr_runtime_select.h).
 //
 // Every accessor returns nullptr when the runtime has no such interface (for
 // OpenVR: before VR_Init, or in desktop mode), exactly like the vr::VRxxx()
@@ -23,6 +25,7 @@
 #include "openvr.h"
 
 #include <cstdint>
+#include <string>
 
 namespace l4d2vr_backend
 {
@@ -201,7 +204,19 @@ namespace l4d2vr_backend
         virtual IVrOverlay* Overlay() = 0;
         virtual IVrRenderModels* RenderModels() = 0;
         virtual IVrApplications* Applications() = 0;
+
+        // Debug: saves the next left-eye image the runtime receives (after the
+        // backend's own copy) as a BMP at `path`. False when unsupported
+        // (OpenVR: the runtime owns that copy).
+        virtual bool RequestSubmittedEyeDump(const char* path) { (void)path; return false; }
     };
+
+    // The OpenXR backend (vr_backend_openxr.cpp).
+    IVrBackend& OpenXrBackendInstance();
+    // Loads openxr_loader.dll and creates the OpenXR instance and HMD system
+    // (once; the result is cached). False with a player-readable reason when
+    // OpenXR is unusable. Runs only when OpenXR was explicitly selected.
+    bool OpenXrProbeRuntime(std::string& reason);
 
     // The backend chosen for this process (L4D2VR_SelectedVrRuntime()). It is
     // created on first use and lives until the process exits.
@@ -221,6 +236,25 @@ namespace l4d2vr_backend
     }
 }
 
+// What DXVK hands the OpenXR backend once its device exists (plain C so the
+// DXVK fork needs no mod headers; d3d9_interface.cpp has a matching copy).
+// The lock callbacks are DxvkDevice::lockSubmission/unlockSubmission, the gate
+// every VkQueue user (and every xr call that may use the queue) goes through.
+struct L4D2VR_VkDeviceInfo
+{
+    uint32_t size;                 // sizeof(L4D2VR_VkDeviceInfo)
+    void* instance;                // VkInstance
+    void* physicalDevice;          // VkPhysicalDevice
+    void* device;                  // VkDevice
+    void* queue;                   // VkQueue (DXVK's graphics queue)
+    uint32_t queueFamilyIndex;
+    uint32_t queueIndex;
+    void* getInstanceProcAddr;     // PFN_vkGetInstanceProcAddr of DXVK's loader
+    void (*lockQueue)(void* context);
+    void (*unlockQueue)(void* context);
+    void* queueContext;
+};
+
 // C entry points for the DXVK fork (d3d9_interface.cpp, dxvk_instance.cpp),
 // which does not include the mod's headers.
 extern "C"
@@ -232,4 +266,17 @@ extern "C"
     // recommended per-eye render size. On failure writes "VR_Init failed: ..."
     // into errorString and returns false.
     bool L4D2VR_VrBackendInitForDevice(uint32_t* renderWidth, uint32_t* renderHeight, char* errorString, uint32_t errorStringSize);
+
+    // OpenXR only (DXVK's native OpenXR extension provider and adapter pin).
+    // Space-separated Vulkan extension lists from xrGetVulkan*ExtensionsKHR;
+    // `length` receives the size including the terminator. False when OpenXR
+    // is unavailable or the buffer is too small.
+    bool L4D2VR_XrGetVulkanInstanceExtensions(char* buffer, uint32_t capacity, uint32_t* length);
+    bool L4D2VR_XrGetVulkanDeviceExtensions(char* buffer, uint32_t capacity, uint32_t* length);
+    // xrGetVulkanGraphicsDeviceKHR for DXVK's VkInstance (void* = VkInstance,
+    // VkPhysicalDevice*).
+    bool L4D2VR_XrGetVulkanGraphicsDevice(void* vkInstance, void** physicalDevice);
+    // DXVK created the D3D9 device: the OpenXR backend creates its session on it.
+    // No-op for OpenVR.
+    void L4D2VR_VrBackendDeviceCreated(const L4D2VR_VkDeviceInfo* info);
 }

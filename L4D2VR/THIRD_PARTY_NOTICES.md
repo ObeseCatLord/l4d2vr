@@ -29,3 +29,14 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Khronos OpenXR loader and headers
+
+`openxr_loader.dll` (shipped next to `d3d9.dll`) and the OpenXR headers used by the OpenXR backend
+(`vr_backend/vr_backend_openxr.cpp`) come from the Khronos OpenXR-SDK, tag `release-1.1.65`
+(https://github.com/KhronosGroup/OpenXR-SDK). Build and checksums: `thirdparty/openxr/README.md`.
+
+- Copyright (c) 2017-2026 The Khronos Group Inc. and contributors
+- License: Apache License 2.0 (`thirdparty/openxr/LICENSE`, https://www.apache.org/licenses/LICENSE-2.0)
+- The loader includes JsonCpp (Copyright (c) 2007-2010 Baptiste Lepilleur and The JsonCpp Authors),
+  public domain or MIT License (`thirdparty/openxr/LICENSE.jsoncpp`).

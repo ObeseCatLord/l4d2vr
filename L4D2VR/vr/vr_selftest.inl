@@ -2463,6 +2463,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             return false;
         case 606:
             if (!glideDone(0.4f)) return false;
+            m_SelfTestStrikeCorrections = 0;
             m_SelfTestMeasure = m->speed;
             {
                 // Aim from where the spare really is now (its pose trails the
@@ -2498,8 +2499,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 m_SelfTestValueD = 1;
             }
             slapShots();
-            if (slaps() == 0u && m_SelfTestGlideMs && nowMs - m_MagazineSlapCentersAtMs < 200u &&
-                meters(m_MagazineSlapHeldCenter, m_MagazineSlapSeatedCenter) > 0.15f)
+            if (slaps() == 0u && m_SelfTestGlideMs && !glideDone(0.0f) && m_SelfTestStrikeCorrections < 40 &&
+                nowMs - m_MagazineSlapCentersAtMs < 200u)
             {
                 // Keep the strike on line, as a hand watching the magazine does:
                 // correct only the sideways miss (the held pose trails the hand
@@ -2517,6 +2518,10 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 const Vector correction = miss - plannedSide;
                 if (correction.Length() > 0.005f * scale)
                 {
+                    ++m_SelfTestStrikeCorrections;
+                    if (meters(m_MagazineSlapHeldCenter, m_MagazineSlapSeatedCenter) < 0.2f)
+                        Game::logMsg("[VR][SelfTest] slap motion %s: %.3f m off line %.3f m from the old magazine, corrected",
+                            m->name, correction.Length() / scale, meters(m_MagazineSlapHeldCenter, m_MagazineSlapSeatedCenter));
                     const Vector end = m_SelfTestGlideTo + correction;
                     m_SelfTestSlapEnd = m_SelfTestSlapEnd + correction;
                     glide(end, meters(end, leftNow()) / m->speed);

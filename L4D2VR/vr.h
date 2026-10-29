@@ -2421,6 +2421,10 @@ public:
     // where the spare was last frame relative to the seated magazine, both
     // hands' tracking positions for the velocity estimates, and when the hand let go.
     l4d2vr_mag_slap::Collider m_MagazineSlapCollider;
+    // The boxes the slap collides this frame (world centres, self-test aiming).
+    Vector m_MagazineSlapSeatedCenter{0.0f, 0.0f, 0.0f};
+    Vector m_MagazineSlapHeldCenter{0.0f, 0.0f, 0.0f};
+    uint64_t m_MagazineSlapCentersAtMs = 0;
     // Where the held old magazine sat against the well when the hand took it.
     Vector m_MagazineInteractionOldPullBaseline{0.0f, 0.0f, 0.0f};
     bool m_MagazineInteractionOldPullBaselineValid = false;

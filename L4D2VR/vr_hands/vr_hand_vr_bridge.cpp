@@ -9302,6 +9302,9 @@ bool VR::UpdateMagazineInteraction(
             return false;
         const float unitsPerMeter = std::max(0.001f, m_VRScale);
         const float gapMeters = l4d2vr_mag_slap::Gap(seated, held) / unitsPerMeter;
+        m_MagazineSlapSeatedCenter = MagazineSlapVector(l4d2vr_mag_slap::Center(seated));
+        m_MagazineSlapHeldCenter = MagazineSlapVector(l4d2vr_mag_slap::Center(held));
+        m_MagazineSlapCentersAtMs = GetTickCount64();
         const l4d2vr_mag_slap::PhysicsParams physics = l4d2vr_mag_slap::Physical(slap);
 
         // Strike velocity estimates, all the spare relative to the gun so

@@ -2473,9 +2473,16 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 if (across.Length() < 0.2f) across = CrossProduct(dir, g.gunForward);
                 across = across * (1.0f / (std::max)(0.001f, across.Length()));
                 const float side = motion == "wide" ? 0.30f : 0.0f;
-                const Vector target = g.magazineCenter + dir * (0.05f * scale) + across * (side * scale);
-                const Vector end = g.heldValid ? leftNow() + (target - g.heldCenter)
+                // The boxes the slap itself collides (the published magazine box
+                // can sit a few centimetres from the one rebased to this frame).
+                const bool collider = nowMs - m_MagazineSlapCentersAtMs < 200u;
+                const Vector seatedCenter = collider ? m_MagazineSlapSeatedCenter : g.magazineCenter;
+                const Vector heldCenter = collider ? m_MagazineSlapHeldCenter : g.heldCenter;
+                const Vector target = seatedCenter + dir * (0.05f * scale) + across * (side * scale);
+                const Vector end = (collider || g.heldValid) ? leftNow() + (target - heldCenter)
                     : m_SelfTestSlapEnd + (g.magazineCenter - m_SelfTestPoint);
+                Game::logMsg("[VR][SelfTest] slap motion %s: spare %.3f m from the old magazine (collider boxes %d), published box %.3f m from the collided one",
+                    m->name, meters(heldCenter, seatedCenter), collider ? 1 : 0, meters(g.magazineCenter, m_MagazineSlapSeatedCenter));
                 m_SelfTestSlapEnd = end;
                 m_SelfTestPoint = g.magazineCenter;
                 // The run-up plus 5 cm past the magazine at the motion's speed

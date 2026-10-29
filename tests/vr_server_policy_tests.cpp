@@ -381,6 +381,44 @@ namespace
         off.features &= ~kFeatureInstantDeploy;
         Check(!PostExecute(deploy, &sw, ctx, off, c).instantDeploy);
 
+        // A switch made between commands (holster draw "use" command): the
+        // next VR command clears the deploy delay before it runs.
+        PlayerVRState between{};
+        between.isUsingVR = true;
+        ExecInput first = Input(weapon::kPistol, kFeatureAllMask);
+        first.deployBackend = true;
+        CommandPose c1 = Pose(800);
+        ctx = PreExecute(between, &c1, 800, 0, first, c);
+        Check(!ctx.instantDeployBefore);                                 // nothing known yet
+        PostExecute(between, &c1, ctx, Post(weapon::kPistol, 0x2000, 0x2000), c);
+        CommandPose c2 = Pose(801);
+        ctx = PreExecute(between, &c2, 801, 0, first, c);
+        Check(!ctx.instantDeployBefore);                                 // same item
+        PostExecute(between, &c2, ctx, Post(weapon::kPistol, 0x2000, 0x2000), c);
+        ExecInput drawn = first;
+        drawn.weaponTag = 0x4000;
+        CommandPose c3 = Pose(802);
+        ctx = PreExecute(between, &c3, 802, 0, drawn, c);
+        Check(ctx.instantDeployBefore);                                  // switched between commands
+        PostExecute(between, &c3, ctx, Post(weapon::kMelee, 0x4000, 0x4000), c);
+        CommandPose c4 = Pose(803);
+        ctx = PreExecute(between, &c4, 803, 0, drawn, c);
+        Check(!ctx.instantDeployBefore);                                 // once
+        ExecInput noBackend = drawn;
+        noBackend.weaponTag = 0x5000;
+        noBackend.deployBackend = false;
+        ctx = PreExecute(between, &c4, 803, 0, noBackend, c);
+        Check(!ctx.instantDeployBefore);
+        ExecInput dead = drawn;
+        dead.weaponTag = 0x5000;
+        dead.liveSurvivor = false;
+        ctx = PreExecute(between, &c4, 803, 0, dead, c);
+        Check(!ctx.instantDeployBefore);
+        PlayerVRState desktop{};                                         // not a VR player
+        desktop.lastActiveWeapon = 0x2000;
+        ctx = PreExecute(desktop, &c4, 803, 0, drawn, c);
+        Check(!ctx.instantDeployBefore);
+
         // Melee sweep through PostExecute.
         PlayerVRState melee{};
         melee.isUsingVR = true;

@@ -117,6 +117,18 @@ namespace l4d2vr_vm_anim
         return Kind::Other;
     }
 
+    // Weapon switches: the draw / deploy sequence and the item pickup reach. In
+    // VR the item is simply in the hand, so none of these may move it.
+    inline bool IsSwitchActivity(const char* activity, const char* label)
+    {
+        const char* const a = activity ? activity : "";
+        const char* const l = label ? label : "";
+        if (*a)
+            return ContainsNoCase(a, "ACT_VM_DEPLOY") || ContainsNoCase(a, "ACT_VM_DRAW") ||
+                ContainsNoCase(a, "ACT_VM_ITEMPICKUP");
+        return ContainsNoCase(l, "deploy") || ContainsNoCase(l, "draw") || ContainsNoCase(l, "itempickup");
+    }
+
     // Model path of a swung melee viewmodel ("models/weapons/melee/v_bat.mdl").
     inline bool IsSwungMeleeModel(const char* lowerModelPath)
     {

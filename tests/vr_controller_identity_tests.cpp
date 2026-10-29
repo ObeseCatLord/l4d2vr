@@ -75,6 +75,7 @@ struct VR
     vr::TrackedDevicePose_t m_Poses[vr::k_unMaxTrackedDeviceCount]{};
     vr::TrackedDevicePose_t m_HmdPose{}, m_LeftControllerPose{}, m_RightControllerPose{};
     bool m_LeftHanded = false;
+    bool ItemHandIsPhysicalLeft() const { return m_LeftHanded; }
 #include "vr_controller_identity_cache.inl"
     void GetPoses();
     vr::TrackedDeviceIndex_t GetPhysicalControllerIndexForHand(bool leftHand) const;

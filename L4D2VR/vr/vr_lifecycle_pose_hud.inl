@@ -17,7 +17,9 @@ void VR::GetPoses()
     if (rightControllerIndex != vr::k_unTrackedDeviceIndexInvalid && rightControllerIndex < vr::k_unMaxTrackedDeviceCount)
         rightControllerPose = m_Poses[rightControllerIndex];
 
-    if (m_LeftHanded)
+    // The gameplay right hand is the item hand (LeftHanded, then the hand that
+    // took the active item: vr_item_hand.h).
+    if (ItemHandIsPhysicalLeft())
         std::swap(leftControllerPose, rightControllerPose);
 
     GetPoseData(hmdPose, m_HmdPose);
@@ -709,9 +711,12 @@ bool VR::GetLeftHandedMirroredAnalogActionData(vr::VRActionHandle_t actionHandle
     return anyQuerySucceeded;
 }
 
-bool VR::GetDigitalActionData(vr::VRActionHandle_t& actionHandle, vr::InputDigitalActionData_t& digitalDataOut)
+bool VR::GetDigitalActionData(vr::VRActionHandle_t& requestedAction, vr::InputDigitalActionData_t& digitalDataOut)
 {
     digitalDataOut = {};
+    // Hand roles: while the off hand holds the item, its trigger fires and its
+    // grip is the weapon grip (vr_item_hand.h).
+    vr::VRActionHandle_t actionHandle = ItemHandRoleAction(requestedAction);
     bool selfTestDown = false, selfTestChanged = false;
     if (l4d2vr_selftest::Lookup(actionHandle, selfTestDown, selfTestChanged))
     {
@@ -2112,7 +2117,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
     vr::TrackedDeviceIndex_t leftControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
     vr::TrackedDeviceIndex_t rightControllerIndex = m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
-    if (m_LeftHanded)
+    if (ItemHandIsPhysicalLeft())
         std::swap(leftControllerIndex, rightControllerIndex);
 
     // A controller-relative overlay needs a valid controller pose: OpenXR

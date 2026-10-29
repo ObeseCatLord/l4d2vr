@@ -3167,6 +3167,8 @@ namespace
         sampleKeys.insert("LeftWristHudNativeWidthMeters");
         sampleKeys.insert("RightAmmoHudNativeWidthMeters");
         sampleKeys.insert("HolsterInstantDraw");
+        sampleKeys.insert("AmbidextrousItemHands");
+        sampleKeys.insert("ItemHandOffRadiusMeters");
         sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawFollowSpeed");
         sampleKeys.insert("HolsterHeightScale");

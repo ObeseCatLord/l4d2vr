@@ -73,6 +73,17 @@ namespace l4d2vr_grip_toggle
         }
 
         bool Held() const { return m_Held; }
+        // The item changed hands (ambidextrous hand-off): the new hand's grip is
+        // already in rawDown, so it is not a fresh press, and the item stays
+        // held (or not) as it was.
+        void Adopt(bool rawDown, bool held)
+        {
+            m_PrevRaw = rawDown;
+            m_SwapPress = false;
+            m_Pending = false;
+            m_PinnedTag = 0u;
+            m_Held = held;
+        }
         void Reset()
         {
             Clear();

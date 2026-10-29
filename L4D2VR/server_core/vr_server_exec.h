@@ -31,6 +31,7 @@ namespace l4d2vr_server
         Vec3 eye{};                        // native EyePosition (not overridden)
         std::uint64_t nowMs = 0u;
         float tickSeconds = 1.0f / 30.0f;
+        bool deployBackend = false;        // next-attack netprops + curtime resolved
     };
 
     struct ExecContext
@@ -46,6 +47,10 @@ namespace l4d2vr_server
         bool throwPrepared = false;
         bool shoveStarted = false;
         bool pillGiveStarted = false;
+        // The active item changed since this player's last command (the "use" or
+        // slot command of a holster draw runs between commands): clear the
+        // deploy delay before this command runs, so a shot right after a draw fires.
+        bool instantDeployBefore = false;
     };
 
     // Before the original PlayerRunCommand. `pose` may be null (unknown command).
@@ -67,6 +72,8 @@ namespace l4d2vr_server
         }
         if (command > p.lastExecutedCommand)
             p.lastExecutedCommand = command;
+        ctx.instantDeployBefore = in.deployBackend && (in.features & kFeatureInstantDeploy) != 0u &&
+            in.liveSurvivor && in.weaponTag != 0u && p.lastActiveWeapon != 0u && in.weaponTag != p.lastActiveWeapon;
 
         // Native reload gate policy (listen host: physicalReloadLedger.Observe).
         if (in.interaction)
@@ -172,6 +179,7 @@ namespace l4d2vr_server
         const PostInput& in, const ServerConfig& c)
     {
         PostActions a{};
+        p.lastActiveWeapon = in.weaponTagAfter;
         if (p.pendingThrow.valid && ++p.pendingThrow.executedSinceRelease > 48)
             p.pendingThrow = {};
         if (!ctx.vr || !pose)

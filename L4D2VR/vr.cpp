@@ -559,7 +559,7 @@ void VR::UpdateHudLiftGestureState(bool inGame)
         m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
     vr::TrackedDeviceIndex_t rightControllerIndex =
         m_System->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
-    if (m_LeftHanded)
+    if (ItemHandIsPhysicalLeft())
         std::swap(leftControllerIndex, rightControllerIndex);
 
     const bool leftControllerValid =
@@ -733,6 +733,7 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
 #include "vr/vr_sight_alignment.inl"
 #include "vr/vr_melee_motion.inl"
 #include "vr/vr_selftest.inl"
+#include "vr/vr_item_hand.inl"
 #include "vr/vr_native_wrist_hud.inl"
 #include "vr/vr_viewmodel_config.inl"
 

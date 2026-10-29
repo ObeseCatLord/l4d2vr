@@ -12,7 +12,7 @@ Desktop players running the mod are unaffected; they can join VR servers and pla
 
 ## Holsters
 
-Reach to a holster and squeeze the weapon-hand grip: the item is in your hand immediately, with a haptic pulse, and the hovered item glows.
+Reach to a holster with either hand and squeeze its grip: the item is in that hand immediately, with a haptic pulse, and the hovered item glows.
 
 Grips are toggles, as in Pavlov (`GripToggle`, on by default). One firm squeeze takes an item and your hand keeps it after you let go; on Index controllers that means a hard squeeze, not a light grip. The next squeeze lets go of it:
 
@@ -41,7 +41,15 @@ Chest items go back in when your hand is anywhere in the vest, a capsule over th
 
 Each grip press logs where your hand was relative to the head (`[VR][Holster] grip pressed`), so the layout can be checked against your own reaches.
 
-On servers without the plugin the server's own deploy delay before you can fire still applies; the deploy animation is skipped either way.
+No weapon switch plays the draw animation (`HolsterInstantDraw`): holster draws, pickups, slot keys, the switch after a throw or a medkit and switches the server makes all put the item straight into your hand. The weapon is shown in its idle pose while the game's draw plays underneath; the very first time a model is drawn, before its idle pose is known, it is not drawn until the draw has settled (up to about a second), and the learned poses are kept in `VR\viewmodel_idle_poses.bin` for later sessions. On servers with the plugin the deploy delay before you can fire is cleared too, also for draws made between commands (the `use` command a holster draw sends); elsewhere the server's own delay still applies.
+
+## Ambidextrous items
+
+The hand that takes an item holds and uses it (`AmbidextrousItemHands`, on by default). Draw a gun with your left hand and it sits in your left hand, aims along your left controller and fires with your left trigger; a grenade drawn with the left hand is armed with the left trigger and thrown with the left hand; pills go to your mouth and adrenaline into your other arm from the left. Your other hand becomes the support hand: it takes the foregrip, magazines, slides and bolts, the magazine pouch moves to its hip, and its trigger no longer fires. The ammo display follows the hand with the gun. Holsters stay where they are. With the game's own hands (the default) the item is held by the game's right-hand model on your left controller; with `VrHandsGlovesEnabled` each controller shows its own glove.
+
+- **Drawing:** squeeze over a holster with the free hand: the item goes into that hand, exactly as a draw with the gun hand (glow, haptics, put away or drop with the next squeeze).
+- **Handing over:** bring the free hand to the item in the other hand and squeeze (hands within `ItemHandOffRadiusMeters`, 14 cm); a squeeze on the foregrip, a magazine, the bolt or slide, or a holster does that instead. Or hold the foregrip with the free hand and let go with the item hand: the item stays in the hand on the foregrip instead of dropping.
+- Both triggers and grips trade roles with the item; sticks and face buttons stay where your bindings put them (the magazine release stays on the right A button). Desktop players and servers see a normal player whose shots come from that hand.
 
 Dropping (`HolsterReleaseDrop`, on by default): letting go of an item you took with the grip drops it with your hand's motion, so you can toss a gun to a teammate. Letting go inside or over a holster never drops it. Items you already held before drawing aren't affected. Dropping needs a server with the plugin or a modded host; elsewhere letting go does nothing.
 
@@ -107,11 +115,11 @@ Before trusting a new game build, run `l4d2vr_server_symcheck <path to server_sr
 
 ## Controls (physical layout)
 
-Both grips are used only for gripping: they draw from holsters and hold magazines, bolts and foregrips. On Index the grips respond to a firm, full-hand squeeze (squeeze value 0.85 right, 0.8 left). Right A releases the magazine. Push the right stick forward to jump and pull it back to crouch (hold; `StickJumpCrouch`); turning pauses while the stick is pushed mostly forward or back, and clicking the right stick also jumps. Left trigger shoves, or fires the left pistol in akimbo. Oculus Touch, Index (Knuckles) and Vive Cosmos defaults follow this layout.
+Both grips are used only for gripping: they draw from holsters and hold magazines, bolts and foregrips. On Index the grips respond to a firm, full-hand squeeze (squeeze value 0.85 right, 0.8 left). Right A releases the magazine. Push the right stick forward to jump and pull it back to crouch (hold; `StickJumpCrouch`); turning pauses while the stick is pushed mostly forward or back, and clicking the right stick also jumps. Left trigger shoves, or fires the left pistol in akimbo; when the left hand holds the item, the two triggers and grips trade roles (see Ambidextrous items). Oculus Touch, Index (Knuckles) and Vive Cosmos defaults follow this layout.
 
 ## Self-test (developers)
 
-`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `reach` (both hands reach every holster from a human body model at human speeds; checks draws, hover pulses and no gun bash), `emptysqueeze` (squeezing the grip in the air never drops the gun), `pickup` (grip contact pickup of a first aid kit keeps the gun), `bashanim` and `swinganim` (the strike registers and the viewmodel never shows the native shove or swing animation, `[VR][VmAnim]` lines), `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server.
+`-l4d2vrselftest step,step,...` on the game's command line scripts head and hand poses and button presses, so the online mechanics can be checked with a simulated headset (Monado `SIMULATED_ENABLE=1` with `XRT_COMPOSITOR_NULL=1`, which needs no window). Each check logs `[VR][SelfTest] PASS|FAIL ...` to `vrmod_log.txt`, and the dedicated plugin logs the matching server side. Steps: `ambie2e` (left-hand draw into the left hand, left trigger fires along the left controller while the right trigger does not, the pouch moves to the right hip, a hand-off back to the right hand, a left-hand pipe bomb throw, left-hand pills, a right-hand draw back; no bash from any hand change), `ambimelee` (the left hand draws a melee weapon from the hip and a left-hand slash swings it), `ambimedkit` (the left hand takes the medkit and heals with the left trigger, then stabs adrenaline into the chest), `switchanim` (eight switches of every kind with three photographs each, `sw_*`, after forgetting the learned idle poses; no frame may show the draw), `switchtotal` (the same for every switch since the game started), `lfire=<seconds>` (holds the physical left trigger), `features`, `holster`, `togglegrip`, `holsterdrop` (hold-to-grip mode), `give`, `reach` (both hands reach every holster from a human body model at human speeds; checks draws, hover pulses and no gun bash), `emptysqueeze` (squeezing the grip in the air never drops the gun), `pickup` (grip contact pickup of a first aid kit keeps the gun), `bashanim` and `swinganim` (the strike registers and the viewmodel never shows the native shove or swing animation, `[VR][VmAnim]` lines), `throwpipe`, `throwbile`, `swing`, `shove`, `reload`, `slap` (AK-47 magazine slap), `shells`, `pills`, `adrenaline`, `crouch`, `wave`, `weapons`, `wait`, `cmd=<console command>`, `quit`. Steps that give items need `sv_cheats 1` on the server.
 
 Render checks photograph the VR eye images instead of trusting the log:
 
@@ -138,6 +146,8 @@ Test on a listen server you host, on Marmot Cafe with the plugin, and on a serve
 - Reload every gun type: button release versus AK hand pull, catching, dropped magazines, spare magazine shown only with reserve ammo, chamber only when empty, shotgun shells and pump.
 - Sights: the crosshair sits on the front sight for every gun; the crosshair gap grows while moving and firing.
 - Akimbo: each trigger hits where its own pistol points.
+- Ambidextrous: draw each item type with the left hand (gun, melee, grenade, medkit, pills, adrenaline): it is in the left hand, aims and fires from the left; hand items over both ways; reload a left-held gun with the right hand from the right hip.
+- Switches: no draw animation on any switch (holster, pickup, after a throw, after a medkit).
 - Melee: heavy weapons lag a little, hits land where the blade goes, no hits while walking, thrust and gun bash shove.
 - Grenades: throw distance follows your arm; arc lands near the target on plain servers.
 - Pills to the mouth, adrenaline to the chest and arm.

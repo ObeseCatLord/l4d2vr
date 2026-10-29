@@ -460,6 +460,7 @@ namespace
     using FnPrimaryActivity = int (*)(void*, void*);
     using FnMeleeInfo = void* (*)(void*, int);
     using FnWeaponDrop = void (*)(void*, void*, const Vector*, const Vector*);
+    using FnTeleport = void (*)(void*, const Vector*, const QAngle*, const Vector*);
     using FnAmmoCount = int (*)(void*, int);
     using FnAmmoDef = void* (*)();
     using FnInfinite = bool (*)(void*, int);
@@ -490,6 +491,7 @@ namespace
         FnMeleeInfo meleeInfo = nullptr;
         void* meleeStore = nullptr;
         FnWeaponDrop weaponDrop = nullptr;
+        FnTeleport animatingTeleport = nullptr; // optional
         FnInt clip1 = nullptr;
         FnEntity getOwner = nullptr;
         FnBool isDualWielding = nullptr;
@@ -1231,8 +1233,17 @@ namespace
         {
             const Vector velocity = ToVector(actions.dropRequest.velocity);
             g_N.weaponDrop(self, weaponAfter, nullptr, &velocity);
-            Log("%s player=%d weapon=%d velocity=(%.1f %.1f %.1f)", actions.dropRequest.holster ? "holster drop" : "inventory drop",
-                index, actions.dropRequest.weaponId, velocity.x, velocity.y, velocity.z);
+            // Weapon_Drop puts the item at the body and tosses it forward; move it
+            // to the hand that let go, with the hand's velocity.
+            const bool atHand = actions.dropRequest.haveOrigin && g_N.animatingTeleport && g_N.getOwner &&
+                g_N.getOwner(weaponAfter) == nullptr;
+            if (atHand)
+            {
+                const Vector origin = ToVector(actions.dropRequest.origin);
+                g_N.animatingTeleport(weaponAfter, &origin, nullptr, &velocity);
+            }
+            Log("%s player=%d weapon=%d velocity=(%.1f %.1f %.1f) atHand=%d", actions.dropRequest.holster ? "holster drop" : "inventory drop",
+                index, actions.dropRequest.weaponId, velocity.x, velocity.y, velocity.z, atHand ? 1 : 0);
         }
         if (actions.instantDeploy && weaponAfter)
             ClearAttackDelay(self, weaponAfter);
@@ -1485,6 +1496,7 @@ namespace
         g_N.meleeInfo = As<FnMeleeInfo>(Address(results, "GetMeleeWeaponInfo"));
         g_N.meleeStore = reinterpret_cast<void*>(Address(results, "g_MeleeWeaponInfoStore"));
         g_N.weaponDrop = As<FnWeaponDrop>(Address(results, "Weapon_Drop"));
+        g_N.animatingTeleport = As<FnTeleport>(Address(results, "CBaseAnimating::Teleport"));
         g_N.clip1 = As<FnInt>(Address(results, "Clip1"));
         g_N.getOwner = As<FnEntity>(Address(results, "GetOwner"));
         g_N.isDualWielding = As<FnBool>(Address(results, "IsDualWielding"));

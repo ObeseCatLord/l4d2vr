@@ -118,6 +118,8 @@ namespace l4d2vr_server
         int weaponId = 0;             // expected active weapon id (inventory release)
         int command = 0;
         Vec3 velocity{};
+        Vec3 origin{};                // reach-clamped hand position at the release
+        bool haveOrigin = false;
     };
 
     struct PlayerVRState

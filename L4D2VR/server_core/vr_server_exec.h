@@ -241,7 +241,7 @@ namespace l4d2vr_server
                 in.tickSeconds, velocity, angular);
             ClampMagnitude(velocity, c.dropMaxSpeed);
             a.drop = true;
-            a.dropRequest = { true, true, false, in.weaponIdAfter, ctx.command, velocity };
+            a.dropRequest = { true, true, false, in.weaponIdAfter, ctx.command, velocity, ctx.position, ctx.position.Finite() };
         }
         else if (canDrop && pose->inventoryRelease && in.interaction && (in.features & kFeatureHolsterDrop) != 0u &&
             pose->carryWeaponId == in.weaponIdAfter && pose->dropHand == l4d2vr_dual::Hand::None &&
@@ -251,7 +251,19 @@ namespace l4d2vr_server
             ThrowRelease release = ComputeThrowRelease(p.throwRing, pose->tick, ctx.position, ctx.aimAngles,
                 in.tickSeconds, c);
             a.drop = true;
-            a.dropRequest = { true, false, grip, in.weaponIdAfter, ctx.command, grip ? Vec3{} : release.velocity };
+            // Pavlov: a let-go item leaves the hand where it is, with the hand's
+            // own measured motion (a still hand drops it straight down).
+            Vec3 velocity = release.velocity;
+            if (grip)
+            {
+                Vec3 angular{};
+                velocity = {};
+                p.throwRing.EstimateReleaseVelocity(pose->tick, c.throwVelocityWindowTicks, c.throwPeakVelocityBlend,
+                    in.tickSeconds, velocity, angular);
+                ClampMagnitude(velocity, c.dropMaxSpeed);
+            }
+            a.dropRequest = { true, false, grip, in.weaponIdAfter, ctx.command, velocity, ctx.position,
+                ctx.position.Finite() };
         }
 
         // Instant deploy after a weapon switch made by this VR command.

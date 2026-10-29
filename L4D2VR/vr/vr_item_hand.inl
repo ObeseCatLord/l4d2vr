@@ -263,19 +263,26 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             Vector pouch{}, held{};
             bool heldValid = false;
             const bool pouchValid = GetMagazineSlapSelfTestPoints(pouch, held, heldValid);
-            const float gunSide = side(m_RightControllerPosAbs);
-            std::snprintf(detail, sizeof(detail), "active slot %d (rifle is 1), item hand %s, gun hand %.2f m %s of the head",
-                SelfTestActiveSlot(player) + 1, hand, std::fabs(gunSide), gunSide < 0.0f ? "left" : "right");
+            std::snprintf(detail, sizeof(detail), "active slot %d (rifle is 1), item hand %s",
+                SelfTestActiveSlot(player) + 1, hand);
             SelfTestReport("ambidextrous: left hand draws the rifle into the left hand",
-                SelfTestActiveSlot(player) == 0 && ItemHandIsPhysicalLeft() && ActiveItemHand() == l4d2vr_dual::Hand::Left &&
-                gunSide < -0.05f, detail);
+                SelfTestActiveSlot(player) == 0 && ItemHandIsPhysicalLeft() && ActiveItemHand() == l4d2vr_dual::Hand::Left, detail);
             std::snprintf(detail, sizeof(detail), "pouch %.2f m %s of the head (free hand is the right)",
                 std::fabs(side(pouch)), side(pouch) < 0.0f ? "left" : "right");
             SelfTestReport("ambidextrous: pouch on the free (right) hip", pouchValid && side(pouch) > 0.05f, detail);
             SelfTestReachLeft(SelfTestVec(0.42f, -0.12f, -0.32f), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
             SelfTestHoldRight(body::RightReady(), QAngle(0.0f, -25.0f, 0.0f));
         }
-        if (at(6, 6.6f)) { SelfTestRequestShot("ambi_left_rifle", 1); }
+        if (at(6, 6.6f))
+        {
+            // The rifle came over the right shoulder; once the left hand is back
+            // in front-left, the gun must be there with it.
+            const float gunSide = side(m_RightControllerPosAbs);
+            std::snprintf(detail, sizeof(detail), "gun hand %.2f m %s of the head",
+                std::fabs(gunSide), gunSide < 0.0f ? "left" : "right");
+            SelfTestReport("ambidextrous: the rifle follows the left hand", ItemHandIsPhysicalLeft() && gunSide < -0.05f, detail);
+            SelfTestRequestShot("ambi_left_rifle", 1);
+        }
         if (at(7, 7.2f)) { m_SelfTestValueA = clip(); button(m_ActionSecondaryAttack, true); }
         if (at(8, 7.5f)) { button(m_ActionSecondaryAttack, false); }
         if (at(9, 8.2f))

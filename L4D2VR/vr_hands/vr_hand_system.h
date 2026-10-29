@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openvr.h"
+#include "../vr_backend/vr_backend.h"
 #include "vr_hand_asset_loader.h"
 #include "vr_hand_renderer_d3d9.h"
 #include "vr_hand_skeleton_runtime.h"
@@ -19,7 +20,7 @@ namespace VrHandVmPose { struct Snapshot; }
 
 struct VrHandControllerContext
 {
-    vr::IVRSystem* system = nullptr;
+    l4d2vr_backend::IVrSystem* system = nullptr;
     std::array<vr::TrackedDeviceIndex_t, 2> physicalIndices{
         vr::k_unTrackedDeviceIndexInvalid, vr::k_unTrackedDeviceIndexInvalid};
 };
@@ -35,7 +36,7 @@ public:
 
     bool DrawForEye(
         IDirect3DDevice9* device,
-        vr::IVRInput* input,
+        l4d2vr_backend::IVrInput* input,
         const l4d2vr_input::ActionFrame& actionFrame,
         const VrHandControllerContext& controllers,
         const CViewSetup& view,
@@ -169,7 +170,7 @@ private:
     bool EnsureAssetsLoaded(bool debugLog);
     void PublishFreeWristModelPosition(size_t handIndex);
     bool EnsureInitialized(
-        vr::IVRInput* input,
+        l4d2vr_backend::IVrInput* input,
         const l4d2vr_input::ActionFrame& actionFrame,
         const VrHandControllerContext& controllers,
         bool rightUseViewmodelPose,
@@ -195,7 +196,7 @@ private:
         bool useViewmodelLayer,
         VrHandDrawPass drawPass);
     void UpdatePoses(
-        vr::IVRInput* input,
+        l4d2vr_backend::IVrInput* input,
         const l4d2vr_input::ActionFrame& actionFrame,
         const VrHandControllerContext& controllers,
         bool motionRangeWithoutController,

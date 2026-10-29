@@ -51,7 +51,11 @@ namespace vr
     constexpr VRActionHandle_t k_ulInvalidActionHandle = 0u;
     constexpr VRInputValueHandle_t k_ulInvalidInputValueHandle = 0u;
     constexpr unsigned k_unMaxPropertyStringSize = 32768u;
-    bool VR_GetRuntimePath(char* output, std::uint32_t capacity, std::uint32_t* required)
+}
+namespace l4d2vr_backend
+{
+    // The active VR backend's runtime path (OpenVR: VR_GetRuntimePath).
+    bool GetRuntimePath(char* output, std::uint32_t capacity, std::uint32_t* required)
     {
         ++resolves;
         *required = static_cast<std::uint32_t>(runtimeRoot.size() + 1u);

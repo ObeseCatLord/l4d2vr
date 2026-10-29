@@ -453,12 +453,12 @@ bool VrHandSystem::ResolveSteamVrAssetPath(const char* fileName, std::string& ou
 
     std::vector<char> buffer(vr::k_unMaxPropertyStringSize, '\0');
     uint32_t required = 0;
-    if (!vr::VR_GetRuntimePath(buffer.data(), static_cast<uint32_t>(buffer.size()), &required))
+    if (!l4d2vr_backend::GetRuntimePath(buffer.data(), static_cast<uint32_t>(buffer.size()), &required))
         return false;
     if (required > buffer.size())
     {
         buffer.assign(static_cast<size_t>(required) + 1u, '\0');
-        if (!vr::VR_GetRuntimePath(buffer.data(), static_cast<uint32_t>(buffer.size()), &required))
+        if (!l4d2vr_backend::GetRuntimePath(buffer.data(), static_cast<uint32_t>(buffer.size()), &required))
             return false;
     }
     if (buffer.empty() || buffer.front() == '\0')
@@ -848,7 +848,7 @@ bool VrHandSystem::EnsureAssetsLoaded(bool debugLog)
 }
 
 bool VrHandSystem::EnsureInitialized(
-    vr::IVRInput* input,
+    l4d2vr_backend::IVrInput* input,
     const l4d2vr_input::ActionFrame& actionFrame,
     const VrHandControllerContext& controllers,
     bool rightUseViewmodelPose,
@@ -1241,7 +1241,7 @@ bool VrHandSystem::BuildViewmodelWorld(
 }
 
 void VrHandSystem::UpdatePoses(
-    vr::IVRInput* input,
+    l4d2vr_backend::IVrInput* input,
     const l4d2vr_input::ActionFrame& actionFrame,
     const VrHandControllerContext& controllers,
     bool motionRangeWithoutController,
@@ -1423,7 +1423,7 @@ bool VrHandSystem::ReadFreeWristModelPosition(bool physicalLeft,
 
 bool VrHandSystem::DrawForEye(
     IDirect3DDevice9* device,
-    vr::IVRInput* input,
+    l4d2vr_backend::IVrInput* input,
     const l4d2vr_input::ActionFrame& actionFrame,
     const VrHandControllerContext& controllers,
     const CViewSetup& view,

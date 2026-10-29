@@ -16,6 +16,7 @@
 #include "vr_scope_optics.h"
 #include "vr_weapon_models.h"
 #include "vr_magazine_policy.h"
+#include "vr_mag_slap.h"
 #include "vr_reload_log.h"
 #include "vr_remote_shells.h"
 #include "vr_pistol_effects.h"
@@ -1338,6 +1339,17 @@ public:
 	// sniper: take a fresh magazine with the old one seated and strike it out.
 	bool m_MagazineSlapEnabled = true;
 	std::atomic<uint32_t> m_MagazineSlapSerial{ 0u };  // slaps detected (self-test)
+	std::atomic<uint32_t> m_MagazineSlapNearMissSerial{ 0u };  // strikes that touched but were too slow / off axis
+	// Pavlov's split (MagazineInteractionTriggerInteractions): the free hand's grip
+	// grabs (holsters, the foregrip, pickups); its trigger does the small
+	// interactions: magazines and shells from the pouch, seating, pulling the
+	// seated magazine out, slides, bolts and pumps (hold the trigger to hold).
+	// false = the off-hand grip does both, as before.
+	bool m_MagazineInteractionTriggerInteractions = true;
+	// The free hand's trigger this frame (self-test diagnostics): down, and
+	// presses that reached a fire or shove command (must stay 0).
+	std::atomic<bool> m_FreeHandTriggerDown{ false };
+	std::atomic<uint32_t> m_FreeHandTriggerLeakSerial{ 0u };
 	// Ejected magazines that fall to the floor (rendered with the viewmodel's clip subtree).
 	bool m_MagazineDropEnabled = true;
 	float m_MagazineDropLifetimeSeconds = 8.0f;
@@ -2488,8 +2500,30 @@ public:
     std::chrono::steady_clock::time_point m_MagazineInteractionSlapAt{};
     float m_MagazineInteractionSlapReinsertSeconds = 0.0f;
     Vector m_MagazineInteractionSlapDropVelocity{0.0f, 0.0f, 0.0f};
+    // The physical slap (vr_mag_slap.h Collider): the swept contact state,
+    // where the spare was last frame relative to the seated magazine, both
+    // hands' tracking positions for the velocity estimates, and when the hand let go.
+    l4d2vr_mag_slap::Collider m_MagazineSlapCollider;
+    // The boxes the slap collides this frame (world centres, self-test aiming).
+    Vector m_MagazineSlapSeatedCenter{0.0f, 0.0f, 0.0f};
+    Vector m_MagazineSlapHeldCenter{0.0f, 0.0f, 0.0f};
+    uint64_t m_MagazineSlapCentersAtMs = 0;
+    // Where the held old magazine sat against the well when the hand took it.
+    Vector m_MagazineInteractionOldPullBaseline{0.0f, 0.0f, 0.0f};
+    bool m_MagazineInteractionOldPullBaselineValid = false;
+    bool m_MagazineSlapPrevHeldValid = false;
+    l4d2vr_mag_slap::Vec3 m_MagazineSlapPrevHeldRel{};
+    bool m_MagazineSlapPrevTrackingValid = false;
+    Vector m_MagazineSlapPrevSupportTracking{0.0f, 0.0f, 0.0f};
+    Vector m_MagazineSlapPrevGunTracking{0.0f, 0.0f, 0.0f};
+    std::chrono::steady_clock::time_point m_MagazineSlapPrevAt{};
+    std::chrono::steady_clock::time_point m_MagazineSlapReleasedAt{};
+    std::chrono::steady_clock::time_point m_MagazineSlapNearMissLogAt{};
     l4d2vr_magazine::RetainedInsertGate m_RetainedMagazineInsertGate;
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
+    // The held old magazine was pulled out by hand (not caught as it fell).
+    bool m_RetainedMagazineHandPulled = false;
+    float m_RetainedPullMaxDepth = -1e9f; // furthest it has been out of the well since
     // Fresh ammo seats only after leaving the well once since it was taken.
     l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;
     // A shell was taken while the pump waited to be cycled; the pump stage
@@ -3127,6 +3161,7 @@ public:
 	uint64_t m_SelfTestPhaseStartMs = 0;
 	Vector m_SelfTestGlideFrom{ 0.0f, 0.0f, 0.0f };
 	Vector m_SelfTestGlideTo{ 0.0f, 0.0f, 0.0f };
+	int m_SelfTestStrikeCorrections = 0; // sideways corrections during one slap strike
 	uint64_t m_SelfTestGlideStartMs = 0;
 	uint64_t m_SelfTestGlideMs = 0;
 	int m_SelfTestCycle = 0;
@@ -4753,7 +4788,12 @@ public:
 		bool leftGripJustPressed,
 		bool leftSupportHandDown,
     	bool leftSupportHandJustPressed,
-		bool allowGameplayInputOnTwoHandedGripRelease);
+		bool allowGameplayInputOnTwoHandedGripRelease,
+		// Trigger interactions: leftGrip* is the free hand's trigger and the
+		// foregrip follows the grip (foregripSplit); otherwise both are the grip.
+		bool foregripSplit = false,
+		bool foregripDown = false,
+		bool foregripJustPressed = false);
 	void MarkMagazineInteractionReloadCommandIssued();
 	bool IsMagazineInteractionReloadCommandActive() const;
 	bool ShouldSuppressMagazineInteractionEmptyClipAutoReload(C_BasePlayer* localPlayer) const;

@@ -1,8 +1,10 @@
 # Optional manual reload input
 
 The existing controller bindings remain the default. The optional Quest profile
-uses left grip for off-hand support, magazines and the slide; right A for magazine
-release; right stick press for jump; and left X for the flashlight.
+uses the left grip for off-hand support and grabbing, the left trigger for
+magazines, shells and the slide (`MagazineInteractionTriggerInteractions`, on by
+default; with it off the left grip does both), right A for magazine release, and
+right stick press or left X for the flashlight.
 
 To use it, back up `vr/SteamVRActionManifest/bindings_oculus_touch.json` in the game
 installation and replace it with `bindings_oculus_touch_manual_reload.json` from
@@ -21,8 +23,9 @@ in SteamVR. Other controller profiles can bind those actions without adopting
 this layout.
 
 In button mode, running out of ammunition does not eject a detachable magazine.
-Magazine Release can eject a loaded or empty magazine. Off-hand grip then handles
-the loose magazine and the existing slide interaction. A loaded magazine change
+Magazine Release can eject a loaded or empty magazine. The off-hand trigger (or
+grip, with trigger interactions off) then handles the loose magazine and the
+existing slide interaction. A loaded magazine change
 retains one existing chambered round; an empty pistol does not gain a round from
 its infinite reserve.
 
@@ -37,8 +40,9 @@ reload request for a live reloadable gun. Its brief input pulse remains tied to
 the same owner and native weapon handle, so a weapon switch cannot inherit it.
 
 For an empty single pistol, Magnum or SMG, press Magazine Release, grab a fresh
-magazine from the body ammo position with the off-hand grip, guide it into the
-well, then grip and pull the slide or charging handle before releasing it.
+magazine from the body ammo position with the off-hand trigger, guide it into the
+well, then pull the trigger on the slide or charging handle and pull it back before
+letting go.
 Shotguns accept individual shells at their loading port; pump shotguns also need
 the pump cycle. An empty pump or chrome shotgun accepts multiple shells before
 you choose to grab the pump and chamber one. A dry pump stroke keeps its chamber

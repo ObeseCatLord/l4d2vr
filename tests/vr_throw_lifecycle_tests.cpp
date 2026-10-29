@@ -114,7 +114,7 @@ static bool ManualEmptyHandsPlaceholderOwnerIsLiveSurvivor(void* owner)
 static bool ManualThrowGetPlayerOrigin(void*,Vector& origin) { origin=Vector(0.0f,0.0f,0.0f); return true; }
 static int ManualPistolExecuteSplit(int,void*,const ManualThrowPending&) { return 0; }
 static int handSpawnNotes=0;
-static void HandThrowNoteSpawn(const Vector&,const Vector&,int) { ++handSpawnNotes; }
+static void HandThrowNoteSpawn(const Vector&,const Vector&,const Vector&,int) { ++handSpawnNotes; }
 static bool ManualThrowEstimateReleaseVelocity(Player&,int,int,float,Vector& velocity,Vector& angular)
 { velocity=Vector(1.0f,2.0f,3.0f); angular=Vector(4.0f,5.0f,6.0f); return true; }
 static bool ManualCarryThrowTeleportDroppedEntity(void* entity,const ManualThrowPending&,bool)

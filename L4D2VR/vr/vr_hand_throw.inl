@@ -74,12 +74,13 @@ bool VR::GetHandThrowUsercmd(int command, HandThrowUsercmd& out) const
     return true;
 }
 
-void VR::NoteHandThrowServerSpawn(const Vector& origin, const Vector& velocity, int command)
+void VR::NoteHandThrowServerSpawn(const Vector& origin, const Vector& velocity, const Vector& body, int command)
 {
     {
         std::lock_guard<std::mutex> lock(m_HandThrowMutex);
         m_HandThrowServerSpawnOrigin = origin;
         m_HandThrowServerSpawnVelocity = velocity;
+        m_HandThrowServerSpawnBody = body;
         m_HandThrowServerSpawnCommand = command;
     }
     m_HandThrowServerSpawnMs.store(GetTickCount64(), std::memory_order_release);

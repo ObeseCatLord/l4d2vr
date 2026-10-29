@@ -1290,8 +1290,10 @@ void __fastcall Hooks::dPistolPlayerRunCommand(void* owner, void*, CUserCmd* com
     const bool trackAmmo = !hkPistolGunFire.isEnabled && context.poseValid && context.attack && m_VR && m_VR->m_DualPistolsIndependentHandsEnabled &&
         ManualPistolReadAmmo(owner, reinterpret_cast<void*>(context.reloadWeapon.pointer), before, ammoIndex) &&
         ammoIndex == context.index;
+    const HandThrowExecution handThrow = HandThrowBeginCommand(owner, command);
     l4d2vr_native_scope::Run<const ServerPistolExecution>(g_ServerPistolExecution, &context,
         [&]() { hkPistolPlayerRunCommand.fOriginal(owner, command, moveHelper); });
+    HandThrowEndCommand(handThrow);
     if (trackAmmo)
     {
         l4d2vr_pistol::AmmoSnapshot after{};
@@ -2099,7 +2101,7 @@ float __fastcall Hooks::dProcessUsercmds(void* ecx, void* edx, edict_t* player,
 
 	Hooks::s_ServerUnderstandsVR = true;
 	if (m_VR)
-		m_VR->m_ServerFeatureMask.fetch_or(l4d2vr_features::kListenHostMask, std::memory_order_acq_rel);
+		m_VR->m_ServerFeatureMask.fetch_or(ListenHostFeatureMask(), std::memory_order_acq_rel);
 
 	// Function pointer for CBaseEntity::entindex
 	typedef int(__thiscall* tEntindex)(void* thisptr);
@@ -2552,7 +2554,7 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
 
 	Hooks::s_ServerUnderstandsVR = true;
 	if (m_VR)
-		m_VR->m_ServerFeatureMask.fetch_or(l4d2vr_features::kListenHostMask, std::memory_order_acq_rel);
+		m_VR->m_ServerFeatureMask.fetch_or(ListenHostFeatureMask(), std::memory_order_acq_rel);
 	hkReadUsercmd.fOriginal(buf, move, from);
 	if (move && move->tick_count < 0)
 		m_ServerPacketSawVRUsercmd = true;
@@ -2651,6 +2653,34 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
             (l4d2vr_wire::KeepNativeReloadGate(incomingInteractionImpulse)
                 ? l4d2vr_server_pistol::ReloadPolicy::Preserve : l4d2vr_server_pistol::ReloadPolicy::Native);
         if (gripPickupCommand || gripReleaseCommand || blockPhysicalNativeReload) move->impulse = 0;
+        if (move->impulse == l4d2vr_hand_throw::kImpulse)
+        {
+            // Hand throw: the velocity rides in the movement and weapon-select
+            // fields of this command only; the game sees the real movement.
+            const l4d2vr_hand_throw::Payload throwPayload = l4d2vr_hand_throw::DecodeFields(
+                move->forwardmove, move->sidemove, move->weaponselect, move->weaponsubtype);
+            move->impulse = 0;
+            if (hasValidPlayer && throwPayload.valid)
+            {
+                Player& thrower = m_Game->m_PlayersVRInfo[static_cast<size_t>(i)];
+                if (!thrower.handThrowRequest.valid || thrower.handThrowRequest.command != move->command_number)
+                {
+                    HandThrowRequest request{};
+                    request.valid = true;
+                    request.command = move->command_number;
+                    request.weaponId = l4d2vr_hand_throw::WeaponIdFromKind(throwPayload.kind);
+                    request.leftHand = throwPayload.leftHand;
+                    request.handVelocity = Vector(throwPayload.velocity.x, throwPayload.velocity.y, throwPayload.velocity.z);
+                    request.position = thrower.controllerPos;
+                    request.angles = thrower.controllerAngle;
+                    request.decodedAtMs = GetTickCount64();
+                    thrower.handThrowRequest = request;
+                    Game::logMsg("[VR][HandThrow] decoded player=%d command=%d weaponId=%d hand=%s velocity=(%.0f %.0f %.0f)",
+                        i, move->command_number, request.weaponId, request.leftHand ? "left" : "right",
+                        request.handVelocity.x, request.handVelocity.y, request.handVelocity.z);
+                }
+            }
+        }
 		const uint8_t objectPullCommand = move->impulse;
 		if (objectPullCommand >= VR::kObjectPullWireBegin &&
 			objectPullCommand <= VR::kObjectPullWireCancel)
@@ -3205,6 +3235,27 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 		s_lastObjectPullLoggedWirePayload = 0u;
 	}
 
+	// Hand throw release: the throwing hand's pose and its measured velocity
+	// (vr_hand_throw.h payload). Backups of this command carry the same data.
+	const float originalForwardMove = to->forwardmove;
+	const float originalSideMove = to->sidemove;
+	VR::HandThrowUsercmd handThrow{};
+	const bool handThrowCommand = !meleePose && m_VR->HandThrowServerReady() &&
+		m_VR->GetHandThrowUsercmd(originalCommandNum, handThrow);
+	if (handThrowCommand)
+	{
+		if (IsFiniteControllerPosition(handThrow.position) && IsFiniteViewAngle(handThrow.angles))
+		{
+			controllerPos = handThrow.position;
+			controllerAngles = handThrow.angles;
+		}
+		to->impulse = l4d2vr_hand_throw::kImpulse;
+		to->forwardmove = l4d2vr_hand_throw::PackMove(originalForwardMove, handThrow.velocity.x);
+		to->sidemove = l4d2vr_hand_throw::PackMove(originalSideMove, handThrow.velocity.y);
+		l4d2vr_hand_throw::PackVertical(handThrow.velocity.z, static_cast<l4d2vr_hand_throw::Kind>(handThrow.kind),
+			handThrow.leftHand, to->weaponselect, to->weaponsubtype);
+	}
+
 	// Signal to the server that this CUserCmd has VR info. The controller pose above
 	// belongs to this exact command, including when Source retransmits it as backup.
 	to->tick_count *= -1;
@@ -3254,7 +3305,8 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 	if (from)
 	{
 		if (l4d2vr_wire::IsGripAction(static_cast<uint8_t>(from->impulse)) ||
-			static_cast<uint8_t>(from->impulse) == l4d2vr_grip::kBlockNativeReloadImpulse)
+			static_cast<uint8_t>(from->impulse) == l4d2vr_grip::kBlockNativeReloadImpulse ||
+			static_cast<uint8_t>(from->impulse) == l4d2vr_hand_throw::kImpulse)
 			from->impulse = 0;
 		from->buttons = static_cast<int>(static_cast<uint32_t>(from->buttons) & ~(0x3fu << 26));
 	}
@@ -3276,6 +3328,13 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 	to->impulse = originalImpulse;
 	to->weaponselect = originalWeaponSelect;
 	to->weaponsubtype = originalWeaponSubtype;
+	if (handThrowCommand)
+	{
+		// The host decodes whole units; keep the local copy identical so the
+		// next command's delta and prediction match the host.
+		to->forwardmove = l4d2vr_hand_throw::QuantizedMove(originalForwardMove);
+		to->sidemove = l4d2vr_hand_throw::QuantizedMove(originalSideMove);
+	}
 
 	// 重算校验，否则多人下枪声会异常
 	pVerified->m_cmd = *to;

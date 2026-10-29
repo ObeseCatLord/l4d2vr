@@ -730,6 +730,7 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
 #include "vr/vr_object_pull.inl"
 #include "vr/vr_holsters.inl"
 #include "vr/vr_dropped_mags.inl"
+#include "vr/vr_hand_throw.inl"
 #include "vr/vr_sight_alignment.inl"
 #include "vr/vr_melee_motion.inl"
 #include "vr/vr_selftest.inl"

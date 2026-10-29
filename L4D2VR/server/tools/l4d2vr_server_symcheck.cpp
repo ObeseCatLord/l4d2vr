@@ -119,12 +119,12 @@ int main(int argc, char** argv)
 
     l4d2vr_linux::FeatureInputs inputs{};
     inputs.groups = l4d2vr_linux::ResolvedGroups(results);
-    inputs.netpropStatus = inputs.netpropAmmo = inputs.netpropShell = inputs.netpropDeploy = true;
+    inputs.netpropStatus = inputs.netpropAmmo = inputs.netpropShell = inputs.netpropDeploy = inputs.netpropGrenade = true;
     inputs.meleeOperands = melee.ok;
     const auto resolved = l4d2vr_linux::ResolveFeatures(inputs);
     std::printf("\ngroups=0x%X usercmd_decoder=%d interaction=%d features=0x%X (netprops assumed present)\n",
         inputs.groups, resolved.usercmdDecoder ? 1 : 0, resolved.interaction ? 1 : 0, resolved.features);
-    for (std::uint32_t bit = 1u; bit <= l4d2vr_server::kFeatureInstantDeploy; bit <<= 1u)
+    for (std::uint32_t bit = 1u; bit <= l4d2vr_server::kFeatureHandThrow; bit <<= 1u)
         std::printf("  %-14s 0x%03X %s\n", l4d2vr_server::FeatureName(bit), bit,
             (resolved.features & bit) ? "resolved" : "unavailable");
     std::printf("\n%s: %d target(s) rejected\n", failures ? "FAIL" : "PASS", failures);

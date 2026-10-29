@@ -23,6 +23,8 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 
 	// Non-VR server melee feel state (ForceNonVRServerMovement=true only)
 	static l4d2vr_grip::ReleaseLatch s_weaponGripRelease;
+	// Pavlov-style grenade hold / pin / release (servers with HandThrow).
+	static l4d2vr_hand_throw::ReleaseFsm s_handThrowFsm;
     static l4d2vr_physical::PickupIntent s_gripPickup;
     static l4d2vr_physical::PickupIntent s_holsterDrawPickup;
     static uint32_t s_gripDrawSerial = 0u;
@@ -619,8 +621,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				static QAngle s_t0ThrowAngles{};
 				C_WeaponCSBase* const throwWeapon = localPlayerForAutoActions
 					? reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon()) : nullptr;
+				// A HandThrow server throws from the hand itself (below).
 				const bool throwable = throwWeapon && m_VR->m_ManualThrowEnabled && !m_VR->m_MouseModeEnabled &&
-					m_VR->IsThrowableWeapon(throwWeapon);
+					!m_VR->HandThrowServerReady() && m_VR->IsThrowableWeapon(throwWeapon);
 				const bool attackDownForThrow = (cmd->buttons & (1 << 0)) != 0;
 				if (throwable && attackDownForThrow && !s_t0ThrowPrevAttack)
 					m_VR->TriggerPhysicalHandHapticPulse(m_VR->IsGameplayHandLeftPhysical(false), 0.025f, 140.0f, 0.2f, 2); // pin pulled
@@ -1973,6 +1976,12 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             }
             s_previousGripWeapon = activeWeaponTag;
 
+			// Hand throws: the trigger only pulls the pin, so it never holds the
+			// grenade in the native attack path that would block a grip release.
+			const l4d2vr_hand_throw::Kind handThrowKind = carriedProp ? l4d2vr_hand_throw::Kind::None
+				: l4d2vr_hand_throw::KindFromWeaponId(activeWeaponId);
+			const bool handThrowMode = handThrowKind != l4d2vr_hand_throw::Kind::None && activeWeaponTag != 0u &&
+				m_VR->HandThrowServerReady();
 			const bool gripDropEligible =
 				l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) &&
 				gripSession.gameplay && (m_VR->m_GripReleaseDropEnabled || holsterGripHoldMode) &&
@@ -1985,7 +1994,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				!IsLocalClientUsingMountedWeapon() &&
 				l4d2vr_grip::CanReleaseInventoryItem(
 					ManualInventoryThrowWeaponIdDoesMeleeDamage(activeWeaponId),
-					physicalAttackDown, s_manualCarryThrowPhysicalAttackDown,
+					handThrowMode ? false : physicalAttackDown, handThrowMode ? false : s_manualCarryThrowPhysicalAttackDown,
 					physicalUseDown, s_manualInventoryThrowArmed);
             // Letting go inside the item's own holster puts it away, and over
             // another holster swaps: neither drops. The grip keeps owning what it
@@ -2018,6 +2027,65 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				weaponGripDown,
 				activeWeaponTag, l4d2vr_input::GripSample::Generation(weaponGripInputState), gripDropHere) ||
                 pistolDropHand != l4d2vr_dual::Hand::None;
+			// Hand throw: tap the trigger (pin), let go of the grip to throw; or
+			// hold the trigger through the swing and let go of it.
+			bool handThrowNow = false;
+			{
+				l4d2vr_hand_throw::ReleaseInput throwInput{};
+				throwInput.throwable = handThrowMode;
+				throwInput.weapon = activeWeaponTag;
+				throwInput.blocked = !gripSession.gameplay || !throwActionsUsable || physicalUseDown ||
+					emptyHandsPlaceholderActive || m_VR->m_SuppressPlayerInput || cmd->command_number <= 0 ||
+					m_VR->m_RenderPlayerIncap.load(std::memory_order_relaxed) ||
+					m_VR->m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) || IsLocalClientUsingMountedWeapon();
+				throwInput.gripOwned = gripOwnedBeforeRelease;
+				throwInput.gripReleased = gripDropRequested && pistolDropHand == l4d2vr_dual::Hand::None;
+				throwInput.triggerDown = physicalAttackDown;
+				throwInput.pinRequired = m_VR->m_ManualThrowPinRequired;
+				throwInput.nowMs = GetTickCount64();
+				const l4d2vr_hand_throw::Action throwAction = s_handThrowFsm.Update(throwInput);
+				if (throwAction == l4d2vr_hand_throw::Action::PinPulled)
+				{
+					m_VR->TriggerPhysicalHandHapticPulse(m_VR->ThrowableHandIsLeft(), 0.025f, 140.0f, 0.2f, 2);
+					Game::logMsg("[VR][HandThrow] pin pulled cmd=%d weaponId=%d gripOwned=%d", cmd->command_number,
+						activeWeaponId, gripOwnedBeforeRelease ? 1 : 0);
+				}
+				if (throwAction == l4d2vr_hand_throw::Action::Throw)
+				{
+					const bool leftHand = m_VR->ThrowableHandIsLeft();
+					Vector handVelocity{};
+					const bool measured = m_VR->EstimateHandThrowVelocity(leftHand, handVelocity);
+					VR::HandThrowUsercmd entry{};
+					entry.command = cmd->command_number;
+					entry.position = leftHand ? m_VR->m_LeftControllerPosAbs : m_VR->GetRightControllerViewmodelAbsPos();
+					entry.angles = leftHand ? m_VR->m_LeftControllerTrackedAngAbs : m_VR->GetRightControllerAbsAngle();
+					entry.velocity = handVelocity;
+					entry.kind = static_cast<int>(handThrowKind);
+					entry.leftHand = leftHand;
+					m_VR->QueueHandThrowUsercmd(entry);
+					{
+						std::lock_guard<std::mutex> lock(m_VR->m_HandThrowMutex);
+						m_VR->m_HandThrowLastReleasePos = entry.position;
+						m_VR->m_HandThrowLastReleaseVelocity = handVelocity;
+					}
+					cmd->impulse = l4d2vr_hand_throw::kImpulse;
+					handThrowNow = true;
+					const uint64_t releaseMs = GetTickCount64();
+					m_VR->m_HandThrowLastReleaseMs.store(releaseMs, std::memory_order_release);
+					m_VR->m_HandThrowHideUntilMs.store(releaseMs + 1000u, std::memory_order_release);
+					m_VR->m_HandThrowCount.fetch_add(1u, std::memory_order_acq_rel);
+					m_VR->TriggerPhysicalHandHapticPulse(leftHand, 0.04f, 90.0f, 0.5f, 1);
+					const float speedMps = handVelocity.Length() / std::max(1.0f, m_VR->m_VRScale);
+					Game::logMsg("[VR][HandThrow] client release cmd=%d weaponId=%d hand=%s by=%s handVelocity=(%.0f %.0f %.0f) speed=%.2f m/s measured=%d pos=(%.1f %.1f %.1f) t=%llu",
+						cmd->command_number, activeWeaponId, leftHand ? "left" : "right",
+						throwInput.gripReleased ? "grip" : "trigger", handVelocity.x, handVelocity.y, handVelocity.z,
+						speedMps, measured ? 1 : 0, entry.position.x, entry.position.y, entry.position.z,
+						static_cast<unsigned long long>(releaseMs));
+				}
+				// The thrown grenade stays hidden until the server switches the hand empty.
+				if (!handThrowMode)
+					m_VR->m_HandThrowHideUntilMs.store(0u, std::memory_order_release);
+			}
 			{
 				// One line per weapon-grip release: why it did or did not drop.
 				static bool s_prevGripDownForDropLog = false;
@@ -2113,7 +2181,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					const bool triggerPressedAfterUse =
 						physicalAttackDown && !s_manualCarryThrowPhysicalAttackDown &&
 						physicalUseDown && s_manualInventoryThrowPhysicalUseDown;
-					if (gripDropRequested)
+					if (gripDropRequested && !handThrowNow)
 					{
 						m_VR->CancelMagazineInteractionManual();
 						m_VR->m_VrHandsTwoHandedGripActive = false;
@@ -2136,6 +2204,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					}
 					if (!gripDropRequested && !s_manualInventoryThrowArmed && triggerPressedAfterUse)
 						s_manualInventoryThrowArmed = true;
+					// The trigger pulls the pin; the grenade's native attack never starts.
+					if (handThrowMode)
+						carryButtons &= ~kManualCarryThrowIN_ATTACK;
 
 					if (s_manualInventoryThrowArmed)
 					{
@@ -2162,6 +2233,18 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				s_manualCarryThrowPhysicalAttackDown = physicalAttackDown;
 				s_manualInventoryThrowPhysicalUseDown = physicalUseDown;
 			}
+		}
+
+		// HandThrow servers: a grenade never enters the native pin-pull/throw
+		// path (its 0.5 s pin animation and 0.2 s throw timer); the trigger
+		// only pulls the pin and the throw leaves the hand (impulse 244).
+		if (localPlayerForAutoActions && m_VR->HandThrowServerReady())
+		{
+			C_WeaponCSBase* const grenade =
+				reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon());
+			if (grenade && l4d2vr_hand_throw::KindFromWeaponId(static_cast<int>(grenade->GetWeaponID())) !=
+				l4d2vr_hand_throw::Kind::None)
+				cmd->buttons &= ~(1 << 0);
 		}
 
 		if (m_VR->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire))

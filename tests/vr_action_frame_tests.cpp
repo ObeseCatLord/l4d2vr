@@ -308,6 +308,8 @@ struct ThrowFixture
     uintptr_t s_manualCarryThrowWeapon = 0;
     bool s_manualCarryThrowPhysicalAttackDown = false, s_manualInventoryThrowPhysicalUseDown = false;
     bool s_manualInventoryThrowArmed = false;
+    bool handThrowMode = false, handThrowNow = false;   // hand throws have their own tests
+    bool gripDropRequested = false;
     struct Command { int buttons=0,command_number=1; unsigned char impulse=0; } command;
     void Step(bool carriedProp, bool attack, bool use)
     {
@@ -315,7 +317,7 @@ struct ThrowFixture
         VR* m_VR=&vr;
         Command* cmd=&command;
         const bool s_ServerUnderstandsVR=true, throwBackendReady=true, emptyHandsPlaceholderActive=false;
-        const bool localUseButtonDownForAutoActions=use, gripDropRequested=false;
+        const bool localUseButtonDownForAutoActions=use;
         constexpr uint32_t kManualCarryThrowIN_ATTACK=1u, kManualInventoryThrowIN_USE=1u<<5;
         constexpr uint32_t kManualCarryThrowWeaponShift=26u, kManualCarryThrowWeaponMask=0x3fu<<26;
         constexpr int carryWeaponId=3, activeWeaponId=4;

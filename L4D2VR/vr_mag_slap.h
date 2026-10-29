@@ -198,13 +198,13 @@ namespace l4d2vr_mag_slap
     // the strike counts by the part of its impulse along those: the approach
     // speed into the face pushes along the face's inward normal, and friction
     // (up to kFriction of that) drags along the face. A slap is that release
-    // speed reaching Pavlov's threshold (speed x dot, 80 % of it). A glancing
+    // speed reaching Pavlov's threshold (speed x dot, 90 % of it). A glancing
     // touch, a push toward the stock or into the well, or a slow push never
     // ejects; touching below the threshold keeps the held magazine on the
     // seated one's surface instead of passing through it.
     struct PhysicsParams
     {
-        float releaseSpeedMetersPerSecond = 0.49f; // 0.9 m/s x 0.68 x 0.8
+        float releaseSpeedMetersPerSecond = 0.55f; // 0.9 m/s x 0.68 x 0.9
         float friction = 0.5f;                     // magazine on magazine
         float contactMeters = 0.015f;              // boxes this close are in contact
         float maxIntoWellDot = 0.35f;              // strikes this much into the well are inserts
@@ -214,11 +214,13 @@ namespace l4d2vr_mag_slap
     };
 
     // Pavlov's gate (|v| >= speed and dot >= forwardDot) needs at least
-    // speed x dot along the magazine; 80 % of that is the release speed.
+    // speed x dot along the magazine; 90 % of that is the release speed (the
+    // frame-to-frame velocity estimates read a steady 0.25 m/s push as up to
+    // 0.32 m/s, so a gentle push stays well clear of it).
     inline PhysicsParams Physical(const Params& pavlov)
     {
         PhysicsParams out{};
-        out.releaseSpeedMetersPerSecond = pavlov.speedMetersPerSecond * pavlov.forwardDot * 0.8f;
+        out.releaseSpeedMetersPerSecond = pavlov.speedMetersPerSecond * pavlov.forwardDot * 0.9f;
         return out;
     }
 

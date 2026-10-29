@@ -193,8 +193,8 @@ static StrikeRun RunStrike(const Box& seated, const Vec3& outward, const Vec3& g
 static void TestPhysicalParams()
 {
     const PhysicsParams ak = Physical(AkPavlov());
-    CHECK(Near(ak.releaseSpeedMetersPerSecond, 0.384f));
-    CHECK(Near(Physical(Params{}).releaseSpeedMetersPerSecond, 0.9f * 0.68f * 0.8f));
+    CHECK(Near(ak.releaseSpeedMetersPerSecond, 0.432f));
+    CHECK(Near(Physical(Params{}).releaseSpeedMetersPerSecond, 0.9f * 0.68f * 0.9f));
 }
 
 static void TestSatAndSweep()
@@ -244,7 +244,7 @@ static void TestStrikes()
     const Case cases[] = {
         // From behind toward the muzzle (the AK rock-out), several speeds.
         { "toward the muzzle 1.0 m/s", { -0.30f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 90.0f, true },
-        { "toward the muzzle 0.45 m/s", { -0.30f, 0.0f, 0.0f }, { 0.45f, 0.0f, 0.0f }, 90.0f, true },
+        { "toward the muzzle 0.5 m/s", { -0.30f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 90.0f, true },
         { "forward and down 0.9 m/s", { -0.25f, 0.0f, 0.15f }, { 0.64f, 0.0f, -0.64f }, 90.0f, true },
         { "down onto the top 1.0 m/s", { 0.0f, 0.0f, 0.35f }, { 0.0f, 0.0f, -1.0f }, 90.0f, true },
         // Tunnelling: 5.5 m/s at 30 Hz is 18 cm a frame.

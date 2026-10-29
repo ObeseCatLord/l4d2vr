@@ -530,6 +530,45 @@ namespace
     std::uint32_t g_Features = 0u;     // resolved & operator-enabled
     bool g_EyeHooks = false;
     std::array<PlayerVRState, kMaxPlayerSlots + 1> g_Players{};
+
+    // The body's velocity from its own origins over the last few executed
+    // commands, for hand throws when m_vecVelocity is not a findable SendProp
+    // (it is not on the L4D2 dedicated build). curtime advances per command.
+    struct OriginTrack
+    {
+        Vec3 origin[4]{};
+        float time[4]{};
+        int count = 0;
+        int next = 0;
+
+        bool Estimate(float now, const Vec3& current, Vec3& velocity) const
+        {
+            for (int age = count; age >= 1; --age)
+            {
+                const int i = (next - age + 4) % 4;
+                const float dt = now - time[i];
+                if (dt >= 0.03f && dt <= 0.5f)
+                {
+                    velocity = (current - origin[i]) / dt;
+                    return velocity.Finite();
+                }
+            }
+            return false;
+        }
+
+        void Add(const Vec3& o, float now)
+        {
+            const int last = (next + 3) % 4;
+            if (count > 0 && (now < time[last] || now - time[last] > 1.0f))
+                count = 0; // map change, respawn or a long stall
+            if (count > 0 && now == time[last]) { origin[last] = o; return; }
+            origin[next] = o;
+            time[next] = now;
+            next = (next + 1) % 4;
+            if (count < 4) ++count;
+        }
+    };
+    std::array<OriginTrack, kMaxPlayerSlots + 1> g_OriginTracks{};
     edict_t* g_EdictList = nullptr;
     int g_EdictCount = 0;
     int g_ClientMax = kMaxPlayerSlots;
@@ -1052,12 +1091,33 @@ namespace
         in.deployBackend = (g_Features & kFeatureInstantDeploy) != 0u;
         in.handThrowBackend = (g_Features & kFeatureHandThrow) != 0u && g_P.grenade && g_GlobalsValidated &&
             weaponBefore && g_N.getOwner && g_N.getOwner(weaponBefore) == self;
+        Vec3 originVelocity{};
+        bool haveOriginVelocity = false;
+        if (g_N.absOrigin && g_GlobalsValidated)
+        {
+            const Vector* origin = g_N.absOrigin(self);
+            if (origin && std::isfinite(origin->x) && std::isfinite(origin->y) && std::isfinite(origin->z))
+            {
+                OriginTrack& track = g_OriginTracks[static_cast<std::size_t>(index)];
+                const float now = Curtime();
+                haveOriginVelocity = track.Estimate(now, ToVec(*origin), originVelocity);
+                track.Add(ToVec(*origin), now);
+            }
+        }
         if (in.handThrowBackend)
         {
-            const Vec3 velocity(Field<float>(self, g_P.playerVelocity), Field<float>(self, g_P.playerVelocity + 4),
-                Field<float>(self, g_P.playerVelocity + 8));
-            in.havePlayerVelocity = velocity.Finite();
-            in.playerVelocity = velocity;
+            if (g_P.playerVelocity > 0)
+            {
+                const Vec3 velocity(Field<float>(self, g_P.playerVelocity), Field<float>(self, g_P.playerVelocity + 4),
+                    Field<float>(self, g_P.playerVelocity + 8));
+                in.havePlayerVelocity = velocity.Finite();
+                in.playerVelocity = velocity;
+            }
+            else
+            {
+                in.havePlayerVelocity = haveOriginVelocity;
+                in.playerVelocity = originVelocity;
+            }
         }
         if (pose && pose->poseValid && g_N.eyePosition)
         {
@@ -1318,7 +1378,8 @@ namespace
             g_P.grenadeThrowTime == g_P.grenadeRedraw + 4 &&
             Netprop("CMolotov", "m_fThrowTime") == g_P.grenadeThrowTime &&
             Netprop("CItem_VomitJar", "m_fThrowTime") == g_P.grenadeThrowTime;
-        g_P.grenade = grenadeLayout && g_P.weaponIdle > 0 && g_P.playerVelocity > 0;
+        // The body velocity comes from m_vecVelocity, or else from the origins (OriginTrack).
+        g_P.grenade = grenadeLayout && g_P.weaponIdle > 0 && (g_P.playerVelocity > 0 || g_N.absOrigin != nullptr);
         if (!g_P.grenade)
             Log("grenade netprops unavailable (redraw 0x%X pin 0x%X throwTime 0x%X idle 0x%X velocity 0x%X); "
                 "hand throws disabled", g_P.grenadeRedraw, g_P.grenadePinPulled, g_P.grenadeThrowTime, g_P.weaponIdle,

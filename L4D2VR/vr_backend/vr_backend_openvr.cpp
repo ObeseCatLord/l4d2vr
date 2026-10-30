@@ -1,12 +1,18 @@
 // OpenVR backend: a pass-through to openvr_api with exactly the behaviour the
 // mod had before the backend seam (OpenXR port M1).
 //
+// Legacy developer builds only (L4D2VR_LEGACY_OPENVR=1, MSBuild
+// /p:L4D2VRLegacyOpenVR=true, which also links openvr_api.lib). The release
+// build is OpenXR-only and compiles this file to nothing.
+//
 // Each facade forwards to the OpenVR interface pointer it was last bound to.
 // The accessors bind from the same vr::VRxxx() lookups the mod used to call
 // directly and return nullptr whenever OpenVR returns nullptr, so null checks
 // and the VR members' publication points behave as before.
 
 #include "vr_backend.h"
+
+#if defined(L4D2VR_LEGACY_OPENVR) && L4D2VR_LEGACY_OPENVR
 
 #include <atomic>
 #include <cstdio>
@@ -286,40 +292,13 @@ namespace
         OpenVrRenderModels m_RenderModels;
         OpenVrApplications m_Applications;
     };
-
-    IVrBackend& CreateBackend(int selected)
-    {
-        if (selected == static_cast<int>(RuntimeKind::OpenXR))
-            return OpenXrBackendInstance();
-        static OpenVrBackend openVr;
-        return openVr;
-    }
 }
 
-IVrBackend& Active()
+IVrBackend& OpenVrBackendInstance()
 {
-    static IVrBackend& backend = CreateBackend(L4D2VR_SelectedVrRuntime());
-    return backend;
+    static OpenVrBackend openVr;
+    return openVr;
 }
 }
 
-extern "C" bool L4D2VR_VrBackendInitForDevice(uint32_t* renderWidth, uint32_t* renderHeight, char* errorString, uint32_t errorStringSize)
-{
-    l4d2vr_backend::IVrBackend& backend = l4d2vr_backend::Active();
-    const char* initError = nullptr;
-    if (!backend.Init(initError))
-    {
-        if (errorString && errorStringSize)
-            std::snprintf(errorString, errorStringSize, "VR_Init failed: %s", initError ? initError : "");
-        return false;
-    }
-    l4d2vr_backend::IVrSystem* system = backend.System();
-    if (!system)
-    {
-        if (errorString && errorStringSize)
-            std::snprintf(errorString, errorStringSize, "VR_Init failed: %s runtime has no system interface", backend.Name());
-        return false;
-    }
-    system->GetRecommendedRenderTargetSize(renderWidth, renderHeight);
-    return true;
-}
+#endif // L4D2VR_LEGACY_OPENVR

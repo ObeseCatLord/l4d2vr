@@ -3260,8 +3260,9 @@ void VR::ParseConfigFile()
     m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
     m_BackgroundAudioEnabled = getBool("BackgroundAudio", true);
     {
-        // VrRuntime=auto|openxr|openvr. The runtime itself is chosen once at
-        // startup (L4D2VR_SelectedVrRuntime); unknown values read as auto.
+        // VrRuntime=auto|openxr|openvr (legacy builds only; the release is
+        // OpenXR-only). The runtime itself is chosen once at startup
+        // (L4D2VR_SelectedVrRuntime); unknown values read as auto.
         l4d2vr_runtime_select::Preference runtime = l4d2vr_runtime_select::Preference::Auto;
         l4d2vr_runtime_select::ParsePreference(getString(l4d2vr_runtime_select::kConfigKey, m_VrRuntime), runtime);
         m_VrRuntime = l4d2vr_runtime_select::Name(runtime);

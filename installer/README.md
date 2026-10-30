@@ -43,12 +43,17 @@ a **Launch in VR** button. It also has a full command line for headless use.
    (SmartScreen may warn about an unsigned program: *More info > Run anyway*.)
 3. Check the game folder at the top (use **Browse...** if it was not found), then
    press **Install / Update**.
-4. Start SteamVR, open the **Play** tab and press **Launch in VR**
+4. Make sure your headset's OpenXR runtime supports 32-bit games: SteamVR 2.17 or
+   newer set as the OpenXR runtime (SteamVR > Settings > OpenXR), Virtual Desktop or
+   Meta Quest Link (Windows Mixed Reality: through SteamVR). `status` and the
+   **Play** tab show the active 32-bit and 64-bit OpenXR runtimes.
+5. Start the runtime, open the **Play** tab and press **Launch in VR**
    (this opens `steam://rungameid/550`). **Create desktop shortcut** adds a
    `Left 4 Dead 2 VR.url` to your desktop.
 
 No special Steam launch options are needed on Windows. The mod's recommended
-options are in the main [README](../README.md#how-to-use).
+options are in the main [README](../README.md#how-to-use). OpenXR requirements and
+error messages: [docs/openxr.md](../docs/openxr.md).
 
 ## Linux
 
@@ -58,14 +63,22 @@ The mod is a Windows DLL, so the game must run the **Windows build under Proton*
    *Force the use of a specific Steam Play compatibility tool* > pick **Proton Hotfix**
    (or Proton Experimental). Let Steam download the files. The installer refuses a
    native Linux install (no `left4dead2.exe`) and tells you this.
+   The mod's OpenXR needs Proton's 32-bit OpenXR: Proton Hotfix 2026-10-07 or newer or
+   Proton Experimental 11.0-20261014 or newer. Proton 11.0/10.0 stable and GE-Proton
+   builds without it cannot start VR. The installer detects this (`proton show`, the
+   **Linux setup** tab) and, with Steam closed, switches the game to the right Proton
+   (`proton apply`, GUI *Use the right Proton*; it edits `config/config.vdf`
+   `CompatToolMapping/550` with a `.bak` copy; `proton restore` undoes it).
 2. Run the installer: `chmod +x l4d2vr-installer-linux && ./l4d2vr-installer-linux`
    (or from source: `python3 installer/l4d2vr-installer.py`; needs `python3-tk`).
    Press **Install / Update**.
 3. **Launch options** (Linux setup tab). Steam must start the game with:
 
    ```
-   WINEDLLOVERRIDES="d3d9,openvr_api=n,b" PROTON_USE_WOW64=1 %command% -dx9
+   WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9
    ```
+
+   (Older releases used `d3d9,openvr_api=n,b`; **Write to Steam** rewrites that.)
 
    - **Write to Steam**: quit Steam completely first (Steam > Exit). The installer
      edits `userdata/<id>/config/localconfig.vdf` for app 550 only, keeps your
@@ -74,7 +87,10 @@ The mod is a Windows DLL, so the game must run the **Windows build under Proton*
      **Remove from Steam** puts back what you had before.
    - Or press **Copy** and paste into *Properties > General > Launch options* yourself
      (works while Steam is running).
-4. **SteamVR route (default)**: start SteamVR, then **Launch in VR**.
+4. **SteamVR route (default)**: start SteamVR, then **Launch in VR**. Proton needs an
+   OpenVR runtime registered (`~/.config/openvr/openvrpaths.vrpath`: SteamVR, XRizer or
+   OpenComposite) before its OpenXR bridge works, even though the mod only uses OpenXR;
+   `status` shows which one is registered and the active OpenXR runtime.
 5. **Monado / WiVRn route (advanced)**: for people using Monado (e.g. through
    Envision) or WiVRn instead of SteamVR. It needs an XRizer OpenVR runtime built
    for this game (the repaired one from the Linux handoff bundle, or a
@@ -109,6 +125,7 @@ Every command that changes files accepts `--dry-run`.
 | `restore [--list] [--backup NAME] [--force]` | Undo the most recent install/update |
 | `uninstall [--force]` | Undo every install; leaves files you edited |
 | `launch-options show\|apply\|remove` | Linux Proton launch options (`--all-users`, `--steam-user ID`) |
+| `proton show\|apply\|restore [--tool NAME]` | Linux: check the Proton forced for L4D2 has 32-bit OpenXR; switch it to Proton Hotfix/Experimental (Steam closed) or undo |
 | `launch [--route steamvr\|monado] [--connect HOST:PORT] [--password PW]` | Start the game; Monado route: `--xrizer-dir`, `--openxr-manifest`, `--proton-dir`, `--runtime-entrypoint`, `--check`, `--save` |
 | `shortcut [--route ...] [--no-desktop]` | Desktop / menu shortcut |
 | `install-server --server-dir <srcds>/left4dead2 [--platform linux\|windows] [--zip Z]` | Dedicated-server plugin (server admins) |
@@ -150,7 +167,11 @@ Installs the `l4d2vr-server-linux.zip` (or Windows server) release asset into
 - **"changed since install" on restore**: you edited a file the installer wrote.
   `--force` restores anyway and keeps your copy in the backup's `replaced-on-restore/`.
 - **Game starts without VR on Linux**: check `launch-options show`; the
-  `WINEDLLOVERRIDES` part is what makes Proton load the mod's `d3d9.dll`.
+  `WINEDLLOVERRIDES` part is what makes Proton load the mod's `d3d9.dll`. If the mod
+  loads but starts in desktop mode, `vrmod_log.txt` has an `OpenXR could not start:` line;
+  `status` checks the Proton version, the OpenVR runtime Proton needs and the OpenXR runtime.
+- **Game starts in desktop mode on Windows**: `status` shows the active OpenXR runtimes; the
+  32-bit one must exist (SteamVR 2.17+, Virtual Desktop, Meta Quest Link).
 - **"Failed to create D3D device"**: see the main README (GPU driver / Vulkan 1.3).
 - **Monado route**: run `l4d2vr-installer launch --route monado --check`. Start your
   Monado/Envision/WiVRn profile and Steam first. See the Linux handoff README for
@@ -166,7 +187,7 @@ Attach to each GitHub release:
 
 | Asset | Purpose |
 |---|---|
-| `l4d2vr.zip` | Client package (root: `d3d9.dll`, `openvr_api.dll`, `openxr_loader.dll` (32-bit Khronos loader for `VrRuntime=openxr`), `manifest.json`, `vr/`, `left4dead2/`) |
+| `l4d2vr.zip` | Client package (root: `d3d9.dll`, `openxr_loader.dll` (32-bit Khronos OpenXR loader), `manifest.json`, `vr/`, `left4dead2/`). OpenXR-only: no `openvr_api.dll` or SteamVR manifest (`tools/package_client_release.py` refuses them). Updating an older install removes those files, backed up first |
 | `l4d2vr.sha256` | `sha256sum` line(s) for the zips (optional: GitHub's digest is used otherwise) |
 | `l4d2vr-server-linux.zip` / `l4d2vr-server-windows.zip` | Server plugin (`left4dead2/addons/...` or `addons/...`) |
 | `l4d2vr-installer-windows.exe`, `l4d2vr-installer-linux` | Installer builds; add `-v1.2.0` to the name (or ship `l4d2vr-manifest.json` with `installer.version`) so older installers can tell a newer one exists |

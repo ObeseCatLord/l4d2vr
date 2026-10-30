@@ -6,7 +6,8 @@ from l4d2vr_installer.fsutil import InstallerError
 
 from .helpers import TempDirTest
 
-RECOMMENDED = 'WINEDLLOVERRIDES="d3d9,openvr_api=n,b" PROTON_USE_WOW64=1 %command% -dx9'
+RECOMMENDED = 'WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9'
+OLD_RECOMMENDED = 'WINEDLLOVERRIDES="d3d9,openvr_api=n,b" PROTON_USE_WOW64=1 %command% -dx9'
 
 
 class MergeTests(unittest.TestCase):
@@ -23,13 +24,25 @@ class MergeTests(unittest.TestCase):
 
     def test_plain_game_args_are_kept(self):
         merged, _ = launchopts.merge_launch_options("-novid -high")
-        self.assertEqual(merged, 'WINEDLLOVERRIDES="d3d9,openvr_api=n,b" PROTON_USE_WOW64=1 %command% -novid -high -dx9')
+        self.assertEqual(merged, 'WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -novid -high -dx9')
 
     def test_existing_overrides_and_wrappers_are_merged(self):
         merged, _ = launchopts.merge_launch_options('WINEDLLOVERRIDES="dxgi=n,b;d3d9=b" gamemoderun %command% -novid')
         self.assertEqual(
             merged,
-            'WINEDLLOVERRIDES="dxgi=n,b;d3d9,openvr_api=n,b" PROTON_USE_WOW64=1 gamemoderun %command% -novid -dx9')
+            'WINEDLLOVERRIDES="dxgi=n,b;d3d9=n,b" PROTON_USE_WOW64=1 gamemoderun %command% -novid -dx9')
+
+    def test_pre_openxr_options_are_upgraded(self):
+        # 1.2.x wrote d3d9,openvr_api=n,b; the OpenXR-only release has no openvr_api.dll.
+        self.assertFalse(launchopts.has_required_options(OLD_RECOMMENDED))
+        merged, notes = launchopts.merge_launch_options(OLD_RECOMMENDED)
+        self.assertEqual(merged, RECOMMENDED)
+        self.assertTrue(any("openvr_api" in note for note in notes))
+        merged, _ = launchopts.merge_launch_options('WINEDLLOVERRIDES="dxgi=n,b;d3d9,openvr_api=n,b" MANGOHUD=1 %command% -dx9')
+        self.assertEqual(merged, 'WINEDLLOVERRIDES="dxgi=n,b;d3d9=n,b" MANGOHUD=1 PROTON_USE_WOW64=1 %command% -dx9')
+        self.assertEqual(launchopts.strip_launch_options(OLD_RECOMMENDED), "")
+        self.assertEqual(launchopts.strip_launch_options('WINEDLLOVERRIDES="dxgi=n,b;d3d9,openvr_api=n,b" %command% -dx9'),
+                         'WINEDLLOVERRIDES="dxgi=n,b" %command%')
 
     def test_vulkan_is_removed(self):
         merged, notes = launchopts.merge_launch_options("%command% -vulkan")

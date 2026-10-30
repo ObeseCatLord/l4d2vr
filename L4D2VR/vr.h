@@ -755,9 +755,10 @@ public:
 	// loading screen. Shares a frame mutex with VR::Update.
 	bool m_LoadingFramePumpEnabled = true;
 	bool m_BackgroundAudioEnabled = true;
-	// VrRuntime=auto|openxr|openvr (vr_runtime_select.h). Read at startup by
-	// L4D2VR_SelectedVrRuntime() before Direct3DCreate9; this copy is the
-	// normalized config value, for display only (changes need a restart).
+	// VrRuntime=auto|openxr|openvr (vr_runtime_select.h). Only legacy builds
+	// with the OpenVR backend use it; the OpenXR-only release ignores it. Read
+	// at startup by L4D2VR_SelectedVrRuntime() before Direct3DCreate9; this
+	// copy is the normalized config value, for display only (needs a restart).
 	std::string m_VrRuntime = "auto";
 	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
 	bool m_ScopePictureInPictureLens = true;

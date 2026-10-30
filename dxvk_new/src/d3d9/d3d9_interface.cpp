@@ -389,7 +389,7 @@ namespace dxvk {
         if (L4D2VR_DesktopFallbackAllowed()) {
           L4D2VR_EnterDesktopFallback(errorString);
         } else {
-          MessageBox(0, errorString, "DXVK", MB_ICONERROR | MB_OK);
+          MessageBox(0, errorString, "L4D2VR: VR could not start", MB_ICONERROR | MB_OK);
           ExitProcess(0);
         }
       }

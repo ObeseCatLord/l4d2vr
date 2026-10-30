@@ -1,5 +1,5 @@
 // Pavlov-style recoil and exact VR aim: shot bookkeeping, per-command shot
-// poses and Pavlov shotgun pellets (see vr/vr_recoil.inl, vr_recoil.h and
+// poses and fixed shotgun pellets (see vr/vr_recoil.inl, vr_recoil.h and
 // vr_shotgun_pattern.h).
 
 float __cdecl Hooks::dClientSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed)

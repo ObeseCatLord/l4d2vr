@@ -128,7 +128,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         Game::logMsg("[VR][SelfTest] iron sight aim %s", m_IronSightAimEnabled ? "on" : "off (bore alignment)");
         return true;
     }
-    // pellets=<give>:<1|0>: Pavlov (1) or stock (0) shotgun pellets: sights on
+    // pellets=<give>:<1|0>: fixed (1) or stock (0) shotgun pellets: sights on
     // a wall ~6 m away, one shot, a photograph of the pellet holes, and the
     // count of pellet-loop draws the client and the listen host replaced.
     if (step.rfind("pellets=", 0) == 0)
@@ -166,7 +166,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         if (atP(3, 4.6f))
         {
             char name[96];
-            std::snprintf(name, sizeof(name), "pellets_%s_%s", gun.c_str(), pavlov ? "pavlov" : "stock");
+            std::snprintf(name, sizeof(name), "pellets_%s_%s", gun.c_str(), pavlov ? "fixed" : "stock");
             SelfTestRequestShot(name, 1);
             m_SelfTestSerial = m_SelfTestShotRequest.load(std::memory_order_acquire);
         }
@@ -181,13 +181,13 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 player && player->GetActiveWeapon() ? static_cast<int>(static_cast<C_WeaponCSBase*>(player->GetActiveWeapon())->GetWeaponID()) : 0);
             char detail[192];
             std::snprintf(detail, sizeof(detail), "%s %s: pellet draws replaced client=%d server=%d (pattern active=%d, opt-in sent=%d)",
-                gun.c_str(), pavlov ? "Pavlov" : "stock", client, server, ShotgunPatternActiveForLocalShot(w ? w->weaponId : 0) ? 1 : 0,
+                gun.c_str(), pavlov ? "fixed" : "stock", client, server, ShotgunPatternActiveForLocalShot(w ? w->weaponId : 0) ? 1 : 0,
                 m_ShotgunPatternSent);
-            // Pavlov: every pellet after the first replaces two draws on both
+            // fixed: every pellet after the first replaces two draws on both
             // sides (an even count > 0); stock: none.
             const bool ok = w && (pavlov ? (client > 0 && client % 2 == 0 && (server == client || server == 0))
                                          : (client == 0 && server == 0));
-            SelfTestReport(pavlov ? "shotgun fires Pavlov's pellet pattern" : "shotgun keeps stock pellets", ok, detail);
+            SelfTestReport(pavlov ? "shotgun fires the fixed pellet pattern" : "shotgun keeps stock pellets", ok, detail);
             m_ShotgunPavlovPattern = true;
         }
         return m_SelfTestStage >= 5;

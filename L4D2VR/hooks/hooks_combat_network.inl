@@ -1372,7 +1372,7 @@ int Hooks::dServerFireTerrorBullets(int playerId, const Vector& vecOrigin, const
 {
 	Vector vecNewOrigin = vecOrigin;
 	QAngle vecNewAngles = vecAngles;
-    // Pavlov shotgun pellets for VR players who opted in (listen host).
+    // Fixed shotgun pellets for VR players who opted in (listen host).
     const bool localHostShooter = m_VR && m_VR->m_IsVREnabled && m_Game && m_Game->m_EngineClient &&
         playerId == m_Game->m_EngineClient->GetLocalPlayer();
     const bool pelletPattern = hkServerSharedRandomFloat.isEnabled && m_Game &&
@@ -2028,7 +2028,7 @@ int Hooks::dClientFireTerrorBullets(
 		const auto original = hkClientFireTerrorBullets.fOriginal;
 		if (!original)
 			return 0;
-        // Pavlov shotgun pellets (predicted the same way the server fires them)
+        // Fixed shotgun pellets (predicted the same way the server fires them)
         // and the recoil kick of this shot, applied after the shot so it moves
         // the gun for the next one.
         PelletShotScope pellets(g_ClientPelletShot,

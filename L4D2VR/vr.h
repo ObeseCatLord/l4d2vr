@@ -3389,7 +3389,7 @@ public:
 	float m_RecoilScale = 1.0f;
 	// Bullets go exactly along the aim ray for VR players: no artificial VR
 	// spread, the crosshair shows no spread gap, and (where the server
-	// supports it) shotguns use Pavlov's even pellet pattern.
+	// supports it) shotguns fire a fixed pellet pattern of vanilla size.
 	bool m_SpreadDisabled = true;
 	bool m_ShotgunPavlovPattern = true;
 	bool m_RecoilDebugLog = false;

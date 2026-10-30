@@ -45,7 +45,7 @@ namespace
         return true;
     }
 
-    // Pavlov shotgun pellets: SharedRandomFloat draws of the pellet loop.
+    // Fixed shotgun pellets: SharedRandomFloat draws of the pellet loop.
     thread_local l4d2vr_shotgun_pattern::ShotContext* g_ClientPelletShot = nullptr;
     thread_local l4d2vr_shotgun_pattern::ShotContext* g_ServerPelletShot = nullptr;
 
@@ -119,9 +119,7 @@ namespace
     {
         float value = 0.0f;
         replaced = false;
-        if (shot && original && l4d2vr_shotgun_pattern::Override(*shot, name, minValue, maxValue, additionalSeed,
-                [&]() { return static_cast<int>(original(l4d2vr_shotgun_pattern::kStartIndexName, 0.0f, 32767.0f, 0)); },
-                value))
+        if (shot && original && l4d2vr_shotgun_pattern::Override(*shot, name, minValue, maxValue, additionalSeed, value))
         {
             replaced = true;
             return value;

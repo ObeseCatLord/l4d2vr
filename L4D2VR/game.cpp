@@ -1872,7 +1872,7 @@ bool Game::HandleShotgunPatternCommand(edict_t* entity, const void* sourceComman
         return true;
     m_PlayersVRInfo[playerIndex].shotgunPattern = on;
     m_PlayersVRInfo[playerIndex].shotgunPatternSerial = edictSerial;
-    Game::logMsg("[VR][ShotgunPattern][server] player %d uses %s shotgun pellets", playerIndex, on ? "Pavlov" : "stock");
+    Game::logMsg("[VR][ShotgunPattern][server] player %d uses %s shotgun pellets", playerIndex, on ? "fixed" : "stock");
     return true;
 }
 

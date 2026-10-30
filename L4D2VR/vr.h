@@ -3434,12 +3434,22 @@ public:
 		QAngle angles{};
 		bool server = false;
 		int weaponId = 0;
+		int command = 0;
 		l4d2vr_recoil::Offset offset{};
+		Vector handForward{}, handRight{}, handUp{}; // the gun hand's basis before the kick
 	};
 	std::mutex m_RecoilShotLogMutex;
 	std::vector<RecoilShotRecord> m_RecoilShotLog;
 	std::atomic<bool> m_RecoilShotLogActive{ false };
-	void RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool server, int weaponId);
+	void RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool server, int weaponId, int command = 0);
+	// The gun hand's aim basis before this frame's kick (self-test reference).
+	Vector m_RecoilPreKickForward{ 1.0f, 0.0f, 0.0f };
+	Vector m_RecoilPreKickRight{ 0.0f, -1.0f, 0.0f };
+	Vector m_RecoilPreKickUp{ 0.0f, 0.0f, 1.0f };
+	float m_RecoilTestFireStart = 0.0f;
+	float m_RecoilTestGripSince = -1.0f;
+	Vector m_RecoilTestRefLocal{ 1.0f, 0.0f, 0.0f };
+	Vector m_RecoilTestRefComp{ 1.0f, 0.0f, 0.0f };
 	bool RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	bool RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	// Self-test scratch for the recoil and sight steps.

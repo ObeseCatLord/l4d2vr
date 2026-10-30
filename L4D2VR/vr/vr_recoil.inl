@@ -102,6 +102,9 @@ void VR::UpdateWeaponRecoil(C_BasePlayer* localPlayer)
         m_RecoilClipWatchClip = -1;
     }
 
+    m_RecoilPreKickForward = m_RightControllerForward;
+    m_RecoilPreKickRight = m_RightControllerRight;
+    m_RecoilPreKickUp = m_RightControllerUp;
     const bool dual = m_DualPistolsActive.load(std::memory_order_acquire) ||
         m_LeftHandPistolActive.load(std::memory_order_acquire);
     for (int k = 0; k < 2; ++k)

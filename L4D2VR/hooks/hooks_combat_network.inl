@@ -1408,7 +1408,7 @@ int Hooks::dServerFireTerrorBullets(int playerId, const Vector& vecOrigin, const
             g_RecoilServerCommand > 0 && RecoilShotPoseForCommand(g_RecoilServerCommand, vecNewOrigin, vecNewAngles))
         {
             if (m_VR->m_RecoilShotLogActive.load(std::memory_order_acquire))
-                m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, true, a4);
+                m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, true, a4, g_RecoilServerCommand);
             return hkServerFireTerrorBullets.fOriginal(playerId, vecNewOrigin, vecNewAngles, a4, a5, a6, a7);
         }
 		const bool scopeActive = m_VR->ScopeChangesAim();
@@ -1501,7 +1501,7 @@ int Hooks::dServerFireTerrorBullets(int playerId, const Vector& vecOrigin, const
 	}
 
     if (localHostShooter && m_VR->m_RecoilShotLogActive.load(std::memory_order_acquire))
-        m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, true, a4);
+        m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, true, a4, g_RecoilServerCommand);
 	return hkServerFireTerrorBullets.fOriginal(playerId, vecNewOrigin, vecNewAngles, a4, a5, a6, a7);
 }
 
@@ -2034,7 +2034,7 @@ int Hooks::dClientFireTerrorBullets(
         PelletShotScope pellets(g_ClientPelletShot,
             !preserveNativeDualRay && m_VR->ShotgunPatternActiveForLocalShot(a4) ? l4d2vr_shotgun_pattern::WeaponFor(a4) : nullptr);
         if (!preserveNativeDualRay && m_VR->m_RecoilShotLogActive.load(std::memory_order_acquire))
-            m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, false, a4);
+            m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, false, a4, g_RecoilClientCommand);
         struct RecoilAfterShot
         {
             bool active;

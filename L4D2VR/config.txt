@@ -413,6 +413,9 @@ RecoilDebugLog=false
 // distance. IronSightAimEnabled=false goes back to turning the bore parallel to the hand's aim ray.
 SightAutoAlignEnabled=true
 IronSightAimEnabled=true
+// Keep guns rigid in the hand: L4D2's own idle sway and firing animation no longer move the gun (the
+// slide and bolt still move), so the only kick is the Pavlov recoil and the sights stay on the bullets.
+GunRigidInHand=true
 // Melee weapons stay in your hand and their blade trails the swing (Ancient Dungeon VR style): the faster
 // you swing, the more it lags, up to a soft limit of about 20 degrees; long weapons settle with a slight
 // follow-through, short ones snap back. The server's melee sweep follows the blade you see. The chainsaw

@@ -9283,6 +9283,13 @@ namespace
         bool idlePosesDirty = false;
         uint64_t idlePosesSavedMs = 0u;
         std::chrono::steady_clock::time_point weaponKindAt{};
+        // Guns stay rigid in the hand (Pavlov recoil and sight-line aim): the
+        // correction that puts the native weapon_bone back on its idle pose,
+        // relative to the model root; the arms draw reuses the weapon's.
+        std::unordered_map<std::string, int> weaponBoneIndex;
+        vr_vm_stabilize::Mat3x4 rigidCorrection{};
+        bool rigidCorrectionValid = false;
+        std::chrono::steady_clock::time_point rigidCorrectionAt{};
         uint64_t lastTraceMs = 0u;
         uint64_t lastDeviationTraceMs = 0u;
         int lastTraceSequence = -2;
@@ -9528,6 +9535,7 @@ namespace
         Kind kind = Kind::Unknown;
         bool strike = false;
         bool switching = false;
+        bool fireActivity = false;
         if (!armsModel)
         {
             const bool melee = l4d2vr_vm_anim::IsSwungMeleeModel(lowerModel.c_str());
@@ -9538,6 +9546,7 @@ namespace
             if (vr_vm_stabilize::TryGetStudioHdrFromDrawState(drawState, studioHdr))
                 kind = ClassifyViewmodelSequence(vr, info.entity_index, studioHdr, melee, sequence, cycle, activity);
             switching = kind != Kind::Unknown && l4d2vr_vm_anim::IsSwitchActivity(activity, activity);
+            fireActivity = !melee && l4d2vr_vm_anim::IsFireActivity(activity);
             // Gun shoves are always motion-driven in VR; melee swings are when
             // motion melee owns them.
             strike = kind == Kind::Strike && (!melee || vr->m_MotionOnlyMeleeAndShove);
@@ -9777,6 +9786,69 @@ namespace
         }
         if (strikeFrame)
             vr->m_VmStrikeFramesShown.fetch_add(1u, std::memory_order_relaxed);
+
+        // Rigid gun: with Pavlov recoil the gun's own idle sway and fire
+        // animation must not move it in the hand (that would add L4D2's kick on
+        // top of the recoil and pull the sight line, which the bullets follow,
+        // off the hand). Every bone gets the rigid correction that puts the
+        // weapon_bone back on its idle pose, so moving parts (slide, bolt) still
+        // animate relative to the gun. Reloads, pumps and other actions keep the
+        // native animation.
+        if (!armsModel)
+        {
+            state.rigidCorrectionValid = false;
+            const int weaponId = vr->m_ActiveGunWeaponId.load(std::memory_order_acquire);
+            const bool gun = vr->m_GunRigidInHand && vr->m_IronSightAimEnabled && !vr->m_MouseModeEnabled &&
+                l4d2vr_iron_sights::ForModel(lowerModel.c_str()) != nullptr && weaponId != 0 &&
+                l4d2vr_recoil::ProfileForWeapon(weaponId) != nullptr;
+            if (gun && readyMatches && currentValid && (kind == Kind::Idle || fireActivity) &&
+                !vr->IsMagazineInteractionManualActive())
+            {
+                auto found = state.weaponBoneIndex.find(lowerModel);
+                if (found == state.weaponBoneIndex.end())
+                {
+                    int index = -1;
+                    std::vector<std::string> boneNames;
+                    std::vector<int> boneParents;
+                    int names = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+                    if (vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, boneNames, boneParents, names,
+                            boneIndex, stride, numBonesOffset))
+                        for (int i = 0; i < names && i < static_cast<int>(boneNames.size()); ++i)
+                        {
+                            const std::string lower = vr_vm_stabilize::ToLowerAscii(boneNames[static_cast<size_t>(i)]);
+                            if (lower == "valvebiped.weapon_bone" || lower == "weapon_bone") { index = i; break; }
+                        }
+                    found = state.weaponBoneIndex.emplace(lowerModel, index).first;
+                }
+                const int wb = found->second;
+                if (wb >= 0 && wb < numBones)
+                {
+                    vr_vm_stabilize::Mat3x4 inverseCurrent{};
+                    vr_vm_stabilize::InvertTR(currentLocal[static_cast<size_t>(wb)], inverseCurrent);
+                    vr_vm_stabilize::Mul(ready.frozenLocalBones[static_cast<size_t>(wb)], inverseCurrent, state.rigidCorrection);
+                    state.rigidCorrectionValid = true;
+                    state.rigidCorrectionAt = now;
+                }
+            }
+        }
+        if (state.rigidCorrectionValid &&
+            std::chrono::duration<float>(now - state.rigidCorrectionAt).count() < 0.25f)
+        {
+            std::vector<vr_vm_stabilize::Mat3x4> local;
+            if (!BuildMagazineInteractionLocalBones(modelAnchor, sourceBones, numBones, local))
+                return;
+            for (auto& bone : local)
+            {
+                vr_vm_stabilize::Mat3x4 corrected{};
+                vr_vm_stabilize::Mul(state.rigidCorrection, bone, corrected);
+                bone = corrected;
+            }
+            vr_vm_stabilize::Mat3x4* const rigidBones = vr_vm_stabilize::AllocStableBones(numBones, seqEven);
+            if (!rigidBones)
+                return;
+            ApplyMagazineInteractionLocalPose(modelAnchor, local, rigidBones, numBones);
+            pCustomBoneToWorld = rigidBones;
+        }
     }
 
     inline void ApplyMagazineInteractionBoltPose(

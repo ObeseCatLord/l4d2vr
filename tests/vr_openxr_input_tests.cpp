@@ -144,6 +144,10 @@ int main()
                     CheckS(Legal(p, hand, p.triggerCurl), std::string("trigger curl legal on ") + p.key);
                 if (p.squeezeCurl)
                     CheckS(Legal(p, hand, p.squeezeCurl), std::string("squeeze curl legal on ") + p.key);
+                if (p.squeezeForceCurl)
+                    CheckS(Legal(p, hand, p.squeezeForceCurl), std::string("squeeze force curl legal on ") + p.key);
+                if (p.indexProximityCurl)
+                    CheckS(Legal(p, hand, p.indexProximityCurl), std::string("index proximity curl legal on ") + p.key);
                 for (const std::string& t : p.thumbTouch[h])
                     CheckS(Legal(p, hand, t), std::string("thumb touch legal on ") + p.key + ": " + t);
             }
@@ -398,21 +402,17 @@ int main()
         Check(Near(v.x, -0.1f) && Near(v.y, 0.0f) && Near(v.z, 0.0f), "raw velocity includes w x r");
     }
 
-    // ---- Curls ------------------------------------------------------------------
+    // Finger curls from controller sensors: tests/vr_openxr_hand_tests.cpp.
     {
-        float c[5];
-        xi::CurlInputs in;
-        xi::CurlsFromInputs(in, c);
-        Check(c[0] == 0.0f && c[1] == 0.0f && c[4] == 0.0f, "open hand");
-        in.trigger = 0.6f; in.squeeze = 1.0f; in.thumbTouched = true;
-        xi::CurlsFromInputs(in, c);
-        Check(Near(c[1], 0.6f) && Near(c[2], 1.0f) && Near(c[3], 1.0f) && Near(c[4], 1.0f) && c[0] > 0.5f, "fist");
-        in = {}; in.triggerTouched = true;
-        xi::CurlsFromInputs(in, c);
-        Check(Near(c[1], 0.25f), "finger resting on the trigger");
-        in.squeeze = 7.0f;
-        xi::CurlsFromInputs(in, c);
-        Check(Near(c[2], 1.0f), "clamped to 1");
+        // Curl sources per profile (M5): Index grip force, Quest Pro / 3 index proximity.
+        for (const xi::Profile& p : xi::Profiles())
+        {
+            const bool index = p.id == xi::ProfileId::Index;
+            CheckS((p.squeezeForceCurl != nullptr) == index, std::string("grip force curl only on Index: ") + p.key);
+            const bool proximity = p.id == xi::ProfileId::TouchPro || p.id == xi::ProfileId::TouchPlus;
+            CheckS((p.indexProximityCurl != nullptr) == proximity, std::string("index proximity only on Quest Pro/3: ") + p.key);
+            CheckS(p.triggerCurl != nullptr && p.squeezeCurl != nullptr, std::string("every profile has index and grip curl sources: ") + p.key);
+        }
     }
 
     // ---- Fake input spec ---------------------------------------------------------

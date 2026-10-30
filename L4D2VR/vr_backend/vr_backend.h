@@ -114,6 +114,7 @@ namespace l4d2vr_backend
             vr::EVRSkeletalMotionRange eMotionRange, vr::VRBoneTransform_t* pTransformArray, uint32_t unTransformArrayCount) = 0;
         virtual vr::EVRInputError GetSkeletalSummaryData(vr::VRActionHandle_t action, vr::EVRSummaryType eSummaryType,
             vr::VRSkeletalSummaryData_t* pSkeletalSummaryData) = 0;
+        virtual vr::EVRInputError GetSkeletalTrackingLevel(vr::VRActionHandle_t action, vr::EVRSkeletalTrackingLevel* pSkeletalTrackingLevel) = 0;
         virtual vr::EVRInputError GetOriginTrackedDeviceInfo(vr::VRInputValueHandle_t origin, vr::InputOriginInfo_t* pOriginInfo,
             uint32_t unOriginInfoSize) = 0;
         virtual vr::EVRInputError GetActionBindingInfo(vr::VRActionHandle_t action, vr::InputBindingInfo_t* pOriginInfo,
@@ -189,7 +190,7 @@ namespace l4d2vr_backend
         bool nativeOverlayMouse = false;   // SetOverlayInputMethod(Mouse) + PollNextOverlayEvent mouse events
         bool overlayIntersection = false;  // ComputeOverlayIntersection
         bool vrKeyboard = false;           // ShowKeyboardForOverlay
-        bool skeletalBones = false;        // GetSkeletalBoneData and friends
+        bool skeletalBones = false;        // GetSkeletalBoneData and friends (31-bone OpenVR hand skeleton)
         bool runtimeAssets = false;        // GetRuntimePath (vr_glove meshes)
         uint32_t maxOverlayLayers = 0;     // 0 = no practical limit
     };

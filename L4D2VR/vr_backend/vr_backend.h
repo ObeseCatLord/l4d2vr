@@ -15,7 +15,9 @@
 //   vr_backend_openvr.cpp  pass-through to openvr_api (today's behaviour).
 //   vr_backend_openxr.cpp  OpenXR on DXVK's Vulkan device: HMD pose and eye
 //                          frames (M2), controllers and input (M3,
-//                          openxr_input_runtime.inl); overlays follow in M4.
+//                          openxr_input_runtime.inl), overlays as composition
+//                          layers with a laser mouse and keyboard (M4,
+//                          openxr_overlay_runtime.inl).
 //                          Selected by VrRuntime=openxr or -l4d2vr_openxr
 //                          (vr_runtime_select.h).
 //
@@ -180,7 +182,8 @@ namespace l4d2vr_backend
 
     // What the runtime can do natively. Features without a native path use the
     // mod's own fallbacks (manual laser pointer, in-mod keyboard, ...). Nothing
-    // reads this yet in M1; the OpenVR backend reports everything available.
+    // OpenVR reports everything available; OpenXR rebuilds the overlay mouse,
+    // intersection and keyboard itself (M4) and reports them available too.
     struct Caps
     {
         bool nativeOverlayMouse = false;   // SetOverlayInputMethod(Mouse) + PollNextOverlayEvent mouse events
@@ -230,6 +233,12 @@ namespace l4d2vr_backend
         // Short description of each hand's controller ("left=wmr right=wmr"),
         // for logs and self-test reports.
         virtual std::string DescribeControllers() { return std::string(); }
+
+        // Test only (self-test xrdump=, xraim=, xrmaxlayers=, ...): overlay
+        // layer dumps, aiming a hand's laser at an overlay point, the layer
+        // budget and the laser/keyboard state. Syntax: openxr_overlay_runtime.inl
+        // TestCommand. False with a reason when unsupported (OpenVR).
+        virtual bool OverlayTestCommand(const char* spec, std::string& result) { (void)spec; result = "not supported by this runtime"; return false; }
     };
 
     // The OpenXR backend (vr_backend_openxr.cpp).

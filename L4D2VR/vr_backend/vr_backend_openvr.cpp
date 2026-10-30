@@ -129,6 +129,8 @@ namespace
         vr::EVRInputError GetSkeletalSummaryData(vr::VRActionHandle_t action, vr::EVRSummaryType eSummaryType,
             vr::VRSkeletalSummaryData_t* pSkeletalSummaryData) override
         { return R()->GetSkeletalSummaryData(action, eSummaryType, pSkeletalSummaryData); }
+        vr::EVRInputError GetSkeletalTrackingLevel(vr::VRActionHandle_t action, vr::EVRSkeletalTrackingLevel* pSkeletalTrackingLevel) override
+        { return R()->GetSkeletalTrackingLevel(action, pSkeletalTrackingLevel); }
         vr::EVRInputError GetOriginTrackedDeviceInfo(vr::VRInputValueHandle_t origin, vr::InputOriginInfo_t* pOriginInfo,
             uint32_t unOriginInfoSize) override
         { return R()->GetOriginTrackedDeviceInfo(origin, pOriginInfo, unOriginInfoSize); }

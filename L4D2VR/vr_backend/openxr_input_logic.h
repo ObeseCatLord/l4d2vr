@@ -5,7 +5,6 @@
 //   * click thresholds with hysteresis (OpenXR bindings carry no parameters),
 //   * radial stick deadzone, the menu dpad derived from a stick,
 //   * the grip pose -> OpenVR raw pose transform (with velocity),
-//   * finger curls from controller inputs (skeletal summary fallback),
 //   * the test-only fake action source's spec parser.
 
 #include "openxr_pose_math.h"
@@ -156,31 +155,6 @@ namespace l4d2vr_openxr_input
         const xrm::Vec3 r{ raw.position.x - grip.position.x, raw.position.y - grip.position.y, raw.position.z - grip.position.z };
         const xrm::Vec3 c = Cross(angular, r);
         return xrm::Vec3{ gripLinear.x + c.x, gripLinear.y + c.y, gripLinear.z + c.z };
-    }
-
-    // ---- Finger curls (skeletal summary fallback) --------------------------------
-    // OpenVR order: thumb, index, middle, ring, pinky. Index follows the trigger
-    // (a resting finger on a touch sensor curls a little), the other three
-    // follow the grip, and the thumb is down while it touches a face button,
-    // stick or thumbrest.
-    struct CurlInputs
-    {
-        float trigger = 0.0f;
-        bool triggerTouched = false;
-        float squeeze = 0.0f;
-        bool thumbTouched = false;
-    };
-
-    inline void CurlsFromInputs(const CurlInputs& in, float out[5])
-    {
-        auto clamp01 = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; };
-        const float trigger = clamp01(in.trigger);
-        const float squeeze = clamp01(in.squeeze);
-        out[0] = in.thumbTouched ? 0.75f : 0.0f;
-        out[1] = (std::max)(trigger, in.triggerTouched ? 0.25f : 0.0f);
-        out[2] = squeeze;
-        out[3] = squeeze;
-        out[4] = squeeze;
     }
 
     // ---- Fake action source (self-test / unit test only) ------------------------

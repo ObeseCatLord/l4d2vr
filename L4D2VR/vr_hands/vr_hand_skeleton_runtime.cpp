@@ -288,6 +288,7 @@ struct VrHandSkeletonRuntime::Impl
     bool hasPose = false;
     bool hasSummary = false;
     bool hasBoneData = false;
+    bool summaryOnly = false;
     const l4d2vr_input::ActionFrame* actionFrame = nullptr;
     std::uint64_t poseFrameToken = 0u;
 };
@@ -432,7 +433,41 @@ bool VrHandSkeletonRuntime::Initialize(l4d2vr_backend::IVrInput* input, vr::VRAc
         m_Impl->ozzJointToOpenVrBone[static_cast<size_t>(i)] = openVrBone->second;
     }
 
+    m_Impl->summaryOnly = false;
     m_Impl->hasPose = false;
+    return true;
+}
+
+void VrHandSkeletonRuntime::InitializeSummaryOnly(vr::VRActionHandle_t action)
+{
+    m_Impl->skeleton.reset();
+    m_Impl->action = action;
+    m_Impl->summaryOnly = true;
+    m_Impl->hasPose = false;
+    m_Impl->hasSummary = false;
+    m_Impl->hasBoneData = false;
+    m_Impl->poseFrameToken = 0u;
+}
+
+bool VrHandSkeletonRuntime::UpdateFromCurls(const l4d2vr_input::ActionFrame& actionFrame, const float curls[5])
+{
+    m_Impl->hasPose = false;
+    m_Impl->hasSummary = false;
+    m_Impl->hasBoneData = false;
+    m_Impl->poseFrameToken = 0u;
+    m_Impl->actionFrame = &actionFrame;
+    const auto frameToken = actionFrame.Read();
+    if (!IsInitialized() || !l4d2vr_input::ActionFrame::Ready(frameToken))
+        return false;
+    vr::VRSkeletalSummaryData_t summary{};
+    for (int finger = 0; finger < vr::VRFinger_Count; ++finger)
+        summary.flFingerCurl[finger] = std::clamp(curls[finger], 0.0f, 1.0f);
+    for (int splay = 0; splay < vr::VRFingerSplay_Count; ++splay)
+        summary.flFingerSplay[splay] = 0.2f;
+    m_Impl->summary = summary;
+    m_Impl->hasSummary = true;
+    m_Impl->poseFrameToken = frameToken;
+    m_Impl->hasPose = true;
     return true;
 }
 
@@ -448,7 +483,7 @@ bool VrHandSkeletonRuntime::Update(l4d2vr_backend::IVrInput* input, const l4d2vr
     m_Impl->poseFrameToken = 0u;
     m_Impl->actionFrame = &actionFrame;
     const auto frameToken = actionFrame.Read();
-    if (!input || !m_Impl->skeleton || m_Impl->action == vr::k_ulInvalidActionHandle ||
+    if (!input || !IsInitialized() || m_Impl->action == vr::k_ulInvalidActionHandle ||
         !l4d2vr_input::ActionFrame::Ready(frameToken))
     {
         outError = "hand skeleton runtime is not initialized";
@@ -473,7 +508,7 @@ bool VrHandSkeletonRuntime::Update(l4d2vr_backend::IVrInput* input, const l4d2vr
         summary);
 
     std::vector<vr::VRBoneTransform_t> transforms(m_Impl->transforms.size());
-    const bool hasBoneData = input->GetSkeletalBoneData(
+    const bool hasBoneData = !m_Impl->summaryOnly && !transforms.empty() && input->GetSkeletalBoneData(
         m_Impl->action,
         vr::VRSkeletalTransformSpace_Model,
         motionRange,
@@ -487,7 +522,8 @@ bool VrHandSkeletonRuntime::Update(l4d2vr_backend::IVrInput* input, const l4d2vr
     }
     if (!hasSummary && !hasBoneData)
     {
-        outError = "OpenVR hand summary and bone data are unavailable or invalid";
+        outError = m_Impl->summaryOnly ? "OpenVR hand summary is unavailable or invalid"
+            : "OpenVR hand summary and bone data are unavailable or invalid";
         m_Impl->hasPose = false;
         return false;
     }
@@ -516,7 +552,7 @@ bool VrHandSkeletonRuntime::BuildSkinningPalette(
 {
     outError.clear();
     outPalette.clear();
-    if (!m_Impl->skeleton || !HasPose())
+    if (!IsInitialized() || !HasPose())
         return false;
     if (!asset.IsValid())
     {
@@ -550,7 +586,7 @@ bool VrHandSkeletonRuntime::BuildSkinningPalette(
 
     if (m_Impl->hasSummary && BuildSummaryCurlPalette(asset, m_Impl->summary, outPalette, fingerCurlOverride, fingerMaxCurl))
         return finishPalette();
-    if (!m_Impl->hasBoneData)
+    if (!m_Impl->hasBoneData || !m_Impl->skeleton)
     {
         outError = "hand skinning palette requires current valid bone data";
         outPalette.clear();
@@ -596,7 +632,12 @@ bool VrHandSkeletonRuntime::BuildSkinningPalette(
 
 bool VrHandSkeletonRuntime::IsInitialized() const
 {
-    return m_Impl && m_Impl->skeleton != nullptr;
+    return m_Impl && (m_Impl->skeleton != nullptr || m_Impl->summaryOnly);
+}
+
+bool VrHandSkeletonRuntime::IsSummaryOnly() const
+{
+    return m_Impl && m_Impl->summaryOnly;
 }
 
 bool VrHandSkeletonRuntime::HasPose() const

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <cstdio>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -447,9 +448,60 @@ void VrHandSystem::ReportWarningOnce(const std::string& warning)
     Game::logMsg("[VR][Hands] %s", warning.c_str());
 }
 
+namespace
+{
+    std::mutex& VrHandsTestAssetMutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+    std::string& VrHandsTestAssetDirectory()
+    {
+        static std::string directory;
+        return directory;
+    }
+    constexpr std::uint32_t kSkeletonRetryMs = 2000u;
+    constexpr unsigned kSkeletonFullAttempts = 5u;
+}
+
+void VrHandSystem::SetTestAssetDirectory(const std::string& directory)
+{
+    std::lock_guard<std::mutex> lock(VrHandsTestAssetMutex());
+    VrHandsTestAssetDirectory() = directory;
+}
+
+bool VrHandSystem::HandPaletteFresh(size_t handIndex, std::uint32_t maxAgeMs, const char*& mode) const
+{
+    mode = "none";
+    if (handIndex >= m_PaletteTick.size())
+        return false;
+    const int m = m_PaletteMode[handIndex].load(std::memory_order_acquire);
+    mode = m == 1 ? "bones" : m == 2 ? "curls" : "none";
+    const std::uint32_t tick = m_PaletteTick[handIndex].load(std::memory_order_acquire);
+    return tick != 0u && GetTickCount() - tick <= maxAgeMs;
+}
+
 bool VrHandSystem::ResolveSteamVrAssetPath(const char* fileName, std::string& outPath) const
 {
     outPath.clear();
+    {
+        std::lock_guard<std::mutex> lock(VrHandsTestAssetMutex());
+        const std::string& directory = VrHandsTestAssetDirectory();
+        if (!directory.empty() && fileName && *fileName)
+        {
+            try
+            {
+                const std::filesystem::path path = std::filesystem::u8path(directory) / fileName;
+                outPath = path.u8string();
+                std::error_code error;
+                return std::filesystem::is_regular_file(path, error) && !error;
+            }
+            catch (const std::filesystem::filesystem_error&)
+            {
+                return false;
+            }
+        }
+    }
 
     std::vector<char> buffer(vr::k_unMaxPropertyStringSize, '\0');
     uint32_t required = 0;
@@ -867,11 +919,28 @@ bool VrHandSystem::EnsureInitialized(
             const int index = static_cast<int>(handIndex);
             return index == rightViewmodelPoseHandIndex || index == leftViewmodelPoseHandIndex;
         };
+    const std::uint32_t nowTick = GetTickCount();
+    const bool runtimeHasBones = l4d2vr_backend::Active().GetCaps().skeletalBones;
     for (size_t handIndex = 0; handIndex < m_Hands.size(); ++handIndex)
     {
         HandState& hand = m_Hands[handIndex];
+        const char* side = handIndex == 0u ? "left" : "right";
+        float overrideCurls[5];
+        const bool curlOverride = l4d2vr_selftest::LookupCurls(static_cast<int>(handIndex), overrideCurls);
         if (hand.skeletonInitialized)
+        {
+            // A curls-only skeleton tries the full setup again now and then.
+            if (hand.skeleton.IsSummaryOnly() && !hand.skeletonFromOverride && !curlOverride && runtimeHasBones &&
+                hand.skeletonFullAttempts < kSkeletonFullAttempts && nowTick - hand.skeletonRetryTick >= kSkeletonRetryMs)
+            {
+                hand.skeletonRetryTick = nowTick;
+                ++hand.skeletonFullAttempts;
+                std::string error;
+                if (hand.skeleton.Initialize(input, hand.action, error))
+                    ReportWarningOnce(std::string(side) + " hand skeleton: bone data became available");
+            }
             continue;
+        }
         if (!l4d2vr_input::ActionFrame::Ready(frameToken))
             continue;
         if (hand.source == vr::k_ulInvalidInputValueHandle &&
@@ -885,6 +954,17 @@ bool VrHandSystem::EnsureInitialized(
         {
             m_DependencyFailureReason = std::string("missing SteamVR skeletal action: ") +
                 (hand.actionPath ? hand.actionPath : "<unknown>");
+            continue;
+        }
+
+        // Self-test fingercurls=: curls stand in for the runtime's skeleton
+        // (no runtime skeletal calls at all).
+        if (curlOverride)
+        {
+            hand.skeleton.InitializeSummaryOnly(hand.action);
+            hand.skeletonFromOverride = true;
+            hand.skeletonInitialized = true;
+            ReportWarningOnce(std::string(side) + " hand skeleton: self-test finger curls");
             continue;
         }
 
@@ -907,16 +987,33 @@ bool VrHandSystem::EnsureInitialized(
             continue;
         }
 
-        std::string error;
-        if (!hand.skeleton.Initialize(input, hand.action, error))
+        std::string error = runtimeHasBones ? std::string() : std::string("the runtime reports no skeletal bones");
+        hand.skeletonRetryTick = nowTick;
+        if (runtimeHasBones && hand.skeleton.Initialize(input, hand.action, error))
         {
-            m_DependencyFailureReason = "failed to initialize SteamVR hand skeleton";
-            if (!error.empty())
-                m_DependencyFailureReason += ": " + error;
-            continue;
+            if (actionFrame.Matches(frameToken))
+                hand.skeletonInitialized = true;
         }
-        if (actionFrame.Matches(frameToken))
-            hand.skeletonInitialized = true;
+        else
+        {
+            // Never retry the setup every frame: the glove draws from the
+            // skeletal summary curls (as under SteamVR whenever they are
+            // valid) and the full setup is retried a few times in the background.
+            hand.skeleton.InitializeSummaryOnly(hand.action);
+            hand.skeletonFullAttempts = runtimeHasBones ? 1u : kSkeletonFullAttempts;
+            ReportWarningOnce(std::string(side) + " hand skeleton: no OpenVR bone data (" +
+                (error.empty() ? std::string("unknown") : error) + "); the glove follows the skeletal summary curls");
+            if (actionFrame.Matches(frameToken))
+                hand.skeletonInitialized = true;
+        }
+        if (hand.skeletonInitialized)
+        {
+            vr::EVRSkeletalTrackingLevel level = vr::VRSkeletalTracking_Estimated;
+            const vr::EVRInputError levelResult = input->GetSkeletalTrackingLevel(hand.action, &level);
+            Game::logMsg("[VR][Hands] %s hand skeleton ready: %s, tracking level %d (%d)", side,
+                hand.skeleton.IsSummaryOnly() ? "summary curls only" : "OpenVR bones",
+                static_cast<int>(level), static_cast<int>(levelResult));
+        }
     }
 
     m_Initialized = false;
@@ -928,8 +1025,14 @@ bool VrHandSystem::EnsureInitialized(
     if (m_Initialized && debugLog && !m_DebugInitializationLogged)
     {
         m_DebugInitializationLogged = true;
-        const char* leftMode = usesViewmodelPose(0u) ? "viewmodel" : m_Hands[0].skeletonInitialized ? "openvr" : "pending";
-        const char* rightMode = usesViewmodelPose(1u) ? "viewmodel" : m_Hands[1].skeletonInitialized ? "openvr" : "pending";
+        auto mode = [&](size_t h) -> const char*
+            {
+                if (usesViewmodelPose(h)) return "viewmodel";
+                if (!m_Hands[h].skeletonInitialized) return "pending";
+                return m_Hands[h].skeleton.IsSummaryOnly() ? "openvr-curls" : "openvr";
+            };
+        const char* leftMode = mode(0u);
+        const char* rightMode = mode(1u);
         Game::logMsg(
             "[VR][Hands] initialized left=%s/%u vertices right=%s/%u vertices",
             leftMode,
@@ -1298,7 +1401,13 @@ void VrHandSystem::UpdatePoses(
             continue;
 
         std::string error;
-        if (!hand.skeleton.Update(input, actionFrame, controllers.system, hand.source,
+        float overrideCurls[5];
+        if (l4d2vr_selftest::LookupCurls(static_cast<int>(handIndex), overrideCurls))
+        {
+            if (!hand.skeleton.UpdateFromCurls(actionFrame, overrideCurls))
+                continue;
+        }
+        else if (!hand.skeleton.Update(input, actionFrame, controllers.system, hand.source,
                 controllers.physicalIndices[handIndex], motionRange, error))
         {
             continue;
@@ -1313,6 +1422,8 @@ void VrHandSystem::UpdatePoses(
         }
         hand.paletteValid = true;
         hand.paletteFrameToken = hand.skeleton.PoseFrameToken();
+        m_PaletteMode[handIndex].store(hand.skeleton.IsSummaryOnly() ? 2 : 1, std::memory_order_release);
+        m_PaletteTick[handIndex].store((std::max)(static_cast<std::uint32_t>(GetTickCount()), 1u), std::memory_order_release);
         PublishFreeWristModelPosition(handIndex);
     }
 

@@ -8,6 +8,7 @@
 #include "vector.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -118,6 +119,12 @@ public:
     // Render-thread only: wrist position in the currently skinned glove model.
     bool ReadFreeWristModelPosition(bool physicalLeft, const l4d2vr_input::ActionFrame& actionFrame,
         Vector& position) const;
+    // Self-test (glovecheck=): whether a hand's glove got a skinning palette in
+    // the last maxAgeMs, and from what ("bones", "curls" = skeletal summary only).
+    bool HandPaletteFresh(size_t handIndex, std::uint32_t maxAgeMs, const char*& mode) const;
+    // Self-test (gloveassets=): load the glove meshes from this folder instead
+    // of the runtime's resources/rendermodels/vr_glove ("" = the runtime's).
+    static void SetTestAssetDirectory(const std::string& directory);
 
 private:
     std::uint32_t m_LastPoseUpdateTick = 0u;
@@ -145,7 +152,15 @@ private:
         bool paletteValid = false;
         std::uint64_t paletteFrameToken = 0u;
         bool skeletonInitialized = false;
+        // Capability gating: a runtime without bone data gets a curls-only
+        // skeleton at once (no per-frame setup retries); a full setup is
+        // retried every kSkeletonRetryMs, a few times, in case bones appear.
+        std::uint32_t skeletonRetryTick = 0u;
+        unsigned skeletonFullAttempts = 0u;
+        bool skeletonFromOverride = false;
     };
+    std::array<std::atomic<std::uint32_t>, 2> m_PaletteTick{};
+    std::array<std::atomic<int>, 2> m_PaletteMode{};  // 0 none, 1 bones, 2 curls only
 
     struct ViewmodelPoseState
     {

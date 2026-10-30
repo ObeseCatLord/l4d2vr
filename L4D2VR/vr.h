@@ -3081,6 +3081,9 @@ public:
 	// Overlay steps (vr/vr_selftest_overlays.inl): overlays, xrdump=, xraim=,
 	// xrclick=, xrtype=, xrcfgrow=, uicheck=, uiwait=, cfg=, killind=, xrmaxlayers=.
 	bool RunOverlaySelfTestStep(const std::string& step, float t, bool& handled);
+	// Hand skeleton / finger curl steps (vr/vr_selftest_hands.inl): fingercurls=,
+	// curlcheck=, skeldump=, gloveassets=, glovecheck=.
+	bool RunHandSelfTestStep(const std::string& step, float t, bool& handled);
 	static bool SelfTestRunsWithoutPlayer(const std::string& step);
 	void SelfTestLogOverlays(const char* label);
 	bool SelfTestCheckUi(const std::string& predicate, char* detail, size_t detailSize);

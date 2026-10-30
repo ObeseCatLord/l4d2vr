@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../vr_dual_reload.h"
 #include "../vr_remote_magazines.h"
 #include "../vr_remote_shells.h"
 
@@ -43,6 +44,13 @@ namespace l4d2vr_server
         // Writes clip/reserve if they still equal the snapshot, ends any native
         // reload and marks the entities changed. Returns false on any mismatch.
         virtual bool WriteAmmo(const AmmoState& state, int clip, int reserve, bool magazine) = 0;
+        // Reads the player's active dual pistols for l4d2vr_mag_dual_v1
+        // (capacity = the pair's clip, 2 x 15). Backends without it report
+        // `unsupported`; WriteAmmo(..., true) writes the result.
+        virtual bool ReadDualPistolAmmo(int playerIndex, AmmoState& state, bool& unsupported)
+        {
+            (void)playerIndex; state = AmmoState{}; unsupported = true; return false;
+        }
     protected:
         ~AmmoBackend() = default;
     };
@@ -107,6 +115,7 @@ namespace l4d2vr_server
         const void* entity = nullptr;
         l4d2vr_shell::ServerLedger shell{};
         l4d2vr_remote_mag::ServerLedger mag{};
+        l4d2vr_dual_reload::ServerLedger dual{};    // shares the magazine token
     };
 
     // Applies one shell insertion. Mirrors Game::HandleRemoteShellCommand.
@@ -136,6 +145,23 @@ namespace l4d2vr_server
         const l4d2vr_remote_mag::Snapshot snapshot{native.eligible, native.handle, native.latestCommand,
             native.weaponId, native.clip, native.reserve, native.capacity, native.infinite};
         return client.mag.Apply(request, snapshot, nowMs,
+            [&](int clip, int reserve) { return backend.WriteAmmo(native, clip, reserve, true); });
+    }
+
+    // Applies one physical dual-pistol reload (vr_dual_reload.h). Mirrors
+    // Game::HandleDualMagazineCommand on the listen host.
+    inline l4d2vr_dual_reload::Reply ApplyDualRequest(TransactionClient& client, AmmoBackend& backend, int playerIndex,
+        const l4d2vr_dual_reload::Request& request, std::uint64_t nowMs)
+    {
+        if (client.dual.Token() != client.mag.Token()) client.dual.Reset(client.mag.Token());
+        AmmoState native{};
+        bool unsupported = false;
+        backend.ReadDualPistolAmmo(playerIndex, native, unsupported);
+        if (unsupported)
+            return client.dual.Unsupported(request);
+        const l4d2vr_dual_reload::Snapshot snapshot{native.eligible, native.handle, native.latestCommand,
+            native.clip, native.reserve, native.capacity, native.infinite};
+        return client.dual.Apply(request, snapshot, nowMs,
             [&](int clip, int reserve) { return backend.WriteAmmo(native, clip, reserve, true); });
     }
 }

@@ -48,6 +48,7 @@
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
+#include "vr_dual_reload.h"
 #include "vr_item_hand.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
@@ -1447,6 +1448,103 @@ public:
     bool m_DualPistolsNativeReloadFallbackEnabled = true;
     std::atomic<uint32_t> m_DualPistolNativeReloadState{ 0u };
     l4d2vr_dual::ReloadPulse m_DualPistolNativeReloadPulse;
+    // ---- Physical dual-pistol reload (vr_dual_reload.h, vr_hands/vr_dual_reload_bridge.inl) ----
+    // Release both magazines, stack one pistol into the other hand, seat a
+    // double magazine from the pouch, rack each empty gun's slide, take the
+    // gun back. Off: the shared native button reload above.
+    bool m_DualPistolsPhysicalReloadEnabled = true;
+    float m_DualPistolsStackDistanceMeters = 0.12f;
+    float m_DualPistolsStackMaxAngleDeg = 45.0f;
+    struct DualReloadButtons
+    {
+        bool release = false;
+        bool grab[2] = { false, false };   // gameplay right, left: the reload-interaction input
+        bool grip[2] = { false, false };   // gameplay right, left: the grip
+    };
+    // Logic -> viewmodel draw (under m_DualReloadMutex).
+    struct DualReloadRenderState
+    {
+        bool enabled = false;          // physical dual reload applies to the drawn dual pistols
+        bool active = false;
+        unsigned stage = 0u;
+        int receiving = -1;            // gameplay hand holding both guns (0 right, 1 left)
+        std::uint32_t serial = 0u;     // one per release
+        bool hideClips = false;
+        bool drawHeld = false;         // the double magazine in the free hand
+        bool drawPouch = false;        // the double magazine waiting at the pouch
+        bool pouchValid = false;
+        Vector pouch{}, pouchForward{}, pouchRight{};
+        float slidePullUnits[2] = { 0.0f, 0.0f };
+        float holdRaiseUnits = 0.0f;
+    };
+    // Viewmodel draw -> logic: the dual model's magazines and slides.
+    // `...Local` is in the receiving hand's controller frame (x right, y up, z back).
+    struct DualReloadGeometry
+    {
+        bool valid = false;
+        std::uint64_t atMs = 0u;
+        std::uint32_t serial = 0u;
+        int receiving = -1;
+        std::string model;
+        int clipBone[2] = { -1, -1 };
+        VrHandMatrix4 clipWorld[2]{};  // the magazines in their guns (where they drop from)
+        bool clipWorldValid = false;
+        bool seatValid = false;
+        VrHandMatrix4 clipSeatLocal[2]{};
+        Vector seatCenterLocal{};
+        bool slideValid[2] = { false, false };
+        Vector slideLocal[2]{}, slideBackLocal[2]{};
+    };
+    mutable std::mutex m_DualReloadMutex;
+    DualReloadRenderState m_DualReloadRender{};
+    DualReloadGeometry m_DualReloadGeometry{};
+    l4d2vr_dual_reload::Machine m_DualReload;
+    l4d2vr_dual_reload::ClientRequest m_DualReloadRequest;   // under m_DualReloadMutex
+    l4d2vr_dual_reload::Reply m_DualReloadReply{};
+    bool m_DualReloadReplyReady = false;
+    std::atomic<bool> m_DualReloadActive{ false };
+    std::atomic<bool> m_DualReloadNativePulse{ false };
+    std::atomic<uint64_t> m_DualReloadNativeWindowUntilMs{ 0u };  // stock reload allowed (host transaction failed)
+    std::atomic<bool> m_DualReloadHostOwned{ false };        // a host transaction owns the dual reload (no stock reload)
+    std::atomic<int> m_DualReloadHandRole[2]{};              // l4d2vr_dual_reload::HandRole per gameplay hand
+    std::atomic<uint32_t> m_DualReloadEventCount[14]{};      // per event bit, for the self-test and logs
+    uintptr_t m_DualReloadOwner = 0u;
+    uint32_t m_DualReloadHandle = 0u;
+    int m_DualReloadCommitAttempts = 0;
+    bool m_DualReloadCommitByHost = false;
+    int m_DualReloadClipBefore = -1, m_DualReloadReserveBefore = -1;
+    int m_DualReloadLastClip = -1, m_DualReloadLastReserve = -1;
+    bool m_DualReloadLastCommitByHost = false;
+    void UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, const DualReloadButtons& buttons);
+    bool DualReloadActive() const { return m_DualReloadActive.load(std::memory_order_acquire); }
+    bool DualReloadHostTransactionAvailable() const;
+    bool DualReloadUsesPhysicalPath() const;
+    l4d2vr_dual_reload::HandRole GetDualReloadHandRole(bool gameplayLeft) const
+    {
+        return static_cast<l4d2vr_dual_reload::HandRole>(m_DualReloadHandRole[gameplayLeft ? 1 : 0].load(std::memory_order_acquire));
+    }
+    void ReceiveDualReloadReply(const l4d2vr_dual_reload::Reply& reply);
+    bool GetDualReloadRenderState(DualReloadRenderState& out) const;
+    void PublishDualReloadGeometry(const DualReloadGeometry& geometry);
+    // Self-test view of the sequence; targets are scene-world hand positions.
+    struct DualReloadSelfTestPoints
+    {
+        bool enabled = false, hostTxn = false, lastCommitByHost = false, geometryFresh = false, hideClips = false;
+        unsigned stage = 0u;
+        int receiving = -1, freeHand = -1, slideHeld = -1, clip = -1, reserve = -1;
+        bool needsRack[2] = { false, false };
+        float slidePullM = 0.0f;
+        bool pouchValid = false;
+        Vector pouchTarget{};
+        float pouchDistanceM = -1.0f;
+        bool seatValid = false;
+        Vector freeSeatTarget{};
+        float seatDistanceM = -1.0f, holdAngleDeg = 180.0f;
+        bool slideValid[2] = { false, false };
+        Vector slideTarget[2]{}, slideBack[2]{};
+        float slideDistanceM[2] = { -1.0f, -1.0f };
+    };
+    bool GetDualReloadSelfTestPoints(DualReloadSelfTestPoints& out);
     std::atomic<bool> m_DualPistolsActive{ false };
     std::atomic<uint32_t> m_DualPistolTriggerState{ 0u };
     std::atomic<uint32_t> m_PistolOwnershipMask{ 0u }; // Right=1, left=2.
@@ -3452,6 +3550,7 @@ public:
 	Vector m_RecoilTestRefComp{ 1.0f, 0.0f, 0.0f };
 	bool RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	bool RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
+	bool RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	// Self-test scratch for the recoil and sight steps.
 	Vector m_RecoilTestRefDir{ 1.0f, 0.0f, 0.0f };
 	float m_RecoilTestPeakPitch = 0.0f;

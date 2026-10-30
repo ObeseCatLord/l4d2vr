@@ -76,9 +76,11 @@ releasing a pending shell remains a release even if the grip is pressed again.
 A retained rejected shell must leave and re-enter the loading port to retry;
 the host still decides whether an existing round can be transferred.
 
-Dual pistols intentionally use a button reload because both hands hold a gun.
-With this Quest profile, right A reloads both pistols together using the native
-animation. `DualPistolsNativeReloadFallbackEnabled=true` is the default. Manual
+Dual pistols use the stacking reload (`DualPistolsPhysicalReloadEnabled=true`,
+see physical-overhaul.md, Akimbo): right A drops both magazines, one pistol is
+stacked into the other hand, the free hand seats a double magazine and racks
+each empty slide. With it off, right A reloads both pistols together using the
+native animation (`DualPistolsNativeReloadFallbackEnabled=true`). Manual
 magazine and slide gestures remain available for a single pistol in either hand
 on a supported host. Native button reload, hand tracking without gloves and
 recovery after incapacitation still need in-game verification. The existing VR

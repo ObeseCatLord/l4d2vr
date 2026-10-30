@@ -3328,6 +3328,9 @@ void VR::ParseConfigFile()
     m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", true);
     m_DualPistolsAkimboOnAnyServer = getBool("DualPistolsAkimboOnAnyServer", true);
     m_DualPistolsNativeReloadFallbackEnabled = getBool("DualPistolsNativeReloadFallbackEnabled", true);
+    m_DualPistolsPhysicalReloadEnabled = getBool("DualPistolsPhysicalReloadEnabled", true);
+    m_DualPistolsStackDistanceMeters = std::clamp(getFloat("DualPistolsStackDistanceMeters", 0.12f), 0.04f, 0.40f);
+    m_DualPistolsStackMaxAngleDeg = std::clamp(getFloat("DualPistolsStackMaxAngleDeg", 45.0f), 5.0f, 90.0f);
     m_MagazineReleaseButtonRequired = getBool("MagazineReleaseButtonRequired", true);
     m_MagazineInteractionAutoEjectWhenEmpty = getBool("MagazineInteractionAutoEjectWhenEmpty", false);
     m_MagazineEmptyGlowEnabled = getBool("MagazineEmptyGlowEnabled", true);

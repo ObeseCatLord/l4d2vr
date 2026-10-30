@@ -22,7 +22,12 @@ namespace l4d2vr_features
     // Fixed (non-random) shotgun pellets for VR players who send
     // "l4d2vr_shotgun_pattern 1" (vr_shotgun_pattern.h).
     constexpr std::uint32_t ShotgunPattern = 0x800u;
-    constexpr std::uint32_t kKnownMask = 0xFFFu;
+    // Physical dual-pistol reload: one l4d2vr_mag_dual_v1 transaction commits
+    // L4D2's dual reload when both magazines seat (vr_dual_reload.h).
+    constexpr std::uint32_t DualMagTxn = 0x1000u;
+    constexpr std::uint32_t kKnownMask = 0x1FFFu;
+    // Everything a dedicated plugin built before DualMagTxn advertises.
+    constexpr std::uint32_t kPreDualMagTxnMask = 0xFFFu;
     // Everything a dedicated plugin built before HandThrow advertises.
     constexpr std::uint32_t kPreHandThrowMask = 0x7FFu & ~HandThrow;
 
@@ -30,7 +35,7 @@ namespace l4d2vr_features
     // ShotgunPattern are added at run time when their server.dll hooks
     // resolved: Hooks::ListenHostFeatureMask).
     constexpr std::uint32_t kListenHostMask =
-        MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | PoseV3;
+        MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | PoseV3 | DualMagTxn;
 
     inline bool ParseMask(const char* text, std::uint32_t& mask)
     {

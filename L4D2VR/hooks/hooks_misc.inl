@@ -10,6 +10,9 @@
 // ------------------------------------------------------------
 static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
     const std::string& modelName, void*& bones);
+namespace vr_vm_stabilize { struct Mat3x4; }
+static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string& modelName, void*& bones,
+    vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow);
 
 namespace vr_vm_stabilize
 {
@@ -25169,6 +25172,258 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
     return singleLeft ? (canRetarget ? l4d2vr_dual::Hand::Left : l4d2vr_dual::Hand::None) : l4d2vr_dual::Hand::Right;
 }
 
+// Physical dual-pistol reload on the dual viewmodel (vr_dual_reload.h; the logic
+// is vr_hands/vr_dual_reload_bridge.inl). Runs on the final bones after the
+// independent-pistol retarget: stacks the moving gun beside the receiving one,
+// moves the slides being pulled, hides both magazines while they are out, and
+// builds the double magazine (both clip subtrees side by side, exactly as they
+// sit in the stacked guns) for a second pass in the free hand or at the pouch.
+// It publishes where the magazines and slides are, in the receiving hand's
+// controller frame, for the logic.
+static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string& modelName, void*& bones,
+    vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow)
+{
+    pairBones = nullptr; pairGlow = false;
+    auto matrixOrigin = [](const VrHandMatrix4& matrix)
+    { return Vector(VrHandMath::Get(matrix, 0, 3), VrHandMath::Get(matrix, 1, 3), VrHandMath::Get(matrix, 2, 3)); };
+    auto matrixAxis = [](const VrHandMatrix4& matrix, int column)
+    { return Vector(VrHandMath::Get(matrix, 0, column), VrHandMath::Get(matrix, 1, column), VrHandMath::Get(matrix, 2, column)); };
+    if (!vr || !state || !bones || !vr->m_DualPistolsActive.load(std::memory_order_acquire)) return false;
+    VR::DualReloadRenderState rs{};
+    if (!vr->GetDualReloadRenderState(rs)) return false;
+    const std::string model = vr_vm_stabilize::ToLowerAscii(modelName);
+    if (!HooksModelNameIsViewmodel(model) || model.find("dual_pistol") == std::string::npos) return false;
+    std::vector<std::string> names;
+    std::vector<int> parents;
+    int count = 0, boneIndex = 0, stride = 0, countOffset = 0;
+    if (!vr_vm_stabilize::TryCollectBoneNamesFromDrawState(state, names, parents, count, boneIndex, stride, countOffset) ||
+        count <= 0 || count > 512 || static_cast<int>(names.size()) < count || static_cast<int>(parents.size()) < count)
+        return false;
+    int root[2] = { -1, -1 }, clip[2] = { -1, -1 }, slide[2] = { -1, -1 }, leftBolt = -1;
+    std::vector<std::string> lower(static_cast<size_t>(count));
+    for (int bone = 0; bone < count; ++bone)
+    {
+        const std::string name = lower[static_cast<size_t>(bone)] = vr_vm_stabilize::ToLowerAscii(names[static_cast<size_t>(bone)]);
+        if (name == "valvebiped.weapon_bone") root[0] = bone;
+        else if (name == "valvebiped.weapon_bone_l") root[1] = bone;
+        else if (name == "valvebiped.weapon_clip") clip[0] = bone;
+        else if (name == "valvebiped.weapon_clip_l") clip[1] = bone;
+        else if (name == "valvebiped.weapon_charger_slide") slide[0] = bone;
+        else if (name == "valvebiped.weapon_charger_slide_l") slide[1] = bone;
+        else if (name == "valvebiped.weapon_bolt_l") leftBolt = bone;   // the left slide's front, outside its subtree
+    }
+    if (root[0] < 0 || root[1] < 0 || clip[0] < 0 || clip[1] < 0) return false;
+    auto inSubtree = [&](int bone, int top)
+    {
+        for (int depth = 0; depth < count && bone >= 0 && bone < count; ++depth)
+        {
+            if (bone == top) return true;
+            bone = parents[static_cast<size_t>(bone)];
+        }
+        return false;
+    };
+    // Which gun each bone belongs to (the same rule as the independent retarget).
+    std::vector<int> gunOf(static_cast<size_t>(count), -1);
+    for (int bone = 0; bone < count; ++bone)
+    {
+        const std::string& name = lower[static_cast<size_t>(bone)];
+        const bool left = inSubtree(bone, root[1]) || (name.find("weapon_") != std::string::npos &&
+            name.size() >= 2 && name.compare(name.size() - 2, 2, "_l") == 0);
+        gunOf[static_cast<size_t>(bone)] = left ? 1 : inSubtree(bone, root[0]) ? 0 : -1;
+    }
+    const auto* source = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(bones);
+    auto* out = vr_vm_stabilize::AllocStableBones(count, vr->m_RenderFrameSeq.load(std::memory_order_relaxed));
+    if (!out) return false;
+    for (int bone = 0; bone < count; ++bone)
+        if (!vr_vm_stabilize::SafeRead(source + bone, out[bone])) return false;
+
+    VrHandMatrix4 controller[2]{};
+    const bool tracked[2] = { vr->BuildPistolControllerWorld(false, controller[0]), vr->BuildPistolControllerWorld(true, controller[1]) };
+    const bool stacked = rs.active && rs.receiving >= 0 && rs.stage >= static_cast<unsigned>(l4d2vr_dual_reload::Stage::Stacked);
+    const int r = rs.receiving >= 0 ? rs.receiving : 0;
+    const int m = 1 - r;
+
+    VR::DualReloadGeometry geometry{};
+    geometry.atMs = GetTickCount64();
+    geometry.serial = rs.serial;
+    geometry.receiving = rs.receiving;
+    geometry.model = model;
+    geometry.clipBone[0] = clip[0]; geometry.clipBone[1] = clip[1];
+    geometry.clipWorld[0] = HooksMat3x4ToVrHandMatrix(out[clip[0]]);
+    geometry.clipWorld[1] = HooksMat3x4ToVrHandMatrix(out[clip[1]]);
+    geometry.clipWorldValid = !stacked;
+    geometry.valid = true;
+
+    // The moving gun sits beside the receiving one: same orientation, one gun
+    // width along the receiving gun's lateral axis, on the side it came from.
+    constexpr float kStackSpacingUnits = 1.7f;   // the P220 is about 1.6 units wide
+    static uint32_t s_sideSerial = 0u;
+    static int s_sideReceiving = -1;
+    static float s_side = 1.0f;
+    float side = 1.0f;
+    {
+        const Vector lateral(out[root[r]].m[0][0], out[root[r]].m[1][0], out[root[r]].m[2][0]);
+        const Vector toMoving = tracked[0] && tracked[1]
+            ? matrixOrigin(controller[m]) - matrixOrigin(controller[r])
+            : Vector(0.0f, 0.0f, 0.0f);
+        const float live = DotProduct(lateral, toMoving) >= 0.0f ? 1.0f : -1.0f;
+        if (stacked)
+        {
+            if (s_sideSerial != rs.serial || s_sideReceiving != rs.receiving)
+            { s_sideSerial = rs.serial; s_sideReceiving = rs.receiving; s_side = live; }
+            side = s_side;
+        }
+        else side = live;
+    }
+    vr_vm_stabilize::Mat3x4 offset{};
+    offset.m[0][0] = offset.m[1][1] = offset.m[2][2] = 1.0f;
+    offset.m[0][3] = side * kStackSpacingUnits;
+    vr_vm_stabilize::Mat3x4 stackedRoot{}, inverseMoving{}, moveDelta{};
+    vr_vm_stabilize::Mul(out[root[r]], offset, stackedRoot);
+    vr_vm_stabilize::InvertTR(out[root[m]], inverseMoving);
+    vr_vm_stabilize::Mul(stackedRoot, inverseMoving, moveDelta);
+    if (stacked)
+    {
+        for (int bone = 0; bone < count; ++bone)
+        {
+            if (gunOf[static_cast<size_t>(bone)] != m) continue;
+            vr_vm_stabilize::Mat3x4 moved{};
+            vr_vm_stabilize::Mul(moveDelta, out[bone], moved);
+            out[bone] = moved;
+        }
+    }
+    // Where a bone of gun g is once stacked (already there when stacked).
+    auto stackedWorld = [&](int bone) -> vr_vm_stabilize::Mat3x4
+    {
+        if (stacked || gunOf[static_cast<size_t>(bone)] != m) return out[bone];
+        vr_vm_stabilize::Mat3x4 moved{};
+        vr_vm_stabilize::Mul(moveDelta, out[bone], moved);
+        return moved;
+    };
+    // Slides pulled back along their gun's barrel (weapon_bone -Z).
+    Vector slideBack[2]{};
+    for (int gun = 0; gun < 2; ++gun)
+    {
+        const vr_vm_stabilize::Mat3x4 gunRoot = stackedWorld(root[gun]);
+        slideBack[gun] = HooksNormalizeVector(Vector(-gunRoot.m[0][2], -gunRoot.m[1][2], -gunRoot.m[2][2]), Vector(0.0f, 0.0f, 0.0f));
+        const float pull = rs.slidePullUnits[gun];
+        if (slide[gun] < 0 || !(pull > 0.0001f) || !std::isfinite(pull)) continue;
+        for (int bone = 0; bone < count; ++bone)
+        {
+            if (!inSubtree(bone, slide[gun]) && !(gun == 1 && leftBolt >= 0 && inSubtree(bone, leftBolt))) continue;
+            out[bone].m[0][3] += slideBack[gun].x * pull;
+            out[bone].m[1][3] += slideBack[gun].y * pull;
+            out[bone].m[2][3] += slideBack[gun].z * pull;
+        }
+    }
+    // Magazine wells and slides in the receiving hand's controller frame.
+    VrHandMatrix4 clipSeat[2]{};
+    if (tracked[r])
+    {
+        vr_vm_stabilize::Mat3x4 inverseController{};
+        vr_vm_stabilize::InvertTR(HooksVrHandMatrixToMat3x4(controller[r]), inverseController);
+        for (int gun = 0; gun < 2; ++gun)
+        {
+            const vr_vm_stabilize::Mat3x4 seat = stackedWorld(clip[gun]);
+            clipSeat[gun] = HooksMat3x4ToVrHandMatrix(seat);
+            vr_vm_stabilize::Mat3x4 local{};
+            vr_vm_stabilize::Mul(inverseController, seat, local);
+            geometry.clipSeatLocal[gun] = HooksMat3x4ToVrHandMatrix(local);
+            if (slide[gun] >= 0)
+            {
+                const vr_vm_stabilize::Mat3x4 slideWorld = stackedWorld(slide[gun]);
+                const Vector p(slideWorld.m[0][3], slideWorld.m[1][3], slideWorld.m[2][3]);
+                const Vector& b = slideBack[gun];
+                geometry.slideLocal[gun] = Vector(
+                    inverseController.m[0][0] * p.x + inverseController.m[0][1] * p.y + inverseController.m[0][2] * p.z + inverseController.m[0][3],
+                    inverseController.m[1][0] * p.x + inverseController.m[1][1] * p.y + inverseController.m[1][2] * p.z + inverseController.m[1][3],
+                    inverseController.m[2][0] * p.x + inverseController.m[2][1] * p.y + inverseController.m[2][2] * p.z + inverseController.m[2][3]);
+                geometry.slideBackLocal[gun] = Vector(
+                    inverseController.m[0][0] * b.x + inverseController.m[0][1] * b.y + inverseController.m[0][2] * b.z,
+                    inverseController.m[1][0] * b.x + inverseController.m[1][1] * b.y + inverseController.m[1][2] * b.z,
+                    inverseController.m[2][0] * b.x + inverseController.m[2][1] * b.y + inverseController.m[2][2] * b.z);
+                geometry.slideValid[gun] = l4d2vr_interaction::Finite(geometry.slideLocal[gun]);
+            }
+        }
+        geometry.seatCenterLocal = (matrixOrigin(geometry.clipSeatLocal[0]) +
+            matrixOrigin(geometry.clipSeatLocal[1])) * 0.5f;
+        geometry.seatValid = l4d2vr_interaction::Finite(geometry.seatCenterLocal);
+    }
+    vr->PublishDualReloadGeometry(geometry);
+
+    // The double magazine: in the free fist, or waiting at the pouch.
+    const int freeHand = 1 - r;
+    VrHandMatrix4 hold{};
+    bool holdValid = false;
+    if (rs.drawHeld && stacked && tracked[freeHand] && geometry.seatValid)
+    {
+        hold = controller[freeHand];
+        const Vector raised = matrixOrigin(hold) + matrixAxis(hold, 1) * rs.holdRaiseUnits;
+        VrHandMath::Set(hold, 0, 3, raised.x); VrHandMath::Set(hold, 1, 3, raised.y); VrHandMath::Set(hold, 2, 3, raised.z);
+        holdValid = true;
+    }
+    else if (rs.drawPouch && rs.pouchValid && geometry.seatValid)
+    {
+        // Upright in the pouch, facing the way the body faces.
+        const Vector forward = HooksNormalizeVector(rs.pouchForward, Vector(1.0f, 0.0f, 0.0f));
+        const Vector right = HooksNormalizeVector(rs.pouchRight, Vector(0.0f, -1.0f, 0.0f));
+        const Vector up(0.0f, 0.0f, 1.0f);
+        hold = VrHandMath::Identity();
+        for (int row = 0; row < 3; ++row)
+        {
+            VrHandMath::Set(hold, row, 0, right[row]);
+            VrHandMath::Set(hold, row, 1, up[row]);
+            VrHandMath::Set(hold, row, 2, -forward[row]);
+        }
+        const Vector c = geometry.seatCenterLocal;
+        const Vector origin = rs.pouch - (right * c.x + up * c.y - forward * c.z);
+        VrHandMath::Set(hold, 0, 3, origin.x); VrHandMath::Set(hold, 1, 3, origin.y); VrHandMath::Set(hold, 2, 3, origin.z);
+        holdValid = true;
+        pairGlow = rs.stage == static_cast<unsigned>(l4d2vr_dual_reload::Stage::Stacked);
+    }
+    if (holdValid)
+    {
+        auto* pair = vr_vm_stabilize::AllocStableBones(count, vr->m_RenderFrameSeq.load(std::memory_order_relaxed));
+        if (pair)
+        {
+            vr_vm_stabilize::Mat3x4 delta[2]{};
+            for (int gun = 0; gun < 2; ++gun)
+            {
+                const vr_vm_stabilize::Mat3x4 target = HooksVrHandMatrixToMat3x4(
+                    VrHandMath::Multiply(hold, geometry.clipSeatLocal[gun]));
+                vr_vm_stabilize::Mat3x4 inverseSeat{};
+                vr_vm_stabilize::InvertTR(HooksVrHandMatrixToMat3x4(clipSeat[gun]), inverseSeat);
+                vr_vm_stabilize::Mat3x4 fromSeat{};
+                vr_vm_stabilize::Mul(target, inverseSeat, fromSeat);
+                delta[gun] = fromSeat;
+            }
+            for (int bone = 0; bone < count; ++bone)
+            {
+                const int gun = inSubtree(bone, clip[0]) ? 0 : inSubtree(bone, clip[1]) ? 1 : -1;
+                if (gun < 0)
+                {
+                    pair[bone] = out[bone];
+                    pair[bone].m[0][3] += 100000.0f; pair[bone].m[1][3] += 100000.0f; pair[bone].m[2][3] += 100000.0f;
+                    continue;
+                }
+                vr_vm_stabilize::Mul(delta[gun], stackedWorld(bone), pair[bone]);
+            }
+            pairBones = pair;
+        }
+    }
+    // Both magazines out of the guns.
+    if (rs.hideClips)
+    {
+        for (int bone = 0; bone < count; ++bone)
+        {
+            if (!inSubtree(bone, clip[0]) && !inSubtree(bone, clip[1])) continue;
+            out[bone].m[0][3] += 100000.0f; out[bone].m[1][3] += 100000.0f; out[bone].m[2][3] += 100000.0f;
+        }
+    }
+    bones = out;
+    return true;
+}
+
 namespace
 {
     // Moves the bones rigidly so that the reference bone lands exactly on the
@@ -25604,6 +25859,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     void* pBonesToWorldFinal = pCustomBoneToWorld;
     vr_vm_stabilize::Mat3x4* magazineInteractionDetachedMagazineBones = nullptr;
     bool drawMagazineInteractionDetachedMagazine = false;
+    vr_vm_stabilize::Mat3x4* dualReloadPairBones = nullptr;   // the double magazine (physical dual reload)
+    bool dualReloadPairGlow = false;
     vr_vm_stabilize::Mat3x4* magazineInteractionCalibrationPreviewBones = nullptr;
     vr_vm_stabilize::Mat3x4* magazineInteractionCalibrationPreviewModelToWorld = nullptr;
     bool drawMagazineInteractionCalibrationPreview = false;
@@ -26395,6 +26652,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         // Contact publication and visual capture must see the same moved gun.
         MagazineInteractionRenderSnapshotScope pistolContactSnapshot(queueMode != 0);
         VR::t_MagazineContactHand = ApplyIndependentDualPistolBones(m_VR, state, modelName, pBonesToWorldFinal);
+        if (!shadowDepthDraw)
+            ApplyDualReloadViewmodelPose(m_VR, state, modelName, pBonesToWorldFinal, dualReloadPairBones, dualReloadPairGlow);
 
         PublishMagazineInteractionCalibrationSnapshotFromDraw(
             m_VR,
@@ -26710,6 +26969,15 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             HooksDrawGlow(ecx, state, pDrawInfo, magazineInteractionDetachedMagazineBones, hintMaterial,
                 spareInReach ? kGlowInReach : kGlowNextStep);
         }
+    }
+
+    // The double magazine of a physical dual reload, glowing at the pouch when it is next.
+    if (dualReloadPairBones)
+    {
+        hkDrawModelExecute.fOriginal(ecx, state, *pDrawInfo, dualReloadPairBones);
+        if (!shadowDepthDraw && dualReloadPairGlow)
+            if (IMaterial* const hintMaterial = HooksHolsterHighlightMaterial())
+                HooksDrawGlow(ecx, state, pDrawInfo, dualReloadPairBones, hintMaterial, kGlowNextStep);
     }
 
     if (!shadowDepthDraw && m_VR && pBonesToWorldFinal)

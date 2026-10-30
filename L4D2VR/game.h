@@ -12,6 +12,7 @@ class C_WeaponCSBase;
 #include "vr_physical_controls.h"
 #include "vr_remote_shells.h"
 #include "vr_remote_magazines.h"
+#include "vr_dual_reload.h"
 #include "vr_server_pistol_commands.h"
 #include "vr_pistol_ammo.h"
 #include "vr_pistol_ammo_sync.h"
@@ -341,11 +342,13 @@ public:
         edict_t* entity = nullptr;
         unsigned serial = 0u;
         l4d2vr_remote_mag::ServerLedger ledger;
+        l4d2vr_dual_reload::ServerLedger dual;   // physical dual-pistol reload, same token
     };
     std::mutex m_RemoteMagazineServerMutex;
     std::array<RemoteMagazineServerClient, kMaxPlayers> m_RemoteMagazineServerClients{};
     void OfferRemoteMagazineProtocol(edict_t* entity);
     bool HandleRemoteMagazineCommand(edict_t* entity, const void* command);
+    bool HandleDualMagazineCommand(edict_t* entity, const void* command);
     void ResetRemoteMagazineServerClients();
 
     // === Weapon / Viewmodel State ===

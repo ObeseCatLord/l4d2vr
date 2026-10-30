@@ -9801,8 +9801,9 @@ namespace
             const bool gun = vr->m_GunRigidInHand && vr->m_IronSightAimEnabled && !vr->m_MouseModeEnabled &&
                 l4d2vr_iron_sights::ForModel(lowerModel.c_str()) != nullptr && weaponId != 0 &&
                 l4d2vr_recoil::ProfileForWeapon(weaponId) != nullptr;
-            if (gun && readyMatches && currentValid && (kind == Kind::Idle || fireActivity) &&
-                !vr->IsMagazineInteractionManualActive())
+            // (Only idle and firing sequences: reloads, pumps and other actions
+            // keep their animation. A shotgun waiting for shells is still idle.)
+            if (gun && readyMatches && currentValid && (kind == Kind::Idle || fireActivity))
             {
                 auto found = state.weaponBoneIndex.find(lowerModel);
                 if (found == state.weaponBoneIndex.end())
@@ -9830,6 +9831,10 @@ namespace
                     state.rigidCorrectionAt = now;
                 }
             }
+            if (nowMs < vr->m_VmAnimTraceUntilMs.load(std::memory_order_acquire))
+                Game::logMsg("[VR][VmAnim] rigid model=%s gun=%d ready=%d kind=%d fire=%d applied=%d",
+                    lowerModel.c_str(), gun ? 1 : 0, readyMatches ? 1 : 0, static_cast<int>(kind), fireActivity ? 1 : 0,
+                    state.rigidCorrectionValid ? 1 : 0);
         }
         if (state.rigidCorrectionValid &&
             std::chrono::duration<float>(now - state.rigidCorrectionAt).count() < 0.25f)

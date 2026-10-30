@@ -64,6 +64,67 @@ class InstallTests(TempDirTest):
         self.install(self.v1, pin_workshop=False)
         self.assertFalse((self.game / install.PIN_FILE).exists())
 
+    # -- OpenXR-only release: old OpenVR files go ------------------------------
+    def openxr_release(self):
+        files = dict(CLIENT_V2)
+        for name in ("openvr_api.dll", "vr/SteamVRActionManifest/action_manifest.json"):
+            del files[name]
+        files["openxr_loader.dll"] = b"MZ khronos loader"
+        files["manifest.json"] = json.dumps({"version": "1.3.0"}).encode()
+        return make_zip(self.tmp / "dl" / "openxr.zip", files)
+
+    def test_upgrade_to_openxr_removes_recorded_openvr_files(self):
+        self.install(self.v1)
+        before = snapshot(self.game)
+        plan = self.install(self.openxr_release())
+        removed = {item.rel for item in plan.by_action("remove")}
+        self.assertIn("openvr_api.dll", removed)
+        self.assertIn("vr/SteamVRActionManifest/action_manifest.json", removed)
+        self.assertFalse((self.game / "openvr_api.dll").exists())
+        self.assertFalse((self.game / "vr/SteamVRActionManifest").exists(), "the emptied folder is removed")
+        self.assertTrue((self.game / "openxr_loader.dll").is_file())
+        self.assertTrue(any("OpenXR only" in warning for warning in plan.warnings))
+        # Backed up first: restoring brings them (and the folder) back.
+        install.restore_backup(self.target(), log=self.logs.append)
+        self.assertEqual(snapshot(self.game), before)
+
+    def test_upgrade_removes_unrecorded_and_modified_openvr_files(self):
+        # A manual 1.2 install (not recorded) plus a user-replaced openvr_api.dll (OpenComposite)
+        # and a SteamVR binding file exported next to the manifest.
+        (self.game / "openvr_api.dll").write_bytes(b"MZ opencomposite")
+        (self.game / "VR/SteamVRActionManifest").mkdir(parents=True)
+        (self.game / "VR/SteamVRActionManifest/bindings_knuckles.json").write_bytes(b"{}")
+        (self.game / "VR/manifest.vrmanifest").write_bytes(b"{}")
+        (self.game / "VR/SteamVRActionManifest/readme.txt").write_bytes(b"not a json")
+        before = snapshot(self.game)
+        plan = self.install(self.openxr_release())
+        removed = {item.rel.lower() for item in plan.by_action("remove")}
+        self.assertEqual(removed, {"openvr_api.dll", "vr/manifest.vrmanifest",
+                                   "vr/steamvractionmanifest/bindings_knuckles.json"})
+        self.assertFalse((self.game / "openvr_api.dll").exists())
+        self.assertTrue((self.game / "VR/SteamVRActionManifest/readme.txt").is_file(), "only the OpenVR json files go")
+        backups = install.list_backups(self.target())
+        entries = {e["path"].lower(): e for e in backups[0].index["entries"]}
+        self.assertEqual(entries["openvr_api.dll"]["action"], "removed")
+        backup_copy = backups[0].path / "files" / "openvr_api.dll"
+        self.assertEqual(backup_copy.read_bytes(), b"MZ opencomposite")
+        install.uninstall(self.target(), log=self.logs.append)
+        self.assertEqual(snapshot(self.game), before)
+
+    def test_recorded_but_modified_openvr_file_is_removed_with_backup(self):
+        self.install(self.v1)
+        (self.game / "openvr_api.dll").write_bytes(b"MZ edited")
+        plan = self.install(self.openxr_release())
+        self.assertIn("openvr_api.dll", {item.rel for item in plan.by_action("remove")})
+        self.assertFalse(plan.by_action("keep-modified"))
+        self.assertFalse((self.game / "openvr_api.dll").exists())
+
+    def test_a_package_that_still_ships_openvr_keeps_it(self):
+        (self.game / "openvr_api.dll").write_bytes(b"MZ old")
+        plan = self.install(self.v2)  # a legacy package that ships openvr_api.dll
+        self.assertIn("openvr_api.dll", {item.rel for item in plan.by_action("overwrite")})
+        self.assertEqual((self.game / "openvr_api.dll").read_bytes(), CLIENT_V2["openvr_api.dll"])
+
     # -- preserve -------------------------------------------------------------
     def test_user_configs_are_preserved(self):
         files = dict(CLIENT_V1)

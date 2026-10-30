@@ -27,6 +27,9 @@ extern "C" BOOL WINAPI K32EnumProcessModules(
         DWORD     size,
         LPDWORD   needed);
 
+// L4D2VR/vr_backend: 1 = OpenVR (legacy builds), 2 = OpenXR, 0 = none.
+extern "C" int L4D2VR_SelectedVrRuntime();
+
 namespace dxvk {
 
   namespace {
@@ -138,6 +141,12 @@ namespace dxvk {
     }
 
     bool ReadReShadeVrCompatEnabled() {
+      // The bridge binds ReShade's OpenVR effect runtime, so it only exists for
+      // the legacy OpenVR backend. With OpenXR (the release build), desktop
+      // mode or -nohmd it reads as off: ReShade.ini keeps (or gets back) its
+      // Generic Depth add-on and the bridge never registers.
+      if (L4D2VR_SelectedVrRuntime() != 1)
+        return false;
       const std::filesystem::path root = GetProcessRootPath();
       if (root.empty())
         return false;

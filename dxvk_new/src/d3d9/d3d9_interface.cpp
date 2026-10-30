@@ -380,8 +380,8 @@ namespace dxvk {
     if (!noHmd && !L4D2VR_DesktopModeActive()) {
       uint32_t renderWidth;
       uint32_t renderHeight;
-      char errorString[256];
-      if (L4D2VR_VrBackendInitForDevice(&renderWidth, &renderHeight, errorString, 256)) {
+      char errorString[1024];
+      if (L4D2VR_VrBackendInitForDevice(&renderWidth, &renderHeight, errorString, sizeof(errorString))) {
         // Override viewport size.
         pPresentationParameters->BackBufferWidth = renderWidth;
         pPresentationParameters->BackBufferHeight = renderHeight;

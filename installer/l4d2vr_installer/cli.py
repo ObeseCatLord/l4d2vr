@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import DEFAULT_REPO, __version__, actions, install, launchopts, settings, shortcut, sources, steam, vrlaunch
+from . import DEFAULT_REPO, __version__, actions, install, launchopts, openxr, settings, shortcut, sources, steam, vrlaunch
 from .fsutil import InstallerError, atomic_write_json, read_json, user_config_dir
 
 IS_WINDOWS = sys.platform.startswith("win")
@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("detect", help="show Steam, game and VR runtime locations that were found")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("status", help="installed version, changed files, backups, launch options")
+    p = sub.add_parser("status", help="installed version, changed files, backups, OpenXR requirements, launch options")
     _add_game_arg(p)
     p.add_argument("--server-dir", help="also show a dedicated server plugin install")
     p.add_argument("--online", action="store_true", help="also check the latest release")
@@ -85,6 +85,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dry_run(p)
     p.add_argument("--steam-user", help="Steam account id (folder name in userdata); default most recent user")
     p.add_argument("--all-users", action="store_true", help="apply to every Steam user on this computer")
+
+    p = sub.add_parser("proton", help="Linux: check or set the Proton version VR needs (32-bit OpenXR)")
+    p.add_argument("action", choices=("show", "apply", "restore"), nargs="?", default="show")
+    p.add_argument("--tool", help="compat tool to force for L4D2 (default: proton_hotfix, else proton_experimental)")
+    _add_game_arg(p)
+    _add_dry_run(p)
 
     p = sub.add_parser("launch", help="start the game in VR")
     _add_game_arg(p)
@@ -176,6 +182,11 @@ def cmd_detect(args, saved) -> int:
         data["proton"] = [str(p) for p in vrlaunch.detect_proton(libraries, roots[0] if roots else None)]
         data["steam_runtime_entrypoints"] = [str(p) for p in vrlaunch.detect_runtime_entrypoints(libraries)]
         data["openxr_manifests"] = [str(p) for p in vrlaunch.detect_openxr_manifests()]
+        root = roots[0] if roots else None
+        if root is not None:
+            data["proton_for_l4d2"] = openxr.to_json(openxr.check_proton(root, libraries))
+        runtime = openxr.openvr_runtime()
+        data["openvr_runtime_for_proton"] = str(runtime) if runtime else None
     if args.json:
         print(json.dumps(data, indent=2))
         return 0
@@ -191,6 +202,8 @@ def cmd_detect(args, saved) -> int:
     for key in ("proton", "steam_runtime_entrypoints", "openxr_manifests"):
         if key in data:
             print(f"{key.replace('_', ' ')}: " + (", ".join(data[key]) or "none"))
+    for line in actions.openxr_requirement_lines(installs[0].path if installs else None, roots):
+        print(line)
     return 0
 
 
@@ -241,12 +254,16 @@ def cmd_install(args, saved) -> int:
         if args.preserve:
             saved["extra_preserve"] = sorted(set(extra))
         settings.save(saved)
+        print()
+        print("OpenXR (the mod's VR interface) needs:")
+        for line in actions.openxr_requirement_lines(game):
+            print("  " + line)
         if not IS_WINDOWS:
             print()
             print("Next (Linux): Steam needs these launch options for Left 4 Dead 2:")
             print("  " + launchopts.RECOMMENDED)
-            print("Run 'launch-options apply' with Steam closed, or paste them into "
-                  "Properties > General > Launch options.")
+            print("Run 'launch-options apply' (and 'proton apply' if the Proton check above failed) with Steam "
+                  "closed, or paste the options into Properties > General > Launch options.")
     return 0
 
 
@@ -281,7 +298,8 @@ def cmd_uninstall(args, saved) -> int:
     target = _target(args, saved)
     install.uninstall(target, force=args.force, dry_run=args.dry_run, log=print)
     if not args.dry_run and target.kind == "client" and not IS_WINDOWS:
-        print("If you added VR launch options in Steam, run 'launch-options remove' (with Steam closed).")
+        print("If you added VR launch options in Steam, run 'launch-options remove' (with Steam closed); "
+              "'proton restore' puts back the Proton version the installer replaced.")
     return 0
 
 
@@ -319,6 +337,26 @@ def cmd_launch_options(args, saved) -> int:
             print("  Dry run: not written." if args.dry_run else f"  Saved (backup: {change.backup}).")
     if running and args.action == "show":
         print("Steam is running: close it completely before 'apply', or paste the options in Steam yourself.")
+    return 0
+
+
+def cmd_proton(args, saved) -> int:
+    if IS_WINDOWS:
+        print("Proton is only used on Linux. Windows needs a 32-bit OpenXR runtime instead:")
+        for line in openxr.windows_openxr_lines():
+            print("  " + line)
+        return 0
+    game = actions.detect_game_dir(args.game_dir, saved.get("game_dir"))
+    if args.action == "show":
+        for line in actions.proton_check(game).lines():
+            print(line)
+        if steam.is_steam_running():
+            print("Steam is running: close it completely before 'proton apply', or pick the Proton in Steam yourself.")
+        return 0
+    if args.action == "apply":
+        actions.apply_proton(game, args.tool, dry_run=args.dry_run, log=print)
+    else:
+        actions.restore_proton(game, dry_run=args.dry_run, log=print)
     return 0
 
 
@@ -432,7 +470,7 @@ def cmd_make_manifest(args, saved) -> int:
 COMMANDS = {
     "detect": cmd_detect, "status": cmd_status, "check": cmd_check, "install": cmd_install,
     "update": cmd_install, "restore": cmd_restore, "uninstall": cmd_uninstall,
-    "launch-options": cmd_launch_options, "launch": cmd_launch, "shortcut": cmd_shortcut,
+    "launch-options": cmd_launch_options, "proton": cmd_proton, "launch": cmd_launch, "shortcut": cmd_shortcut,
     "install-server": cmd_install_server, "xrizer": cmd_xrizer, "self-update-check": cmd_self_update,
     "make-manifest": cmd_make_manifest,
 }

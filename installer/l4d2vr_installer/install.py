@@ -57,6 +57,13 @@ CLIENT_PRESERVE = (
     "vr/native_viewmodel_hands_freeze_pose.txt",  # saved by the in-game hand pose editor
 )
 SERVER_PRESERVE = ("*l4d2vr_server_config.txt", "cfg/*")
+# OpenVR files of the releases before the OpenXR-only 1.3. When a package no
+# longer ships them, an update removes them (backed up first, like every
+# removal), whether an earlier installer run recorded them or not, and even if
+# they were changed (e.g. an OpenComposite openvr_api.dll): nothing loads them now.
+RETIRED_CLIENT_FILES = ("openvr_api.dll", "vr/manifest.vrmanifest", "vr/SteamVRActionManifest/*.json")
+RETIRED_NOTE = ("Removing the old OpenVR files (openvr_api.dll, the SteamVR action manifest and bindings): the mod "
+                "now uses OpenXR only. Copies are kept in the backup.")
 
 Log = Callable[[str], None]
 
@@ -288,19 +295,54 @@ def plan_install(target: Target, package: Package, metadata: Optional[dict] = No
                 plan.items.append(PlanItem(PIN_FILE, dest, "add", sha256_bytes(data), None, data))
 
     # Files the previous install wrote that the new package no longer ships.
+    retired_seen = False
     for rel, recorded in sorted((previous.get("files") or {}).items()):
         dest = resolve_ci(target.root, rel)
         if os.path.normcase(str(dest)) in seen_dest or not dest.is_file() or target.is_preserved(rel):
             continue
+        seen_dest.add(os.path.normcase(str(dest)))
         current = sha256_file(dest)
-        if current == recorded:
+        if target.kind == "client" and is_retired_client_file(rel):
+            plan.items.append(PlanItem(rel, dest, "remove", None, current))
+            retired_seen = True
+        elif current == recorded:
             plan.items.append(PlanItem(rel, dest, "remove", None, current))
         else:
             plan.items.append(PlanItem(rel, dest, "keep-modified", None, current))
             plan.warnings.append(f"{rel} is no longer part of the mod but you changed it; leaving it in place.")
+    # Old OpenVR files no installer run recorded (a manual or Workshop install).
+    if target.kind == "client":
+        for rel, dest in _existing_retired_files(target.root):
+            if os.path.normcase(str(dest)) in seen_dest or target.is_preserved(rel):
+                continue
+            _check_dest(dest)
+            seen_dest.add(os.path.normcase(str(dest)))
+            plan.items.append(PlanItem(rel, dest, "remove", None, sha256_file(dest)))
+            retired_seen = True
+    if retired_seen:
+        plan.warnings.append(RETIRED_NOTE)
     plan.metadata.setdefault("previous_version", previous.get("version"))
     plan.metadata.setdefault("previous_tag", previous.get("tag"))
     return plan
+
+
+def is_retired_client_file(rel: str) -> bool:
+    lowered = rel.lower()
+    return any(fnmatch.fnmatchcase(lowered, pattern.lower()) for pattern in RETIRED_CLIENT_FILES)
+
+
+def _existing_retired_files(root: Path) -> List[Tuple[str, Path]]:
+    found: List[Tuple[str, Path]] = []
+    for pattern in RETIRED_CLIENT_FILES:
+        folder_rel, _, name = pattern.rpartition("/")
+        folder = resolve_ci(root, folder_rel) if folder_rel else Path(root)
+        if not folder.is_dir():
+            continue
+        for child in sorted(folder.iterdir()):
+            if child.is_file() and not child.is_symlink() and fnmatch.fnmatchcase(child.name.lower(), name.lower()):
+                rel = (folder_rel + "/" if folder_rel else "") + child.name
+                found.append((rel, child))
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +536,7 @@ def apply_plan(plan: Plan, dry_run: bool = False, log: Log = _noop) -> Optional[
                 atomic_write_bytes(item.dest, data)
             elif item.action == "remove":
                 os.remove(item.dest)
+                _remove_empty_parents(target.root, item.dest)
         atomic_write_bytes(state_dest, state_bytes)
     except Exception as error:
         log(f"Install failed ({error}); restoring the previous files...")
@@ -509,6 +552,21 @@ def apply_plan(plan: Plan, dry_run: bool = False, log: Log = _noop) -> Optional[
     atomic_write_json(backup_dir / "index.json", index)
     log("Done.")
     return backup_dir
+
+
+def _remove_empty_parents(root: Path, removed: Path) -> None:
+    """Drop folders a removal left empty (e.g. vr/SteamVRActionManifest);
+    restoring the backup recreates them."""
+    root = Path(os.path.abspath(root))
+    parent = Path(os.path.abspath(removed)).parent
+    while parent != root and root in parent.parents:
+        try:
+            if parent.is_symlink() or any(parent.iterdir()):
+                return
+            parent.rmdir()
+        except OSError:
+            return
+        parent = parent.parent
 
 
 def install_package(target: Target, zip_path: Path, metadata: Optional[dict] = None, *,

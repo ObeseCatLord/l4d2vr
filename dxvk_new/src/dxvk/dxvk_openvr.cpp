@@ -1,3 +1,7 @@
+// L4D2VR: DXVK's OpenVR extension provider (loads openvr_api.dll). Only the
+// legacy developer build with the OpenVR backend uses it
+// (L4D2VR_LEGACY_OPENVR=1); the OpenXR-only release compiles it to nothing.
+#if defined(L4D2VR_LEGACY_OPENVR) && L4D2VR_LEGACY_OPENVR
 #include "dxvk_instance.h"
 #include "dxvk_openvr.h"
 
@@ -357,3 +361,5 @@ namespace dxvk {
   }
   
 }
+
+#endif // L4D2VR_LEGACY_OPENVR

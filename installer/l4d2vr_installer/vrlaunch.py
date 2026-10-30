@@ -7,7 +7,9 @@
   ``tools/launch.py``. The Windows game is started through the Steam Runtime
   entry point and Proton directly, keeping Steam app id 550, with
   ``VR_OVERRIDE`` pointing at an XRizer OpenVR runtime and
-  ``XR_RUNTIME_JSON`` at the OpenXR runtime manifest.
+  ``XR_RUNTIME_JSON`` at the OpenXR runtime manifest. The mod itself talks
+  OpenXR (1.3+); Proton still needs the XRizer OpenVR runtime before its
+  wineopenxr starts, and a Proton with 32-bit wineopenxr (Hotfix/Experimental).
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import APP_ID
+from . import openxr as openxr_mod
 from . import steam as steam_mod
 from .fsutil import InstallerError, atomic_write_bytes, normalize_member, sha256_file
 
@@ -189,8 +192,10 @@ def detect_proton(libraries: List[Path], steam_root: Optional[Path] = None) -> L
             found += [child for child in tools.iterdir() if (child / "proton").is_file()]
 
     def rank(path: Path):
+        # Builds with 32-bit OpenXR first (the mod is OpenXR-only), Hotfix first.
         name = path.name.lower()
-        return (0 if "hotfix" in name else 1 if "experimental" in name else 2, name)
+        return (0 if openxr_mod.proton_has_32bit_openxr(path) else 1,
+                0 if "hotfix" in name else 1 if "experimental" in name else 2, name)
 
     return sorted(dict.fromkeys(found), key=rank)
 
@@ -313,9 +318,12 @@ def validate(config: MonadoConfig, steam_running: Optional[Callable[[], bool]] =
         problems.append(f"Missing {exe} (the Windows build of the game is required)")
     elif not is_pe32(exe):
         problems.append(f"{exe} is not a 32-bit Windows executable")
-    for name in ("d3d9.dll", "openvr_api.dll"):
+    for name in ("d3d9.dll", "openxr_loader.dll"):
         if not (game / name).is_file():
             problems.append(f"The mod is not installed ({name} missing in {game})")
+    if not openxr_mod.proton_has_32bit_openxr(config.path("proton_dir")):
+        problems.append(f"{config.path('proton_dir')} has no 32-bit OpenXR (wineopenxr), so VR cannot start. "
+                        f"Use {openxr_mod.SUPPORTED_PROTON}.")
     integrity = xrizer_integrity(config.path("xrizer_dir"))
     if integrity:
         problems.append(integrity)
@@ -355,7 +363,7 @@ def build_command(config: MonadoConfig, server: Optional[str] = None, password: 
         "STEAM_COMPAT_INSTALL_PATH": str(game),
         "STEAM_COMPAT_LIBRARY_PATHS": os.pathsep.join((str(library_root_for(game)), str(config.path("steam_dir")))),
         "SteamAppId": APP_ID, "SteamGameId": APP_ID, "STEAM_COMPAT_APP_ID": APP_ID,
-        "PROTON_USE_WOW64": "1", "WINEDLLOVERRIDES": "d3d9,openvr_api=n,b",
+        "PROTON_USE_WOW64": "1", "WINEDLLOVERRIDES": "d3d9=n,b",
         "XDG_RUNTIME_DIR": str(runtime_dir()),
         "XR_RUNTIME_JSON": str(manifest), "VR_OVERRIDE": str(config.path("xrizer_dir")),
         "RUST_LOG": "error,xrizer::overlay=warn", "DXVK_FRAME_PACE": "max-frame-latency",

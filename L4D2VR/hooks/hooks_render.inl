@@ -2555,7 +2555,23 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	// The VR eye targets would be 0x0 and their creation fails inside the
 	// shader API. Remote VR bodies are posed by the model hooks, not here.
 	if (!m_VR->m_IsVREnabled)
+	{
+		// Once per process: say in the game console why VR did not start
+		// (e.g. no 32-bit OpenXR runtime, old Proton); vrmod_log.txt has it too.
+		static bool s_desktopReasonShown = false;
+		if (!s_desktopReasonShown && m_Game && m_Game->m_EngineClient)
+		{
+			s_desktopReasonShown = true;
+			char reason[1024] = {};
+			if (L4D2VR_DesktopModeReason(reason, sizeof(reason)))
+			{
+				const std::string command = "echo [L4D2VR] VR is off, desktop mode: " +
+					l4d2vr_openxr::ConsoleSafe(reason, 420);
+				m_Game->ClientCmd_Unrestricted(command.c_str());
+			}
+		}
 		return hkRenderView.fOriginal(ecx, setup, hudViewSetup, nClearFlags, whatToDraw);
+	}
 
 	if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
 		m_VR->CreateVRTextures();

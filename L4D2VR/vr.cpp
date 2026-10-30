@@ -741,6 +741,7 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
 #include "vr/vr_selftest_overlays.inl"
 #include "vr/vr_selftest_hands.inl"
 #include "vr/vr_selftest_recoil.inl"
+#include "vr/vr_selftest_melee.inl"
 #include "vr/vr_item_hand.inl"
 #include "vr/vr_recoil.inl"
 #include "vr/vr_native_wrist_hud.inl"
@@ -4877,6 +4878,7 @@ void VR::ParseHapticsConfigFile()
     m_HapticMixMinIntervalSeconds = std::max(0.0f, getFloat("mix.min_interval", m_HapticMixMinIntervalSeconds));
     m_DefaultWeaponHapticsProfile = parseProfile("weapon.default", m_DefaultWeaponHapticsProfile);
     m_MeleeSwingHapticsProfile = parseProfile("melee.swing", m_MeleeSwingHapticsProfile);
+    m_MeleeHitHapticsProfile = parseProfile("melee.hit", m_MeleeHitHapticsProfile);
     m_ShoveHapticsProfile = parseProfile("melee.shove", m_ShoveHapticsProfile);
 
     m_DamageFeedbackEnabled = getBool("damage.enabled", true);

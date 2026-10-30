@@ -428,6 +428,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (handled)
             return done;
     }
+    // Melee lag and swing gates (vr_selftest_melee.inl).
+    {
+        bool handled = false;
+        const bool done = RunMeleeSelfTestStep(step, t, player, handled);
+        if (handled)
+            return done;
+    }
 
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);

@@ -3257,6 +3257,13 @@ void VR::ParseConfigFile()
     m_RecoilDebugLog = getBool("RecoilDebugLog", false);
     m_IronSightAimEnabled = getBool("IronSightAimEnabled", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
+    // Ancient Dungeon VR style swing gates: tip and hand speed plus travel.
+    m_MeleeSwingMinTipSpeed = std::clamp(getFloat("MeleeSwingMinTipSpeed", 4.5f), 0.5f, 20.0f);
+    m_MeleeSwingMinHandleSpeedLong = std::clamp(getFloat("MeleeSwingMinHandSpeedLong", 2.5f), 0.0f, 10.0f);
+    m_MeleeSwingMinHandleSpeedShort = std::clamp(getFloat("MeleeSwingMinHandSpeedShort", 3.0f), 0.0f, 10.0f);
+    m_MeleeSwingMinTipTravel = std::clamp(getFloat("MeleeSwingMinTipTravel", 0.43f), 0.0f, 2.0f);
+    m_MeleeSwingMinHandleTravel = std::clamp(getFloat("MeleeSwingMinHandTravel", 0.13f), 0.0f, 1.0f);
+    m_MeleeSwingStartHaptics = getBool("MeleeSwingStartHaptics", false);
     m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
     m_BackgroundAudioEnabled = getBool("BackgroundAudio", true);
     {

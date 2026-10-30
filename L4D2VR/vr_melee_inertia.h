@@ -3,11 +3,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
-// Held melee weapons lag the controller through a critically damped (zeta = 1)
-// spring so heavy weapons feel heavy. Units: metres, seconds; angular speeds are
-// stored in rad/s and configured in deg/s. Source axis convention: forward = +x,
+// Held melee weapons are welded to the hand at the grip; their rotation lags
+// the controller through a damped angular spring tuned per weapon (modelled on
+// Ancient Dungeon VR: its sword for long weapons, its dagger for short ones).
+// Units: metres, seconds; angular speeds are stored in rad/s and configured in
+// deg/s. Source axis convention: forward = +x,
 // left = +y (right = -y), up = +z. Callers convert game units with m_VRScale.
 namespace l4d2vr_melee_inertia
 {
@@ -194,47 +197,44 @@ namespace l4d2vr_melee_inertia
     }
 
     // ------------------------------------------------------------------- params
-    enum class WeightClass { Light, Medium, Heavy, Chainsaw };
-
+    // The held weapon is welded to the hand at the grip and only its rotation
+    // lags, like a weapon on a joint with locked linear axes and a damped
+    // angular drive: the blade trails the controller in proportion to how fast
+    // it turns (lag ~ 2 * zeta / omega * angular speed), up to a soft lag limit.
+    // The drive damps the weapon's absolute angular velocity, which is what
+    // makes the lag speed-proportional. Long weapons ring a little (zeta < 1),
+    // short ones snap back (zeta > 1).
     struct Params
     {
-        float positionHz = 14.0f;
-        float rotationHz = 10.0f;
-        float maxAngularSpeedDegPerSec = 520.0f;
-        float maxLinearSpeed = 8.0f;      // m/s
-        float snapDistance = 1.0f;        // m; larger target jumps (teleport, respawn) snap
+        float rotationHz = 11.0f;         // natural frequency of the angular drive
+        float rotationZeta = 0.8f;        // damping ratio (on the absolute angular velocity)
+        float maxLagDeg = 20.0f;          // soft lag limit; 0 = none
+        float limitStiffness = 0.86f;     // extra spring past the limit, fraction of the drive spring
+        float limitDamping = 1.0f;        // extra damping of the lag rate past the limit, fraction of the drive damping
+        float maxAngularSpeedDegPerSec = 2500.0f; // guard against tracking glitches only
+        float snapAngleDeg = 90.0f;       // a larger lag (glitch, teleported controller) snaps
+        bool positionLocked = true;       // grip welded to the hand; false: positionHz spring (legacy)
+        float positionHz = 14.0f;         // only when !positionLocked
+        float maxLinearSpeed = 8.0f;      // m/s, only when !positionLocked
+        float snapDistance = 1.0f;        // m; larger hand jumps (teleport, respawn) snap
+        float reach = 0.85f;              // m, grip to tip
         bool motionMelee = true;          // false: weapon is never swing-triggered (chainsaw)
     };
 
     inline bool ValidParams(const Params& p)
     {
-        return std::isfinite(p.positionHz) && p.positionHz > 0.0f && std::isfinite(p.rotationHz) &&
-            p.rotationHz > 0.0f && std::isfinite(p.maxAngularSpeedDegPerSec) && p.maxAngularSpeedDegPerSec > 0.0f &&
-            std::isfinite(p.maxLinearSpeed) && p.maxLinearSpeed > 0.0f && std::isfinite(p.snapDistance) &&
-            p.snapDistance > 0.0f;
+        auto positive = [](float v) { return std::isfinite(v) && v > 0.0f; };
+        auto nonNegative = [](float v) { return std::isfinite(v) && v >= 0.0f; };
+        return positive(p.rotationHz) && positive(p.rotationZeta) && nonNegative(p.maxLagDeg) &&
+            nonNegative(p.limitStiffness) && nonNegative(p.limitDamping) && positive(p.maxAngularSpeedDegPerSec) &&
+            positive(p.snapAngleDeg) && positive(p.positionHz) && positive(p.maxLinearSpeed) &&
+            positive(p.snapDistance) && positive(p.reach);
     }
 
-    inline Params ParamsForClass(WeightClass weight)
+    // Steady-state lag (degrees) at a constant angular speed below the soft limit.
+    inline float SteadyLagDeg(const Params& p, float angularSpeedDegPerSec)
     {
-        Params p{};
-        switch (weight)
-        {
-        case WeightClass::Heavy:
-            p.positionHz = 11.0f; p.rotationHz = 7.0f; p.maxAngularSpeedDegPerSec = 420.0f; p.maxLinearSpeed = 6.0f;
-            break;
-        case WeightClass::Light:
-            p.positionHz = 20.0f; p.rotationHz = 14.0f; p.maxAngularSpeedDegPerSec = 700.0f; p.maxLinearSpeed = 10.0f;
-            break;
-        case WeightClass::Chainsaw:
-            p.positionHz = 10.0f; p.rotationHz = 7.0f; p.maxAngularSpeedDegPerSec = 360.0f; p.maxLinearSpeed = 5.0f;
-            p.motionMelee = false;
-            break;
-        case WeightClass::Medium:
-        default:
-            p.positionHz = 14.0f; p.rotationHz = 10.0f; p.maxAngularSpeedDegPerSec = 520.0f; p.maxLinearSpeed = 8.0f;
-            break;
-        }
-        return p;
+        return 2.0f * p.rotationZeta / (2.0f * kPi * p.rotationHz) * angularSpeedDegPerSec;
     }
 
     inline bool NameEquals(const char* name, const char* expected)
@@ -244,11 +244,58 @@ namespace l4d2vr_melee_inertia
         return *name == '\0' && *expected == '\0';
     }
 
-    // Maps L4D2 melee script names ("fireaxe", "katana", ...) to a weight class.
-    // A "weapon_" prefix is ignored, matching is case-insensitive, unknown -> Medium.
-    inline WeightClass ClassForMeleeScriptName(const char* name)
+    // Short weapons (knife, tonfa, machete, frying pan, riot shield) are
+    // dagger-like; the rest sword-like. Swing gates differ by this.
+    constexpr float kShortWeaponReach = 0.7f;
+    inline bool ShortWeapon(const Params& p) { return p.reach < kShortWeaponReach; }
+
+    struct MeleeProfile
     {
-        if (!name) return WeightClass::Medium;
+        const char* name;
+        float reach;     // m
+        float hz;
+        float zeta;
+        float maxLagDeg;
+    };
+
+    // Per weapon: natural frequency ~ 11.1 / effective reach (Hz; blades x1.0,
+    // blunt x1.1, head-heavy x1.3, kept within 8..17 Hz) and damping ratio
+    // ~ 0.072 x frequency, so damping / stiffness stays ~23 ms for every
+    // weapon: every weapon lags the same amount at a given speed, heavier ones
+    // build it up and settle more slowly.
+    inline const MeleeProfile* MeleeProfiles(std::size_t& count)
+    {
+        static const MeleeProfile profiles[] = {
+            { "knife", 0.30f, 17.0f, 1.20f, 15.0f },
+            { "tonfa", 0.55f, 15.0f, 1.10f, 18.0f },
+            { "machete", 0.65f, 15.0f, 1.10f, 18.0f },
+            { "frying_pan", 0.50f, 13.0f, 0.95f, 20.0f },
+            { "riotshield", 0.60f, 10.0f, 1.00f, 15.0f },
+            { "crowbar", 0.75f, 13.0f, 0.95f, 20.0f },
+            { "katana", 1.00f, 11.3f, 0.81f, 20.0f },
+            { "baseball_bat", 0.85f, 11.0f, 0.80f, 20.0f },
+            { "cricket_bat", 0.95f, 10.5f, 0.76f, 22.0f },
+            { "golfclub", 1.00f, 10.0f, 0.72f, 22.0f },
+            { "electric_guitar", 1.00f, 9.0f, 0.65f, 25.0f },
+            { "fireaxe", 0.90f, 9.0f, 0.65f, 25.0f },
+            { "shovel", 1.20f, 8.5f, 0.62f, 25.0f },
+            { "sledgehammer", 0.90f, 8.0f, 0.58f, 25.0f },
+            { "pitchfork", 1.40f, 8.0f, 0.58f, 25.0f },
+            { "chainsaw", 0.70f, 7.0f, 1.00f, 20.0f },
+        };
+        count = sizeof(profiles) / sizeof(profiles[0]);
+        return profiles;
+    }
+
+    // Unknown (custom) melee weapons: a sword-like medium weapon.
+    inline Params DefaultParams() { return Params{}; }
+
+    // Maps L4D2 melee script names ("fireaxe", "katana", ...) to their
+    // parameters. A "weapon_" prefix is ignored, matching is case-insensitive.
+    inline Params ParamsForMeleeScriptName(const char* name)
+    {
+        Params p = DefaultParams();
+        if (!name) return p;
         const char prefix[] = "weapon_";
         if (std::strlen(name) > sizeof(prefix) - 1)
         {
@@ -257,33 +304,46 @@ namespace l4d2vr_melee_inertia
                 if (std::tolower(static_cast<unsigned char>(name[i])) != prefix[i]) { prefixed = false; break; }
             if (prefixed) name += sizeof(prefix) - 1;
         }
-        static const char* const heavy[] = { "fireaxe", "sledgehammer", "electric_guitar", "pitchfork", "shovel", "riotshield" };
-        static const char* const light[] = { "knife" };
-        for (const char* candidate : heavy)
-            if (NameEquals(name, candidate)) return WeightClass::Heavy;
-        for (const char* candidate : light)
-            if (NameEquals(name, candidate)) return WeightClass::Light;
-        if (NameEquals(name, "chainsaw")) return WeightClass::Chainsaw;
-        // baseball_bat, cricket_bat, crowbar, katana, machete, golfclub, frying_pan, tonfa, unknown.
-        return WeightClass::Medium;
+        std::size_t count = 0;
+        const MeleeProfile* const profiles = MeleeProfiles(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (!NameEquals(name, profiles[i].name)) continue;
+            p.reach = profiles[i].reach;
+            p.rotationHz = profiles[i].hz;
+            p.rotationZeta = profiles[i].zeta;
+            p.maxLagDeg = profiles[i].maxLagDeg;
+            p.motionMelee = !NameEquals(name, "chainsaw"); // runs on the trigger, never swing-triggered
+            break;
+        }
+        return p;
     }
 
-    inline Params ParamsForMeleeScriptName(const char* name)
+    // Where swing speed and travel are measured: 73 % of the reach (Ancient
+    // Dungeon's sword samples its tip there), at least 0.5 m: its dagger is
+    // measured even further out (past its own tip), so short weapons need no
+    // more arm travel than a dagger.
+    inline float TipSampleDistance(const Params& p) { return std::max(0.5f, 0.73f * p.reach); }
+
+    // Pivots a weapon pose about its grip: `viewmodel` is the unlagged pose,
+    // `grip` a point on it (the hand), `rotation` the world-frame lag rotation.
+    inline Pose PivotAboutGrip(const Pose& viewmodel, const Vector& grip, const Quat& rotation)
     {
-        return ParamsForClass(ClassForMeleeScriptName(name));
+        return Pose{ grip + QuatRotate(rotation, viewmodel.position - grip),
+            QuatNormalize(QuatMultiply(rotation, viewmodel.orientation)) };
     }
 
     // ------------------------------------------------------------------- spring
     struct State
     {
-        Vector position{ 0.0f, 0.0f, 0.0f };
+        Vector position{ 0.0f, 0.0f, 0.0f };        // grip (welded: the target's)
         Vector velocity{ 0.0f, 0.0f, 0.0f };        // m/s, world
         Quat orientation{};
         Vector angularVelocity{ 0.0f, 0.0f, 0.0f }; // rad/s, world
     };
 
     constexpr float kMaxStepDt = 0.05f;      // longer frames (hitches) are clamped
-    constexpr float kMaxSubstepDt = 1.0f / 240.0f;
+    constexpr float kMaxSubstepDt = 1.0f / 1000.0f;
 
     inline Vector ClampLength(const Vector& v, float maxLength)
     {
@@ -291,9 +351,11 @@ namespace l4d2vr_melee_inertia
         return length > maxLength && length > 0.0f ? v * (maxLength / length) : v;
     }
 
-    // Velocity is solved implicitly (backward Euler on the spring-damper) and the
-    // position/orientation is advanced with the new velocity. For zeta = 1 this
-    // has a repeated real pole 1/(1 + omega*h): never overshoots, stable for any h.
+    // The angular velocity is solved implicitly (backward Euler on the
+    // spring-damper, stable for any step) and the orientation advanced with
+    // the new velocity. Each frame is split into 1 ms substeps along which the
+    // goal moves from the last frame's controller orientation to this one's,
+    // so the lag does not depend on the frame rate.
     class Spring
     {
     public:
@@ -305,6 +367,8 @@ namespace l4d2vr_melee_inertia
         const State& GetState() const { return m_State; }
         Pose Lagged() const { return Pose{ m_State.position, m_State.orientation }; }
         float AngularSpeedDegPerSec() const { return m_State.angularVelocity.Length() * kRadToDeg; }
+        // Angle between the weapon and the last goal (the controller), degrees.
+        float LagDeg() const { return m_Initialized ? QuatAngleBetween(m_Goal, m_State.orientation) * kRadToDeg : 0.0f; }
 
         // Snaps to the pose with zero velocity.
         bool Reset(const Pose& pose)
@@ -313,12 +377,14 @@ namespace l4d2vr_melee_inertia
             m_State = State{};
             m_State.position = pose.position;
             m_State.orientation = QuatNormalize(pose.orientation);
+            m_Goal = m_State.orientation;
             m_Initialized = true;
             return true;
         }
         void Clear() { m_State = State{}; m_Initialized = false; }
 
-        // Advances toward the controller target. Invalid input leaves the state unchanged.
+        // Advances toward the controller target (the grip pose). Invalid input
+        // leaves the state unchanged.
         bool Step(const Pose& target, float dt)
         {
             if (!PoseFinite(target) || !std::isfinite(dt)) return false;
@@ -326,27 +392,61 @@ namespace l4d2vr_melee_inertia
                 return Reset(target);
             dt = std::clamp(dt, 0.0f, kMaxStepDt);
             if (dt <= 0.0f) return true;
-            const Quat goal = QuatNormalize(target.orientation);
+            Quat goal1 = QuatNormalize(target.orientation);
+            if (QuatDot(goal1, m_Goal) < 0.0f) goal1 = Quat{ -goal1.w, -goal1.x, -goal1.y, -goal1.z };
+            const Quat goal0 = m_Goal;
             const int steps = std::max(1, static_cast<int>(std::ceil(dt / kMaxSubstepDt - 1e-4f)));
             const float h = dt / static_cast<float>(steps);
-            const float wp = 2.0f * kPi * m_Params.positionHz, wr = 2.0f * kPi * m_Params.rotationHz;
-            const float dp = (1.0f + wp * h) * (1.0f + wp * h), dr = (1.0f + wr * h) * (1.0f + wr * h);
+            const float w = 2.0f * kPi * m_Params.rotationHz;
+            const float k = w * w, c = 2.0f * m_Params.rotationZeta * w;
+            const float limit = m_Params.maxLagDeg * kDegToRad;
+            const float kl = m_Params.limitStiffness * k, cl = m_Params.limitDamping * c;
             const float maxAngular = m_Params.maxAngularSpeedDegPerSec * kDegToRad;
+            // The goal's own angular velocity over this frame (world frame).
+            const Vector goalVelocity = QuatLog(QuatMultiply(goal1, QuatConjugate(goal0))) * (1.0f / dt);
+
+            if (m_Params.positionLocked)
+            {
+                m_State.velocity = (target.position - m_State.position) * (1.0f / dt);
+                m_State.position = target.position;
+            }
+            const float wp = 2.0f * kPi * m_Params.positionHz;
+            const float dp = (1.0f + wp * h) * (1.0f + wp * h);
             for (int i = 0; i < steps; ++i)
             {
-                const Vector error = m_State.position - target.position;
-                m_State.velocity = ClampLength((m_State.velocity - error * (h * wp * wp)) * (1.0f / dp),
-                    m_Params.maxLinearSpeed);
-                m_State.position += m_State.velocity * h;
+                if (!m_Params.positionLocked)
+                {
+                    const Vector error = m_State.position - target.position;
+                    m_State.velocity = ClampLength((m_State.velocity - error * (h * wp * wp)) * (1.0f / dp),
+                        m_Params.maxLinearSpeed);
+                    m_State.position += m_State.velocity * h;
+                }
 
-                const Vector angularError = QuatLog(QuatMultiply(m_State.orientation, QuatConjugate(goal)));
-                m_State.angularVelocity = ClampLength((m_State.angularVelocity - angularError * (h * wr * wr)) *
-                    (1.0f / dr), maxAngular);
+                const Quat goal = QuatSlerp(goal0, goal1, static_cast<float>(i + 1) / static_cast<float>(steps));
+                // Rotation vector from the goal to the weapon (the lag, world frame).
+                const Vector error = QuatLog(QuatMultiply(m_State.orientation, QuatConjugate(goal)));
+                const float angle = error.Length();
+                float stiffness = k, damping = c;
+                Vector force = error * k; // spring force (restoring: subtracted)
+                if (limit > 0.0f && angle > limit)
+                {
+                    // Soft limit: an extra spring on the excess and extra damping
+                    // of the lag rate (weapon minus goal velocity), so the limit
+                    // holds the lag instead of dragging the blade further behind.
+                    stiffness += kl;
+                    damping += cl;
+                    force += error * (kl * (angle - limit) / angle) - goalVelocity * cl;
+                }
+                // v' = v - h * (force + damping * v') - h^2 * stiffness * v' (implicit in v').
+                m_State.angularVelocity = ClampLength((m_State.angularVelocity - force * h) *
+                    (1.0f / (1.0f + damping * h + stiffness * h * h)), maxAngular);
                 m_State.orientation = QuatNormalize(QuatMultiply(QuatExp(m_State.angularVelocity * h),
                     m_State.orientation));
             }
+            m_Goal = goal1;
             if (!Finite(m_State.position) || !Finite(m_State.velocity) || !QuatFinite(m_State.orientation) ||
-                !Finite(m_State.angularVelocity))
+                !Finite(m_State.angularVelocity) ||
+                QuatAngleBetween(m_State.orientation, goal1) > m_Params.snapAngleDeg * kDegToRad)
                 return Reset(target);
             return true;
         }
@@ -357,6 +457,7 @@ namespace l4d2vr_melee_inertia
     private:
         Params m_Params{};
         State m_State{};
+        Quat m_Goal{};
         bool m_Initialized = false;
     };
 }

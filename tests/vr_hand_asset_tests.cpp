@@ -16,6 +16,7 @@
 #include <vector>
 #include "../L4D2VR/vr_input_recovery.h"
 #include "../L4D2VR/vr_hand_pose_cache.h"
+#include "../L4D2VR/vr_hands/vr_hand_test_assets.h"
 #if defined(VECTOR_PARANOIA) && !defined(VEC_T_NAN)
 #define VEC_T_NAN std::numeric_limits<float>::quiet_NaN()
 #endif

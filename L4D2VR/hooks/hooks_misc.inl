@@ -8957,7 +8957,8 @@ namespace
             Vector sightDir = frontWorld - rearWorld;
             if (VectorNormalize(sightDir) > 0.5f && std::isfinite(sightDir.x) && std::isfinite(sightDir.y) && std::isfinite(sightDir.z))
             {
-                boreWorld = sightDir;
+                if (vr->m_IronSightAimEnabled)
+                    boreWorld = sightDir;
                 vr->PublishSightPoints(lowerModel, rearWorld, frontWorld);
             }
         }

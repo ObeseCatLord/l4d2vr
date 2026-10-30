@@ -407,8 +407,11 @@ RecoilScale=1.0
 SpreadDisabled=true
 ShotgunPavlovPattern=true
 RecoilDebugLog=false
-// Turn each drawn gun so its bore is parallel to the aim ray: the crosshair then sits on the sights.
+// Turn each drawn gun so its sights are parallel to where your hand points, and fire along the sight
+// line (rear sight through front sight, or the scope axis): shots land on the sight picture at every
+// distance. IronSightAimEnabled=false goes back to turning the bore parallel to the hand's aim ray.
 SightAutoAlignEnabled=true
+IronSightAimEnabled=true
 // Melee weapons lag the hand slightly so swings match the regular melee speed; a swing is detected
 // from the blade tip (the chainsaw only needs the trigger). Thrusting a melee weapon forward or
 // bashing with a gun shoves along the motion.

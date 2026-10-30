@@ -16,6 +16,11 @@ namespace l4d2vr_iron_sights
         float front[3];
     };
 
+    // The dual pistols' left gun sits on ValveBiped.weapon_bone_l.
+    inline constexpr char kDualModel[] = "models/v_models/v_dual_pistola.mdl";
+    inline constexpr float kDualLeftRear[3] = { 0.0f, 2.22f, 1.9f };
+    inline constexpr float kDualLeftFront[3] = { 0.007f, 2.318f, 9.81f };
+
     inline const Sight* ForModel(const char* modelLower)
     {
         static constexpr Sight kSights[] = {

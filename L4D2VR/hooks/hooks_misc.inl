@@ -8962,6 +8962,39 @@ namespace
                 vr->PublishSightPoints(lowerModel, rearWorld, frontWorld);
             }
         }
+        // Dual pistols: the left gun's sights, relative to the left hand.
+        if (lowerModel == l4d2vr_iron_sights::kDualModel)
+        {
+            static int s_leftBone = -2;
+            if (s_leftBone == -2)
+            {
+                s_leftBone = -1;
+                std::vector<std::string> boneNames;
+                std::vector<int> boneParents;
+                int numBones = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+                if (vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, boneNames, boneParents, numBones,
+                        boneIndex, stride, numBonesOffset))
+                    for (int i = 0; i < numBones && i < static_cast<int>(boneNames.size()); ++i)
+                        if (vr_vm_stabilize::ToLowerAscii(boneNames[static_cast<size_t>(i)]) == "valvebiped.weapon_bone_l")
+                        {
+                            s_leftBone = i;
+                            break;
+                        }
+            }
+            vr_vm_stabilize::Mat3x4 left{};
+            if (s_leftBone >= 0 &&
+                vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pFinalBoneToWorld) + s_leftBone, left))
+            {
+                auto toWorld = [&](const float* p)
+                {
+                    return Vector(left.m[0][0] * p[0] + left.m[0][1] * p[1] + left.m[0][2] * p[2] + left.m[0][3],
+                        left.m[1][0] * p[0] + left.m[1][1] * p[1] + left.m[1][2] * p[2] + left.m[1][3],
+                        left.m[2][0] * p[0] + left.m[2][1] * p[1] + left.m[2][2] * p[2] + left.m[2][3]);
+                };
+                vr->PublishLeftPistolSightPoints(toWorld(l4d2vr_iron_sights::kDualLeftRear),
+                    toWorld(l4d2vr_iron_sights::kDualLeftFront));
+            }
+        }
         Vector forward{}, right{}, up{};
         QAngle::AngleVectors(info.angles, &forward, &right, &up);
         const Vector boreLocal(DotProduct(boreWorld, forward), -DotProduct(boreWorld, right), DotProduct(boreWorld, up));

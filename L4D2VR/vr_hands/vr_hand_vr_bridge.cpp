@@ -3580,9 +3580,9 @@ void VR::RecordDualPistolCommand(int command, l4d2vr_dual::Hand hand, bool firin
         const bool left = hand == l4d2vr_dual::Hand::Left;
         Vector position = left ? GetLeftControllerAbsPos() : GetRightControllerAbsPos();
         QAngle angles = left ? GetLeftControllerAbsAngle() : GetRightControllerAbsAngle();
-        // The right pistol fires along its own iron sights (vr/vr_sight_alignment.inl).
+        // Each pistol fires along its own iron sights (vr/vr_sight_alignment.inl).
         Vector sightDir{};
-        if (!left && GetIronSightRay(position, sightDir))
+        if (left ? GetLeftPistolSightRay(position, sightDir) : GetIronSightRay(position, sightDir))
         {
             QAngle::VectorAngles(sightDir, angles);
             angles.x = std::clamp(angles.x > 180.0f ? angles.x - 360.0f : angles.x, -89.0f, 89.0f);

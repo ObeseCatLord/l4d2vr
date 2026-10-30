@@ -1031,6 +1031,12 @@ public:
 	uint64_t m_SightPointsAtMs = 0;
 	std::string m_SightPointsModel;
 	void PublishSightPoints(const std::string& modelLower, const Vector& rearWorld, const Vector& frontWorld);
+	// The dual pistols' left gun, relative to the left hand.
+	Vector m_SightLeftRearInHand{ 0.0f, 0.0f, 0.0f };
+	Vector m_SightLeftFrontInHand{ 0.0f, 0.0f, 0.0f };
+	uint64_t m_SightLeftPointsAtMs = 0;
+	void PublishLeftPistolSightPoints(const Vector& rearWorld, const Vector& frontWorld);
+	bool GetLeftPistolSightRay(Vector& origin, Vector& direction, bool evenWhenDisabled = false) const;
 	bool GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut = nullptr, bool evenWhenDisabled = false) const;
 	QAngle m_SightActiveCorrection{ 0.0f, 0.0f, 0.0f };
 	void PublishSightBore(const std::string& modelLower, const Vector& boreLocal);
@@ -3422,7 +3428,8 @@ public:
 	Vector m_RecoilTestSightRear{ 0.0f, 0.0f, 0.0f };
 	Vector m_RecoilTestSightDir{ 1.0f, 0.0f, 0.0f };
 	std::vector<uint64_t> m_RecoilTestShotTimes;
-	void RecoilTestAlignSightsToEye();
+	void RecoilTestAlignSightsToEye(bool leftGun = false);
+	bool m_RecoilTestLeftGun = false;
 	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
 	std::chrono::steady_clock::time_point m_ReloadGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_JumpGestureHoldUntil{};

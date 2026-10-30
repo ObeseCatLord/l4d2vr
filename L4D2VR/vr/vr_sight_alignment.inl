@@ -54,6 +54,43 @@ bool VR::GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut, bo
     return true;
 }
 
+void VR::PublishLeftPistolSightPoints(const Vector& rearWorld, const Vector& frontWorld)
+{
+    const Vector handPos = GetLeftControllerAbsPos();
+    Vector forward{}, right{}, up{};
+    QAngle::AngleVectors(GetLeftControllerAbsAngle(), &forward, &right, &up);
+    const Vector r = rearWorld - handPos, f = frontWorld - handPos;
+    std::lock_guard<std::mutex> lock(m_SightBoreMutex);
+    m_SightLeftRearInHand = Vector(DotProduct(r, forward), DotProduct(r, right), DotProduct(r, up));
+    m_SightLeftFrontInHand = Vector(DotProduct(f, forward), DotProduct(f, right), DotProduct(f, up));
+    m_SightLeftPointsAtMs = GetTickCount64();
+}
+
+bool VR::GetLeftPistolSightRay(Vector& origin, Vector& direction, bool evenWhenDisabled) const
+{
+    if ((!evenWhenDisabled && (!m_IronSightAimEnabled || !m_SightAutoAlignEnabled)) || m_MouseModeEnabled || m_IsThirdPersonCamera)
+        return false;
+    Vector rear{}, front{};
+    {
+        std::lock_guard<std::mutex> lock(m_SightBoreMutex);
+        if (GetTickCount64() - m_SightLeftPointsAtMs > 250u)
+            return false;
+        rear = m_SightLeftRearInHand;
+        front = m_SightLeftFrontInHand;
+    }
+    const Vector& p = m_LeftControllerPosAbs;
+    const Vector& f = m_LeftControllerForward;
+    const Vector& r = m_LeftControllerRight;
+    const Vector& u = m_LeftControllerUp;
+    const Vector rearWorld = p + f * rear.x + r * rear.y + u * rear.z;
+    Vector dir = (p + f * front.x + r * front.y + u * front.z) - rearWorld;
+    if (VectorNormalize(dir) < 0.5f || !l4d2vr_calibration::Finite(rearWorld) || !l4d2vr_calibration::Finite(dir))
+        return false;
+    origin = rearWorld;
+    direction = dir;
+    return true;
+}
+
 void VR::UpdateSightAlignment(const QAngle& baseOffset)
 {
     m_SightActiveCorrection = QAngle(0.0f, 0.0f, 0.0f);

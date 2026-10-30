@@ -101,6 +101,16 @@ namespace
         const auto frame = actionFrame.Read();
         if (!input || !system || !sourcePath || !l4d2vr_input::ActionFrame::Ready(frame) || !actionPath || actionPath[0] == '\0')
             return false;
+        // Self-test fingercurls=: the same curls on either backend.
+        {
+            float overrideCurls[5];
+            if (l4d2vr_selftest::LookupCurls(l4d2vr_selftest::HandOfSourcePath(sourcePath), overrideCurls))
+            {
+                for (int finger = 0; finger < 5; ++finger)
+                    outCurls[static_cast<size_t>(finger)] = overrideCurls[finger];
+                return actionFrame.Matches(frame);
+            }
+        }
 
         if (action == vr::k_ulInvalidActionHandle)
         {

@@ -25254,9 +25254,11 @@ static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string&
     geometry.clipWorldValid = !stacked;
     geometry.valid = true;
 
-    // The moving gun sits beside the receiving one: same orientation, one gun
-    // width along the receiving gun's lateral axis, on the side it came from.
-    constexpr float kStackSpacingUnits = 1.7f;   // the P220 is about 1.6 units wide
+    // The moving gun sits beside the receiving one: same orientation, its
+    // magazine one gun width along the receiving gun's lateral axis from the
+    // receiving gun's magazine (the two models sit differently on their root
+    // bones, so the magazines are aligned, not the roots), on the side it came from.
+    constexpr float kStackSpacingUnits = 1.9f;   // the P220 is about 1.6 units wide
     static uint32_t s_sideSerial = 0u;
     static int s_sideReceiving = -1;
     static float s_side = 1.0f;
@@ -25275,12 +25277,15 @@ static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string&
         }
         else side = live;
     }
-    vr_vm_stabilize::Mat3x4 offset{};
-    offset.m[0][0] = offset.m[1][1] = offset.m[2][2] = 1.0f;
-    offset.m[0][3] = side * kStackSpacingUnits;
-    vr_vm_stabilize::Mat3x4 stackedRoot{}, inverseMoving{}, moveDelta{};
-    vr_vm_stabilize::Mul(out[root[r]], offset, stackedRoot);
+    vr_vm_stabilize::Mat3x4 stackedRoot = out[root[r]], inverseMoving{}, movingClipLocal{}, moveDelta{};
     vr_vm_stabilize::InvertTR(out[root[m]], inverseMoving);
+    vr_vm_stabilize::Mul(inverseMoving, out[clip[m]], movingClipLocal);
+    for (int row = 0; row < 3; ++row)
+    {
+        const float clipOffset = stackedRoot.m[row][0] * movingClipLocal.m[0][3] +
+            stackedRoot.m[row][1] * movingClipLocal.m[1][3] + stackedRoot.m[row][2] * movingClipLocal.m[2][3];
+        stackedRoot.m[row][3] = out[clip[r]].m[row][3] + stackedRoot.m[row][0] * (side * kStackSpacingUnits) - clipOffset;
+    }
     vr_vm_stabilize::Mul(stackedRoot, inverseMoving, moveDelta);
     if (stacked)
     {

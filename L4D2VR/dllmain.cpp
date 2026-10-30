@@ -3228,6 +3228,7 @@ namespace
         sampleKeys.insert("ShotgunPavlovPattern");
         sampleKeys.insert("RecoilDebugLog");
         sampleKeys.insert("IronSightAimEnabled");
+        sampleKeys.insert("GunRigidInHand");
         sampleKeys.insert("MeleeInertiaEnabled");
         sampleKeys.insert("MeleeSwingMinTipSpeed");
         sampleKeys.insert("MeleeSwingMinHandSpeedLong");

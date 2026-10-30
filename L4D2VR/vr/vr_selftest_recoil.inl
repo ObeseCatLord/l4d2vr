@@ -303,6 +303,8 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 m_RecoilShotLog.clear();
             }
             m_RecoilShotLogActive.store(true, std::memory_order_release);
+            m_RecoilTestProjectile.clear();
+            m_RecoilTestProjectileEnt = -1;
             button(leftGun ? m_ActionSecondaryAttack : m_ActionPrimaryAttack, true);
         }
         if (at(4, 5.6f))
@@ -314,6 +316,33 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 !leftGun && give == "pistol" && m_DualPistolsActive.load(std::memory_order_acquire) ? "_dual_right" : "", metres);
             SelfTestRequestShot(name, 1);
             m_SelfTestSerial = m_SelfTestShotRequest.load(std::memory_order_acquire);
+        }
+        // The grenade launcher fires a projectile, not bullets: follow the
+        // grenade the client sees right after the shot.
+        if (give == "grenade_launcher" && m_SelfTestStage >= 4 && m_SelfTestStage <= 6 && m_Game && m_Game->m_ClientEntityList &&
+            m_RecoilTestProjectile.size() < 40)
+        {
+            if (m_RecoilTestProjectileEnt < 0)
+            {
+                const int highest = std::min(m_Game->m_ClientEntityList->GetHighestEntityIndex(), 4095);
+                for (int i = 1; i <= highest && m_RecoilTestProjectileEnt < 0; ++i)
+                {
+                    C_BaseEntity* e = m_Game->GetClientEntity(i);
+                    const char* cls = e ? m_Game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(e)) : nullptr;
+                    if (cls && std::strstr(cls, "GrenadeLauncher_Projectile"))
+                        m_RecoilTestProjectileEnt = i;
+                }
+            }
+            if (m_RecoilTestProjectileEnt >= 0)
+            {
+                C_BaseEntity* e = m_Game->GetClientEntity(m_RecoilTestProjectileEnt);
+                if (e)
+                {
+                    const Vector p = e->GetAbsOrigin();
+                    if (m_RecoilTestProjectile.empty() || VectorLength(p - m_RecoilTestProjectile.back().pos) > 0.01f)
+                        m_RecoilTestProjectile.push_back({ GetTickCount64(), p });
+                }
+            }
         }
         if (m_SelfTestStage == 6 && (m_SelfTestShotDone.load(std::memory_order_acquire) == m_SelfTestSerial || t > 11.0f))
         {
@@ -339,6 +368,38 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 (r.server ? server : client)++;
                 // The server's ray is what hits; the client's prediction must agree.
                 worst = std::max(worst, offCm);
+            }
+            if (give == "grenade_launcher")
+            {
+                // Launch direction from the first samples (quadratic fit removes
+                // gravity), against the sight line.
+                const auto& s = m_RecoilTestProjectile;
+                bool ok = false;
+                float angle = -1.0f, offset = -1.0f;
+                if (s.size() >= 3)
+                {
+                    const double t0 = 0.0, t1 = (s[1].ms - s[0].ms) / 1000.0, t2 = (s[2].ms - s[0].ms) / 1000.0;
+                    if (t1 > 0.0 && t2 > t1)
+                    {
+                        // Derivative at t0 of the parabola through the three samples.
+                        const double a = -(t1 + t2) / ((t0 - t1) * (t0 - t2));
+                        const double b = (t0 - t2) / ((t1 - t0) * (t1 - t2));
+                        const double c = (t0 - t1) / ((t2 - t0) * (t2 - t1));
+                        Vector v(static_cast<float>(a * s[0].pos.x + b * s[1].pos.x + c * s[2].pos.x),
+                            static_cast<float>(a * s[0].pos.y + b * s[1].pos.y + c * s[2].pos.y),
+                            static_cast<float>(a * s[0].pos.z + b * s[1].pos.z + c * s[2].pos.z));
+                        if (VectorNormalize(v) > 0.001f)
+                        {
+                            angle = std::acos(std::clamp(DotProduct(v, m_RecoilTestSightDir), -1.0f, 1.0f)) * 57.29578f;
+                            offset = VR_RecoilLineDistance(m_RecoilTestSightRear, m_RecoilTestSightDir, s[0].pos) / m_VRScale * 100.0f;
+                            ok = true;
+                        }
+                    }
+                }
+                std::snprintf(detail, sizeof(detail), "grenade_launcher: %zu projectile sample(s); launch %.2f deg off the sight line, "
+                    "first seen %.1f cm from it", s.size(), angle, offset);
+                SelfTestReport("grenade leaves along the sight line", m_SelfTestValueA == 1 && ok && angle <= 1.0f, detail);
+                return m_SelfTestStage >= 7 && t >= 7.0f;
             }
             const float limitCm = 1.0f + 0.0025f * distance * 100.0f; // 1 cm + 0.15 deg
             std::snprintf(detail, sizeof(detail), "%s at %.1f m: worst %.2f cm from the sight line (limit %.2f), %d server + %d client ray(s)",
@@ -369,11 +430,13 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
     // The support hand rides on the foregrip box of the drawn gun.
     if (hands == 2 && m_SelfTestStage >= 1 && m_SelfTestStage < 6)
     {
-        MagazineInteractionBoxSnapshot box{};
-        if (GetVrHandsTwoHandedGripWeaponBox(box))
+        // Hold the support hand on the foregrip target until the grip is
+        // taken; then let the two-hand basis carry it (moving the hand with the
+        // kicked gun would fight the recoil).
+        Vector target{};
+        if (!m_VrHandsTwoHandedGripActive && GetTwoHandedGripTargetPoint(target))
         {
-            const Vector c = (box.mins + box.maxs) * 0.5f;
-            m_SelfTestLeftWorld = box.origin + box.axisX * c.x + box.axisY * c.y + box.axisZ * c.z;
+            m_SelfTestLeftWorld = target;
             m_SelfTestLeftWorldValid = true;
         }
     }
@@ -392,6 +455,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
     {
         m_SelfTestValueA = m_VrHandsTwoHandedGripActive ? 1 : 0;
         m_RecoilTestRefDir = aimDir();
+        m_RecoilTestRefCtrl = m_RightControllerForward;
         m_RecoilTestPeakPitch = m_RecoilTestPeakYaw = m_RecoilTestPeakBack = 0.0f;
         m_RecoilTestShotTimes.clear();
         {
@@ -438,6 +502,31 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
             button(m_ActionPrimaryAttack, false);
             m_SelfTestStage = 4;
         }
+    }
+    // Trace (50 ms): the model's offset, the gun basis (hand forward incl. the
+    // kick) and the aim (sight line) against their pre-fire references, and the
+    // sight line relative to the hand.
+    if (m_SelfTestStage >= 3 && m_SelfTestStage <= 4 && t >= fireStart - 0.2f && GetTickCount64() - m_RecoilTestTraceMs >= 50u)
+    {
+        m_RecoilTestTraceMs = GetTickCount64();
+        QAngle ref{}, now{}, refCtrl{}, nowCtrl{};
+        QAngle::VectorAngles(m_RecoilTestRefDir, ref);
+        QAngle::VectorAngles(aimDir(), now);
+        QAngle::VectorAngles(m_RecoilTestRefCtrl, refCtrl);
+        QAngle::VectorAngles(m_RightControllerForward, nowCtrl);
+        Vector inHand{};
+        {
+            std::lock_guard<std::mutex> lock(m_SightBoreMutex);
+            inHand = m_SightFrontInHand - m_SightRearInHand;
+        }
+        const l4d2vr_recoil::Offset& o = m_RecoilHands[0].offset;
+        Game::logMsg("[VR][SelfTest] recoiltrace t=%.2f shots=%llu offset p=%.2f y=%.2f b=%.2f | basis p=%.2f y=%.2f | aim p=%.2f y=%.2f | "
+            "sight-in-hand p=%.2f y=%.2f | foregrip=%d",
+            t - fireStart, static_cast<unsigned long long>(m_RecoilHands[0].shots), o.pitchDeg, o.yawDeg, o.backCm,
+            -VR_RecoilAngleDiff(nowCtrl.x, refCtrl.x), -VR_RecoilAngleDiff(nowCtrl.y, refCtrl.y),
+            -VR_RecoilAngleDiff(now.x, ref.x), -VR_RecoilAngleDiff(now.y, ref.y),
+            std::atan2(inHand.z, inHand.x) * 57.29578f, std::atan2(inHand.y, inHand.x) * 57.29578f,
+            m_VrHandsTwoHandedGripActive ? 1 : 0);
     }
     if (at(4, fireStart + seconds + 2.0f))
     {
@@ -518,6 +607,11 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         std::snprintf(detail, sizeof(detail), "%s %dh: %zu shots, kick %.2f deg (model %.2f), ray error %.2f deg, rest %.2f deg, foregrip %d",
             give.c_str(), hands, times.size(), m_RecoilTestPeakPitch, modelPitch, worstRayErr, rest, m_SelfTestValueA);
         SelfTestReport("recoil kicks the gun as the model and recovers", gripOk && kickOk && worstRayErr <= 0.35f && rest <= 0.3f, detail);
+        {
+            char name[96];
+            std::snprintf(name, sizeof(name), "recoil_%s_%dh_after", give.c_str(), hands);
+            SelfTestRequestShot(name, 1);
+        }
         m_RecoilEnabled = m_RecoilTestSavedEnabled;
         m_SelfTestLeftWorldValid = false;
         if (hands == 2 && m_VrHandsTwoHandedGripActive)

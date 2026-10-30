@@ -117,6 +117,13 @@ namespace l4d2vr_vm_anim
         return Kind::Other;
     }
 
+    // Firing sequences of a gun (L4D2 layers its recoil animation on them).
+    inline bool IsFireActivity(const char* activity)
+    {
+        const char* const a = activity ? activity : "";
+        return ContainsNoCase(a, "PRIMARYATTACK") || ContainsNoCase(a, "ACT_VM_SHOOT") || ContainsNoCase(a, "FIRE");
+    }
+
     // Weapon switches: the draw / deploy sequence and the item pickup reach. In
     // VR the item is simply in the hand, so none of these may move it.
     inline bool IsSwitchActivity(const char* activity, const char* label)

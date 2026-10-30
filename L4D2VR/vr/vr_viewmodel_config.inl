@@ -3257,6 +3257,7 @@ void VR::ParseConfigFile()
     m_ShotgunPavlovPattern = getBool("ShotgunPavlovPattern", true);
     m_RecoilDebugLog = getBool("RecoilDebugLog", false);
     m_IronSightAimEnabled = getBool("IronSightAimEnabled", true);
+    m_GunRigidInHand = getBool("GunRigidInHand", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     // Ancient Dungeon VR style swing gates: tip and hand speed plus travel.
     m_MeleeSwingMinTipSpeed = std::clamp(getFloat("MeleeSwingMinTipSpeed", 4.5f), 0.5f, 20.0f);

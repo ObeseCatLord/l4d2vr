@@ -133,6 +133,7 @@ void VR::UpdateSightAlignment(const QAngle& baseOffset)
     // Gather samples only while nothing animates the gun away from its rest pose.
     const float age = std::chrono::duration<float>(now - m_SightCalibrationModelSince).count();
     const bool settled = age > 1.6f && !m_PrimaryAttackDown && !IsMagazineInteractionManualActive() &&
+        GetTickCount64() - m_LastLocalShotMs.load(std::memory_order_acquire) > 1000u &&
         m_HasAimLine && model.find("dual") == std::string::npos;
     if (!settled || serial == m_SightLastSerial)
         return;

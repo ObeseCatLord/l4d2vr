@@ -8,6 +8,9 @@
 //                                up to 3 attempts, 1 s apart, until a hello).
 //   client: l4d2vr_pose_hello 2  existing clients answer pose_ack / server_ack>=3.
 //   client: l4d2vr_pose_hello 3  (new) opt into pose protocol v3 relay.
+//   client: l4d2vr_shotgun_pattern <0|1>
+//                                (new, optional) Pavlov shotgun pellets for
+//                                this player; needs ShotgunPattern (0x800).
 //   client: l4d2vr_feature_hello <hexmask> <version>
 //                                (new, optional) restrict the server-side
 //                                features applied to this player.
@@ -56,8 +59,9 @@ namespace l4d2vr_server
         kFeaturePoseV3 = 0x100u,
         kFeatureInstantDeploy = 0x200u,
         kFeatureHandThrow = 0x400u,
+        kFeatureShotgunPattern = 0x800u,
     };
-    constexpr std::uint32_t kFeatureAllMask = 0x7FFu;
+    constexpr std::uint32_t kFeatureAllMask = 0xFFFu;
     constexpr unsigned kFeatureAckVersion = 1u;
 
     inline const char* FeatureName(std::uint32_t bit)
@@ -75,6 +79,7 @@ namespace l4d2vr_server
         case kFeaturePoseV3: return "PoseV3";
         case kFeatureInstantDeploy: return "InstantDeploy";
         case kFeatureHandThrow: return "HandThrow";
+        case kFeatureShotgunPattern: return "ShotgunPattern";
         default: return "?";
         }
     }
@@ -152,6 +157,9 @@ namespace l4d2vr_server
     constexpr char kFeatureHelloCommand[] = "l4d2vr_feature_hello";
     constexpr char kShellInsertCommand[] = "l4d2vr_shell_insert_v1";
     constexpr char kMagActionCommand[] = "l4d2vr_mag_action_v2";
+    // client: l4d2vr_shotgun_pattern <0|1>  opt this VR player into Pavlov's
+    // even shotgun pellet pattern (only sent when ShotgunPattern is advertised).
+    constexpr char kShotgunPatternCommand[] = "l4d2vr_shotgun_pattern";
     constexpr char kPoseAckText[] = "l4d2vr_pose_ack 2\n";   // byte-identical to the proven relay
 
     inline bool FormatServerAck(char* out, std::size_t size)

@@ -63,6 +63,7 @@ namespace l4d2vr_server
         std::uint64_t nextBundleMs = 0u;
         bool bundleConfirmed = false;
         std::uint32_t requestedFeatures = kFeatureAllMask;
+        bool shotgunPattern = false;      // opted in with l4d2vr_shotgun_pattern 1
         TransactionClient txn{};
     };
 
@@ -113,6 +114,14 @@ namespace l4d2vr_server
             const SessionClient* c = Client(index);
             if (!c || !c->helloSeen) return 0u;
             return m_Caps.features & c->requestedFeatures;
+        }
+
+        // Pavlov shotgun pellets apply only to players that opted in, and only
+        // while the feature is resolved and requested.
+        bool ShotgunPattern(int index) const
+        {
+            const SessionClient* c = Client(index);
+            return c && c->shotgunPattern && (EffectiveFeatures(index) & kFeatureShotgunPattern) != 0u;
         }
 
         // ---- Engine callbacks (relay semantics) -----------------------------
@@ -174,7 +183,8 @@ namespace l4d2vr_server
             const bool isFeatureHello = std::strcmp(name, kFeatureHelloCommand) == 0;
             const bool isShell = std::strcmp(name, kShellInsertCommand) == 0;
             const bool isMag = std::strcmp(name, kMagActionCommand) == 0;
-            if (!isHello && !isUpload && !isFeatureHello && !isShell && !isMag)
+            const bool isPattern = std::strcmp(name, kShotgunPatternCommand) == 0;
+            if (!isHello && !isUpload && !isFeatureHello && !isShell && !isMag && !isPattern)
                 return CommandResult::Continue;
             if (!IsValidPlayerIndex(index)) return CommandResult::Stop;
 
@@ -185,6 +195,19 @@ namespace l4d2vr_server
             if (isUpload) { HandleUpload(index, argc, argv); return CommandResult::Stop; }
             if (isFeatureHello) { HandleFeatureHello(index, argc, argv); return CommandResult::Stop; }
             if (isShell) { HandleShell(index, argc, argv, ammo); return CommandResult::Stop; }
+            if (isPattern)
+            {
+                std::uint32_t on = 0u;
+                if (argc == 2 && ParseDecimal(argv[1], 1u, on))
+                {
+                    c.shotgunPattern = on != 0u;
+                    char log[96];
+                    std::snprintf(log, sizeof(log), "L4D2VR server: player %d uses %s shotgun pellets\n",
+                        index, on ? "Pavlov" : "stock");
+                    m_Host.Log(log);
+                }
+                return CommandResult::Stop;
+            }
             HandleMag(index, argc, argv, ammo);
             return CommandResult::Stop;
         }

@@ -3249,6 +3249,13 @@ void VR::ParseConfigFile()
     m_BodyGripInventoryUseModelPelvis = getBool("BodyGripInventoryUseModelPelvis", true);
     m_PhysicalReloadOnUnsupportedServers = getBool("PhysicalReloadOnUnsupportedServers", true);
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
+    // Pavlov-style recoil and exact VR aim (vr/vr_recoil.inl).
+    m_RecoilEnabled = getBool("RecoilEnabled", true);
+    m_RecoilScale = std::clamp(getFloat("RecoilScale", 1.0f), 0.0f, 4.0f);
+    m_SpreadDisabled = getBool("SpreadDisabled", true);
+    m_ShotgunPavlovPattern = getBool("ShotgunPavlovPattern", true);
+    m_RecoilDebugLog = getBool("RecoilDebugLog", false);
+    m_IronSightAimEnabled = getBool("IronSightAimEnabled", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
     m_BackgroundAudioEnabled = getBool("BackgroundAudio", true);
@@ -3278,10 +3285,13 @@ void VR::ParseConfigFile()
     m_MeleeGripReachMeters = std::clamp(getFloat("MeleeGripReachMeters", 0.12f), 0.0f, 0.4f);
     m_ConsumableGiveEnabled = getBool("ConsumableGiveEnabled", true);
     m_ConsumableGesturesEnabled = getBool("ConsumableGesturesEnabled", true);
-    m_CrosshairEnabled = getBool("CrosshairEnabled", true);
+    // Pavlov-style aiming uses the sights: the crosshair is opt-in.
+    m_CrosshairEnabled = getBool("CrosshairEnabled", false);
     {
         const std::string style = getString("CrosshairStyle", "x");
         m_CrosshairStyle = (style == "plus" || style == "+") ? 0 : 1;
+        if (style == "off" || style == "none")
+            m_CrosshairEnabled = false;
     }
     m_CrosshairArmPixels = std::clamp(getFloat("CrosshairArmPixels", 7.0f), 1.0f, 64.0f);
     m_CrosshairThicknessPixels = std::clamp(getFloat("CrosshairThicknessPixels", 2.0f), 0.5f, 16.0f);

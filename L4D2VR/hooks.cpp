@@ -18,6 +18,7 @@
 #include "vr_hands/vr_hand_math.h"
 #include "vr_ammo_grip.h"
 #include "vr_hands/vr_hand_vm_pose.h"
+#include "vr_backend/openxr_runtime_diagnosis.h"
 #include "ozz/base/maths/simd_quaternion.h"
 #include "sdk/ivdebugoverlay.h"
 #include <iostream>

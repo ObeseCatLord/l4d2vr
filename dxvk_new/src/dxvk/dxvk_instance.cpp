@@ -12,9 +12,11 @@
 #include <sstream>
 
 // L4D2VR/vr_backend: the VR runtime the mod selected for this process
-// (1 = OpenVR, 2 = OpenXR), decided once before it is first needed here.
+// (0 = none, 1 = OpenVR in legacy builds, 2 = OpenXR), decided once before it
+// is first needed here.
 extern "C" int L4D2VR_SelectedVrRuntime();
 extern "C" bool L4D2VR_DesktopModeActive();
+static constexpr int L4D2VR_RUNTIME_NONE = 0;
 static constexpr int L4D2VR_RUNTIME_OPENVR = 1;
 static constexpr int L4D2VR_RUNTIME_OPENXR = 2;
 
@@ -54,16 +56,23 @@ namespace dxvk {
     // Initialize extension providers
     m_extProviders.push_back(&DxvkPlatformExts::s_instance);
 #ifdef _WIN32
+#if defined(L4D2VR_LEGACY_OPENVR) && L4D2VR_LEGACY_OPENVR
     // The OpenVR provider loads openvr_api and starts OpenVR to ask for its
     // Vulkan extensions, so it only runs when the mod selected OpenVR
-    // (L4D2VR/vr_backend; decided before Direct3DCreate9 gets here).
+    // (L4D2VR/vr_backend; decided before Direct3DCreate9 gets here). Legacy
+    // developer builds only: the release has no OpenVR backend.
     if (L4D2VR_SelectedVrRuntime() == L4D2VR_RUNTIME_OPENVR)
       m_extProviders.push_back(&VrInstance::s_instance);
+#endif
     // The OpenXR backend asks its own XrInstance (xrGetVulkan*ExtensionsKHR),
     // which works on Windows runtimes and under wineopenxr alike.
     if (L4D2VRUsesOpenXr())
       m_extProviders.push_back(&DxvkXrNativeProvider::s_instance);
-    m_extProviders.push_back(&DxvkXrProvider::s_instance);
+    // Proton's wineopenxr extension query (loads wineopenxr.dll, which blocks
+    // until Proton's VR setup is done). Not needed without VR: desktop mode,
+    // and -nohmd / requested desktop mode in the release build (runtime none).
+    if (!L4D2VR_DesktopModeActive() && L4D2VR_SelectedVrRuntime() != L4D2VR_RUNTIME_NONE)
+      m_extProviders.push_back(&DxvkXrProvider::s_instance);
 #endif
 
     Logger::info("Built-in extension providers:");

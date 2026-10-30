@@ -1117,21 +1117,37 @@ namespace
         return requested || IsConfigBoolEnabledInConfig("DesktopModeEnabled");
     }
 
-    // With the mod installed but no VR runtime at all, start on the desktop
-    // directly (DesktopModeAuto=true). With a runtime, VR starts as usual and a
-    // failed VR_Init falls back to desktop mode instead of exiting (see
-    // L4D2VR_EnterDesktopFallback). Headset presence is not probed up front:
-    // through Proton/OpenXR bridges VR_IsHmdPresent and an early VR_Init can
-    // fail although the game's own VR_Init later succeeds.
+    // With the mod installed but no usable VR runtime, start on the desktop
+    // directly (DesktopModeAuto=true).
+    //
+    // OpenXR (the release build): the runtime probe is the real start-up (the
+    // instance it creates is kept for VR), so its answer is final. No OpenXR
+    // runtime registered, a 64-bit-only runtime, a Proton without 32-bit
+    // OpenXR, no OpenVR runtime for Proton or no headset all start desktop mode
+    // with the reason (openxr_runtime_diagnosis.h).
+    //
+    // OpenVR (legacy builds): only "no runtime installed" counts. Headset
+    // presence is not probed up front: through Proton/OpenXR bridges
+    // VR_IsHmdPresent and an early VR_Init can fail although the game's own
+    // VR_Init later succeeds; a failed VR_Init falls back to desktop mode
+    // instead of exiting (see L4D2VR_EnterDesktopFallback).
     bool ShouldAutoSelectDesktopMode(std::string& reason)
     {
         if (!ReadConfigBoolFromFile("DesktopModeAuto", true))
             return false;
+        l4d2vr_backend::IVrBackend& backend = l4d2vr_backend::Active();
+        if (backend.Kind() == l4d2vr_backend::RuntimeKind::OpenXR)
+        {
+            std::string why;
+            if (l4d2vr_backend::OpenXrProbeRuntime(why))
+                return false;
+            reason = std::string(l4d2vr_backend::InitFailurePrefix(backend)) + ": " + (why.empty() ? std::string("unknown error") : why);
+            return true;
+        }
         char value[8]{};
         if (GetEnvironmentVariableA("VR_OVERRIDE", value, sizeof(value)) > 0 ||
             GetEnvironmentVariableA("XR_RUNTIME_JSON", value, sizeof(value)) > 0)
             return false;
-        l4d2vr_backend::IVrBackend& backend = l4d2vr_backend::Active();
         if (!backend.IsRuntimeInstalled())
         {
             reason = std::string("no ") + backend.Name() + " runtime installed";
@@ -3368,33 +3384,62 @@ extern "C" bool L4D2VR_DesktopFallbackAllowed()
     return allowed;
 }
 
+// Why this process runs in desktop mode without being asked to (no or an
+// unusable VR runtime); empty otherwise. Shown once in the game console
+// (hooks_render.inl) besides vrmod_log.txt.
+static std::mutex g_L4D2VRDesktopReasonMutex;
+static std::string g_L4D2VRDesktopReason;
+
+static void SetDesktopModeReason(const std::string& reason)
+{
+    std::lock_guard<std::mutex> lock(g_L4D2VRDesktopReasonMutex);
+    if (g_L4D2VRDesktopReason.empty())
+        g_L4D2VRDesktopReason = reason;
+}
+
+extern "C" bool L4D2VR_DesktopModeReason(char* buffer, uint32_t capacity)
+{
+    std::lock_guard<std::mutex> lock(g_L4D2VRDesktopReasonMutex);
+    if (!buffer || capacity == 0 || g_L4D2VRDesktopReason.empty())
+        return false;
+    strncpy_s(buffer, capacity, g_L4D2VRDesktopReason.c_str(), _TRUNCATE);
+    return true;
+}
+
 extern "C" void L4D2VR_EnterDesktopFallback(const char* reason)
 {
     g_L4D2VRDesktopMode = true;
     if (!g_L4D2VRDesktopFallback.exchange(true))
+    {
+        SetDesktopModeReason(reason ? reason : "VR unavailable");
         Game::logMsg("[VR] %s; continuing in desktop mode (set DesktopModeAuto=false in VR/config.txt to show the error instead)",
             reason ? reason : "VR unavailable");
+    }
 }
 
-// The VR runtime for this process (VrRuntime=auto|openxr|openvr, overridden by
-// -l4d2vr_openxr / -l4d2vr_openvr). Decided once, on first use: DXVK asks
-// inside Direct3DCreate9 (its Vulkan extension provider depends on it), and
-// InitL4D2VR asks early to log the choice. Desktop mode ignores it, and -nohmd
-// stays on the plain OpenVR default without reading the config or logging.
+// The VR runtime for this process, decided once on first use: DXVK asks inside
+// Direct3DCreate9 (its Vulkan extension provider depends on it), and
+// InitL4D2VR asks early to log the choice.
+//
+// Release build: OpenXR, always (vr_runtime_select.h DecideOpenXrOnly; a
+// VrRuntime=openvr or -l4d2vr_openvr request is logged as ignored), or none
+// for -nohmd and requested desktop mode. Legacy build (L4D2VR_LEGACY_OPENVR):
+// VrRuntime=auto|openxr|openvr overridden by -l4d2vr_openxr / -l4d2vr_openvr,
+// with -nohmd and desktop mode on the plain OpenVR default as before.
 extern "C" int L4D2VR_SelectedVrRuntime()
 {
     namespace sel = l4d2vr_runtime_select;
     static std::once_flag once;
-    static int selected = static_cast<int>(sel::Runtime::OpenVR);
+    static int selected = static_cast<int>(sel::kLegacyOpenVrBuild ? sel::Runtime::OpenVR : sel::Runtime::None);
     std::call_once(once, []()
     {
         if (IsNoHmdLaunchArgPresent())
             return;
         if (IsDesktopModeRequested())
         {
-            // Desktop mode never starts a VR runtime; keep the OpenVR default
-            // (which it has always used) and never probe OpenXR.
-            Game::logMsg("[VR] VR runtime: OpenVR (desktop mode requested; %s not used)", sel::kConfigKey);
+            // Desktop mode never starts a VR runtime and never probes OpenXR.
+            Game::logMsg("[VR] VR runtime: %s (desktop mode requested; %s not used)",
+                sel::kLegacyOpenVrBuild ? "OpenVR" : "none", sel::kConfigKey);
             return;
         }
 
@@ -3414,11 +3459,11 @@ extern "C" int L4D2VR_SelectedVrRuntime()
             LocalFree(szArglist);
         }
 
-        // The OpenXR runtime is probed (loader, instance, HMD system) only when
-        // OpenXR was asked for; without a usable one the game stays in VR on
-        // OpenVR and the log says why.
-        constexpr bool kOpenXrBackendBuilt = true;
-        const sel::Decision decision = sel::DecideWithProbe(config, configValid, commandLine, kOpenXrBackendBuilt,
+        // Legacy build: the OpenXR runtime is probed (loader, instance, HMD
+        // system) only when OpenXR was asked for; without a usable one the game
+        // stays in VR on OpenVR and the log says why. Release build: no probe
+        // here; L4D2VR_DesktopModeActive probes and picks desktop mode.
+        const sel::Decision decision = sel::DecideForBuild(sel::kLegacyOpenVrBuild, config, configValid, commandLine,
             [](std::string& reason) { return l4d2vr_backend::OpenXrProbeRuntime(reason); });
         selected = static_cast<int>(decision.runtime);
         Game::logMsg("[VR] %s", sel::Describe(decision, TrimAsciiWhitespace(rawValue)).c_str());
@@ -3448,8 +3493,12 @@ extern "C" bool L4D2VR_DesktopModeActive()
             desktop = ShouldAutoSelectDesktopMode(reason);
         }
         if (desktop)
+        {
+            if (!IsDesktopModeRequested())
+                SetDesktopModeReason(reason);
             Game::logMsg("[VR] %s; starting in desktop mode (set DesktopModeAuto=false in VR/config.txt to always start VR)",
                 reason.c_str());
+        }
     });
     return desktop;
 }

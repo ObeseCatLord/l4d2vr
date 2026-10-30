@@ -41,6 +41,7 @@
 #include "openxr_input_logic.h"
 #include "openxr_overlay_logic.h"
 #include "openxr_hand_logic.h"
+#include "openvr_paths.h"
 
 #include "../game.h"
 
@@ -89,7 +90,7 @@ namespace
 #define L4D2VR_XR_INSTANCE_FUNCS(X) \
     X(xrDestroyInstance) X(xrGetInstanceProperties) X(xrResultToString) X(xrGetSystem) X(xrGetSystemProperties) \
     X(xrEnumerateViewConfigurationViews) X(xrEnumerateEnvironmentBlendModes) X(xrCreateSession) X(xrDestroySession) \
-    X(xrBeginSession) X(xrEndSession) X(xrPollEvent) X(xrEnumerateReferenceSpaces) X(xrCreateReferenceSpace) \
+    X(xrBeginSession) X(xrEndSession) X(xrRequestExitSession) X(xrPollEvent) X(xrEnumerateReferenceSpaces) X(xrCreateReferenceSpace) \
     X(xrLocateSpace) X(xrEnumerateSwapchainFormats) X(xrCreateSwapchain) X(xrDestroySwapchain) \
     X(xrEnumerateSwapchainImages) X(xrAcquireSwapchainImage) X(xrWaitSwapchainImage) X(xrReleaseSwapchainImage) \
     X(xrWaitFrame) X(xrBeginFrame) X(xrEndFrame) X(xrLocateViews) \
@@ -514,6 +515,36 @@ private:
             m_SessionCv.notify_all();
         }
 
+        // The game is destroying the D3D9 device the session lives on (normally
+        // at exit): ask the runtime to end the session. The runtime answers with
+        // STOPPING, which the event thread handles as always (xrEndSession),
+        // then EXITING. Handles are not destroyed: other game threads may still
+        // touch them, and wineopenxr crashes on destroyed handles.
+        void DeviceDestroying(void* device)
+        {
+            if (!m_InitOk || m_Session == XR_NULL_HANDLE || device != m_Device.device)
+                return;
+            if (!Running())
+            {
+                Game::logMsg("[VR][OpenXR] D3D9 device destroyed; session not running (state %s)", SessionStateName(m_State));
+                return;
+            }
+            XrResult r = XR_SUCCESS;
+            {
+                std::lock_guard<std::mutex> lock(m_Mutex);
+                r = m_Xr.xrRequestExitSession(m_Session);
+            }
+            Game::logMsg("[VR][OpenXR] D3D9 device destroyed: xrRequestExitSession %s", ResultName(r).c_str());
+            if (XR_FAILED(r))
+                return;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+            while (!m_SessionEnded.load(std::memory_order_acquire) && !m_Lost.load(std::memory_order_acquire) &&
+                std::chrono::steady_clock::now() < deadline)
+                Sleep(10);
+            Game::logMsg("[VR][OpenXR] session %s at device destruction",
+                m_SessionEnded.load(std::memory_order_acquire) ? "ended cleanly" : "did not end in 1.5 s");
+        }
+
         // ---- Frames: wait ---------------------------------------------------
         vr::EVRCompositorError WaitGetPoses(vr::TrackedDevicePose_t* renderPoses, uint32_t renderCount,
             vr::TrackedDevicePose_t* gamePoses, uint32_t gameCount)
@@ -869,11 +900,13 @@ private:
         // Proton's steam.exe sets HKCU\Software\Wine\VR "state" to 1 once its
         // OpenVR runtime (XRizer, OpenComposite, SteamVR) and the OpenXR info
         // are ready; wineopenxr refuses to work before that.
-        void WaitForWineVrState()
+        // Returns the last state read (xrm::kWineVrStateKeyMissing without the key).
+        int WaitForWineVrState()
         {
             const auto start = std::chrono::steady_clock::now();
             DWORD last = 0xFFFFFFFEu;
             bool keySeen = false;
+            int state = xrm::kWineVrStateKeyMissing;
             for (;;)
             {
                 const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -885,13 +918,15 @@ private:
                     const bool read = RegQueryValueExA(key, "state", nullptr, &type, reinterpret_cast<BYTE*>(&value), &size) == ERROR_SUCCESS &&
                         type == REG_DWORD;
                     RegCloseKey(key);
+                    if (read)
+                        state = static_cast<int>(value);
                     if (read && value != last)
                     {
                         Game::logMsg("[VR][OpenXR] Wine VR state = %d after %.1f s", static_cast<int>(value), elapsed);
                         last = value;
                     }
                     if (read && value != 0)
-                        return;
+                        return state;
                 }
                 // steam.exe creates the key before the game starts when the
                 // launch is a Steam game (SteamGameId); without it the key
@@ -900,7 +935,7 @@ private:
                 {
                     Game::logMsg("[VR][OpenXR] Wine VR state not ready after %.1f s (key %s); continuing", elapsed,
                         keySeen ? "present" : "missing");
-                    return;
+                    return keySeen ? state : xrm::kWineVrStateKeyMissing;
                 }
                 Sleep(50);
             }
@@ -946,11 +981,24 @@ private:
             const bool wine = IsWine();
             const std::string dir = ModuleDirectory();
             ConfigureValidationLayer(wine, dir);
-            if (wine)
-                WaitForWineVrState();
+            // Cheap checks first (registry, files): no runtime registered, a
+            // 64-bit-only runtime, a Proton without 32-bit wineopenxr. The
+            // loader is not touched then, so desktop mode starts at once.
+            const xrm::RuntimeFacts facts = xrm::GatherRuntimeFacts(wine);
+            Game::logMsg("[VR][OpenXR] runtime registration: 32-bit '%s'%s, 64-bit '%s'%s%s",
+                facts.activeRuntime32.c_str(), facts.activeRuntime32.empty() ? "" : (facts.activeRuntime32Exists ? " (exists)" : " (MISSING)"),
+                facts.activeRuntime64.c_str(), facts.runtimeJsonEnv.empty() ? "" : (", XR_RUNTIME_JSON=" + facts.runtimeJsonEnv).c_str(),
+                wine ? (facts.wineOpenXr32 ? ", Proton 32-bit wineopenxr present" : ", Proton 32-bit wineopenxr MISSING") : "");
+            const xrm::Preflight preflight = xrm::CheckPreflight(facts);
+            if (!preflight.tryRuntime)
+            {
+                reason = preflight.reason;
+                return false;
+            }
+            const int wineVrState = wine ? WaitForWineVrState() : xrm::kWineVrStateUnknown;
 
             xrm::LoaderProbe probe;
-            if (!xrm::ProbeLoader(dir + "\\openxr_loader.dll", wine, probe))
+            if (!xrm::ProbeLoader(dir + "\\openxr_loader.dll", wine, probe, &facts, wineVrState))
             {
                 reason = probe.reason;
                 return false;
@@ -1025,9 +1073,17 @@ private:
             XrSystemGetInfo sgi{ XR_TYPE_SYSTEM_GET_INFO };
             sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
             r = m_Xr.xrGetSystem(m_Instance, &sgi, &m_SystemId);
+            // XR_ERROR_FORM_FACTOR_UNAVAILABLE is transient by spec (a runtime
+            // that is still starting, e.g. SteamVR just launched by
+            // xrCreateInstance): retry for a few seconds before giving up.
+            for (int attempt = 0; r == XR_ERROR_FORM_FACTOR_UNAVAILABLE && attempt < 16; ++attempt)
+            {
+                Sleep(250);
+                r = m_Xr.xrGetSystem(m_Instance, &sgi, &m_SystemId);
+            }
             if (XR_FAILED(r))
             {
-                reason = r == XR_ERROR_FORM_FACTOR_UNAVAILABLE ? "no headset connected (XR_ERROR_FORM_FACTOR_UNAVAILABLE)"
+                reason = r == XR_ERROR_FORM_FACTOR_UNAVAILABLE ? xrm::NoHeadsetReason(ip.runtimeName)
                     : "xrGetSystem failed: " + ResultName(r);
                 DestroyInstance();
                 return false;
@@ -1230,6 +1286,7 @@ private:
                 if (XR_SUCCEEDED(r))
                 {
                     m_Ring.Reset();
+                    m_SessionEnded.store(false, std::memory_order_release);
                     m_Running.store(true, std::memory_order_release);
                 }
                 break;
@@ -1243,6 +1300,7 @@ private:
                 m_WaitCv.wait_for(lock, std::chrono::milliseconds(200), [this]() { return !m_Ring.WaitInFlight(); });
                 const XrResult r = m_Xr.xrEndSession(m_Session);
                 m_Ring.Reset();
+                m_SessionEnded.store(true, std::memory_order_release);
                 Game::logMsg("[VR][OpenXR] xrEndSession: %s", ResultName(r).c_str());
                 break;
             }
@@ -1942,6 +2000,7 @@ private:
         XrSessionState m_State = XR_SESSION_STATE_UNKNOWN;
         std::atomic<bool> m_Running{ false };
         std::atomic<bool> m_Lost{ false };
+        std::atomic<bool> m_SessionEnded{ false };  // xrEndSession after the last STOPPING
         bool m_LoggedFocused = false;
         bool m_ExplicitTiming = false;
 
@@ -2145,14 +2204,36 @@ private:
             return false;
         }
 
-        // The OpenVR runtime's install path (openvrpaths.vrpath; no OpenVR init),
-        // as the OpenVR backend reports it, so the SteamVR glove meshes load on
-        // the same machines as there (SteamVR installed; under Proton the path
-        // is Proton's vrclient stub on both backends).
+        // The OpenVR runtime's install path (openvrpaths.vrpath; no OpenVR init
+        // and no openvr_api), as the OpenVR backend reports it, so the SteamVR
+        // glove meshes load on the same machines as there (SteamVR installed;
+        // under Proton the path is Proton's vrclient stub on both backends).
         bool GetRuntimePath(char* pchPathBuffer, uint32_t unBufferSize, uint32_t* punRequiredBufferSize) override
         {
             if (punRequiredBufferSize) *punRequiredBufferSize = 0;
-            return vr::VR_GetRuntimePath(pchPathBuffer, unBufferSize, punRequiredBufferSize);
+            if (pchPathBuffer && unBufferSize) pchPathBuffer[0] = '\0';
+            char base[MAX_PATH] = {};
+            const DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", base, MAX_PATH);
+            if (n == 0 || n >= MAX_PATH)
+                return false;
+            FILE* file = nullptr;
+            if (fopen_s(&file, (std::string(base) + "\\openvr\\openvrpaths.vrpath").c_str(), "rb") != 0 || !file)
+                return false;
+            std::string json;
+            char chunk[4096];
+            size_t got = 0;
+            while ((got = fread(chunk, 1, sizeof(chunk), file)) > 0 && json.size() < (1u << 20))
+                json.append(chunk, got);
+            fclose(file);
+            const std::string runtime = l4d2vr_openvr_paths::FirstRuntime(json);
+            if (runtime.empty())
+                return false;
+            const uint32_t required = static_cast<uint32_t>(runtime.size() + 1);
+            if (punRequiredBufferSize) *punRequiredBufferSize = required;
+            if (!pchPathBuffer || unBufferSize < required)
+                return false;
+            std::memcpy(pchPathBuffer, runtime.c_str(), required);
+            return true;
         }
 
         IVrSystem* System() override { return Runtime().InstanceReady() ? Runtime().SystemFacade() : nullptr; }
@@ -2230,6 +2311,13 @@ extern "C" bool L4D2VR_XrGetVulkanDeviceExtensions(char* buffer, uint32_t capaci
 extern "C" bool L4D2VR_XrGetVulkanGraphicsDevice(void* vkInstance, void** physicalDevice)
 {
     return l4d2vr_backend::Runtime().GraphicsDevice(vkInstance, physicalDevice);
+}
+
+extern "C" void L4D2VR_VrBackendDeviceDestroying(void* vkDevice)
+{
+    if (!vkDevice || L4D2VR_SelectedVrRuntime() != static_cast<int>(l4d2vr_backend::RuntimeKind::OpenXR))
+        return;
+    l4d2vr_backend::Runtime().DeviceDestroying(vkDevice);
 }
 
 extern "C" void L4D2VR_VrBackendDeviceCreated(const L4D2VR_VkDeviceInfo* info)

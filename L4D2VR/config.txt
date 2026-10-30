@@ -31,6 +31,7 @@ LedgeGuardMinMoveSpeed=1
 LedgeGuardDebugLog=false
 LedgeGuardDebugLogHz=2
 AntiAliasing=0
+// ReShade VR depth bridge: OpenVR only (legacy builds); ignored with OpenXR.
 ReShadeVRCompat=false
 EyeRenderTargetMatchProjectionAspect=false
 
@@ -423,9 +424,11 @@ LoadingFramePumpStallMs=150
 IntermissionHudEnabled=true
 // Keep game audio playing when the desktop window is not focused.
 BackgroundAudio=true
-// VR runtime: auto, openxr or openvr. auto uses OpenVR for now. openxr is an early preview: head tracking
-// and the 3D view only (no controllers, menus or HUD panels yet); without a usable 32-bit OpenXR runtime it
-// falls back to OpenVR. The -l4d2vr_openxr / -l4d2vr_openvr launch options override this. Restart to apply.
+// VR runtime. The released mod is OpenXR-only and ignores this key: it always uses OpenXR (a 32-bit
+// OpenXR runtime with Vulkan: SteamVR 2.17+, Virtual Desktop, Meta Quest Link; on Linux Proton Hotfix or
+// Experimental with PROTON_USE_WOW64=1). Legacy developer builds with the OpenVR backend
+// (L4D2VR_LEGACY_OPENVR) read auto, openxr or openvr here (auto = OpenVR); the -l4d2vr_openxr /
+// -l4d2vr_openvr launch options override it there. Restart to apply.
 VrRuntime=auto
 // Picture-in-picture scope lens: the scope image shifts with your eye (parallax) and darkens toward the
 // edge as your eye leaves the eyebox, like a real optic.

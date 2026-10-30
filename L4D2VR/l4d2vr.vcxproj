@@ -111,7 +111,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>openvr_api.lib;libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>$(SolutionDir)dxvk_new\src\d3d9\d3d9.def</ModuleDefinitionFile>
     </Link>
     <PostBuildEvent>
@@ -140,7 +140,7 @@
       <EnableUAC>false</EnableUAC>
       <ModuleDefinitionFile>$(SolutionDir)dxvk_new\src\d3d9\d3d9.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>openvr_api.lib;libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libMinHook.x86.lib;setupapi.lib;ozz_animation.lib;ozz_animation_offline.lib;ozz_base.lib;$(SolutionDir)dxvk_new\lib32\vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>copy /Y "$(OutDir)$(TargetName)$(TargetExt)" "E:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2\$(TargetName)$(TargetExt)"</Command>
@@ -183,6 +183,17 @@
       <EnableUAC>false</EnableUAC>
       <ModuleDefinitionFile>$(ProjectDir)exports.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>C:\Dev\infra\openvr\lib\win32;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>openvr_api.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- OpenVR: the release build is OpenXR-only (no OpenVR backend, no openvr_api.lib).
+       Legacy developer build with the OpenVR backend: msbuild /p:L4D2VRLegacyOpenVR=true
+       (defines L4D2VR_LEGACY_OPENVR=1 for the mod and the DXVK fork, links openvr_api.lib). -->
+  <ItemDefinitionGroup Condition="'$(L4D2VRLegacyOpenVR)'=='true' And '$(Platform)'=='Win32'">
+    <ClCompile>
+      <PreprocessorDefinitions>L4D2VR_LEGACY_OPENVR=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
       <AdditionalDependencies>openvr_api.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -451,6 +462,8 @@
     <ClInclude Include="vr_backend\openxr_frame_ring.h" />
     <ClInclude Include="vr_backend\openxr_pose_math.h" />
     <ClInclude Include="vr_backend\openxr_loader_probe.h" />
+    <ClInclude Include="vr_backend\openxr_runtime_diagnosis.h" />
+    <ClInclude Include="vr_backend\openvr_paths.h" />
     <ClInclude Include="vr_backend\openxr_input_profiles.h" />
     <ClInclude Include="vr_backend\openxr_input_logic.h" />
     <None Include="vr_backend\openxr_input_runtime.inl" />
@@ -674,6 +687,7 @@
     <ClCompile Include="hooks.cpp" />
     <ClCompile Include="sdk\checksum_crc.cpp" />
     <ClCompile Include="vr.cpp" />
+    <ClCompile Include="vr_backend\vr_backend.cpp" />
     <ClCompile Include="vr_backend\vr_backend_openvr.cpp" />
     <ClCompile Include="vr_backend\vr_backend_openxr.cpp" />
     <ClCompile Include="vr_hands\vr_hand_asset_loader.cpp" />

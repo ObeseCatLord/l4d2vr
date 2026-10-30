@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from . import DEFAULT_REPO, __version__, install, launchopts, sources, steam
+from . import DEFAULT_REPO, __version__, install, launchopts, openxr, sources, steam
 from .fsutil import InstallerError, sha256_file
 
 Log = Callable[[str], None]
@@ -247,6 +247,71 @@ def launch_options_lines(game_dir: Optional[Path]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# OpenXR requirements (Proton version, OpenVR runtime for Proton, Windows runtime)
+# ---------------------------------------------------------------------------
+
+def _steam_context(game_dir: Optional[Path], roots: Optional[List[Path]] = None):
+    roots = roots if roots is not None else steam.find_steam_roots()
+    root = steam.steam_root_for_game(game_dir, roots) if game_dir else (roots[0] if roots else None)
+    libraries = steam.library_folders(root) if root else []
+    for other in roots:
+        if other != root:
+            libraries += [lib for lib in steam.library_folders(other) if lib not in libraries]
+    return root, libraries
+
+
+def openxr_requirement_lines(game_dir: Optional[Path], roots: Optional[List[Path]] = None) -> List[str]:
+    root, libraries = _steam_context(game_dir, roots)
+    return openxr.requirement_lines(root, libraries)
+
+
+def proton_check(game_dir: Optional[Path]) -> openxr.ProtonCheck:
+    root, libraries = _steam_context(game_dir)
+    if root is None:
+        raise InstallerError("Steam was not found, so the Proton version cannot be checked.")
+    return openxr.check_proton(root, libraries)
+
+
+def apply_proton(game_dir: Optional[Path], tool: Optional[str] = None, *, dry_run: bool = False,
+                 log: Log = _print) -> Optional[openxr.CompatToolChange]:
+    """Force a Proton with 32-bit OpenXR for app 550 (Steam must be closed).
+    Does nothing when the current one already has it (unless ``tool`` is given)."""
+    from .fsutil import user_config_dir
+    root, libraries = _steam_context(game_dir)
+    if root is None:
+        raise InstallerError("Steam was not found, so the Proton version cannot be changed.")
+    check = openxr.check_proton(root, libraries)
+    if tool is None:
+        if check.ok:
+            log(check.lines()[0])
+            return None
+        tool = check.recommended.name
+    change = openxr.set_compat_tool(root, tool, steam_running=steam.is_steam_running(), dry_run=dry_run,
+                                    state_dir=user_config_dir())
+    if not change.changed:
+        log(f"Proton for Left 4 Dead 2 is already {tool}.")
+    elif dry_run:
+        log(f"Dry run: would set Proton for Left 4 Dead 2: {openxr.describe_change(change)}")
+    else:
+        log(f"Proton for Left 4 Dead 2: {openxr.describe_change(change)} (backup: {change.backup}). "
+            "Steam downloads that Proton on the next start if it is missing.")
+    return change
+
+
+def restore_proton(game_dir: Optional[Path], *, dry_run: bool = False, log: Log = _print) -> None:
+    from .fsutil import user_config_dir
+    root, _ = _steam_context(game_dir)
+    if root is None:
+        raise InstallerError("Steam was not found.")
+    change = openxr.restore_compat_tool(root, steam_running=steam.is_steam_running(), dry_run=dry_run,
+                                        state_dir=user_config_dir())
+    if change is None:
+        log("The installer did not change the Proton version (or it was changed again since); nothing to restore.")
+    else:
+        log(("Dry run: would restore " if dry_run else "Restored ") + f"Proton: {openxr.describe_change(change)}")
+
+
+# ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------
 
@@ -261,11 +326,8 @@ def status_lines(game_dir: Optional[Path], server_dir: Optional[Path] = None,
         lines.append(f"Game folder: {game_dir} [{ {'windows': 'Windows build', 'linux': 'native Linux build (needs Proton)', 'missing': 'not found'}[depot] }]")
         target = install.client_target(game_dir)
         lines += install.status(target).lines()
+        lines += openxr_requirement_lines(game_dir, roots)
         if not sys.platform.startswith("win"):
-            root = steam.steam_root_for_game(game_dir, roots)
-            if root:
-                tool = steam.compat_tool_for_game(root)
-                lines.append(f"Compatibility tool forced for L4D2: {tool or 'none (set Proton in Properties > Compatibility)'}")
             lines += launch_options_lines(game_dir)
     if server_dir is not None:
         lines.append(f"Server folder: {server_dir}")

@@ -33,10 +33,22 @@ It finds the game, installs the latest release with SHA-256 checks, keeps your c
 and has a **Launch in VR** button. On Linux it also checks for the Windows (Proton) build and sets the launch options.
 Manual steps are below.
 
+## Requirements (OpenXR)
+The mod uses **OpenXR only** (no SteamVR/OpenVR files). Left 4 Dead 2 is a 32-bit game, so it needs an OpenXR runtime that supports 32-bit games with Vulkan. Details, error messages and what changed: [docs/openxr.md](docs/openxr.md).
+* **Windows**: SteamVR 2.17 or newer set as the OpenXR runtime (SteamVR > Settings > OpenXR > *Set SteamVR as OpenXR Runtime*), Virtual Desktop (VDXR) or Meta Quest Link. Windows Mixed Reality's own runtime is 64-bit only: use SteamVR with the WMR for SteamVR driver.
+* **Linux**: Proton Hotfix (2026-10-07 or newer) or Proton Experimental (11.0-20261014 or newer), the launch options `WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9`, an OpenVR runtime still registered (SteamVR, or XRizer / OpenComposite for Monado and WiVRn: Proton needs it before its OpenXR bridge starts) and an active OpenXR runtime (Monado, WiVRn or SteamVR). The [installer](installer/README.md) checks and sets the Proton version and launch options.
+* Without a usable runtime the game starts in desktop mode and `vrmod_log.txt` and the game console say why.
+
+What changed for players with OpenXR:
+* Controller bindings are built into the mod; SteamVR's binding screen for the old action manifest no longer applies.
+* The mod applies its own trigger and grip thresholds. Index grips need a firm squeeze (0.85 right, 0.8 left); other triggers and grips click at a quarter pull.
+* Menus use the mod's controller laser, and text fields use the mod's VR keyboard.
+
 ## How to use
 1. Download [L4D2VR.zip](https://github.com/keyou91/l4d2vr/releases) and extract the files to your Left 4 Dead 2 installation directory at: `steamapps/common/Left 4 Dead 2`
     - You can also access the installation directory by right-clicking Left 4 Dead 2 in Steam and going to: Manage > **Browse local files**
-2. Launch SteamVR, then launch Left 4 Dead 2 with these [launch options](https://help.steampowered.com/en/faqs/view/7D01-D2DD-D75E-2955): <br>`-heapsize 524288 -processheap -high -novid -windowed`
+    - Updating by hand from an older (OpenVR) release: delete `openvr_api.dll`, `VR/manifest.vrmanifest` and `VR/SteamVRActionManifest/` (the installer does this for you, with a backup).
+2. Start your OpenXR runtime (SteamVR starts by itself), then launch Left 4 Dead 2 with these [launch options](https://help.steampowered.com/en/faqs/view/7D01-D2DD-D75E-2955): <br>`-heapsize 524288 -processheap -high -novid -windowed`
     - If you use a desktop client resolution of 2k or higher, add `-bigfonts` to the launch options to make in-game text larger; otherwise, the text on the HUD will be very small.
 3. Join or create your campaign and enjoy the game.
 4. To recenter the camera height, press down on the left stick. To see the HUD, aim the left controller up or down.
@@ -53,8 +65,11 @@ Manual steps are below.
 2. Select the rendering API Left 4 Dead 2 uses: Vulkan + OpenXR.
 > Optional: Select effects to install: [VRToolkit](https://github.com/retroluxfilm/reshade-vrtoolkit) by retroluxfilm.
 
+The exact stereo depth bridge (`ReShadeVRCompat`) works only with ReShade's OpenVR runtime. It is off in the OpenXR release (the setting is ignored and logged), and ReShade keeps its own Generic Depth add-on.
+
 ## Troubleshooting
 ### If the game isn't loading in VR:
+* Look for `[VR] OpenXR could not start:` in `vrmod_log.txt` (or the `[L4D2VR] VR is off` line in the game console). It names the problem, for example a 64-bit-only OpenXR runtime or a Proton without 32-bit OpenXR. The fixes are in [docs/openxr.md](docs/openxr.md#when-vr-does-not-start).
 * Disable SteamVR theater in [SteamVR settings](https://img.itch.zone/aW1nLzE0MTMyNTY4LnBuZw==/original/pKSXNc.png)
 
 ### If the game shows "Failed to create D3D device!":
@@ -129,6 +144,10 @@ The original Visual Studio 2019 build route remains available:
    build_release_x86.cmd
    ```
 5. (Optional/manual) Open l4d2vr.sln and build `Release|x86`.
+
+The release build is OpenXR-only (no OpenVR backend, no `openvr_api.lib`). A legacy developer build with
+the OpenVR backend: `msbuild l4d2vr.sln /t:L4D2VR /p:Configuration=Release /p:Platform=x86 /p:L4D2VRLegacyOpenVR=true`
+(tests: `cmake -S tests -B build -DL4D2VR_LEGACY_OPENVR=ON`). See [docs/openxr.md](docs/openxr.md#developers-the-legacy-openvr-build).
 
 > Note: After building, it will attempt to copy the new d3d9.dll to
 > `steamapps/common/Left 4 Dead 2`. The pose relay is produced as

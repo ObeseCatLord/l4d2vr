@@ -1060,7 +1060,7 @@ VR::VR(Game* game)
     {
         // Desktop (receive-only) mode: same state as a failed VR_Init without
         // the error box. m_IsVREnabled stays false.
-        Game::logMsg("[VR] desktop mode: OpenVR skipped; rendering remote VR poses only");
+        Game::logMsg("[VR] desktop mode: no VR runtime started; rendering remote VR poses only");
         return;
     }
 
@@ -1081,17 +1081,16 @@ VR::VR(Game* game)
         LocalFree(launchArgs);
     }
 
-    char errorString[MAX_STR_LEN];
 
     m_Backend = &l4d2vr_backend::Active();
     const char* initError = nullptr;
     if (!m_Backend->Init(initError))
     {
-        snprintf(errorString, MAX_STR_LEN, "VR_Init failed: %s", initError ? initError : "");
+        const std::string initFailure = std::string(l4d2vr_backend::InitFailurePrefix(*m_Backend)) + ": " + (initError ? initError : "");
         if (L4D2VR_DesktopFallbackAllowed())
-            L4D2VR_EnterDesktopFallback(errorString);
+            L4D2VR_EnterDesktopFallback(initFailure.c_str());
         else
-            Game::errorMsg(errorString);
+            Game::errorMsg(initFailure.c_str());
         return;
     }
     m_System = m_Backend->System();
@@ -1150,6 +1149,15 @@ VR::VR(Game* game)
     const uint32_t recommendedRenderHeight = m_RenderHeight;
     m_ReShadeVRCompat =
         ReadEarlyConfigBool("ReShadeVRCompat", m_ReShadeVRCompat);
+    // The ReShade depth bridge binds to ReShade's OpenVR effect runtime; with
+    // OpenXR there is none (ReShade's OpenXR layer is a different runtime), so
+    // the bridge stays off and ReShade keeps its own Generic Depth add-on.
+    if (m_ReShadeVRCompat && m_Backend && m_Backend->Kind() != l4d2vr_backend::RuntimeKind::OpenVR)
+    {
+        Game::logMsg("[VR][ReShadeCompat] ReShadeVRCompat=true ignored: the ReShade VR depth bridge needs OpenVR (legacy builds); this build uses %s",
+            m_Backend->Name());
+        m_ReShadeVRCompat = false;
+    }
     m_EyeRenderTargetMatchProjectionAspect =
         ReadEarlyConfigBool("EyeRenderTargetMatchProjectionAspect", m_EyeRenderTargetMatchProjectionAspect);
     m_FirstPersonBodyEnabled =

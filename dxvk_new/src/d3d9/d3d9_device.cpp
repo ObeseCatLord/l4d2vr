@@ -55,6 +55,10 @@ namespace {
 
 }
 
+// L4D2VR/vr_backend: the D3D9 device on which the OpenXR session may live is
+// being destroyed (VkDevice handle).
+extern "C" void L4D2VR_VrBackendDeviceDestroying(void* vkDevice);
+
 namespace dxvk {
 
     namespace {
@@ -1244,6 +1248,11 @@ namespace dxvk {
         // in DxvkDevice::~DxvkDevice.
         if (this_thread::isInModuleDetachment())
             return;
+
+        // L4D2VR: the OpenXR session lives on this device; end it cleanly
+        // before the device goes (no-op for other runtimes and devices).
+        if (m_dxvkDevice)
+            L4D2VR_VrBackendDeviceDestroying(m_dxvkDevice->handle());
 
         Flush();
         SynchronizeCsThread(DxvkCsThread::SynchronizeAll);

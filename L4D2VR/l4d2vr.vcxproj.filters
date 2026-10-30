@@ -39,6 +39,12 @@
     <ClInclude Include="vr_backend\openxr_frame_ring.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>
+    <ClInclude Include="vr_backend\openxr_runtime_diagnosis.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_backend\openvr_paths.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
     <ClInclude Include="vr_backend\openxr_loader_probe.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>
@@ -925,6 +931,9 @@
     </ClCompile>
     <ClCompile Include="vr_hands\vr_hand_system.cpp">
       <Filter>Source Files\vr_hands</Filter>
+    </ClCompile>
+    <ClCompile Include="vr_backend\vr_backend.cpp">
+      <Filter>Source Files\vr_backend</Filter>
     </ClCompile>
     <ClCompile Include="vr_backend\vr_backend_openxr.cpp">
       <Filter>Source Files\vr_backend</Filter>

@@ -48,6 +48,7 @@ class App:
             "steam_runtime_entrypoint": tk.StringVar(value=monado.get("steam_runtime_entrypoint", "")),
             "status": tk.StringVar(value="Looking for Left 4 Dead 2..."),
             "launch_status": tk.StringVar(value=""),
+            "openxr_status": tk.StringVar(value=""),
         }
         self.pin = tk.BooleanVar(value=self.saved.get("pin_workshop", True))
         self.dry_run = tk.BooleanVar(value=False)
@@ -160,9 +161,14 @@ class App:
         row.grid(row=3, column=0, columnspan=2, sticky="w")
         self._button(row, "Launch in VR", lambda: self.run(self._launch), row=0, column=0)
         self._button(row, "Create desktop shortcut", lambda: self.run(self._shortcut), row=0, column=1)
-        ttk.Label(tab, text="SteamVR: start SteamVR (or let the game start it), then press Launch. "
-                            "Linux needs the launch options from the 'Linux setup' tab.",
+        ttk.Label(tab, text="The mod uses OpenXR. Windows: the active OpenXR runtime must support 32-bit games "
+                            "(SteamVR 2.17 or newer, Virtual Desktop, Meta Quest Link; not Windows Mixed Reality's "
+                            "own runtime). Start it, then press Launch. Linux needs the Proton version and launch "
+                            "options from the 'Linux setup' tab. Without a usable runtime the game starts in desktop "
+                            "mode and vrmod_log.txt says why.",
                   wraplength=660, justify="left").grid(row=4, column=0, columnspan=2, sticky="w", **PAD)
+        ttk.Label(tab, textvariable=self.v["openxr_status"], wraplength=660, justify="left").grid(
+            row=5, column=0, columnspan=2, sticky="w", **PAD)
         return tab
 
     def _linux_tab(self, parent):
@@ -183,8 +189,17 @@ class App:
         ttk.Label(tab, textvariable=self.v["launch_status"], wraplength=660, justify="left").grid(
             row=2, column=0, columnspan=3, sticky="w", **PAD)
 
+        proton = ttk.LabelFrame(tab, text="Proton version (VR needs 32-bit OpenXR: Proton Hotfix or Experimental)")
+        proton.grid(row=3, column=0, columnspan=3, sticky="ew", pady=6)
+        prow = ttk.Frame(proton)
+        prow.grid(row=0, column=0, sticky="w")
+        self._button(prow, "Check", lambda: self.run(self._check_openxr), row=0, column=0)
+        self._button(prow, "Use the right Proton (Steam must be closed)", lambda: self.run(self._apply_proton),
+                     row=0, column=1)
+        self._button(prow, "Undo", lambda: self.run(self._restore_proton), row=0, column=2)
+
         box = ttk.LabelFrame(tab, text="Monado / WiVRn route (advanced)")
-        box.grid(row=3, column=0, columnspan=3, sticky="ew", pady=6)
+        box.grid(row=4, column=0, columnspan=3, sticky="ew", pady=6)
         box.columnconfigure(1, weight=1)
         self._path_row(box, 0, "XRizer runtime folder", self.v["xrizer_dir"])
         self._path_row(box, 1, "OpenXR manifest", self.v["openxr_manifest"], directory=False)
@@ -233,6 +248,8 @@ class App:
                     self.v["status"].set(value)
                 elif kind == "launch_status":
                     self.v["launch_status"].set(value)
+                elif kind == "openxr_status":
+                    self.v["openxr_status"].set(value)
                 elif kind == "set":
                     name, text = value
                     self.v[name].set(text)
@@ -301,6 +318,10 @@ class App:
     # ------------------------------------------------------------------ actions (worker thread)
     def _startup(self, snap):
         self._detect(snap, quiet=True)
+        try:
+            self._check_openxr(snap, quiet=True)
+        except InstallerError:
+            pass
         try:
             info = actions.check_installer_update(self._options(snap), log=lambda _m: None)
             if info.newer:
@@ -440,6 +461,32 @@ class App:
                                                      dry_run=snap["dry_run"], state_dir=user_config_dir())
         self.log(f"Launch options now: {change.after or '(empty)'}")
         self._show_launch_options(snap)
+
+    def _check_openxr(self, snap, quiet=False):
+        game = Path(snap["game_dir"]) if snap["game_dir"] else None
+        lines = actions.openxr_requirement_lines(game)
+        problems = [line for line in lines if " OK" not in line and not line.startswith("OpenXR runtime: /")]
+        self.queue.put(("openxr_status", "\n".join(lines)))
+        if not quiet or problems:
+            for line in lines:
+                self.log(line)
+
+    def _apply_proton(self, snap):
+        if IS_WINDOWS:
+            raise InstallerError("Proton is only used on Linux.")
+        if steam.is_steam_running():
+            raise InstallerError("Steam is running. Exit Steam completely (Steam > Exit), then press this again "
+                                 "- or pick Proton Hotfix in the game's Properties > Compatibility yourself.")
+        game = Path(snap["game_dir"]) if snap["game_dir"] else None
+        actions.apply_proton(game, dry_run=snap["dry_run"], log=self.log)
+        self._check_openxr(snap, quiet=True)
+
+    def _restore_proton(self, snap):
+        if steam.is_steam_running():
+            raise InstallerError("Steam is running. Exit Steam completely, then try again.")
+        game = Path(snap["game_dir"]) if snap["game_dir"] else None
+        actions.restore_proton(game, dry_run=snap["dry_run"], log=self.log)
+        self._check_openxr(snap, quiet=True)
 
     def _monado_config(self, snap, game: Path) -> vrlaunch.MonadoConfig:
         config = vrlaunch.MonadoConfig.from_dict({key: snap[key] for key in (

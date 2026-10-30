@@ -3077,6 +3077,16 @@ public:
 	void UpdateSelfTest(C_BasePlayer* localPlayer);
 	void ApplySelfTestPoses();
 	bool RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
+	void RunSelfTestStepFrame(uint64_t nowMs, C_BasePlayer* localPlayer);
+	// Overlay steps (vr/vr_selftest_overlays.inl): overlays, xrdump=, xraim=,
+	// xrclick=, xrtype=, xrcfgrow=, uicheck=, uiwait=, cfg=, killind=, xrmaxlayers=.
+	bool RunOverlaySelfTestStep(const std::string& step, float t, bool& handled);
+	static bool SelfTestRunsWithoutPlayer(const std::string& step);
+	void SelfTestLogOverlays(const char* label);
+	bool SelfTestCheckUi(const std::string& predicate, char* detail, size_t detailSize);
+	bool m_SelfTestMenuStepsReady = false;      // the script started in the game: overlay steps may run in menus
+	bool m_SelfTestUiMode = false;              // uimode=1: a visible cursor means menu input, as for a player
+	std::vector<std::pair<float, float>> m_SelfTestKeyQueue; // xrtype=: keyboard targets (u, v)
 	void SelfTestReport(const char* name, bool ok, const char* detail);
 	void SelfTestStartPath(const std::vector<l4d2vr_selftest::Key>& position, const std::vector<l4d2vr_selftest::Key>& angles);
 	void SelfTestHoldRight(const l4d2vr_selftest::Vec3& local, const QAngle& angles);

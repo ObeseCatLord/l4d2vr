@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
+#include <map>
 #include <string>
 #include <filesystem>
 #include <system_error>
@@ -735,6 +736,7 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
 #include "vr/vr_sight_alignment.inl"
 #include "vr/vr_melee_motion.inl"
 #include "vr/vr_selftest.inl"
+#include "vr/vr_selftest_overlays.inl"
 #include "vr/vr_item_hand.inl"
 #include "vr/vr_native_wrist_hud.inl"
 #include "vr/vr_viewmodel_config.inl"

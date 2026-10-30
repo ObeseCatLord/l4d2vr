@@ -2122,7 +2122,7 @@ void VR::Update()
     // cursor visible; the self-test drives gameplay input regardless.
     const bool menuInputActive =
         (m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
-        (m_Game->m_VguiSurface->IsCursorVisible() && !(m_SelfTestEnabled && m_SelfTestPoseActive));
+        (m_Game->m_VguiSurface->IsCursorVisible() && !(m_SelfTestEnabled && m_SelfTestPoseActive && !m_SelfTestUiMode));
 
     if (menuInputActive)
     {

@@ -289,6 +289,16 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
     unsigned char lifeState = 1;
     const bool alive = localPlayer && m_FirstPersonControlReady.load(std::memory_order_acquire) &&
         VR_TryReadU8(reinterpret_cast<const unsigned char*>(localPlayer), kLifeStateOffset, lifeState) && lifeState == 0;
+    // Overlay/menu steps (vr_selftest_overlays.inl) also run in the main menu
+    // and during map loads, once the script has started in the game.
+    if (!alive && m_SelfTestMenuStepsReady && m_SelfTestIndex < m_SelfTestSteps.size() &&
+        SelfTestRunsWithoutPlayer(m_SelfTestSteps[m_SelfTestIndex]))
+    {
+        m_SelfTestLastNotAliveMs = nowMs;
+        m_SelfTestPoseActive = false;
+        RunSelfTestStepFrame(nowMs, nullptr);
+        return;
+    }
     if (!alive)
     {
         static uint64_t s_LastControllerDiagMs = 0;
@@ -324,6 +334,14 @@ void VR::UpdateSelfTest(C_BasePlayer* localPlayer)
         Game::logMsg("[VR][SelfTest] local player ready; starting in 3 s");
     }
     if (nowMs - m_SelfTestReadySinceMs < 3000u || m_SelfTestIndex >= m_SelfTestSteps.size())
+        return;
+    RunSelfTestStepFrame(nowMs, localPlayer);
+}
+
+void VR::RunSelfTestStepFrame(uint64_t nowMs, C_BasePlayer* localPlayer)
+{
+    m_SelfTestMenuStepsReady = true;
+    if (m_SelfTestIndex >= m_SelfTestSteps.size())
         return;
     if (!m_SelfTestStepStartMs)
     {
@@ -388,6 +406,14 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     };
     auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
     char detail[192];
+
+    // Overlay, laser, keyboard and menu steps (OpenXR port M4).
+    {
+        bool handled = false;
+        const bool done = RunOverlaySelfTestStep(step, t, handled);
+        if (handled)
+            return done;
+    }
 
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);

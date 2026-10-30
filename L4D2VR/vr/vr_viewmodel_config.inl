@@ -816,13 +816,39 @@ void VR::ParseConfigFile()
     const bool loadedConfig2 = parseConfigPath("VR\\config2.txt");
     if (!loadedConfig && !loadedConfig2)
         return;
+    // Self-test overrides (cfg= step): option names match in any case.
+    for (const auto& o : SelfTestConfigOverrides())
+    {
+        bool found = false;
+        for (auto& kv : userConfig)
+        {
+            if (_stricmp(kv.first.c_str(), o.first.c_str()) == 0)
+            {
+                kv.second = o.second;
+                found = true;
+            }
+        }
+        if (!found)
+            userConfig[o.first] = o.second;
+    }
 
     // С   ߣ   Ĭ  ֵ İ ȫ  ȡ
+    // Self-test overrides arrive lower-cased: then option names match in any case.
+    auto findConfig = [&](const char* k) {
+        auto it = userConfig.find(k);
+        if (it == userConfig.end() && !SelfTestConfigOverrides().empty())
+        {
+            for (auto i2 = userConfig.begin(); i2 != userConfig.end(); ++i2)
+                if (_stricmp(i2->first.c_str(), k) == 0)
+                    return i2;
+        }
+        return it;
+    };
     auto hasConfigKey = [&](const char* k)->bool {
-        return userConfig.find(k) != userConfig.end();
+        return findConfig(k) != userConfig.end();
         };
     auto getBool = [&](const char* k, bool defVal)->bool {
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end()) return defVal;
         std::string v = it->second;
         // תСд
@@ -832,7 +858,7 @@ void VR::ParseConfigFile()
         return defVal;
         };
     auto getFloat = [&](const char* k, float defVal)->float {
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end() || it->second.empty()) return defVal;
         std::string v = it->second;
         std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -842,7 +868,7 @@ void VR::ParseConfigFile()
         catch (...) { return defVal; }
         };
     auto getInt = [&](const char* k, int defVal)->int {
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end() || it->second.empty()) return defVal;
         std::string v = it->second;
         std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -853,7 +879,7 @@ void VR::ParseConfigFile()
         };
     auto getColor = [&](const char* k, int defR, int defG, int defB, int defA)->std::array<int, 4> {
         std::array<int, 4> defaults{ defR, defG, defB, defA };
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end())
             return defaults;
 
@@ -886,7 +912,7 @@ void VR::ParseConfigFile()
         return color;
         };
     auto getVector3 = [&](const char* k, const Vector& defVal)->Vector {
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end())
             return defVal;
 
@@ -918,7 +944,7 @@ void VR::ParseConfigFile()
     auto getFloatList = [&](const char* k, const char* defVal = nullptr) -> std::vector<float>
         {
             std::vector<float> values;
-            const auto it = userConfig.find(k);
+            const auto it = findConfig(k);
             if (it == userConfig.end() && !defVal)
                 return values;
 
@@ -944,7 +970,7 @@ void VR::ParseConfigFile()
         };
 
     auto getString = [&](const char* k, const std::string& defVal)->std::string {
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end())
             return defVal;
 
@@ -956,7 +982,7 @@ void VR::ParseConfigFile()
 
     auto getStringList = [&](const char* k, const char separator = ',')->std::vector<std::string> {
         std::vector<std::string> values;
-        auto it = userConfig.find(k);
+        auto it = findConfig(k);
         if (it == userConfig.end() || it->second.empty())
             return values;
 

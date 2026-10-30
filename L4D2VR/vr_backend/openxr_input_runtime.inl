@@ -29,6 +29,26 @@
 
 namespace xi = l4d2vr_openxr_input;
 
+// The overlay runtime's view of the controllers (OpenXR port M4): the laser
+// pointer runs once per input sync, and the self-test can aim a hand.
+struct XrPointerInputs
+{
+    bool active[2] = { false, false };
+    float trigger[2] = { 0.0f, 0.0f };   // index trigger value 0..1
+    float stickY[2] = { 0.0f, 0.0f };    // hand stick (discrete scroll)
+};
+
+class XrPointerHook
+{
+public:
+    virtual ~XrPointerHook() = default;
+    // Ray-casts the overlays and queues mouse events; engaged[h] = this hand's
+    // trigger belongs to an overlay (kept from the game, as SteamVR does).
+    virtual void PointerStep(XrTime now, const XrPointerInputs& in, bool engaged[2]) = 0;
+    // Self-test aim override: the point a hand's tip ray must point at.
+    virtual bool AimTarget(int hand, l4d2vr_overlay_pointer::Vec3& target) = 0;
+};
+
 class XrInputRuntime final : public IVrInput
 {
 public:
@@ -148,6 +168,7 @@ public:
     }
 
     void NotifyProfileChanged() { m_ProfileDirty.store(true, std::memory_order_release); }
+    void SetPointerHook(XrPointerHook* hook) { m_PointerHook = hook; }
 
     // ---- Devices ----------------------------------------------------------------
     static int HandOfDevice(vr::TrackedDeviceIndex_t index)
@@ -234,6 +255,27 @@ public:
                 std::lock_guard<std::mutex> lock(m_TipMutex);
                 m_Tip[hand] = xrm::ToMatrix(tip);
                 m_TipValid[hand] = true;
+            }
+        }
+        // Self-test: turn the controller about its tip so the laser points at a target.
+        l4d2vr_overlay_pointer::Vec3 aimTarget;
+        if (m_PointerHook && out.bPoseIsValid && m_PointerHook->AimTarget(hand, aimTarget))
+        {
+            vr::HmdMatrix34_t tip{};
+            if (TipLocal(hand, tip))
+            {
+                l4d2vr_overlay_pointer::Mat34 rawM, tipM;
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        rawM.m[r][c] = out.mDeviceToAbsoluteTracking.m[r][c];
+                        tipM.m[r][c] = tip.m[r][c];
+                    }
+                const l4d2vr_overlay_pointer::Mat34 aimed = l4d2vr_openxr_overlay::AimPoseAt(rawM, tipM, aimTarget);
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 4; ++c)
+                        out.mDeviceToAbsoluteTracking.m[r][c] = aimed.m[r][c];
+                out.vAngularVelocity = {};
             }
         }
         if (!m_LoggedPose[hand].exchange(true))
@@ -677,6 +719,21 @@ private:
         return XR_SUCCEEDED(r) ? static_cast<uint32_t>(kept.size()) : 0;
     }
 
+    // Whether the action is bound to this hand's index trigger (the laser's click).
+    static bool TriggerBound(const xi::Profile* p, xi::Action action, int hand)
+    {
+        if (!p)
+            return false;
+        for (const xi::Binding& b : p->bindings)
+        {
+            if (b.action != action || static_cast<int>(b.hand) != hand || !b.input)
+                continue;
+            if (std::strncmp(b.input, "/input/trigger", 14) == 0 || (p->triggerCurl && std::strcmp(b.input, p->triggerCurl) == 0))
+                return true;
+        }
+        return false;
+    }
+
     xi::GripInRaw GripOffset(int hand) const
     {
         // Fake profiles only change bindings; poses keep the runtime's profile.
@@ -946,6 +1003,27 @@ private:
         for (int h = 0; h < 2; ++h)
             m_Internal[h] = internal[h];
 
+        // Overlay laser (M4): the trigger of a hand pointing at an interactive
+        // overlay clicks the overlay and is kept from the game's actions.
+        bool engaged[2] = { false, false };
+        if (m_PointerHook && synced)
+        {
+            XrPointerInputs pi;
+            for (int h = 0; h < 2; ++h)
+            {
+                pi.active[h] = Connected(h);
+                pi.trigger[h] = internal[h].curlActive ? internal[h].curlTrigger : 0.0f;
+                pi.stickY[h] = internal[h].stickActive ? internal[h].stick.y : 0.0f;
+            }
+            m_PointerHook->PointerStep(now, pi, engaged);
+            for (int h = 0; h < 2; ++h)
+                if (engaged[h] != m_PointerEngaged[h])
+                {
+                    m_PointerEngaged[h] = engaged[h];
+                    Log("%s trigger %s the overlay laser", h == 0 ? "left" : "right", engaged[h] ? "taken by" : "released from");
+                }
+        }
+
         for (size_t i = 0; i < xi::kActionCount; ++i)
         {
             if (m_Actions[i] == XR_NULL_HANDLE)
@@ -956,8 +1034,10 @@ private:
             for (int h = 0; h < 2; ++h)
             {
                 HandState& s = c.hand[h];
-                const RawState& in = raw[i][h];
                 const xi::Profile* p = EffectiveProfile(h);
+                RawState in = raw[i][h];
+                if (engaged[h] && !vector && TriggerBound(p, action, h))
+                    in.x = 0.0f;
                 s.prevX = s.x;
                 s.prevY = s.y;
                 const bool wasDown = s.down;
@@ -1073,6 +1153,9 @@ private:
     xi::FakeInput m_Fake;
     std::atomic<bool> m_FakeEnabled{ false };
     std::atomic<int> m_FakeProfileIndex{ -1 };
+
+    XrPointerHook* m_PointerHook = nullptr;
+    bool m_PointerEngaged[2] = { false, false };
 
     std::mutex m_TipMutex;
     vr::HmdMatrix34_t m_Tip[2]{};

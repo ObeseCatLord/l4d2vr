@@ -252,6 +252,8 @@ namespace l4d2vr_openxr_input
         const char* mainAxisTouch = nullptr;  // touch gate for the dpad (sub_mode touch); nullptr = none
         const char* triggerCurl = nullptr;    // index finger curl source
         const char* squeezeCurl = nullptr;    // middle/ring/pinky curl source
+        const char* squeezeForceCurl = nullptr;   // Index: grip force closes the hand the rest of the way
+        const char* indexProximityCurl = nullptr; // Quest Pro / Quest 3: index finger near the trigger (0..1)
         std::vector<std::string> thumbTouch[2];  // thumb-down sources per hand
         GripInRaw grip[2][2];             // [RuntimeFamily][Hand]
         const char* gripNote = "";        // where the offset comes from
@@ -377,6 +379,7 @@ namespace l4d2vr_openxr_input
                 p.renderModel[1] = "{indexcontroller}valve_controller_knu_1_0_right";
                 p.mainAxis = "/input/thumbstick"; p.mainAxisTouch = "/input/thumbstick/touch";
                 p.triggerCurl = "/input/trigger/value"; p.squeezeCurl = "/input/squeeze/value";
+                p.squeezeForceCurl = "/input/squeeze/force";
                 p.thumbTouch[0] = p.thumbTouch[1] = { "/input/thumbstick/touch", "/input/a/touch", "/input/b/touch", "/input/trackpad/touch" };
                 // SteamVR: handgrip of valve_controller_knu_1_0_{left,right}.json.
                 p.grip[0][0] = Grip(-0.003851f, 0.003715f, 0.075948f, 15.392f, -2.071f, 0.303f, EulerOrder::XYZ);
@@ -437,6 +440,7 @@ namespace l4d2vr_openxr_input
                 p.extension = "XR_FB_touch_controller_pro";
                 p.renderModel[0] = "oculus_quest_pro_controller_left"; p.renderModel[1] = "oculus_quest_pro_controller_right";
                 p.gripNote = "SteamVR openxr_grip (oculus_quest_pro_controller)";
+                p.indexProximityCurl = "/input/trigger/curl_fb";
                 Both(p.legal, { "/input/thumbrest/force", "/input/stylus_fb/force", "/input/trigger/curl_fb",
                     "/input/trigger/slide_fb", "/input/trigger/proximity_fb", "/input/thumb_fb/proximity_fb",
                     "/output/haptic_trigger_fb", "/output/haptic_thumb_fb" });
@@ -450,6 +454,7 @@ namespace l4d2vr_openxr_input
                 p.extension = "XR_META_touch_controller_plus";
                 p.renderModel[0] = "oculus_quest_plus_controller_left"; p.renderModel[1] = "oculus_quest_plus_controller_right";
                 p.gripNote = "SteamVR openxr_grip (oculus_quest_plus_controller)";
+                p.indexProximityCurl = "/input/trigger/curl_meta";
                 Both(p.legal, { "/input/thumb_meta/proximity_meta", "/input/trigger/proximity_meta",
                     "/input/trigger/curl_meta", "/input/trigger/slide_meta", "/input/trigger/force" });
                 out.push_back(p);

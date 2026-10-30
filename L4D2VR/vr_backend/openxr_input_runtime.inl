@@ -23,8 +23,9 @@
 //   * Controller poses: the grip pose converted to the OpenVR raw pose with the
 //     profile's measured offset (openxr_input_profiles.h); the aim pose is the
 //     controller tip (SteamVR builds its OpenXR aim pose from that component).
-//   * Skeletal: summary curls from trigger/squeeze/thumb inputs; bone data is
-//     not available until M5 (XR_EXT_hand_tracking retarget).
+//   * Skeletal (M5): the OpenVR 31-bone hand skeleton, summary curls and
+//     tracking level from openxr_hand_runtime.inl (XR_EXT_hand_tracking joints
+//     when the runtime tracks them, else curls from the controller's sensors).
 //   * Fake action source (tests): replaces the per-hand action states.
 
 namespace xi = l4d2vr_openxr_input;
@@ -63,7 +64,7 @@ public:
     static constexpr vr::TrackedDeviceIndex_t kDeviceLeft = 1;
     static constexpr vr::TrackedDeviceIndex_t kDeviceRight = 2;
 
-    explicit XrInputRuntime(const XrApi& xr) : m_Xr(xr) {}
+    explicit XrInputRuntime(const XrApi& xr) : m_Xr(xr), m_Hands(xr) {}
 
     // ---- Setup ------------------------------------------------------------------
     // Instance extensions this class wants enabled when the runtime offers them.
@@ -73,6 +74,8 @@ public:
         for (const xi::Profile& p : xi::Profiles())
             if (p.extension && std::find_if(out.begin(), out.end(), [&](const char* e) { return std::strcmp(e, p.extension) == 0; }) == out.end())
                 out.push_back(p.extension);
+        for (const char* e : XrHandRuntime::WantedExtensions())
+            out.push_back(e);
         return out;
     }
 
@@ -121,6 +124,8 @@ public:
         m_CurlTriggerTouch = MakeAction(m_ControllerSet, "curl_trigger_touch", "Index Finger Touch", XR_ACTION_TYPE_FLOAT_INPUT);
         m_CurlSqueeze = MakeAction(m_ControllerSet, "curl_squeeze", "Grip Fingers", XR_ACTION_TYPE_FLOAT_INPUT);
         m_CurlThumb = MakeAction(m_ControllerSet, "curl_thumb", "Thumb Touch", XR_ACTION_TYPE_FLOAT_INPUT);
+        m_CurlSqueezeForce = MakeAction(m_ControllerSet, "curl_squeeze_force", "Grip Force", XR_ACTION_TYPE_FLOAT_INPUT);
+        m_CurlIndexNear = MakeAction(m_ControllerSet, "curl_index_near", "Index Finger Near Trigger", XR_ACTION_TYPE_FLOAT_INPUT);
 
         std::string summary;
         for (const xi::Profile& p : xi::Profiles())
@@ -133,9 +138,15 @@ public:
             const uint32_t accepted = SuggestProfile(p);
             summary += std::string(p.key) + ":" + std::to_string(accepted) + " ";
         }
-        Log("actions created: %u gameplay + 9 controller; runtime family %s; suggested bindings %s",
+        Log("actions created: %u gameplay + 11 controller; runtime family %s; suggested bindings %s",
             created, m_Family == xi::RuntimeFamily::SteamVR ? "SteamVR" : "other", summary.c_str());
         m_Ready = true;
+    }
+
+    // After xrGetSystem: hand tracking (extension functions, system support).
+    void ConfigureHands(XrInstance instance, XrSystemId system, const std::set<std::string>& enabledExtensions)
+    {
+        m_Hands.Configure(instance, system, enabledExtensions);
     }
 
     // After xrCreateSession: action spaces and attach (once per session).
@@ -144,6 +155,7 @@ public:
         if (!m_Ready || session == XR_NULL_HANDLE)
             return;
         m_Session = session;
+        m_Hands.SessionCreated(session);
         for (int h = 0; h < 2; ++h)
         {
             XrActionSpaceCreateInfo ci{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
@@ -220,6 +232,7 @@ public:
         out.eTrackingResult = vr::TrackingResult_Uninitialized;
         if (hand < 0 || hand > 1 || base == XR_NULL_HANDLE || m_GripSpace[hand] == XR_NULL_HANDLE || time <= 0)
             return false;
+        m_LastLocateTime.store(time, std::memory_order_relaxed);
         XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
         XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION };
         location.next = &velocity;
@@ -321,6 +334,9 @@ public:
     // ---- Fake action source -----------------------------------------------------
     bool SetFake(const char* spec, std::string& error)
     {
+        // "hand=...": a synthetic tracked hand (openxr_hand_runtime.inl SetFake).
+        if (spec && std::strncmp(spec, "hand=", 5) == 0)
+            return m_Hands.SetFake(spec + 5, error);
         std::lock_guard<std::mutex> lock(m_Mutex);
         if (!spec || !m_Fake.Apply(spec, error))
         {
@@ -464,28 +480,95 @@ public:
         const int hand = SkeletonHand(action);
         if (hand < 0)
             return vr::VRInputError_WrongType;
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        data->bActive = m_Internal[hand].curlActive;
+        data->bActive = m_Hands.Active(hand);
         data->activeOrigin = data->bActive ? Origin(hand) : vr::k_ulInvalidInputValueHandle;
         return vr::VRInputError_None;
     }
 
-    // Bones need XR_EXT_hand_tracking (M5); the capability is reported off.
-    vr::EVRInputError GetBoneCount(vr::VRActionHandle_t, uint32_t* count) override
+    // The OpenVR hand skeleton (openxr_hand_logic.h): SteamVR's 31 bones,
+    // names, hierarchy and reference poses; bone data from tracked joints or
+    // the controller fallback.
+    vr::EVRInputError GetBoneCount(vr::VRActionHandle_t action, uint32_t* count) override
     {
-        if (count) *count = 0;
-        return vr::VRInputError_NoData;
+        if (!count) return vr::VRInputError_InvalidParam;
+        *count = 0;
+        if (SkeletonHand(action) < 0)
+            return vr::VRInputError_WrongType;
+        *count = static_cast<uint32_t>(xh::kBoneCount);
+        return vr::VRInputError_None;
     }
-    vr::EVRInputError GetBoneHierarchy(vr::VRActionHandle_t, vr::BoneIndex_t*, uint32_t) override { return vr::VRInputError_NoData; }
-    vr::EVRInputError GetBoneName(vr::VRActionHandle_t, vr::BoneIndex_t, char* name, uint32_t size) override
+    vr::EVRInputError GetBoneHierarchy(vr::VRActionHandle_t action, vr::BoneIndex_t* parents, uint32_t count) override
+    {
+        if (SkeletonHand(action) < 0)
+            return vr::VRInputError_WrongType;
+        if (!parents) return vr::VRInputError_InvalidParam;
+        if (count < static_cast<uint32_t>(xh::kBoneCount))
+            return vr::VRInputError_InvalidBoneCount;
+        for (int b = 0; b < xh::kBoneCount; ++b)
+            parents[b] = static_cast<vr::BoneIndex_t>(xh::Parent(b));
+        return vr::VRInputError_None;
+    }
+    vr::EVRInputError GetBoneName(vr::VRActionHandle_t action, vr::BoneIndex_t bone, char* name, uint32_t size) override
     {
         if (name && size) name[0] = '\0';
-        return vr::VRInputError_NoData;
+        const int hand = SkeletonHand(action);
+        if (hand < 0)
+            return vr::VRInputError_WrongType;
+        if (bone < 0 || bone >= xh::kBoneCount)
+            return vr::VRInputError_InvalidBoneIndex;
+        if (!name || !size) return vr::VRInputError_InvalidParam;
+        const std::string text = xh::BoneName(hand, bone);
+        if (text.size() + 1 > size)
+            return vr::VRInputError_BufferTooSmall;
+        std::memcpy(name, text.c_str(), text.size() + 1);
+        return vr::VRInputError_None;
     }
-    vr::EVRInputError GetSkeletalReferenceTransforms(vr::VRActionHandle_t, vr::EVRSkeletalTransformSpace, vr::EVRSkeletalReferencePose,
-        vr::VRBoneTransform_t*, uint32_t) override { return vr::VRInputError_NoData; }
-    vr::EVRInputError GetSkeletalBoneData(vr::VRActionHandle_t, vr::EVRSkeletalTransformSpace, vr::EVRSkeletalMotionRange,
-        vr::VRBoneTransform_t*, uint32_t) override { return vr::VRInputError_NoData; }
+    vr::EVRInputError GetSkeletalReferenceTransforms(vr::VRActionHandle_t action, vr::EVRSkeletalTransformSpace space,
+        vr::EVRSkeletalReferencePose pose, vr::VRBoneTransform_t* out, uint32_t count) override
+    {
+        const int hand = SkeletonHand(action);
+        if (hand < 0)
+            return vr::VRInputError_WrongType;
+        if (!out) return vr::VRInputError_InvalidParam;
+        if (count < static_cast<uint32_t>(xh::kBoneCount))
+            return vr::VRInputError_InvalidBoneCount;
+        xh::Reference which = xh::Reference::Bind;
+        switch (pose)
+        {
+        case vr::VRSkeletalReferencePose_BindPose: which = xh::Reference::Bind; break;
+        case vr::VRSkeletalReferencePose_OpenHand: which = xh::Reference::Open; break;
+        case vr::VRSkeletalReferencePose_Fist: which = xh::Reference::Fist; break;
+        case vr::VRSkeletalReferencePose_GripLimit: which = xh::Reference::GripLimit; break;
+        default: return vr::VRInputError_InvalidParam;
+        }
+        const xh::Bones& parent = xh::ReferencePose(hand, which);
+        xh::CopyBones(space == vr::VRSkeletalTransformSpace_Model ? xh::ToModel(parent) : parent, out, count);
+        return vr::VRInputError_None;
+    }
+    vr::EVRInputError GetSkeletalBoneData(vr::VRActionHandle_t action, vr::EVRSkeletalTransformSpace space,
+        vr::EVRSkeletalMotionRange range, vr::VRBoneTransform_t* out, uint32_t count) override
+    {
+        const int hand = SkeletonHand(action);
+        if (hand < 0)
+            return vr::VRInputError_WrongType;
+        if (!out) return vr::VRInputError_InvalidParam;
+        if (count < static_cast<uint32_t>(xh::kBoneCount))
+            return vr::VRInputError_InvalidBoneCount;
+        xh::Bones bones;
+        if (!m_Hands.Bones(hand, space == vr::VRSkeletalTransformSpace_Model, range != vr::VRSkeletalMotionRange_WithoutController, bones))
+            return vr::VRInputError_NoData;
+        xh::CopyBones(bones, out, count);
+        return vr::VRInputError_None;
+    }
+    vr::EVRInputError GetSkeletalTrackingLevel(vr::VRActionHandle_t action, vr::EVRSkeletalTrackingLevel* level) override
+    {
+        if (!level) return vr::VRInputError_InvalidParam;
+        const int hand = SkeletonHand(action);
+        if (hand < 0)
+            return vr::VRInputError_WrongType;
+        *level = m_Hands.Level(hand);
+        return vr::VRInputError_None;
+    }
 
     vr::EVRInputError GetSkeletalSummaryData(vr::VRActionHandle_t action, vr::EVRSummaryType, vr::VRSkeletalSummaryData_t* summary) override
     {
@@ -494,21 +577,13 @@ public:
         const int hand = SkeletonHand(action);
         if (hand < 0)
             return vr::VRInputError_WrongType;
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        const InternalState& s = m_Internal[hand];
-        if (!s.curlActive)
+        xh::Summary s;
+        if (!m_Hands.Summary(hand, s))
             return vr::VRInputError_NoData;
-        xi::CurlInputs in;
-        in.trigger = s.curlTrigger;
-        in.triggerTouched = s.curlTriggerTouch > 0.5f;
-        in.squeeze = s.curlSqueeze;
-        in.thumbTouched = s.curlThumb > 0.5f;
-        float curls[5];
-        xi::CurlsFromInputs(in, curls);
-        for (int f = 0; f < 5; ++f)
-            summary->flFingerCurl[f] = curls[f];
-        for (int f = 0; f < 4; ++f)
-            summary->flFingerSplay[f] = 0.2f;
+        for (int f = 0; f < xh::kFingerCount; ++f)
+            summary->flFingerCurl[f] = s.curl[f];
+        for (int f = 0; f < xh::kFingerCount - 1; ++f)
+            summary->flFingerSplay[f] = s.splay[f];
         return vr::VRInputError_None;
     }
 
@@ -574,7 +649,7 @@ public:
         snprintf(buffer, sizeof(buffer), "input %s syncs=%llu syncErrors=%llu lastSync=%d down=%u haptics=%llu",
             Describe().c_str(), static_cast<unsigned long long>(m_Syncs), static_cast<unsigned long long>(m_SyncErrors),
             static_cast<int>(m_LastSync), CountDown(), static_cast<unsigned long long>(m_HapticCalls));
-        return buffer;
+        return std::string(buffer) + " " + m_Hands.StatsLine();
     }
 
 private:
@@ -604,6 +679,7 @@ private:
         float stickTouch = 0.0f;
         bool curlActive = false;
         float curlTrigger = 0.0f, curlTriggerTouch = 0.0f, curlSqueeze = 0.0f, curlThumb = 0.0f;
+        float curlSqueezeForce = -1.0f, curlIndexNear = -1.0f;  // < 0 = the controller has no such sensor
     };
     struct RawState { bool active = false; float x = 0.0f, y = 0.0f; XrTime changed = 0; };
 
@@ -679,6 +755,8 @@ private:
             add(m_HandStickTouch, h, p.mainAxisTouch);
             add(m_CurlTrigger, h, p.triggerCurl);
             add(m_CurlSqueeze, h, p.squeezeCurl);
+            add(m_CurlSqueezeForce, h, p.squeezeForceCurl);
+            add(m_CurlIndexNear, h, p.indexProximityCurl);
             for (const std::string& t : p.thumbTouch[h])
                 add(m_CurlThumb, h, t.c_str());
             const std::string triggerTouch = "/input/trigger/touch";
@@ -967,162 +1045,196 @@ private:
                 internal[h].curlSqueeze = squeeze.x;
                 internal[h].curlTriggerTouch = ReadFloat(m_CurlTriggerTouch, h).x;
                 internal[h].curlThumb = ReadFloat(m_CurlThumb, h).x;
+                const RawState force = ReadFloat(m_CurlSqueezeForce, h);
+                internal[h].curlSqueezeForce = force.active ? force.x : -1.0f;
+                const RawState proximity = ReadFloat(m_CurlIndexNear, h);
+                internal[h].curlIndexNear = proximity.active ? proximity.x : -1.0f;
             }
         }
 
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        m_LastSyncTime = now;
-        if (fake && synced)
         {
-            for (int h = 0; h < 2; ++h)
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_LastSyncTime = now;
+            if (fake && synced)
             {
-                const xi::Profile* p = EffectiveProfile(h);
-                if (!p)
-                    continue;
-                for (size_t i = 0; i < xi::kActionCount; ++i)
-                    if (m_Actions[i] != XR_NULL_HANDLE)
-                        raw[i][h] = FakeAction(p, static_cast<xi::Action>(i), h);
-                const std::string prefix = xi::HandPath(static_cast<xi::Hand>(h));
-                if (p->mainAxis)
+                for (int h = 0; h < 2; ++h)
                 {
-                    const xi::Stick2 s = m_Fake.Get(prefix + p->mainAxis);
-                    internal[h].stickActive = true;
-                    internal[h].stick = s;
-                    // A stick moved in a test counts as touched unless the test sets the touch.
-                    const bool touchSet = p->mainAxisTouch && m_Fake.values.count(prefix + p->mainAxisTouch);
-                    internal[h].stickTouch = touchSet ? m_Fake.Get(prefix + p->mainAxisTouch).x
-                        : ((s.x != 0.0f || s.y != 0.0f) ? 1.0f : 0.0f);
-                }
-                internal[h].curlActive = true;
-                internal[h].curlTrigger = p->triggerCurl ? m_Fake.Get(prefix + p->triggerCurl).x : 0.0f;
-                internal[h].curlSqueeze = p->squeezeCurl ? m_Fake.Get(prefix + p->squeezeCurl).x : 0.0f;
-                internal[h].curlTriggerTouch = m_Fake.Get(prefix + "/input/trigger/touch").x;
-                internal[h].curlThumb = FakeMax(h, p->thumbTouch[h]);
-            }
-        }
-        for (int h = 0; h < 2; ++h)
-            m_Internal[h] = internal[h];
-
-        // Overlay laser (M4): the trigger of a hand pointing at an interactive
-        // overlay clicks the overlay and is kept from the game's actions.
-        bool engaged[2] = { false, false };
-        if (m_PointerHook && synced)
-        {
-            XrPointerInputs pi;
-            for (int h = 0; h < 2; ++h)
-            {
-                pi.active[h] = Connected(h);
-                pi.trigger[h] = internal[h].curlActive ? internal[h].curlTrigger : 0.0f;
-                pi.stickY[h] = internal[h].stickActive ? internal[h].stick.y : 0.0f;
-            }
-            m_PointerHook->PointerStep(now, pi, engaged);
-            for (int h = 0; h < 2; ++h)
-                if (engaged[h] != m_PointerEngaged[h])
-                {
-                    m_PointerEngaged[h] = engaged[h];
-                    Log("%s trigger %s the overlay laser", h == 0 ? "left" : "right", engaged[h] ? "taken by" : "released from");
-                }
-        }
-
-        for (size_t i = 0; i < xi::kActionCount; ++i)
-        {
-            if (m_Actions[i] == XR_NULL_HANDLE)
-                continue;
-            const xi::Action action = static_cast<xi::Action>(i);
-            const bool vector = xi::Actions()[i].kind == xi::Kind::Vector2;
-            ActionCache& c = m_Cache[i];
-            for (int h = 0; h < 2; ++h)
-            {
-                HandState& s = c.hand[h];
-                const xi::Profile* p = EffectiveProfile(h);
-                RawState in = raw[i][h];
-                if (engaged[h] && !vector && TriggerBound(p, action, h))
-                    in.x = 0.0f;
-                s.prevX = s.x;
-                s.prevY = s.y;
-                const bool wasDown = s.down;
-                if (vector)
-                {
-                    s.active = in.active;
-                    xi::Stick2 stick{ in.x, in.y };
-                    // A trackpad used as a stick (Vive wand) only steers while touched.
-                    if (p && p->mainAxis && p->mainAxisTouch && std::strcmp(p->mainAxis, "/input/trackpad") == 0 &&
-                        internal[h].stickActive && internal[h].stickTouch < 0.5f)
-                        stick = {};
-                    const xi::Stick2 dz = xi::RadialDeadzone(stick, xi::kStickDeadzone);
-                    s.x = in.active ? dz.x : 0.0f;
-                    s.y = in.active ? dz.y : 0.0f;
-                    s.changed = (s.x != s.prevX || s.y != s.prevY);
-                    if (s.changed)
-                        s.lastChange = in.changed > 0 ? in.changed : now;
-                    continue;
-                }
-                // Button: the binding's threshold for this hand, and the menu
-                // dpad derived from the hand's stick.
-                float press = xi::kValueClickPress, release = xi::kValueClickRelease;
-                const xi::Binding* dpad = nullptr;
-                bool haveButton = false;
-                if (p)
-                {
-                    for (const xi::Binding& b : p->bindings)
+                    const xi::Profile* p = EffectiveProfile(h);
+                    if (!p)
+                        continue;
+                    for (size_t i = 0; i < xi::kActionCount; ++i)
+                        if (m_Actions[i] != XR_NULL_HANDLE)
+                            raw[i][h] = FakeAction(p, static_cast<xi::Action>(i), h);
+                    const std::string prefix = xi::HandPath(static_cast<xi::Hand>(h));
+                    if (p->mainAxis)
                     {
-                        if (b.action != action || static_cast<int>(b.hand) != h)
-                            continue;
-                        if (b.mode == xi::Mode::Dpad)
-                            dpad = &b;
-                        else if (!haveButton)
+                        const xi::Stick2 s = m_Fake.Get(prefix + p->mainAxis);
+                        internal[h].stickActive = true;
+                        internal[h].stick = s;
+                        // A stick moved in a test counts as touched unless the test sets the touch.
+                        const bool touchSet = p->mainAxisTouch && m_Fake.values.count(prefix + p->mainAxisTouch);
+                        internal[h].stickTouch = touchSet ? m_Fake.Get(prefix + p->mainAxisTouch).x
+                            : ((s.x != 0.0f || s.y != 0.0f) ? 1.0f : 0.0f);
+                    }
+                    internal[h].curlActive = true;
+                    internal[h].curlTrigger = p->triggerCurl ? m_Fake.Get(prefix + p->triggerCurl).x : 0.0f;
+                    internal[h].curlSqueeze = p->squeezeCurl ? m_Fake.Get(prefix + p->squeezeCurl).x : 0.0f;
+                    internal[h].curlTriggerTouch = m_Fake.Get(prefix + "/input/trigger/touch").x;
+                    internal[h].curlThumb = FakeMax(h, p->thumbTouch[h]);
+                    internal[h].curlSqueezeForce = p->squeezeForceCurl ? m_Fake.Get(prefix + p->squeezeForceCurl).x : -1.0f;
+                    internal[h].curlIndexNear = p->indexProximityCurl ? m_Fake.Get(prefix + p->indexProximityCurl).x : -1.0f;
+                }
+            }
+            for (int h = 0; h < 2; ++h)
+                m_Internal[h] = internal[h];
+
+            // Overlay laser (M4): the trigger of a hand pointing at an interactive
+            // overlay clicks the overlay and is kept from the game's actions.
+            bool engaged[2] = { false, false };
+            if (m_PointerHook && synced)
+            {
+                XrPointerInputs pi;
+                for (int h = 0; h < 2; ++h)
+                {
+                    pi.active[h] = Connected(h);
+                    pi.trigger[h] = internal[h].curlActive ? internal[h].curlTrigger : 0.0f;
+                    pi.stickY[h] = internal[h].stickActive ? internal[h].stick.y : 0.0f;
+                }
+                m_PointerHook->PointerStep(now, pi, engaged);
+                for (int h = 0; h < 2; ++h)
+                    if (engaged[h] != m_PointerEngaged[h])
+                    {
+                        m_PointerEngaged[h] = engaged[h];
+                        Log("%s trigger %s the overlay laser", h == 0 ? "left" : "right", engaged[h] ? "taken by" : "released from");
+                    }
+            }
+
+            for (size_t i = 0; i < xi::kActionCount; ++i)
+            {
+                if (m_Actions[i] == XR_NULL_HANDLE)
+                    continue;
+                const xi::Action action = static_cast<xi::Action>(i);
+                const bool vector = xi::Actions()[i].kind == xi::Kind::Vector2;
+                ActionCache& c = m_Cache[i];
+                for (int h = 0; h < 2; ++h)
+                {
+                    HandState& s = c.hand[h];
+                    const xi::Profile* p = EffectiveProfile(h);
+                    RawState in = raw[i][h];
+                    if (engaged[h] && !vector && TriggerBound(p, action, h))
+                        in.x = 0.0f;
+                    s.prevX = s.x;
+                    s.prevY = s.y;
+                    const bool wasDown = s.down;
+                    if (vector)
+                    {
+                        s.active = in.active;
+                        xi::Stick2 stick{ in.x, in.y };
+                        // A trackpad used as a stick (Vive wand) only steers while touched.
+                        if (p && p->mainAxis && p->mainAxisTouch && std::strcmp(p->mainAxis, "/input/trackpad") == 0 &&
+                            internal[h].stickActive && internal[h].stickTouch < 0.5f)
+                            stick = {};
+                        const xi::Stick2 dz = xi::RadialDeadzone(stick, xi::kStickDeadzone);
+                        s.x = in.active ? dz.x : 0.0f;
+                        s.y = in.active ? dz.y : 0.0f;
+                        s.changed = (s.x != s.prevX || s.y != s.prevY);
+                        if (s.changed)
+                            s.lastChange = in.changed > 0 ? in.changed : now;
+                        continue;
+                    }
+                    // Button: the binding's threshold for this hand, and the menu
+                    // dpad derived from the hand's stick.
+                    float press = xi::kValueClickPress, release = xi::kValueClickRelease;
+                    const xi::Binding* dpad = nullptr;
+                    bool haveButton = false;
+                    if (p)
+                    {
+                        for (const xi::Binding& b : p->bindings)
                         {
-                            xi::Thresholds(b, press, release);
-                            haveButton = true;
+                            if (b.action != action || static_cast<int>(b.hand) != h)
+                                continue;
+                            if (b.mode == xi::Mode::Dpad)
+                                dpad = &b;
+                            else if (!haveButton)
+                            {
+                                xi::Thresholds(b, press, release);
+                                haveButton = true;
+                            }
                         }
                     }
+                    const bool buttonDown = in.active && xi::NextClick(s.buttonDown, in.x, press, release);
+                    bool dpadDown = false;
+                    if (dpad && internal[h].stickActive)
+                    {
+                        const bool touched = p->mainAxisTouch ? internal[h].stickTouch > 0.5f : true;
+                        dpadDown = xi::NextDpad(s.dpadDown, dpad->dir, internal[h].stick, touched);
+                    }
+                    s.active = in.active || (dpad && internal[h].stickActive);
+                    s.value = in.x;
+                    s.x = in.x;
+                    s.y = 0.0f;
+                    s.buttonDown = buttonDown;
+                    s.dpadDown = dpadDown;
+                    s.down = s.active && (buttonDown || dpadDown);
+                    s.changed = s.down != wasDown;
+                    if (s.changed)
+                        s.lastChange = now;
                 }
-                const bool buttonDown = in.active && xi::NextClick(s.buttonDown, in.x, press, release);
-                bool dpadDown = false;
-                if (dpad && internal[h].stickActive)
+                if (vector)
+                    continue;
+                const bool wasAgg = c.aggDown;
+                c.aggDown = c.hand[0].down || c.hand[1].down;
+                c.aggChanged = c.aggDown != wasAgg;
+                // Origin: the pressed hand (the latest press), else an active hand.
+                int origin = -1;
+                if (c.hand[0].down && c.hand[1].down)
+                    origin = c.hand[1].lastChange >= c.hand[0].lastChange ? 1 : 0;
+                else if (c.hand[0].down || c.hand[1].down)
+                    origin = c.hand[1].down ? 1 : 0;
+                else if (c.hand[0].active || c.hand[1].active)
+                    origin = c.hand[1].active ? 1 : 0;
+                c.originHand = origin;
+                for (int h = 0; h < 2; ++h)
                 {
-                    const bool touched = p->mainAxisTouch ? internal[h].stickTouch > 0.5f : true;
-                    dpadDown = xi::NextDpad(s.dpadDown, dpad->dir, internal[h].stick, touched);
-                }
-                s.active = in.active || (dpad && internal[h].stickActive);
-                s.value = in.x;
-                s.x = in.x;
-                s.y = 0.0f;
-                s.buttonDown = buttonDown;
-                s.dpadDown = dpadDown;
-                s.down = s.active && (buttonDown || dpadDown);
-                s.changed = s.down != wasDown;
-                if (s.changed)
-                    s.lastChange = now;
-            }
-            if (vector)
-                continue;
-            const bool wasAgg = c.aggDown;
-            c.aggDown = c.hand[0].down || c.hand[1].down;
-            c.aggChanged = c.aggDown != wasAgg;
-            // Origin: the pressed hand (the latest press), else an active hand.
-            int origin = -1;
-            if (c.hand[0].down && c.hand[1].down)
-                origin = c.hand[1].lastChange >= c.hand[0].lastChange ? 1 : 0;
-            else if (c.hand[0].down || c.hand[1].down)
-                origin = c.hand[1].down ? 1 : 0;
-            else if (c.hand[0].active || c.hand[1].active)
-                origin = c.hand[1].active ? 1 : 0;
-            c.originHand = origin;
-            for (int h = 0; h < 2; ++h)
-            {
-                if (c.hand[h].changed && m_LoggedChanges < 600)
-                {
-                    ++m_LoggedChanges;
-                    Log("%s %s %s (value %.2f%s)", xi::Actions()[i].xrName, h == 0 ? "left" : "right", c.hand[h].down ? "down" : "up",
-                        c.hand[h].value, c.hand[h].dpadDown ? ", dpad" : "");
+                    if (c.hand[h].changed && m_LoggedChanges < 600)
+                    {
+                        ++m_LoggedChanges;
+                        Log("%s %s %s (value %.2f%s)", xi::Actions()[i].xrName, h == 0 ? "left" : "right", c.hand[h].down ? "down" : "up",
+                            c.hand[h].value, c.hand[h].dpadDown ? ", dpad" : "");
+                    }
                 }
             }
+        }
+        UpdateHands(internal, synced, now);
+    }
+
+    // Hand skeletons (openxr_hand_runtime.inl) from this sync's curl sensors;
+    // outside m_Mutex (xrLocateHandJointsEXT).
+    void UpdateHands(const InternalState internal[2], bool synced, XrTime now)
+    {
+        if (!synced)
+            return;
+        const XrTime time = now > 0 ? now : m_LastLocateTime.load(std::memory_order_relaxed);
+        for (int h = 0; h < 2; ++h)
+        {
+            const InternalState& in = internal[h];
+            xh::CurlSensors sensors;
+            sensors.trigger = in.curlTrigger;
+            sensors.triggerTouched = in.curlTriggerTouch > 0.5f;
+            sensors.indexProximity = in.curlIndexNear;
+            sensors.squeeze = in.curlSqueeze;
+            sensors.squeezeForce = in.curlSqueezeForce;
+            sensors.thumbTouched = in.curlThumb > 0.5f;
+            const xi::Profile* runtime = RuntimeProfile(h);
+            m_Hands.Update(h, m_GripSpace[h], time, GripOffset(h), in.curlActive, sensors,
+                runtime && runtime->id == xi::ProfileId::Index);
         }
     }
 
     // ---- State ------------------------------------------------------------------
     const XrApi& m_Xr;
+    XrHandRuntime m_Hands;
+    std::atomic<XrTime> m_LastLocateTime{ 0 };
     XrInstance m_Instance = XR_NULL_HANDLE;
     XrSession m_Session = XR_NULL_HANDLE;
     xi::RuntimeFamily m_Family = xi::RuntimeFamily::Other;
@@ -1133,6 +1245,7 @@ private:
     XrAction m_GripPose = XR_NULL_HANDLE, m_AimPose = XR_NULL_HANDLE, m_Haptic = XR_NULL_HANDLE;
     XrAction m_HandStick = XR_NULL_HANDLE, m_HandStickTouch = XR_NULL_HANDLE;
     XrAction m_CurlTrigger = XR_NULL_HANDLE, m_CurlTriggerTouch = XR_NULL_HANDLE, m_CurlSqueeze = XR_NULL_HANDLE, m_CurlThumb = XR_NULL_HANDLE;
+    XrAction m_CurlSqueezeForce = XR_NULL_HANDLE, m_CurlIndexNear = XR_NULL_HANDLE;
     XrSpace m_GripSpace[2] = { XR_NULL_HANDLE, XR_NULL_HANDLE };
     XrSpace m_AimSpace[2] = { XR_NULL_HANDLE, XR_NULL_HANDLE };
     bool m_Ready = false;

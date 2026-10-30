@@ -112,6 +112,65 @@ namespace l4d2vr_selftest
         return false;
     }
 
+    // ---- Finger curl overrides (self-test step fingercurls=) ----------------
+    // Stand in for a runtime's skeletal summary on either backend (the OpenVR
+    // test path has no controller skeleton): every reader of the hand's curls
+    // (native hands, gloves, magazine curls, the VRIK pose relay) sees these.
+    // Index 0 = physical left hand, 1 = right; packed so readers on other
+    // threads never see a half-written set.
+    struct CurlOverride
+    {
+        std::atomic<bool> active{ false };
+        std::atomic<std::uint64_t> packed{ 0u };  // 5 x 12-bit curls (0..4095 = 0..1)
+    };
+
+    inline CurlOverride* CurlOverrides()
+    {
+        static CurlOverride overrides[2];
+        return overrides;
+    }
+
+    inline void SetCurls(int hand, const float curls[5])
+    {
+        if (hand < 0 || hand > 1)
+            return;
+        std::uint64_t packed = 0u;
+        for (int f = 0; f < 5; ++f)
+        {
+            const float c = std::isfinite(curls[f]) ? std::clamp(curls[f], 0.0f, 1.0f) : 0.0f;
+            packed |= static_cast<std::uint64_t>(std::lround(c * 4095.0f)) << (12 * f);
+        }
+        CurlOverrides()[hand].packed.store(packed, std::memory_order_release);
+        CurlOverrides()[hand].active.store(true, std::memory_order_release);
+    }
+
+    inline void ClearCurls(int hand)
+    {
+        if (hand >= 0 && hand <= 1)
+            CurlOverrides()[hand].active.store(false, std::memory_order_release);
+    }
+
+    inline bool LookupCurls(int hand, float out[5])
+    {
+        if (hand < 0 || hand > 1 || !Get().active.load(std::memory_order_acquire) ||
+            !CurlOverrides()[hand].active.load(std::memory_order_acquire))
+            return false;
+        const std::uint64_t packed = CurlOverrides()[hand].packed.load(std::memory_order_acquire);
+        for (int f = 0; f < 5; ++f)
+            out[f] = static_cast<float>((packed >> (12 * f)) & 0xFFFu) / 4095.0f;
+        return true;
+    }
+
+    // "/user/hand/left" -> 0, "/user/hand/right" -> 1, else -1.
+    inline int HandOfSourcePath(const char* path)
+    {
+        if (!path) return -1;
+        const std::string p(path);
+        if (p == "/user/hand/left") return 0;
+        if (p == "/user/hand/right") return 1;
+        return -1;
+    }
+
     // ---- Scripted paths -----------------------------------------------------
     // Positions are metres in the head-yaw frame: x forward, y toward the right
     // hand, z up.

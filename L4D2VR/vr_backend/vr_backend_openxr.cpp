@@ -40,6 +40,7 @@
 #include "openxr_input_profiles.h"
 #include "openxr_input_logic.h"
 #include "openxr_overlay_logic.h"
+#include "openxr_hand_logic.h"
 
 #include "../game.h"
 
@@ -263,6 +264,7 @@ private:
     int m_Index;
 };
 
+#include "openxr_hand_runtime.inl"
 #include "openxr_input_runtime.inl"
 
     // ---- The runtime ---------------------------------------------------------
@@ -1047,6 +1049,7 @@ private:
 
             // Input: action sets, actions and suggested bindings (before any session).
             m_Input.CreateActions(m_Instance, m_Extensions, m_RuntimeName);
+            m_Input.ConfigureHands(m_Instance, m_SystemId, m_Extensions);
             m_Overlays.Configure(wine, m_Extensions.count(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME) != 0,
                 m_Extensions.count(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME) != 0, m_MaxLayers);
 
@@ -2114,10 +2117,12 @@ private:
 
         Caps GetCaps() const override
         {
-            Caps caps;  // no skeletal bones (M5), no runtime assets
+            Caps caps;
             caps.nativeOverlayMouse = true;   // the backend's laser (openxr_overlay_runtime.inl)
             caps.overlayIntersection = true;
             caps.vrKeyboard = true;           // in-mod keyboard panel
+            caps.skeletalBones = true;        // OpenVR hand skeleton (openxr_hand_runtime.inl)
+            caps.runtimeAssets = true;        // GetRuntimePath = the OpenVR runtime's path
             caps.maxOverlayLayers = Runtime().MaxLayers();
             return caps;
         }
@@ -2140,10 +2145,14 @@ private:
             return false;
         }
 
-        bool GetRuntimePath(char*, uint32_t, uint32_t* punRequiredBufferSize) override
+        // The OpenVR runtime's install path (openvrpaths.vrpath; no OpenVR init),
+        // as the OpenVR backend reports it, so the SteamVR glove meshes load on
+        // the same machines as there (SteamVR installed; under Proton the path
+        // is Proton's vrclient stub on both backends).
+        bool GetRuntimePath(char* pchPathBuffer, uint32_t unBufferSize, uint32_t* punRequiredBufferSize) override
         {
             if (punRequiredBufferSize) *punRequiredBufferSize = 0;
-            return false;
+            return vr::VR_GetRuntimePath(pchPathBuffer, unBufferSize, punRequiredBufferSize);
         }
 
         IVrSystem* System() override { return Runtime().InstanceReady() ? Runtime().SystemFacade() : nullptr; }

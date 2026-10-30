@@ -54,6 +54,12 @@
     <ClInclude Include="vr_backend\openxr_pose_math.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>
+    <ClInclude Include="vr_backend\openxr_hand_logic.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_backend\openxr_hand_reference.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
     <ClInclude Include="..\dxvk_new\src\dxvk\dxvk_openxr_native.h">
       <Filter>dxvk</Filter>
     </ClInclude>

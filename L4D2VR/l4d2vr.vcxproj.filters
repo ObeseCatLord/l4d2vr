@@ -48,6 +48,9 @@
     <ClInclude Include="vr_backend\openxr_input_logic.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>
+    <ClInclude Include="vr_backend\openxr_overlay_logic.h">
+      <Filter>Source Files\vr_backend</Filter>
+    </ClInclude>
     <ClInclude Include="vr_backend\openxr_pose_math.h">
       <Filter>Source Files\vr_backend</Filter>
     </ClInclude>

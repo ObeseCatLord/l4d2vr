@@ -223,8 +223,12 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
             m_RecoilTestSavedEnabled = m_RecoilEnabled;
             m_RecoilEnabled = false;
             char text[96];
-            std::snprintf(text, sizeof(text), "give %s", give.c_str());
-            cmd(text);
+            // A second pistol makes dual pistols: "pistol" uses the one held.
+            if (give != "pistol")
+            {
+                std::snprintf(text, sizeof(text), "give %s", give.c_str());
+                cmd(text);
+            }
             std::snprintf(text, sizeof(text), "use weapon_%s", give.c_str());
             cmd(text);
         }
@@ -326,8 +330,11 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         m_RecoilTestSavedEnabled = m_RecoilEnabled;
         m_RecoilEnabled = true;
         char text[96];
-        std::snprintf(text, sizeof(text), "give %s", give.c_str());
-        cmd(text);
+        if (give != "pistol")
+        {
+            std::snprintf(text, sizeof(text), "give %s", give.c_str());
+            cmd(text);
+        }
         std::snprintf(text, sizeof(text), "use weapon_%s", give.c_str());
         cmd(text);
         SelfTestHoldRight(SelfTestVec(0.40f, 0.12f, -0.22f), QAngle(0.0f, 0.0f, 0.0f));

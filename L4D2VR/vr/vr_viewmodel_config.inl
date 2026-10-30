@@ -1893,11 +1893,12 @@ void VR::ParseConfigFile()
         getFloat("NativeViewmodelLeftHandOpenVRPinkyInitialCurl", m_NativeViewmodelLeftHandOpenVRInitialCurl[4]),
         -1.0f,
         1.0f);
-    const bool forceLeftHandedVrGloves = m_LeftHanded;
+    // Left-handed play turns VR hands on. The separate SteamVR glove models
+    // are retired (the survivor's own viewmodel hands are used for everyone):
+    // VrHandsGlovesEnabled is ignored.
     const bool vrHandsEntryEnabled =
-        getBool("VrHandsEnabled", false) || forceLeftHandedVrGloves;
-    m_VrHandsGlovesEnabled =
-        getBool("VrHandsGlovesEnabled", false) || forceLeftHandedVrGloves;
+        getBool("VrHandsEnabled", false) || m_LeftHanded;
+    m_VrHandsGlovesEnabled = false;
     m_VrHandsGloveFingerMaxCurl[0] = std::clamp(
         getFloat("VrHandsGloveThumbMaxCurl", m_VrHandsGloveFingerMaxCurl[0]),
         0.0f,

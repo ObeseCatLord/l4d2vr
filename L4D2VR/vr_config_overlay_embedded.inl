@@ -1799,8 +1799,9 @@ namespace
         const bool leftHanded = CfgIsEnabled(s, "LeftHanded", false);
         const bool vrHandsEntryEnabled =
             leftHanded || CfgIsEnabled(s, "VrHandsEnabled", false);
-        const bool vrHandsGlovesEnabled =
-            leftHanded || (vrHandsEntryEnabled && CfgIsEnabled(s, "VrHandsGlovesEnabled", false));
+        // SteamVR glove models are retired: the survivor's own hands always.
+        const bool vrHandsGlovesEnabled = false;
+        s.values["VrHandsGlovesEnabled"] = "false";
         const bool nativeHandsOnly = vrHandsEntryEnabled && !vrHandsGlovesEnabled;
 
         s.values["NativeViewmodelHandsOnly"] = nativeHandsOnly ? "true" : "false";
@@ -2026,18 +2027,12 @@ namespace
             CfgIsEnabled(s, "VrHandsEnabled", false) ||
             CfgIsEnabled(s, "LeftHanded", false);
         if (std::strcmp(key, "VrHandsGlovesEnabled") == 0)
-            return vrHandsEntryEnabled;
+            return false; // retired: the survivor's own hands always
         if (std::strcmp(key, "NativeViewmodelArmCroppingEnabled") == 0)
-        {
-            return vrHandsEntryEnabled &&
-                !CfgIsEnabled(s, "VrHandsGlovesEnabled", false) &&
-                !CfgIsEnabled(s, "LeftHanded", false);
-        }
+            return vrHandsEntryEnabled;
         if (nativeFullArmTuning)
         {
             return vrHandsEntryEnabled &&
-                !CfgIsEnabled(s, "VrHandsGlovesEnabled", false) &&
-                !CfgIsEnabled(s, "LeftHanded", false) &&
                 !CfgIsEnabled(s, "NativeViewmodelArmCroppingEnabled", true);
         }
         if (std::strcmp(key, "VrHandsVirtualStockEnabled") == 0)

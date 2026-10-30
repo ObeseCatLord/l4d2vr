@@ -109,8 +109,8 @@ the instance (runtime name and version, extensions), the session states and fram
   dashboard laser is not involved.
 * **Text fields** in the config panel open the mod's own VR keyboard below the view. SteamVR's
   keyboard is not used.
-* **Hands and gloves** look the same. The SteamVR gloves still load from a SteamVR install when
-  `VrHandsGlovesEnabled` is on.
+* **Hands** look the same: the survivor's own hands (the separate SteamVR glove models are retired;
+  `VrHandsGlovesEnabled` is ignored).
 * **ReShade**: the exact stereo depth bridge (`ReShadeVRCompat`) needs ReShade's OpenVR runtime. It is
   off in the OpenXR release; the setting is ignored and logged, and ReShade keeps its own Generic Depth
   add-on. ReShade can still be installed as before; only the depth bridge is off.

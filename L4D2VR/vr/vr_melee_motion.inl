@@ -1,8 +1,10 @@
-// Motion melee: physics inertia on melee weapons, swing detection from the
-// lagged blade, and thrust / gun-bash shoves. The lag is published as a delta
-// in the viewmodel's own frame so the render thread can re-apply it to its
-// fresher controller pose; the usercmd pose uses the same lagged pose, so the
-// server's melee sweep follows what the player sees.
+// Motion melee: the melee weapon is welded to the hand at the grip and its
+// rotation lags the controller (vr_melee_inertia.h); swings are detected from
+// the lagged blade with speed and travel gates (vr_gesture.h); thrusts and
+// gun bashes shove. The lag is published as a delta in the viewmodel's own
+// frame so the render thread can re-apply it to its fresher controller pose;
+// the usercmd pose uses the same lagged pose, so the server's melee sweep
+// follows what the player sees and only runs while the swing is valid.
 
 namespace
 {
@@ -71,16 +73,33 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         m_MeleeMotionWeapon = weapon;
         m_MeleeMotionScriptName = weaponId == C_WeaponCSBase::WeaponID::CHAINSAW ? std::string("chainsaw") :
             (weaponId == C_WeaponCSBase::WeaponID::MELEE ? MeleeMotionReadScriptName(m_Game, weapon) : std::string());
-        m_MeleeInertiaSpring.SetParams(l4d2vr_melee_inertia::ParamsForMeleeScriptName(m_MeleeMotionScriptName.c_str()));
+        m_MeleeMotionParams = l4d2vr_melee_inertia::ParamsForMeleeScriptName(m_MeleeMotionScriptName.c_str());
+        m_MeleeInertiaSpring.SetParams(m_MeleeMotionParams);
         m_MeleeInertiaSpring.Clear();
         m_MeleeSwing.Reset();
         m_MeleeThrust.Reset();
         m_GunBash.Reset();
+        if (meleeActive)
+            Game::logMsg("[VR][Melee] %s: reach %.2f m (%s), lag spring %.1f Hz zeta %.2f limit %.0f deg, swing measured %.2f m out",
+                m_MeleeMotionScriptName.empty() ? "unknown melee" : m_MeleeMotionScriptName.c_str(),
+                m_MeleeMotionParams.reach, l4d2vr_melee_inertia::ShortWeapon(m_MeleeMotionParams) ? "short" : "long",
+                m_MeleeMotionParams.rotationHz, m_MeleeMotionParams.rotationZeta, m_MeleeMotionParams.maxLagDeg,
+                l4d2vr_melee_inertia::TipSampleDistance(m_MeleeMotionParams));
     }
-    const l4d2vr_melee_inertia::Params params =
-        l4d2vr_melee_inertia::ParamsForMeleeScriptName(m_MeleeMotionScriptName.c_str());
+    const l4d2vr_melee_inertia::Params& params = m_MeleeMotionParams;
     // The chainsaw runs while the trigger is held; it never swing-triggers.
     m_MeleeMotionSwingEligible = meleeActive && params.motionMelee;
+    {
+        // Swing gates for this weapon (config values may change at runtime).
+        l4d2vr_gesture::SwingParams swingParams = m_MeleeSwing.GetParams();
+        swingParams.bladeLength = l4d2vr_melee_inertia::TipSampleDistance(params);
+        swingParams.startSpeed = m_MeleeSwingMinTipSpeed;
+        swingParams.minHandleSpeed = l4d2vr_melee_inertia::ShortWeapon(params) ? m_MeleeSwingMinHandleSpeedShort :
+            m_MeleeSwingMinHandleSpeedLong;
+        swingParams.minTipTravel = m_MeleeSwingMinTipTravel;
+        swingParams.minHandleTravel = m_MeleeSwingMinHandleTravel;
+        m_MeleeSwing.SetParams(swingParams);
+    }
 
     // Tracking frame (metres): the game's placement of tracked devices,
     // inverted. Smooth and snap turning pivot the world about the head, and
@@ -109,38 +128,51 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     m_GestureLastYawDeg = trackingFrame.yawDeg;
 
     // Inertia on the viewmodel pose (main thread copy; render re-applies the delta).
+    // The spring runs on the grip (the controller the viewmodel offsets are
+    // measured from): it stays welded to the hand while the weapon's rotation
+    // lags and pivots about it.
     bool lagValid = false;
     l4d2vr_melee_inertia::Pose delta{};
-    l4d2vr_melee_inertia::Pose lagged{};
     if (meleeActive && m_MeleeInertiaEnabled)
     {
-        const Vector viewmodelPos = GetRightControllerViewmodelAbsPos() - m_ViewmodelForward * m_ViewmodelPosOffset.x -
+        const Vector gripWorld = GetRightControllerViewmodelAbsPos();
+        const Vector viewmodelPos = gripWorld - m_ViewmodelForward * m_ViewmodelPosOffset.x -
             m_ViewmodelRight * m_ViewmodelPosOffset.y - m_ViewmodelUp * m_ViewmodelPosOffset.z;
         l4d2vr_melee_inertia::Pose target{};
-        if (l4d2vr_melee_inertia::PoseFromAxes(toBodyP(viewmodelPos), toBodyD(m_ViewmodelForward),
+        if (l4d2vr_melee_inertia::PoseFromAxes(toBodyP(gripWorld), toBodyD(m_ViewmodelForward),
                 toBodyD(m_ViewmodelRight), toBodyD(m_ViewmodelUp), target) && m_MeleeInertiaSpring.Step(target, dt))
         {
-            lagged = m_MeleeInertiaSpring.Lagged();
-            delta = l4d2vr_melee_inertia::LagDelta(target, lagged);
+            const l4d2vr_melee_inertia::Pose laggedGrip = m_MeleeInertiaSpring.Lagged();
+            // Rotation from the controller to the lagged weapon (tracking frame).
+            const l4d2vr_melee_inertia::Quat bodyRotation = l4d2vr_melee_inertia::QuatNormalize(
+                l4d2vr_melee_inertia::QuatMultiply(laggedGrip.orientation,
+                    l4d2vr_melee_inertia::QuatConjugate(target.orientation)));
+            const l4d2vr_melee_inertia::Pose targetViewmodel{ toBodyP(viewmodelPos), target.orientation };
+            l4d2vr_melee_inertia::Pose laggedViewmodel =
+                l4d2vr_melee_inertia::PivotAboutGrip(targetViewmodel, target.position, bodyRotation);
+            laggedViewmodel.position += laggedGrip.position - target.position; // 0 while the grip is welded
+            delta = l4d2vr_melee_inertia::LagDelta(targetViewmodel, laggedViewmodel);
             lagValid = l4d2vr_melee_inertia::PoseFinite(delta);
             if (lagValid)
             {
                 Vector laggedForward{}, laggedRight{}, laggedUp{};
-                l4d2vr_melee_inertia::QuatToAxes(lagged.orientation, laggedForward, laggedRight, laggedUp);
+                l4d2vr_melee_inertia::QuatToAxes(laggedViewmodel.orientation, laggedForward, laggedRight, laggedUp);
                 m_ViewmodelForward = toWorldD(laggedForward);
                 m_ViewmodelRight = toWorldD(laggedRight);
                 m_ViewmodelUp = toWorldD(laggedUp);
-                m_MeleeInertiaPosOffsetWorld = toWorldP(lagged.position) - viewmodelPos;
-                // Rotation from the controller to the lagged weapon (body frame), for
-                // the usercmd pose the server's melee sweep uses.
-                const l4d2vr_melee_inertia::Quat bodyRotation = l4d2vr_melee_inertia::QuatMultiply(
-                    lagged.orientation, l4d2vr_melee_inertia::QuatConjugate(target.orientation));
+                // The viewmodel origin hangs off the grip along the lagged axes
+                // (GetRecommendedViewmodelAbsPos); this is what remains (0 when welded).
+                m_MeleeInertiaPosOffsetWorld = toWorldP(laggedViewmodel.position) - (gripWorld -
+                    m_ViewmodelForward * m_ViewmodelPosOffset.x - m_ViewmodelRight * m_ViewmodelPosOffset.y -
+                    m_ViewmodelUp * m_ViewmodelPosOffset.z);
+                // The lagged controller pose for the usercmd (the server's melee sweep).
                 Vector forward = toWorldD(l4d2vr_melee_inertia::QuatRotate(bodyRotation, toBodyD(m_RightControllerForward)));
                 Vector up = toWorldD(l4d2vr_melee_inertia::QuatRotate(bodyRotation, toBodyD(m_RightControllerUp)));
                 QAngle angles{};
                 QAngle::VectorAngles(forward, up, angles);
                 m_MeleeLaggedControllerAng = angles;
-                m_MeleeLaggedControllerPos = GetRightControllerViewmodelAbsPos() + m_MeleeInertiaPosOffsetWorld;
+                m_MeleeLaggedControllerPos = toWorldP(laggedGrip.position);
+                m_MeleeLagDeg.store(m_MeleeInertiaSpring.LagDeg(), std::memory_order_release);
             }
         }
     }
@@ -181,14 +213,32 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     {
         const l4d2vr_gesture::SwingEvent swing = m_MeleeSwing.Update(sample);
         m_MeleeSwingActive.store(swing.swinging, std::memory_order_release);
+        const uint64_t nowMs = GetTickCount64();
         if (swing.started)
         {
             swingStarted = true;
             m_MeleeSwingDirection = toWorldD(swing.direction);
             m_MeleeSwingStartSerial.fetch_add(1u, std::memory_order_acq_rel);
             if (m_MotionOnlyMeleeAndShove)
-                m_ViewmodelAnimSuppressUntilMs.store(GetTickCount64() + 900u, std::memory_order_release);
-            TriggerMeleeSwingHaptics(false);
+                m_ViewmodelAnimSuppressUntilMs.store(nowMs + 900u, std::memory_order_release);
+            // Like Ancient Dungeon, the hit is what you feel (NotifyMeleeHitConfirmed),
+            // not the start of the swing.
+            if (m_MeleeSwingStartHaptics)
+                TriggerMeleeSwingHaptics(false);
+            Game::logMsg("[VR][Melee] swing: tip %.1f m/s hand %.1f m/s, travel tip %.2f m hand %.2f m, lag %.0f deg, quality %.2f",
+                swing.tipSpeed, swing.handleSpeed, swing.tipTravel, swing.handleTravel,
+                m_MeleeLagDeg.load(std::memory_order_acquire),
+                l4d2vr_gesture::SwingQuality(swing.tipSpeed, swing.tipTravel, swing.handleTravel));
+        }
+        else if (swing.armed && (swing.fastEnough || swing.handleFastEnough) &&
+            (l4d2vr_selftest::Get().active.load(std::memory_order_acquire) || nowMs - m_MeleeSwingNearMissLogMs >= 1000u))
+        {
+            // Fast, but a gate said no (rate limited): why a swing did not count.
+            m_MeleeSwingNearMissLogMs = nowMs;
+            const l4d2vr_gesture::SwingParams& gates = m_MeleeSwing.GetParams();
+            Game::logMsg("[VR][Melee] swing candidate: tip %.1f/%.1f m/s hand %.1f/%.1f m/s travel tip %.2f/%.2f m hand %.2f/%.2f m axial %.2f",
+                swing.tipSpeed, gates.startSpeed, swing.handleSpeed, gates.minHandleSpeed, swing.tipTravel,
+                gates.minTipTravel, swing.handleTravel, gates.minHandleTravel, swing.axial);
         }
     }
     else
@@ -385,7 +435,24 @@ bool VR::ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up
     const l4d2vr_melee_inertia::Pose lagged = l4d2vr_melee_inertia::ApplyLagDelta(current, delta);
     if (!l4d2vr_melee_inertia::PoseFinite(lagged))
         return false;
+    const Vector gripBefore = position + forward * m_ViewmodelPosOffset.x + right * m_ViewmodelPosOffset.y +
+        up * m_ViewmodelPosOffset.z;
     l4d2vr_melee_inertia::QuatToAxes(lagged.orientation, forward, right, up);
     position = lagged.position * scale;
+    // What the drawn weapon shows, for the meleelag self-test: its angle to the
+    // controller and how far the grip moved off the hand (0 when welded).
+    if (m_MeleeDrawnLagRecord.load(std::memory_order_acquire))
+    {
+        const float lagDeg = l4d2vr_melee_inertia::QuatAngleBetween(current.orientation, lagged.orientation) *
+            l4d2vr_melee_inertia::kRadToDeg;
+        const Vector gripAfter = position + forward * m_ViewmodelPosOffset.x + right * m_ViewmodelPosOffset.y +
+            up * m_ViewmodelPosOffset.z;
+        const float drift = (gripAfter - gripBefore).Length() / scale;
+        float seen = m_MeleeDrawnLagMaxDeg.load(std::memory_order_relaxed);
+        while (lagDeg > seen && !m_MeleeDrawnLagMaxDeg.compare_exchange_weak(seen, lagDeg)) {}
+        seen = m_MeleeDrawnGripDriftMax.load(std::memory_order_relaxed);
+        while (drift > seen && !m_MeleeDrawnGripDriftMax.compare_exchange_weak(seen, drift)) {}
+        m_MeleeDrawnFrames.fetch_add(1u, std::memory_order_relaxed);
+    }
     return true;
 }

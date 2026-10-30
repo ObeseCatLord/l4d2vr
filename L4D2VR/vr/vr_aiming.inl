@@ -4557,7 +4557,21 @@ void VR::NotifyMeleeHitConfirmed(std::uintptr_t entityTag)
 
     m_LastMeleeHitHapticsTriggerTime = now;
     m_LastMeleeHitHapticsEntityTag = entityTag;
-    TriggerMeleeSwingHaptics(false);
+    TriggerMeleeHitHaptics(false);
+}
+
+void VR::TriggerMeleeHitHaptics(bool leftHand)
+{
+    if (!m_WeaponHapticsEnabled)
+        return;
+
+    // A hit is felt at full strength (frequency 0 = the runtime's default).
+    TriggerPhysicalHandHapticPulse(
+        IsGameplayHandLeftPhysical(leftHand),
+        m_MeleeHitHapticsProfile.durationSeconds,
+        m_MeleeHitHapticsProfile.frequency,
+        m_MeleeHitHapticsProfile.amplitude,
+        2);
 }
 
 void VR::TriggerShoveHaptics(bool leftHand)

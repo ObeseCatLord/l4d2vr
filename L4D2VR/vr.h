@@ -2029,7 +2029,8 @@ public:
 	bool m_WeaponHapticsEnabled = true;
 	std::unordered_map<std::string, WeaponHapticsProfile> m_WeaponHapticsOverrides;
 	WeaponHapticsProfile m_DefaultWeaponHapticsProfile = { 0.018f, 130.0f, 0.32f };
-	WeaponHapticsProfile m_MeleeSwingHapticsProfile = { 0.035f, 95.0f, 0.72f };
+	WeaponHapticsProfile m_MeleeSwingHapticsProfile = { 0.035f, 95.0f, 0.72f }; // swing start (MeleeSwingStartHaptics)
+	WeaponHapticsProfile m_MeleeHitHapticsProfile = { 0.070f, 0.0f, 1.0f };    // melee.hit: a confirmed hit, full strength 70 ms
 	WeaponHapticsProfile m_ShoveHapticsProfile = { 0.022f, 120.0f, 0.58f };
 	HapticMixState m_LeftHapticMix{};
 	HapticMixState m_RightHapticMix{};
@@ -3065,6 +3066,7 @@ public:
 	bool m_MeleeMotionSwingEligible = false;
 	C_WeaponCSBase* m_MeleeMotionWeapon = nullptr;
 	std::string m_MeleeMotionScriptName;
+	l4d2vr_melee_inertia::Params m_MeleeMotionParams{};
 	l4d2vr_melee_inertia::Spring m_MeleeInertiaSpring;
 	mutable std::mutex m_MeleeInertiaMutex;
 	l4d2vr_melee_inertia::Pose m_MeleeInertiaDelta{};
@@ -3087,6 +3089,20 @@ public:
 	l4d2vr_gesture::SessionClock m_GestureSessionClock;
 	float m_GestureLastYawDeg = 0.0f;
 	uint64_t m_GunBashNearMissLogMs = 0u;
+	// Melee swing gates (Ancient Dungeon VR style; see l4d2vr_gesture::SwingParams).
+	float m_MeleeSwingMinTipSpeed = 4.5f;          // MeleeSwingMinTipSpeed
+	float m_MeleeSwingMinHandleSpeedLong = 2.5f;   // MeleeSwingMinHandSpeedLong
+	float m_MeleeSwingMinHandleSpeedShort = 3.0f;  // MeleeSwingMinHandSpeedShort
+	float m_MeleeSwingMinTipTravel = 0.43f;        // MeleeSwingMinTipTravel
+	float m_MeleeSwingMinHandleTravel = 0.13f;     // MeleeSwingMinHandTravel
+	bool m_MeleeSwingStartHaptics = false;         // MeleeSwingStartHaptics: pulse when a swing starts (hits always pulse)
+	uint64_t m_MeleeSwingNearMissLogMs = 0u;
+	std::atomic<float> m_MeleeLagDeg{ 0.0f };      // current lag of the held melee weapon (main thread)
+	// Drawn-weapon lag record for the meleelag self-test (render thread writes).
+	std::atomic<bool> m_MeleeDrawnLagRecord{ false };
+	mutable std::atomic<float> m_MeleeDrawnLagMaxDeg{ 0.0f };
+	mutable std::atomic<float> m_MeleeDrawnGripDriftMax{ 0.0f };
+	mutable std::atomic<uint32_t> m_MeleeDrawnFrames{ 0u };
 	bool m_GunBashSweepEnabled = true; // GunBashSweepEnabled: a fast sideways swing of the gun also bashes
 	std::chrono::steady_clock::time_point m_MeleeMotionLastUpdate{};
 	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
@@ -3420,6 +3436,7 @@ public:
 	std::atomic<bool> m_RecoilShotLogActive{ false };
 	void RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool server, int weaponId);
 	bool RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
+	bool RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	// Self-test scratch for the recoil and sight steps.
 	Vector m_RecoilTestRefDir{ 1.0f, 0.0f, 0.0f };
 	float m_RecoilTestPeakPitch = 0.0f;
@@ -5103,6 +5120,7 @@ public:
 	WeaponHapticsProfile GetWeaponHapticsProfile(int weaponId) const;
 	void TriggerWeaponFireHaptics(int weaponId, bool leftHand = false);
 	void TriggerMeleeSwingHaptics(bool leftHand = false);
+	void TriggerMeleeHitHaptics(bool leftHand = false);
 	void TriggerShoveHaptics(bool leftHand = false);
 	void NotifyMeleeHitConfirmed(std::uintptr_t entityTag = 0);
 	void ParseConfigFile();

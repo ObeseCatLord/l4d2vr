@@ -3229,6 +3229,12 @@ namespace
         sampleKeys.insert("RecoilDebugLog");
         sampleKeys.insert("IronSightAimEnabled");
         sampleKeys.insert("MeleeInertiaEnabled");
+        sampleKeys.insert("MeleeSwingMinTipSpeed");
+        sampleKeys.insert("MeleeSwingMinHandSpeedLong");
+        sampleKeys.insert("MeleeSwingMinHandSpeedShort");
+        sampleKeys.insert("MeleeSwingMinTipTravel");
+        sampleKeys.insert("MeleeSwingMinHandTravel");
+        sampleKeys.insert("MeleeSwingStartHaptics");
         sampleKeys.insert("PhysicalShoveEnabled");
         sampleKeys.insert("GunBashSweepEnabled");
         sampleKeys.insert("ConsumableGesturesEnabled");

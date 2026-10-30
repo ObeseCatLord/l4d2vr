@@ -6,6 +6,7 @@
 #pragma warning(pop)
 #endif
 #include "../L4D2VR/vr_gesture.h"
+#include "../L4D2VR/vr_melee_inertia.h"
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -65,67 +66,132 @@ static int CountSwings(SwingDetector& detector, Rig& rig, int frames, Step step)
     return starts;
 }
 
+// Blade along +z (up), hand moving sideways: the tip speed is the hand speed
+// plus the wrist's contribution (0.62 m * angular speed).
 static void TestSwing()
 {
+    const Vector slash(0.0f, -3.5f, 0.0f);       // hand 3.5 m/s to the right
+    const Vector roll(600.0f, 0.0f, 0.0f);      // blade tipping the same way, 600 deg/s
+    auto still = [&](Rig& r) { r.Still(); };
+    auto swingStep = [&](Rig& r) { r.Move(slash, roll, kZero, true); };
+    auto backStep = [&](Rig& r) { r.Move(slash * -1.0f, roll * -1.0f, kZero, true); };
+
+    {
+        // Weapon adopted mid-motion: no swing until it has rested.
+        SwingDetector adopted;
+        Rig a;
+        Check(CountSwings(adopted, a, 12, swingStep) == 0 && !adopted.Armed());
+        Check(CountSwings(adopted, a, 10, still) == 0 && adopted.Armed());
+    }
     SwingDetector swing;
     Rig rig;
-    // Wrist flick: blade up, pitching forward at 400 deg/s. Tip ~3.5 m/s.
-    const Vector pitch(0.0f, 400.0f, 0.0f);
-    auto flick = [&](Rig& r) { r.Move(kZero, pitch, kZero, true); };
-    auto still = [&](Rig& r) { r.Still(); };
+    Check(CountSwings(swing, rig, 10, still) == 0 && swing.Armed());
 
-    // Weapon adopted mid-motion: no swing until it has rested.
-    Check(CountSwings(swing, rig, 10, flick) == 0);
-    Check(CountSwings(swing, rig, 5, still) == 0 && !swing.Armed()); // 0.055 s < 0.08 s rest
-    Check(CountSwings(swing, rig, 5, still) == 0 && swing.Armed());
-
-    // One swing fires exactly once, reporting direction while it lasts.
-    rig.s.handForward = Vector(0.0f, 0.0f, 1.0f);
-    int starts = 0;
+    // One swing fires exactly once, with its direction, once speed and travel are there.
+    int starts = 0, startFrame = -1;
     for (int i = 0; i < 20; ++i)
     {
-        flick(rig);
+        swingStep(rig);
         const SwingEvent e = swing.Update(rig.s);
         if (e.started)
         {
             ++starts;
-            Check(e.direction.x > 0.9f && e.tipSpeed > 1.6f);
+            startFrame = i;
+            Check(e.direction.y < -0.9f && e.tipSpeed >= 4.5f && e.handleSpeed >= 2.5f);
+            Check(e.tipTravel >= 0.43f && e.handleTravel >= 0.13f);
+            Check(SwingQuality(e.tipSpeed, e.tipTravel, e.handleTravel) > 0.0f);
         }
-        Check(e.swinging);
+        if (startFrame >= 0) Check(e.swinging);
     }
     Check(starts == 1);
-    // Stops, but without the 0.08 s rest a renewed motion does not re-trigger.
+    // Not on the first fast frame: the tip (~10 m/s) needs ~45 ms to cover 0.43 m.
+    Check(startFrame >= 3 && startFrame <= 5);
+    // Stopping ends the hit window.
     Check(CountSwings(swing, rig, 3, still) == 0 && !swing.Swinging());
-    Check(CountSwings(swing, rig, 10, flick) == 0);
-    // Rest re-arms, then the next swing fires.
-    Check(CountSwings(swing, rig, 9, still) == 0 && swing.Armed());
-    Check(CountSwings(swing, rig, 10, flick) == 1);
+    // A backhand straight out of a forehand counts too: reversing through a
+    // standstill within 0.1 s is rest enough (Ancient Dungeon has no rest rule).
+    {
+        SwingDetector combo;
+        Rig c;
+        CountSwings(combo, c, 10, still);
+        Check(CountSwings(combo, c, 30, swingStep) == 1);
+        int frame = 0;
+        Check(CountSwings(combo, c, 9, [&](Rig& r) {
+            const float k = 1.0f - 2.0f * static_cast<float>(++frame) / 9.0f; // +1 -> -1 in 0.1 s
+            r.Move(slash * k, roll * k, kZero, true); }) == 0);
+        Check(CountSwings(combo, c, 20, backStep) == 1);
+    }
+    // Within the cooldown nothing new starts, however fast.
+    {
+        SwingParams p{};
+        p.cooldown = 1.0f;
+        SwingDetector cooled(p);
+        Rig c;
+        CountSwings(cooled, c, 10, still);
+        Check(CountSwings(cooled, c, 20, swingStep) == 1);
+        CountSwings(cooled, c, 5, still);
+        Check(CountSwings(cooled, c, 20, backStep) == 0);
+        CountSwings(cooled, c, 90, still);
+        Check(CountSwings(cooled, c, 20, swingStep) == 1);
+    }
 
-    // Speed between release and start keeps the swing alive (hysteresis).
-    SwingDetector hysteresis;
-    Rig h;
-    CountSwings(hysteresis, h, 10, still);
-    Check(CountSwings(hysteresis, h, 3, flick) == 1);
-    Check(CountSwings(hysteresis, h, 10, [&](Rig& r) { r.Move(kZero, Vector(0.0f, 100.0f, 0.0f), kZero, true); }) == 0);
-    Check(hysteresis.Swinging()); // 100 deg/s * 0.5 m = 0.87 m/s > 0.6 release
+    // The hit window lasts while blade and hand stay fast: a slower follow-through ends it.
+    {
+        SwingDetector window;
+        Rig w;
+        CountSwings(window, w, 10, still);
+        Check(CountSwings(window, w, 8, swingStep) == 1 && window.Swinging());
+        // Hand at 2 m/s, blade 2 + 0.62 * 2.6 = 3.6 m/s: still above both releases.
+        CountSwings(window, w, 10, [&](Rig& r) { r.Move(Vector(0.0f, -2.0f, 0.0f), Vector(150.0f, 0.0f, 0.0f), kZero, true); });
+        Check(window.Swinging());
+        // The hand slows to 1 m/s (below 1.25) while the wrist still turns: the window closes.
+        CountSwings(window, w, 10, [&](Rig& r) { r.Move(Vector(0.0f, -1.0f, 0.0f), Vector(300.0f, 0.0f, 0.0f), kZero, true); });
+        Check(!window.Swinging());
+    }
+}
 
-    // Cooldown: even after resting, a new swing within cooldown of the last start is ignored.
-    SwingParams cooldownParams{};
-    cooldownParams.cooldown = 1.0f;
-    SwingDetector cooled(cooldownParams);
-    Rig c;
-    CountSwings(cooled, c, 10, still);
-    Check(CountSwings(cooled, c, 3, flick) == 1);
-    CountSwings(cooled, c, 10, still);
-    Check(!cooled.Armed());
-    Check(CountSwings(cooled, c, 3, flick) == 0);
-    CountSwings(cooled, c, 90, still);
-    Check(CountSwings(cooled, c, 3, flick) == 1);
+// Each gate rejects its own kind of motion.
+static void TestSwingGates()
+{
+    auto still = [](Rig& r) { r.Still(); };
+    auto run = [&](SwingParams params, const Vector& hand, const Vector& angular, int frames) {
+        SwingDetector d(params);
+        Rig r;
+        CountSwings(d, r, 10, still);
+        Check(d.Armed());
+        return CountSwings(d, r, frames, [&](Rig& q) { q.Move(hand, angular, kZero, true); });
+    };
+    const SwingParams longWeapon{};
+    SwingParams shortWeapon{};
+    shortWeapon.minHandleSpeed = 3.0f;
+    shortWeapon.bladeLength = 0.5f;
+
+    // Wrist flick: the tip at 0.62 * 1000 deg/s = 10.8 m/s, but the hand is still.
+    Check(run(longWeapon, kZero, Vector(1000.0f, 0.0f, 0.0f), 30) == 0);
+    // Wrist flick with a little hand motion (1 m/s): still not a swing.
+    Check(run(longWeapon, Vector(0.0f, -1.0f, 0.0f), Vector(1000.0f, 0.0f, 0.0f), 30) == 0);
+    // Slow swing: hand 1.8 m/s, blade 1.8 + 0.62 * 3.5 = 4.0 m/s.
+    Check(run(longWeapon, Vector(0.0f, -1.8f, 0.0f), Vector(200.0f, 0.0f, 0.0f), 60) == 0);
+    // Fast enough but too short (a jab of 0.11 m at the hand, 0.30 m at the tip): no swing ...
+    Check(run(longWeapon, Vector(0.0f, -3.5f, 0.0f), Vector(400.0f, 0.0f, 0.0f), 3) == 0);
+    // ... the same motion carried on is one.
+    Check(run(longWeapon, Vector(0.0f, -3.5f, 0.0f), Vector(400.0f, 0.0f, 0.0f), 20) == 1);
+    // Hand at 2.7 m/s: enough for a long weapon, not for a short one.
+    Check(run(longWeapon, Vector(0.0f, -2.7f, 0.0f), Vector(450.0f, 0.0f, 0.0f), 30) == 1);
+    Check(run(shortWeapon, Vector(0.0f, -2.7f, 0.0f), Vector(450.0f, 0.0f, 0.0f), 30) == 0);
+    Check(run(shortWeapon, Vector(0.0f, -3.4f, 0.0f), Vector(450.0f, 0.0f, 0.0f), 30) == 1);
+    // A blade-first thrust (hand driven along the blade) is a shove, not a swing.
+    Check(run(longWeapon, Vector(0.0f, 0.0f, 5.0f), kZero, 30) == 0);
+    // Config values move the gates.
+    SwingParams strict{};
+    strict.startSpeed = 8.0f;
+    Check(run(strict, Vector(0.0f, -3.5f, 0.0f), Vector(300.0f, 0.0f, 0.0f), 30) == 0);
 }
 
 static void TestSwingIgnoresWalking()
 {
     const Vector walk(4.0f, 1.0f, 0.0f);
+    const Vector slash(0.0f, -3.5f, 0.0f), roll(600.0f, 0.0f, 0.0f);
     // Hand and HMD translate together (thumbstick locomotion or physical walking).
     for (bool reportHmd : { true, false })
     {
@@ -133,17 +199,17 @@ static void TestSwingIgnoresWalking()
         Rig rig;
         Check(CountSwings(swing, rig, 10, [](Rig& r) { r.Still(); }) == 0);
         Check(CountSwings(swing, rig, 90, [&](Rig& r) { r.Move(walk, kZero, walk, reportHmd); }) == 0);
-        // Head bob and slight sway on top of walking are below the threshold.
+        // Head bob and sway on top of walking are far below the gates.
         Check(CountSwings(swing, rig, 30, [&](Rig& r) {
             r.Move(walk + Vector(0.0f, 0.0f, 0.3f), Vector(20.0f, 30.0f, 0.0f), walk, reportHmd); }) == 0);
         // A real swing while walking still fires.
-        Check(CountSwings(swing, rig, 10, [&](Rig& r) { r.Move(walk, Vector(0.0f, 400.0f, 0.0f), walk, reportHmd); }) == 1);
+        Check(CountSwings(swing, rig, 20, [&](Rig& r) { r.Move(walk + slash, roll, walk, reportHmd); }) == 1);
     }
-    // Control: the same hand velocity without HMD motion is a swing.
+    // Control: the walk's hand motion (a little faster, 5.2 m/s) without the HMD moving along is a swing.
     SwingDetector swing;
     Rig rig;
     CountSwings(swing, rig, 10, [](Rig& r) { r.Still(); });
-    Check(CountSwings(swing, rig, 10, [&](Rig& r) { r.Move(walk, kZero, kZero, true); }) == 1);
+    Check(CountSwings(swing, rig, 20, [&](Rig& r) { r.Move(walk * 1.25f, kZero, kZero, true); }) == 1);
 }
 
 static void TestSwingValidation()
@@ -839,6 +905,218 @@ static void TestLocomotionNeverBashes()
     }
 }
 
+// The melee path of VR::UpdateMeleeMotion: tracking-space hand pose -> lag
+// spring (welded grip, lagging rotation) -> sample from the lagged blade ->
+// swing detector with the weapon's gates. Locomotion must never swing; real
+// slashes during it count once each; wrist flicks and slow swings never do.
+namespace meleepath
+{
+    using namespace locomotion;
+    namespace mi = l4d2vr_melee_inertia;
+
+    struct MeleePipeline
+    {
+        Game game;
+        TrackingSampler sampler;
+        mi::Spring spring;
+        SwingDetector detector;
+        float time = 1.0f;
+        int frame = 0, swings = 0;
+        bool swinging = false;
+        float peakLag = 0.0f;
+        float slashStart = 0.0f, slashSeconds = 1.0f, startFraction = -1.0f; // when in the slash it counted
+        explicit MeleePipeline(const char* weapon)
+        {
+            const mi::Params p = mi::ParamsForMeleeScriptName(weapon);
+            spring.SetParams(p);
+            SwingParams sp{};
+            sp.bladeLength = mi::TipSampleDistance(p);
+            sp.minHandleSpeed = mi::ShortWeapon(p) ? 3.0f : 2.5f;
+            detector.SetParams(sp);
+        }
+        void Step(float dt)
+        {
+            ++frame;
+            time += dt;
+            Vector hmdWorld{}, handWorld{}, handForwardWorld{}, hmdForwardWorld{};
+            game.Place(hmdWorld, handWorld, handForwardWorld, hmdForwardWorld);
+            const TrackingFrame f = game.Frame();
+            const Vector hand = f.ToTrackingPoint(handWorld), forward = f.ToTrackingDirection(handForwardWorld);
+            const Vector up(0.0f, 0.0f, 1.0f);
+            mi::Pose target{};
+            Check(mi::PoseFromAxes(hand, forward, CrossProduct(forward, up), up, target));
+            Check(spring.Step(target, dt));
+            Check((spring.GetState().position - hand).Length() < 1e-5f); // welded
+            peakLag = std::max(peakLag, spring.LagDeg());
+            Vector laggedForward{}, right{}, laggedUp{};
+            mi::QuatToAxes(spring.GetState().orientation, laggedForward, right, laggedUp);
+            const Sample sample = sampler.Build(time, spring.GetState().position, laggedForward,
+                spring.GetState().angularVelocity * (1.0f / kDegToRad), f.ToTrackingPoint(hmdWorld),
+                f.ToTrackingDirection(hmdForwardWorld), up);
+            const SwingEvent e = detector.Update(sample);
+            if (e.started)
+            {
+                ++swings;
+                startFraction = (time - slashStart) / slashSeconds;
+            }
+            swinging = e.swinging;
+        }
+    };
+
+    static Vector Yawed(const Game& g, float yawDeg, float pitchDeg = 0.0f)
+    {
+        const float yaw = (g.headYawLocal + yawDeg) * kDegToRad, pitch = pitchDeg * kDegToRad;
+        return Vector(std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch));
+    }
+}
+
+static void TestMeleeSwingPath()
+{
+    using namespace meleepath;
+    auto run = [](MeleePipeline& p, float seconds, const auto& drive) {
+        for (float t = 0.0f; t < seconds;)
+        {
+            const float dt = FrameDt(p.frame);
+            drive(p, t, dt);
+            p.Step(dt);
+            t += dt;
+        }
+    };
+    auto ready = [](MeleePipeline& p) {
+        p.game.handLocal = HandAt(p.game, 0.35f, 0.25f, -0.30f);
+        p.game.handForwardLocal = Yawed(p.game, -20.0f, 40.0f); // blade up and forward
+    };
+    // A forehand slash from the right shoulder across the body (hand ~0.75 m,
+    // blade ~110 degrees) in `seconds`, then back to ready slowly.
+    auto slash = [&](MeleePipeline& p, float seconds, const auto& locomote) {
+        const Vector from = HandAt(p.game, 0.30f, 0.40f, -0.15f), to = HandAt(p.game, 0.50f, -0.30f, -0.40f);
+        // Wind up slowly (0.6 s), then hold.
+        const Vector start = p.game.handLocal, startForward = p.game.handForwardLocal;
+        run(p, 0.6f, [&](MeleePipeline& q, float t, float dt) {
+            const float u = realistic::MinJerk(t / 0.6f);
+            q.game.handLocal = start + (from - start) * u;
+            Vector f = startForward + (Yawed(q.game, -70.0f, 30.0f) - startForward) * u;
+            Normalize(f, q.game.handForwardLocal);
+            locomote(q, t, dt); });
+        run(p, 0.1f, [&](MeleePipeline& q, float t, float dt) { locomote(q, t, dt); });
+        p.slashStart = p.time;
+        p.slashSeconds = seconds;
+        run(p, seconds, [&](MeleePipeline& q, float t, float dt) {
+            const float u = realistic::MinJerk(t / seconds);
+            q.game.handLocal = from + (to - from) * u;
+            q.game.handForwardLocal = Yawed(q.game, -70.0f + 110.0f * u, 30.0f - 40.0f * u);
+            locomote(q, t, dt); });
+        run(p, 0.3f, [&](MeleePipeline& q, float t, float dt) { q.game.handLocal = to; locomote(q, t, dt); });
+        run(p, 0.8f, [&](MeleePipeline& q, float t, float dt) {
+            const float u = realistic::MinJerk(t / 0.8f);
+            q.game.handLocal = to + (from - to) * u;
+            q.game.handForwardLocal = Yawed(q.game, 40.0f - 110.0f * u, -10.0f + 40.0f * u);
+            locomote(q, t, dt); });
+        run(p, 0.3f, [&](MeleePipeline& q, float t, float dt) { locomote(q, t, dt); });
+    };
+    auto none = [](MeleePipeline&, float, float) {};
+
+    for (const char* weapon : { "katana", "knife", "fireaxe", "machete" })
+    {
+        // Slashes at three speeds: 0.75 s (slow: hand ~2 m/s) never counts,
+        // 0.25 s and 0.15 s count once each, return strokes never.
+        int counted[3] = {};
+        const float durations[3] = { 0.75f, 0.25f, 0.15f };
+        for (int i = 0; i < 3; ++i)
+        {
+            MeleePipeline p(weapon);
+            run(p, 0.5f, [&](MeleePipeline& q, float, float) { ready(q); });
+            slash(p, durations[i], none);
+            counted[i] = p.swings;
+            if (i > 0)
+            {
+                // Like Ancient Dungeon's travel gate, the first part of the arc
+                // (until the tip is 0.43 m from where it was) does not count; the
+                // middle and the end of it do.
+                std::printf("  %s %.2f s slash: counts %.0f %% into it, peak lag %.1f deg\n", weapon, durations[i],
+                    p.startFraction * 100.0f, p.peakLag);
+                Check(p.startFraction > 0.2f && p.startFraction < 0.6f);
+            }
+            if (i == 2) Check(p.peakLag > 12.0f); // a fast slash trails visibly
+        }
+        if (counted[0] != 0 || counted[1] != 1 || counted[2] != 1)
+            std::fprintf(stderr, "%s: slashes counted %d %d %d (want 0 1 1)\n", weapon, counted[0], counted[1], counted[2]);
+        Check(counted[0] == 0 && counted[1] == 1 && counted[2] == 1);
+
+        // Wrist flicks: the hand still, the blade whipped 120 degrees in 0.12 s (peak 1900 deg/s).
+        MeleePipeline flick(weapon);
+        run(flick, 0.5f, [&](MeleePipeline& q, float, float) { ready(q); });
+        for (int i = 0; i < 4; ++i)
+        {
+            run(flick, 0.12f, [&](MeleePipeline& q, float t, float) {
+                const float u = realistic::MinJerk(t / 0.12f);
+                q.game.handForwardLocal = Yawed(q.game, (i % 2 ? 50.0f : -70.0f) + (i % 2 ? -120.0f : 120.0f) * u, 20.0f); });
+            run(flick, 0.3f, none);
+        }
+        Check(flick.swings == 0);
+    }
+
+    // Locomotion with the weapon held ready (or swept slowly while aiming) never swings.
+    struct Scene { const char* name; void (*drive)(meleepath::MeleePipeline&, float, float); float seconds; };
+    const Scene scenes[] = {
+        { "smooth turning at full stick, both ways", [](meleepath::MeleePipeline& p, float t, float dt) {
+            p.game.yaw += (t < 3.0f ? -300.0f : 300.0f) * dt; }, 6.0f },
+        { "snap turning 45 degrees", [](meleepath::MeleePipeline& p, float t, float dt) {
+            const int step = static_cast<int>(t / 0.3f), prev = static_cast<int>((t - dt) / 0.3f);
+            if (t > 0.0f && step != prev) p.game.yaw += (step % 8 < 4) ? 45.0f : -45.0f; }, 4.0f },
+        { "walking at full speed while turning", [](meleepath::MeleePipeline& p, float t, float dt) {
+            const float heading = (p.game.yaw + p.game.headYawLocal) * kDegToRad;
+            p.game.anchor = p.game.anchor + Vector(std::cos(heading), std::sin(heading), 0.0f) * (220.0f * dt);
+            p.game.yaw += 150.0f * std::sin(t * 2.0f) * dt; }, 5.0f },
+        { "teleports, ladders and being pushed", [](meleepath::MeleePipeline& p, float t, float dt) {
+            const int step = static_cast<int>(t / 0.7f), prev = static_cast<int>((t - dt) / 0.7f);
+            if (t > 0.0f && step != prev) p.game.anchor = p.game.anchor + Vector(300.0f, -120.0f, 40.0f);
+            if (t > 1.0f && t < 2.5f) p.game.anchor.z += 110.0f * dt;
+            if (t > 3.0f && t < 3.12f) p.game.anchor = p.game.anchor + Vector(-350.0f * dt, 200.0f * dt, 0.0f); }, 4.0f },
+        { "walking around the room with the weapon raised", [](meleepath::MeleePipeline& p, float t, float dt) {
+            const Vector step = Vector(std::cos(t), std::sin(t * 0.7f), 0.0f) * (1.2f * dt);
+            p.game.hmdLocal = p.game.hmdLocal + step;
+            p.game.handLocal = p.game.handLocal + step;
+            p.game.yaw += 100.0f * dt; }, 4.0f },
+    };
+    for (const Scene& scene : scenes)
+    {
+        for (const char* weapon : { "katana", "knife" })
+        {
+            meleepath::MeleePipeline p(weapon);
+            run(p, 0.5f, [&](meleepath::MeleePipeline& q, float, float) { ready(q); });
+            const bool room = std::string(scene.name).find("room") != std::string::npos;
+            run(p, scene.seconds, [&](meleepath::MeleePipeline& q, float t, float dt) {
+                if (!room) ready(q);
+                // A slow aim sweep of the blade on top (60 deg/s).
+                q.game.handForwardLocal = meleepath::Yawed(q.game, -20.0f + 30.0f * std::sin(t * 2.0f), 40.0f);
+                scene.drive(q, t, dt); });
+            if (p.swings != 0)
+                std::fprintf(stderr, "%s swung %d time(s) while %s\n", weapon, p.swings, scene.name);
+            Check(p.swings == 0);
+        }
+    }
+    // Real slashes during stick turning, snap turning and walking count once each.
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        meleepath::MeleePipeline p("katana");
+        run(p, 0.5f, [&](meleepath::MeleePipeline& q, float, float) { ready(q); });
+        auto locomote = [mode](meleepath::MeleePipeline& q, float t, float dt) {
+            if (mode == 0) q.game.yaw -= 300.0f * dt;
+            if (mode == 1)
+            {
+                const int step = static_cast<int>(t / 0.25f), prev = static_cast<int>((t - dt) / 0.25f);
+                if (t > 0.0f && step != prev) q.game.yaw += 45.0f;
+            }
+            if (mode == 2) q.game.anchor = q.game.anchor + Vector(220.0f * dt, 0.0f, 0.0f);
+        };
+        slash(p, 0.2f, locomote);
+        slash(p, 0.2f, locomote);
+        if (p.swings != 2) std::fprintf(stderr, "slashes during locomotion mode %d: %d swings, expected 2\n", mode, p.swings);
+        Check(p.swings == 2);
+    }
+}
+
 static void TestTrackingFrameAndClock()
 {
     // The tracking frame inverts the game's placement exactly, whatever the turn.
@@ -1119,8 +1397,10 @@ static void TestHandover()
 
 int main()
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     TestHandover();
     TestSwing();
+    TestSwingGates();
     TestSwingIgnoresWalking();
     TestSwingValidation();
     TestThrust();
@@ -1129,6 +1409,7 @@ int main()
     TestGunBashRealisticStrikes();
     TestTrackingFrameAndClock();
     TestLocomotionNeverBashes();
+    TestMeleeSwingPath();
     TestPills();
     TestAdrenaline();
     TestSampleGapRestartsTiming();

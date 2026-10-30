@@ -413,10 +413,23 @@ RecoilDebugLog=false
 // distance. IronSightAimEnabled=false goes back to turning the bore parallel to the hand's aim ray.
 SightAutoAlignEnabled=true
 IronSightAimEnabled=true
-// Melee weapons lag the hand slightly so swings match the regular melee speed; a swing is detected
-// from the blade tip (the chainsaw only needs the trigger). Thrusting a melee weapon forward or
-// bashing with a gun shoves along the motion.
+// Melee weapons stay in your hand and their blade trails the swing (Ancient Dungeon VR style): the faster
+// you swing, the more it lags, up to a soft limit of about 20 degrees; long weapons settle with a slight
+// follow-through, short ones snap back. The server's melee sweep follows the blade you see. The chainsaw
+// only needs the trigger. Thrusting a melee weapon forward or bashing with a gun shoves along the motion.
 MeleeInertiaEnabled=true
+// A swing counts (and can hit) while the blade, measured about three quarters of the way to the tip,
+// moves at least MeleeSwingMinTipSpeed m/s and the hand at least MeleeSwingMinHandSpeedLong (katana, bat,
+// axe, ...) or MeleeSwingMinHandSpeedShort (knife, machete, tonfa, frying pan, riot shield) m/s, and the
+// blade and hand have travelled MeleeSwingMinTipTravel / MeleeSwingMinHandTravel metres over the last
+// 0.6 s. Wrist flicks, slow swings and short pokes do not count; turning and walking never do.
+MeleeSwingMinTipSpeed=4.5
+MeleeSwingMinHandSpeedLong=2.5
+MeleeSwingMinHandSpeedShort=3.0
+MeleeSwingMinTipTravel=0.43
+MeleeSwingMinHandTravel=0.13
+// Hits pulse the controller at full strength (haptics_config.txt melee.hit); this also pulses when a swing starts.
+MeleeSwingStartHaptics=false
 // Keep the headset fed with frames during loading screens and chapter transitions.
 LoadingFramePumpEnabled=true
 LoadingFramePumpStallMs=150

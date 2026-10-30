@@ -86,24 +86,53 @@ namespace l4d2vr_gesture
     };
 
     // ------------------------------------------------------------------ swing
+    // A swing must be fast and committed, like a hit in Ancient Dungeon VR:
+    // the blade tip (measured on the lagged weapon) and the hand both fast,
+    // and both having travelled far enough over the last 0.6 s. A wrist flick
+    // (fast tip, still hand), a slow swing and a short poke never count. All
+    // positions are relative to the HMD in tracking space, so turning,
+    // walking and locomotion never count either. Speeds are averaged over
+    // ~4 frames (45 ms).
     struct SwingParams
     {
-        float bladeLength = 0.5f;       // hand origin to the striking part, along handForward
-        float startSpeed = 1.6f;        // tip speed relative to the HMD that starts a swing
-        float releaseSpeed = 0.6f;      // swing ends below this
-        float restSpeed = 0.5f;         // must stay below this ...
-        float restDuration = 0.08f;     // ... for this long before re-arming
-        float cooldown = 0.3f;          // minimum time between swing starts
-        float maxAxialAlignment = 0.85f; // |cos| between tip velocity and blade axis; above = thrust, not swing
+        float bladeLength = 0.62f;        // grip to the measured point along handForward (73 % of the reach)
+        float startSpeed = 4.5f;          // tip speed relative to the HMD that starts a swing ...
+        float minHandleSpeed = 2.5f;      // ... with the hand at least this fast (short weapons: 3.0)
+        float minTipTravel = 0.43f;       // ... the tip having moved this far ...
+        float minHandleTravel = 0.13f;    // ... and the hand this far ...
+        float travelWindow = 0.6f;        // ... within this window (largest distance from an earlier point)
+        float speedWindow = 0.045f;       // speed averaging window
+        float releaseSpeed = 2.5f;        // the swing (its hit window) ends when the tip falls below this ...
+        float releaseHandleSpeed = 1.25f; // ... or the hand below this
+        float restSpeed = 1.5f;           // re-arms once the tip stays below this ...
+        float restDuration = 0.02f;       // ... for this long
+        float cooldown = 0.35f;           // minimum time between swing starts (the server's own melee gate)
+        float maxAxialAlignment = 0.85f;  // |cos| between tip velocity and blade axis; above = thrust, not swing
     };
 
     struct SwingEvent
     {
         bool started = false;           // true on the single sample a swing begins
-        bool swinging = false;          // true while the swing lasts
+        bool swinging = false;          // true while the swing (its hit window) lasts
         Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized relative tip velocity (zero when still)
-        float tipSpeed = 0.0f;          // m/s relative to the HMD
+        float tipSpeed = 0.0f;          // m/s relative to the HMD (averaged)
+        float handleSpeed = 0.0f;       // m/s relative to the HMD (averaged)
+        float tipTravel = 0.0f;         // m within the travel window
+        float handleTravel = 0.0f;
+        float axial = 0.0f;             // |cos| between the tip velocity and the blade
+        bool armed = false;
+        // Every start gate but the speed itself passed or not (for near-miss logs).
+        bool fastEnough = false, handleFastEnough = false, tipTravelled = false, handleTravelled = false;
     };
+
+    // Ancient Dungeon's hit quality (0..1) for a swing: speed past 7.75 m/s and
+    // committed tip and hand travel. Informational (L4D2 damage is fixed).
+    inline float SwingQuality(float tipSpeed, float tipTravel, float handleTravel)
+    {
+        const float speedTerm = std::min((tipSpeed - 7.75f) / 10.0f, 1.0f);
+        const float tipTerm = std::min(tipTravel / 2.15f, 1.0f), handleTerm = std::min(handleTravel / 0.65f, 1.0f);
+        return std::clamp((1.5f * speedTerm + tipTerm + handleTerm) * 0.3f, 0.0f, 1.0f);
+    }
 
     // Starts in the rest-required state: a weapon adopted mid-motion cannot swing until it settles.
     class SwingDetector
@@ -128,18 +157,57 @@ namespace l4d2vr_gesture
             if (status == SampleClock::Status::First)
             {
                 m_Resting = false;
+                m_Count = 0;
                 if (m_HasSwung && s.time < m_LastStart) m_HasSwung = false; // clock went backwards
             }
-            const Vector tip = PointVelocity(s.handVelocity - hmdVelocity, s.handAngularVelocityDeg,
-                forward * m_Params.bladeLength);
-            const float speed = tip.Length();
+            const Entry now{ s.time, s.handPosition + forward * m_Params.bladeLength - s.hmdPosition,
+                s.handPosition - s.hmdPosition };
+            Push(now);
+            const float window = std::max(m_Params.travelWindow, m_Params.speedWindow);
+            while (m_Count > 1 && At(0).time < s.time - window - 1e-4f) Pop();
+
+            // Averaged velocity: from the newest entry at least speedWindow old
+            // (or the oldest one) to now.
+            Vector tipVelocity{}, handleVelocity{};
+            for (std::size_t i = m_Count; i-- > 0;)
+            {
+                const Entry& e = At(i);
+                const float span = s.time - e.time;
+                if (span >= m_Params.speedWindow - 1e-4f || i == 0)
+                {
+                    if (span > 1e-4f)
+                    {
+                        tipVelocity = (now.tip - e.tip) * (1.0f / span);
+                        handleVelocity = (now.handle - e.handle) * (1.0f / span);
+                    }
+                    break;
+                }
+            }
+            for (std::size_t i = 0; i < m_Count; ++i)
+            {
+                const Entry& e = At(i);
+                if (e.time < s.time - m_Params.travelWindow - 1e-4f) continue;
+                event.tipTravel = std::max(event.tipTravel, (now.tip - e.tip).Length());
+                event.handleTravel = std::max(event.handleTravel, (now.handle - e.handle).Length());
+            }
+            const float speed = tipVelocity.Length();
             event.tipSpeed = speed;
-            if (speed > 1e-4f) event.direction = tip * (1.0f / speed);
+            event.handleSpeed = handleVelocity.Length();
+            if (speed > 1e-4f) event.direction = tipVelocity * (1.0f / speed);
+            event.axial = std::fabs(DotProduct(event.direction, forward));
+            event.fastEnough = speed >= m_Params.startSpeed;
+            event.handleFastEnough = event.handleSpeed >= m_Params.minHandleSpeed;
+            event.tipTravelled = event.tipTravel >= m_Params.minTipTravel;
+            event.handleTravelled = event.handleTravel >= m_Params.minHandleTravel;
 
             switch (m_Phase)
             {
             case Phase::Swinging:
-                if (speed < m_Params.releaseSpeed) { m_Phase = Phase::NeedRest; m_Resting = false; }
+                if (speed < m_Params.releaseSpeed || event.handleSpeed < m_Params.releaseHandleSpeed)
+                {
+                    m_Phase = Phase::NeedRest;
+                    m_Resting = false;
+                }
                 break;
             case Phase::NeedRest:
                 if (speed < m_Params.restSpeed)
@@ -151,8 +219,8 @@ namespace l4d2vr_gesture
                 else m_Resting = false;
                 break;
             case Phase::Armed:
-                if (speed >= m_Params.startSpeed &&
-                    std::fabs(DotProduct(event.direction, forward)) <= m_Params.maxAxialAlignment)
+                if (event.fastEnough && event.handleFastEnough && event.tipTravelled && event.handleTravelled &&
+                    event.axial <= m_Params.maxAxialAlignment)
                 {
                     m_Phase = Phase::Swinging;
                     m_HasSwung = true;
@@ -161,14 +229,28 @@ namespace l4d2vr_gesture
                 }
                 break;
             }
+            event.armed = m_Phase == Phase::Armed;
             event.swinging = m_Phase == Phase::Swinging;
             return event;
         }
 
     private:
         enum class Phase { NeedRest, Armed, Swinging };
+        struct Entry { float time; Vector tip; Vector handle; };
+        // 512 entries cover the 0.6 s window at up to ~850 Hz; older entries are dropped beyond that.
+        void Push(const Entry& entry)
+        {
+            if (m_Count == m_Entries.size()) Pop();
+            m_Entries[(m_Head + m_Count) % m_Entries.size()] = entry;
+            ++m_Count;
+        }
+        void Pop() { m_Head = (m_Head + 1) % m_Entries.size(); --m_Count; }
+        const Entry& At(std::size_t i) const { return m_Entries[(m_Head + i) % m_Entries.size()]; }
+
         SwingParams m_Params{};
         SampleClock m_Clock{};
+        std::array<Entry, 512> m_Entries{};
+        std::size_t m_Head = 0, m_Count = 0;
         Phase m_Phase = Phase::NeedRest;
         bool m_Resting = false;
         float m_RestStart = 0.0f;

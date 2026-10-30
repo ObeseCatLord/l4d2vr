@@ -30,7 +30,10 @@ weapon.grenade_launcher=0.060,55,1.00
 weapon.melee=0.028,105,0.54
 weapon.chainsaw=0.014,175,0.34
 
+# melee.swing plays when a swing starts, only with MeleeSwingStartHaptics=true in config.txt.
 melee.swing=0.035,95,0.72
+# A confirmed melee hit: full strength for 70 ms (frequency 0 = the runtime's default).
+melee.hit=0.07,0,1.0
 melee.shove=0.05,200,1.0
 
 # ----------------------------

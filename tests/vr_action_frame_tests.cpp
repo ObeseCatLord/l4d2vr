@@ -211,6 +211,9 @@ struct VR
     void StopVoiceRecordCommandNow() {}
     void ResetObjectPullInput(bool) {}
     void CancelMagazineInteractionManual() { ++cancellations; pendingMagazine = pendingShell = false; chamberRequired = false; }
+    struct DualReloadButtons { bool release = false; bool grab[2] = {}; bool grip[2] = {}; };
+    int dualReloadCancels = 0;
+    void UpdateDualPistolReload(C_BasePlayer*, bool active, const DualReloadButtons&) { if (!active) ++dualReloadCancels; }
     void ResetMagazineInteractionSession()
     {
 #include "vr_action_frame_session_reset.inl"

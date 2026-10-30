@@ -54,6 +54,15 @@ namespace
             unsupportedOut = unsupported;
             return state.eligible && state.weaponId == requestedWeaponId;
         }
+        AmmoState dualState{};
+        bool dualUnsupported = false;
+        bool ReadDualPistolAmmo(int, AmmoState& out, bool& unsupportedOut) override
+        {
+            out = dualState;
+            unsupportedOut = dualUnsupported;
+            if (out.eligible) { state.clip = out.clip; state.reserve = out.reserve; }
+            return out.eligible;
+        }
         bool WriteAmmo(const AmmoState& s, int clip, int reserve, bool) override
         {
             if (s.clip != state.clip || s.reserve != state.reserve) return false;
@@ -238,7 +247,7 @@ namespace
         Check(bundle[1] == "l4d2vr_interaction_ack 1\n");
         Check(bundle[2] == "l4d2vr_shell_capability 1 41\n");
         Check(bundle[3] == "l4d2vr_mag_capability 3 42\n");
-        Check(bundle[4] == "l4d2vr_feature_ack fff 1\n");
+        Check(bundle[4] == "l4d2vr_feature_ack 1fff 1\n");
         Check(s.EffectiveFeatures(2) == kFeatureAllMask);
         // The client answers server_ack with another hello: no duplicate bundle.
         host.sent.clear();
@@ -392,6 +401,30 @@ namespace
         host.sent.clear();
         Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "3", "12290", "302", "5", "50", "80", "0" }, &ammo);
         Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 3 12290 302 5 50 80 0 7 0 0\n" });
+        // Physical dual-pistol reload on the magazine token: empty pair, infinite
+        // reserve -> 30; then a finite reserve smaller than two magazines.
+        ammo.unsupported = false;
+        ammo.dualState = AmmoState{ true, 0x3003u, 400u, 1, 0, 0, 30, true, nullptr, nullptr, 1 };
+        host.sent.clear();
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "1002", "1", "12291", "400", "0", "0" }, &ammo);
+        Check(host.sent.empty());   // DualMagTxn not advertised by this session
+        caps.features = kFeatureMagTxn | kFeatureShellTxn | kFeatureDualMagTxn;
+        s.SetCapabilities(caps);
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "1002", "1", "12291", "400", "0", "0" }, &ammo);
+        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_dual_result 1002 1 12291 400 0 0 0 30 0\n" });
+        Check(ammo.state.clip == 30);
+        host.Advance(200);
+        host.sent.clear();
+        ammo.dualState = AmmoState{ true, 0x3003u, 410u, 1, 4, 12, 30, false, nullptr, nullptr, 1 };
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "1002", "2", "12291", "410", "4", "12" }, &ammo);
+        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_dual_result 1002 2 12291 410 4 12 0 16 0\n" });
+        // A single pistol (not dual) is refused (Weapon = 3); a wrong token gets no reply.
+        host.Advance(200);
+        host.sent.clear();
+        ammo.dualState.eligible = false;
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "1002", "3", "12291", "411", "4", "12" }, &ammo);
+        Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "77", "4", "12291", "411", "4", "12" }, &ammo);
+        Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_dual_result 1002 3 12291 411 4 12 3 4 12\n" });
         // Without the feature bit the commands are consumed silently.
         FakeHost host2;
         Session off(host2);

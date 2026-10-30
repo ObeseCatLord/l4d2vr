@@ -184,7 +184,8 @@ namespace l4d2vr_server
             const bool isShell = std::strcmp(name, kShellInsertCommand) == 0;
             const bool isMag = std::strcmp(name, kMagActionCommand) == 0;
             const bool isPattern = std::strcmp(name, kShotgunPatternCommand) == 0;
-            if (!isHello && !isUpload && !isFeatureHello && !isShell && !isMag && !isPattern)
+            const bool isDual = std::strcmp(name, l4d2vr_dual_reload::kRequestCommand) == 0;
+            if (!isHello && !isUpload && !isFeatureHello && !isShell && !isMag && !isPattern && !isDual)
                 return CommandResult::Continue;
             if (!IsValidPlayerIndex(index)) return CommandResult::Stop;
 
@@ -195,6 +196,7 @@ namespace l4d2vr_server
             if (isUpload) { HandleUpload(index, argc, argv); return CommandResult::Stop; }
             if (isFeatureHello) { HandleFeatureHello(index, argc, argv); return CommandResult::Stop; }
             if (isShell) { HandleShell(index, argc, argv, ammo); return CommandResult::Stop; }
+            if (isDual) { HandleDual(index, argc, argv, ammo); return CommandResult::Stop; }
             if (isPattern)
             {
                 std::uint32_t on = 0u;
@@ -416,6 +418,24 @@ namespace l4d2vr_server
             std::snprintf(log, sizeof(log), "L4D2VR server: magazine player=%d seq=%u action=%u status=%u weaponId=%d clip=%d reserve=%d\n",
                 index, request.sequence, static_cast<unsigned>(request.action), static_cast<unsigned>(reply.status),
                 request.weaponId, reply.clip, reply.reserve);
+            m_Host.Log(log);
+        }
+
+        void HandleDual(int index, int argc, const char* const* argv, AmmoBackend* ammo)
+        {
+            SessionClient& c = m_Clients[static_cast<std::size_t>(index)];
+            l4d2vr_dual_reload::Request request{};
+            if (!l4d2vr_dual_reload::ParseRequest(argc, argv, request)) return;
+            if ((m_Caps.features & kFeatureDualMagTxn) == 0u || (c.requestedFeatures & kFeatureDualMagTxn) == 0u ||
+                !ammo || c.txn.entity != c.entity || !c.txn.mag.Token() || request.token != c.txn.mag.Token())
+                return;
+            const l4d2vr_dual_reload::Reply reply = ApplyDualRequest(c.txn, *ammo, index, request, m_Host.NowMs());
+            char line[192];
+            if (l4d2vr_dual_reload::FormatReply(reply, line, sizeof(line))) Send(c, line);
+            char log[192];
+            std::snprintf(log, sizeof(log), "L4D2VR server: dual reload player=%d seq=%u status=%u clip=%d->%d reserve=%d->%d\n",
+                index, request.sequence, static_cast<unsigned>(reply.status), request.clip, reply.clip,
+                request.reserve, reply.reserve);
             m_Host.Log(log);
         }
 

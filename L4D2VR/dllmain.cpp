@@ -3192,6 +3192,9 @@ namespace
         sampleKeys.insert("ManualPumpEnabled");
         sampleKeys.insert("DualPistolsIndependentHandsEnabled");
         sampleKeys.insert("DualPistolsNativeReloadFallbackEnabled");
+        sampleKeys.insert("DualPistolsPhysicalReloadEnabled");
+        sampleKeys.insert("DualPistolsStackDistanceMeters");
+        sampleKeys.insert("DualPistolsStackMaxAngleDeg");
         sampleKeys.insert("ScopePhysicalLensEnabled");
         sampleKeys.insert("ScopeBaseMagnification");
         sampleKeys.insert("HolsterPavlovLayoutEnabled");

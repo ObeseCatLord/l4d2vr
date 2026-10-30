@@ -411,7 +411,7 @@ namespace l4d2vr_linux
         if (has(kGroupEye)) out.features |= kFeatureShoveAim | kFeaturePillGive;
         if (has(kGroupMelee) && status && in.meleeOperands) out.features |= kFeatureMeleeSweepV2;
         const bool ammo = has(kGroupAmmo | kGroupReloadGate) && status && in.netpropAmmo;
-        if (ammo) out.features |= kFeatureMagTxn;
+        if (ammo) out.features |= kFeatureMagTxn | kFeatureDualMagTxn;   // IsDualWielding is in the ammo group
         if (ammo && in.netpropShell) out.features |= kFeatureShellTxn;
         if (has(kGroupDrop) && status) out.features |= kFeatureHolsterDrop;
         if (has(kGroupThrow)) out.features |= kFeatureThrowVelocity;

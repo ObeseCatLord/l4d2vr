@@ -21,7 +21,7 @@ are not assigned a guessed stock identity.
 | Weapons | Aiming and model path | Reload/cycle path |
 | --- | --- | --- |
 | Pistol | Tracked gun, native stock mesh | Host pistol magazine/chamber transactions |
-| Dual pistols | Independent tracked hands and native two-gun mesh | Intentional shared native button reload; enabled by default |
+| Dual pistols | Independent tracked hands and native two-gun mesh | Stacking reload: release both, stack, double magazine, rack each empty slide (native button reload when disabled) |
 | Magnum | Tracked gun, native stock mesh | Host detachable-magazine transactions |
 | Uzi, silenced SMG, MP5 | Tracked gun and support grip | Host detachable-magazine transactions |
 | M16, AK47, Desert rifle | Tracked gun and support grip | Host detachable-magazine transactions; native firing cadence/burst behavior |

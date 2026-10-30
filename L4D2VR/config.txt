@@ -501,6 +501,15 @@ DualPistolsIndependentHandsEnabled=true
 // without the physical protocol the shot's view angles carry that hand's aim).
 DualPistolsAkimboOnAnyServer=true
 DualPistolsNativeReloadFallbackEnabled=true
+// Physical dual-pistol reload: Magazine Release drops both magazines; bring one pistol
+// into the other hand (they stack side by side), take the double magazine from the pouch
+// with the free hand and push it into both guns, pull back each empty gun's slide, then
+// grip the stacked guns with the free hand to take its pistol back. Off: the button reload
+// above. The hands stack within DualPistolsStackDistanceMeters with the barrels within
+// DualPistolsStackMaxAngleDeg of each other.
+DualPistolsPhysicalReloadEnabled=true
+DualPistolsStackDistanceMeters=0.12
+DualPistolsStackMaxAngleDeg=45
 // Pavlov-style: the release button drops detachable magazines (the AK-47's is pulled out by hand).
 // An empty gun never reloads or ejects on its own; its magazine glows to show a reload is needed.
 MagazineReleaseButtonRequired=true

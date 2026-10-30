@@ -203,6 +203,15 @@ VrHandsTwoHandedAimSmoothingSeconds=0.025
 VrHandsTwoHandedStabilizerEnabled=true
 VrHandsTwoHandedStabilizerMinCutoffHz=1.2
 VrHandsTwoHandedStabilizerBeta=1.5
+// Survivor hand finger poses from Pavlov VR: a hand holding a magazine, a shell, a slide, a charging
+// handle, a pump or a bolt takes that item's grip; the gun hand's trigger finger lifts off and pulls with
+// the trigger; a free hand opens, points and closes into a fist with your fingers or controller.
+// HandPoseBlendSeconds: how fast the fingers move to a new pose. HandPoseTriggerFingerScale: how far the
+// trigger finger moves (0 = the game's animation only). HandPosesEnabled=false = the older curls only.
+HandPosesEnabled=true
+HandPoseBlendSeconds=0.06
+HandPoseTriggerFingerScale=1.0
+HandPoseDebugLog=false
 VrHandsTwoHandedAimMinHandDistanceMeters=0.12
 VrHandsTwoHandedAimMaxHandDistanceMeters=0.85
 VrHandsTwoHandedAimOffhandOffsetMeters=0.12,0.0,0.0

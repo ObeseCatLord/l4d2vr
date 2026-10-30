@@ -1958,6 +1958,11 @@ void VR::ParseConfigFile()
     m_VrHandsTwoHandedStabilizerEnabled = getBool("VrHandsTwoHandedStabilizerEnabled", true);
     m_VrHandsTwoHandedStabilizerMinCutoffHz = std::clamp(getFloat("VrHandsTwoHandedStabilizerMinCutoffHz", 1.2f), 0.2f, 10.0f);
     m_VrHandsTwoHandedStabilizerBeta = std::clamp(getFloat("VrHandsTwoHandedStabilizerBeta", 1.5f), 0.0f, 10.0f);
+    // Pavlov hand poses for the survivor hands (vr/vr_hand_poses.inl).
+    m_HandPosesEnabled = getBool("HandPosesEnabled", true);
+    m_HandPoseBlendSeconds = std::clamp(getFloat("HandPoseBlendSeconds", 0.06f), 0.0f, 0.5f);
+    m_HandPoseTriggerFingerScale = std::clamp(getFloat("HandPoseTriggerFingerScale", 1.0f), 0.0f, 2.0f);
+    m_HandPoseDebugLog = getBool("HandPoseDebugLog", false);
     m_VrHandsTwoHandedAimMinHandDistanceMeters = std::clamp(getFloat("VrHandsTwoHandedAimMinHandDistanceMeters", m_VrHandsTwoHandedAimMinHandDistanceMeters), 0.0f, 1.0f);
     m_VrHandsTwoHandedAimMaxHandDistanceMeters = std::clamp(getFloat("VrHandsTwoHandedAimMaxHandDistanceMeters", m_VrHandsTwoHandedAimMaxHandDistanceMeters), 0.0f, 2.0f);
     m_VrHandsTwoHandedAimOffhandOffsetMeters = getVector3("VrHandsTwoHandedAimOffhandOffsetMeters", m_VrHandsTwoHandedAimOffhandOffsetMeters);

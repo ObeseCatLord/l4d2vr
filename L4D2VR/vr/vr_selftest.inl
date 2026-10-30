@@ -421,6 +421,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (handled)
             return done;
     }
+    // Recoil, exact aim and iron sights (vr_selftest_recoil.inl).
+    {
+        bool handled = false;
+        const bool done = RunRecoilSelfTestStep(step, t, player, handled);
+        if (handled)
+            return done;
+    }
 
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
@@ -434,10 +441,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         // Dedicated plugin: every bit. Modded listen host: its own set.
         // Dedicated plugin: every bit (an older plugin: all but HandThrow).
         // Modded listen host: its own set, with HandThrow when its fields resolved.
+        // ShotgunPattern (0x800) is optional on both: it needs SharedRandomFloat.
+        const uint32_t core = mask & ~l4d2vr_features::ShotgunPattern;
         SelfTestReport("server capabilities", Hooks::s_ServerUnderstandsVR &&
-            (mask == l4d2vr_features::kKnownMask || mask == l4d2vr_features::kPreHandThrowMask ||
-                mask == l4d2vr_features::kListenHostMask ||
-                mask == (l4d2vr_features::kListenHostMask | l4d2vr_features::HandThrow)), detail);
+            (core == (l4d2vr_features::kKnownMask & ~l4d2vr_features::ShotgunPattern) ||
+                core == l4d2vr_features::kPreHandThrowMask ||
+                core == l4d2vr_features::kListenHostMask ||
+                core == (l4d2vr_features::kListenHostMask | l4d2vr_features::HandThrow)), detail);
         return true;
     }
 

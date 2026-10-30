@@ -2450,6 +2450,10 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         m_VR->RecordMeleeCommand(cmd->command_number, meleeEligible,
             reinterpret_cast<uintptr_t>(localPlayerForAutoActions), reinterpret_cast<uintptr_t>(routingPistol));
     }
+    // The pose this firing command is fired along (sent with it, and used by
+    // the listen host when it runs the command).
+    if (m_VR)
+        RecoilCacheShotPose(cmd->command_number, (cmd->buttons & 1) != 0);
 	s_lastButtons = cmd->buttons;
 
 	return result;

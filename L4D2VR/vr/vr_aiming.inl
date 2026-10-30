@@ -1837,6 +1837,8 @@ QAngle VR::GetBulletAimAbsAngle()
 
 bool VR::GetBulletAimRay(Vector& origin, Vector& direction)
 {
+    if (!t_UseRenderFrameSnapshot && !ScopeChangesAim() && !CanCalibrateBulletAim() && GetIronSightRay(origin, direction))
+        return true;
     origin = GetRightControllerViewmodelAbsPos();
     Vector up{};
     QAngle::AngleVectors(GetRightControllerAbsAngle(), &direction, nullptr, &up);
@@ -2086,6 +2088,21 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
     }
 
     Vector origin = useAutoGripAimPose ? originBase : originBase + direction * 2.0f;
+
+    // Iron sights: the bullet ray is the drawn gun's sight line (rear sight
+    // to front sight), so the shot lands where the sights point at every
+    // distance. A scope that changes the aim keeps its own camera ray.
+    if (!isThrowable && !useMouse && !frontViewEyeAim && !frontViewControllerEyeOrigin && !ScopeChangesAim() &&
+        !CanCalibrateBulletAim())
+    {
+        Vector sightOrigin{}, sightDirection{};
+        if (GetIronSightRay(sightOrigin, sightDirection))
+        {
+            origin = sightOrigin;
+            direction = sightDirection;
+            m_LastAimDirection = direction;
+        }
+    }
 
     if (isThrowable)
     {
@@ -2554,7 +2571,7 @@ bool VR::ApplyVrHandsRealBulletSpreadAimLine(C_WeaponCSBase* weapon, const Vecto
 {
     (void)origin;
 
-    if (!m_VrHandsRealBulletSpreadEnabled || !IsVrHandsRealBulletSpreadWeapon(weapon))
+    if (!m_VrHandsRealBulletSpreadEnabled || m_SpreadDisabled || !IsVrHandsRealBulletSpreadWeapon(weapon))
     {
         ClearVrHandsRealBulletSpreadAimLine();
         return false;
@@ -2716,6 +2733,14 @@ void VR::UpdateCrosshairSpread(C_BasePlayer* localPlayer)
         m_RenderCrosshairSpreadDeg.store(-1.0f, std::memory_order_relaxed);
         return;
     }
+    if (m_SpreadDisabled && !m_ForceNonVRServerMovement && Hooks::s_ServerUnderstandsVR)
+    {
+        // VR-aware server: bullets follow the aim ray exactly (only recoil
+        // moves it), so the crosshair has no spread gap.
+        m_CrosshairAccumSpreadDeg = 0.0f;
+        m_RenderCrosshairSpreadDeg.store(0.0f, std::memory_order_relaxed);
+        return;
+    }
     const float stance = GetEffectiveAttackRangeSpreadDegrees(localPlayer, weapon, *data);
     const float decay = data->spreadDecay > 0.0f ? data->spreadDecay : 4.0f;
     m_CrosshairAccumSpreadDeg = std::max(0.0f, m_CrosshairAccumSpreadDeg - decay * dt);
@@ -2732,7 +2757,7 @@ bool VR::NotifyVrHandsRealBulletSpreadClientShot(
     (void)origin;
     RecordCrosshairShot(weapon, fireSpreadArgument);
 
-    if (!m_IsVREnabled || !m_VrHandsRealBulletSpreadEnabled || !localPlayer ||
+    if (!m_IsVREnabled || !m_VrHandsRealBulletSpreadEnabled || m_SpreadDisabled || !localPlayer ||
         !IsVrHandsRealBulletSpreadWeapon(weapon) || m_MouseModeEnabled || ScopeChangesAim() ||
         (!m_VrHandsEnabled && !m_NativeViewmodelHandsOnly))
     {
@@ -3575,6 +3600,10 @@ bool VR::ShouldShowAimLine(C_WeaponCSBase* weapon) const
     case C_WeaponCSBase::SCOUT:
     case C_WeaponCSBase::GRENADE_LAUNCHER:
     case C_WeaponCSBase::M60:
+        // The bullet ray (aim line state) is always traced for firearms; only
+        // its drawing follows AimLineEnabled, so turning the laser off never
+        // changes where bullets go.
+        return true;
     case C_WeaponCSBase::MOLOTOV:
     case C_WeaponCSBase::PIPE_BOMB:
     case C_WeaponCSBase::VOMITJAR:

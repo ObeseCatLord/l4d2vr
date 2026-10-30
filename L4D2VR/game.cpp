@@ -1289,6 +1289,7 @@ void Game::ResetAllPlayerVRInfo()
     if (m_VR) m_VR->DisconnectRemoteMagazineProtocol();
     if (m_VR) m_VR->m_ServerPhysicalInteractionVersion.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
+    if (m_VR) m_VR->m_ShotgunPatternSent = -1;
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         m_PlayersVRInfo.fill(Player{});
@@ -1316,6 +1317,7 @@ void Game::ResetVRPoseServerSession()
     if (m_VR) m_VR->DisconnectRemoteMagazineProtocol();
     if (m_VR) m_VR->m_ServerPhysicalInteractionVersion.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
+    if (m_VR) m_VR->m_ShotgunPatternSent = -1;
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         for (Player& player : m_PlayersVRInfo)
@@ -1810,6 +1812,8 @@ void Game::ObserveBuiltinVRPoseRelayClient(
         client = VRPoseRelayServerClient{};
         client.entity = entity;
         client.edictSerial = edictSerial;
+        if (IsValidPlayerIndex(playerIndex))
+            m_PlayersVRInfo[playerIndex].shotgunPattern = false;
     }
 
     const std::uint64_t nowMs = VRPoseTickMs();
@@ -1850,6 +1854,33 @@ void Game::ObserveBuiltinVRPoseRelayClient(
             static_cast<unsigned int>(l4d2vr_pose::kVersion),
             playerIndex);
     }
+}
+
+bool Game::HandleShotgunPatternCommand(edict_t* entity, const void* sourceCommand)
+{
+    VRPoseRelayCommandView command{};
+    if (!VRPoseRelayReadCommand(sourceCommand, command) ||
+        std::strcmp(command.name, l4d2vr_shotgun_pattern::kOptInCommand) != 0)
+        return false;
+    int playerIndex = -1;
+    unsigned edictSerial = 0u;
+    if (command.argumentCount != 2 || !VRPoseRelayReadEdictIdentity(entity, playerIndex, edictSerial) ||
+        !IsValidPlayerIndex(playerIndex))
+        return true;
+    const bool on = std::strcmp(command.argument1, "1") == 0;
+    if (!on && std::strcmp(command.argument1, "0") != 0)
+        return true;
+    m_PlayersVRInfo[playerIndex].shotgunPattern = on;
+    m_PlayersVRInfo[playerIndex].shotgunPatternSerial = edictSerial;
+    Game::logMsg("[VR][ShotgunPattern][server] player %d uses %s shotgun pellets", playerIndex, on ? "Pavlov" : "stock");
+    return true;
+}
+
+bool Game::PlayerUsesShotgunPattern(int playerIndex) const
+{
+    // Cleared whenever the slot's relay session starts over (pose hello from
+    // a new entity), so a later player in the slot never inherits it.
+    return IsValidPlayerIndex(playerIndex) && m_PlayersVRInfo[playerIndex].shotgunPattern;
 }
 
 bool Game::HandleBuiltinVRPoseRelayCommand(

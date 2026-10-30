@@ -42,6 +42,7 @@ namespace l4d2vr_linux
         kGroupThrow = 1u << 6,
         kGroupDeploy = 1u << 7,
         kGroupStatus = 1u << 8,        // survivor status accessors
+        kGroupPattern = 1u << 9,       // SharedRandomFloat: Pavlov shotgun pellets
     };
 
     struct TargetSpec
@@ -106,6 +107,8 @@ namespace l4d2vr_linux
               Strategy::Inline, nullptr, "55 89 E5 57 56 53 83 EC 4C 8B 55 08 C7 04 24 ?? ?? ?? ??", kGroupThrow },
             { "CVomitJarProjectile::Create", "_ZN19CVomitJarProjectile6CreateERK6VectorRK6QAngleS2_S2_P20CBaseCombatCharacter",
               Strategy::Inline, nullptr, "55 89 E5 57 56 53 83 EC 4C 8B 55 08 C7 04 24 ?? ?? ?? ??", kGroupThrow },
+            { "SharedRandomFloat", "_Z17SharedRandomFloatPKcffi", Strategy::Inline, nullptr,
+              "55 89 E5 57 56 53 83 EC 1C 8B 75 08 8B 7D 14", kGroupPattern },
             // Optional (no group): puts a dropped item at the releasing hand.
             { "CBaseAnimating::Teleport", "_ZN14CBaseAnimating8TeleportEPK6VectorPK6QAngleS2_", Strategy::Call, nullptr,
               "55 89 E5 53 83 EC 14 8B 45 14 8B 5D 08 89 44 24 0C 8B 45 10", 0u },
@@ -417,6 +420,8 @@ namespace l4d2vr_linux
         // curtime) and need the projectile Create hooks for position/velocity.
         if (has(kGroupThrow | kGroupDeploy) && in.netpropDeploy && in.netpropGrenade && status)
             out.features |= kFeatureHandThrow;
+        // Pavlov shotgun pellets rewrite the pellet loop's shared random draws.
+        if (has(kGroupPattern)) out.features |= kFeatureShotgunPattern;
         out.interaction = has(kGroupReloadGate | kGroupDrop | kGroupEye) && status;
         return out;
     }

@@ -740,7 +740,9 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
 #include "vr/vr_selftest.inl"
 #include "vr/vr_selftest_overlays.inl"
 #include "vr/vr_selftest_hands.inl"
+#include "vr/vr_selftest_recoil.inl"
 #include "vr/vr_item_hand.inl"
+#include "vr/vr_recoil.inl"
 #include "vr/vr_native_wrist_hud.inl"
 #include "vr/vr_viewmodel_config.inl"
 

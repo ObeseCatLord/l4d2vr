@@ -3050,6 +3050,9 @@ namespace
         { "2026-10-28_pavlov_socket_capture_angle", "MagazineInteractionSocketCaptureAngleDeg", "45" },
         // Pavlov grips grab, the off-hand trigger reloads.
         { "2026-10-28_pavlov_trigger_interactions", "MagazineInteractionTriggerInteractions", "true" },
+        // Pavlov-style recoil: aim with the sights, no crosshair or laser line.
+        { "2026-10-29_pavlov_recoil_crosshair_off", "CrosshairEnabled", "false" },
+        { "2026-10-29_pavlov_recoil_aim_line_off", "AimLineEnabled", "false" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3203,6 +3206,12 @@ namespace
         sampleKeys.insert("CrosshairColorRGB");
         sampleKeys.insert("CrosshairAlpha");
         sampleKeys.insert("SightAutoAlignEnabled");
+        sampleKeys.insert("RecoilEnabled");
+        sampleKeys.insert("RecoilScale");
+        sampleKeys.insert("SpreadDisabled");
+        sampleKeys.insert("ShotgunPavlovPattern");
+        sampleKeys.insert("RecoilDebugLog");
+        sampleKeys.insert("IronSightAimEnabled");
         sampleKeys.insert("MeleeInertiaEnabled");
         sampleKeys.insert("PhysicalShoveEnabled");
         sampleKeys.insert("GunBashSweepEnabled");

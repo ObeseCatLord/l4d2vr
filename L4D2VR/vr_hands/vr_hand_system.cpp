@@ -7,6 +7,7 @@
 #include "../vr_skeletal_data.h"
 #include "../vr_hand_input_validation.h"
 #include "../vr_hand_pose_cache.h"
+#include "vr_hand_test_assets.h"
 
 #include <Windows.h>
 #include <d3d9.h>
@@ -450,24 +451,13 @@ void VrHandSystem::ReportWarningOnce(const std::string& warning)
 
 namespace
 {
-    std::mutex& VrHandsTestAssetMutex()
-    {
-        static std::mutex mutex;
-        return mutex;
-    }
-    std::string& VrHandsTestAssetDirectory()
-    {
-        static std::string directory;
-        return directory;
-    }
     constexpr std::uint32_t kSkeletonRetryMs = 2000u;
     constexpr unsigned kSkeletonFullAttempts = 5u;
 }
 
 void VrHandSystem::SetTestAssetDirectory(const std::string& directory)
 {
-    std::lock_guard<std::mutex> lock(VrHandsTestAssetMutex());
-    VrHandsTestAssetDirectory() = directory;
+    l4d2vr_hand_test_assets::SetDirectory(directory);
 }
 
 bool VrHandSystem::HandPaletteFresh(size_t handIndex, std::uint32_t maxAgeMs, const char*& mode) const
@@ -485,8 +475,7 @@ bool VrHandSystem::ResolveSteamVrAssetPath(const char* fileName, std::string& ou
 {
     outPath.clear();
     {
-        std::lock_guard<std::mutex> lock(VrHandsTestAssetMutex());
-        const std::string& directory = VrHandsTestAssetDirectory();
+        const std::string directory = l4d2vr_hand_test_assets::Directory();
         if (!directory.empty() && fileName && *fileName)
         {
             try

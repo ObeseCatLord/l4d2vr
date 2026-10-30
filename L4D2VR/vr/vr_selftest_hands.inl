@@ -254,7 +254,8 @@ bool VR::RunHandSelfTestStep(const std::string& step, float t, bool& handled)
             }
         }
         const std::string file = "l4d2vr_selftest_" + name + "_skeleton.txt";
-        if (FILE* f = std::fopen(file.c_str(), "wb"))
+        FILE* f = nullptr;
+        if (fopen_s(&f, file.c_str(), "wb") == 0 && f)
         {
             std::fwrite(out.data(), 1, out.size(), f);
             std::fclose(f);

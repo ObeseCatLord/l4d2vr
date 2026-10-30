@@ -48,6 +48,7 @@
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
+#include "vr_hand_pose_library.h"
 #include "vr_item_hand.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
@@ -2388,6 +2389,22 @@ public:
 	{
 		return m_VrHandsTwoHandedGripActive;
 	}
+	// Survivor hand finger poses (vr_hand_pose_library.h, vr/vr_hand_poses.inl).
+	bool m_HandPosesEnabled = true;
+	float m_HandPoseBlendSeconds = 0.06f;
+	float m_HandPoseTriggerFingerScale = 1.0f;
+	bool m_HandPoseDebugLog = false;
+	mutable std::mutex m_HandPoseMutex;
+	l4d2vr_handpose::HandBlender m_HandPoseBlenders[2];
+	l4d2vr_handpose::HandOutput m_HandPoseOutputs[2];
+	bool m_HandPoseOutputValid[2] = { false, false };
+	std::chrono::steady_clock::time_point m_HandPoseOutputAt[2]{};
+	std::chrono::steady_clock::time_point m_HandPoseLastUpdate{};
+	l4d2vr_handpose::HandActivity m_HandPoseLoggedActivity[2] = { l4d2vr_handpose::HandActivity::Free, l4d2vr_handpose::HandActivity::Free };
+	std::atomic<int> m_SelfTestHandPoseForced[2] = { -1, -1 };  // self-test handact=: activity | weapon << 8
+	l4d2vr_handpose::HandInput ResolveHandPoseInput(int gameplaySide) const;
+	void UpdateHandPoseTargets();
+	bool GetHandPoseOutput(int viewmodelSide, l4d2vr_handpose::HandOutput& out) const;
 	Vector m_VrHandsRealBulletSpreadAimDirection = { 0.0f, 0.0f, 0.0f };
 	std::chrono::steady_clock::time_point m_VrHandsRealBulletSpreadAimHoldUntil{};
 	std::chrono::steady_clock::time_point m_VrHandsRealBulletSpreadLastShotAt{};
@@ -3126,6 +3143,9 @@ public:
 	// Hand skeleton / finger curl steps (vr/vr_selftest_hands.inl): fingercurls=,
 	// curlcheck=, skeldump=, gloveassets=, glovecheck=.
 	bool RunHandSelfTestStep(const std::string& step, float t, bool& handled);
+	bool RunHandPoseSelfTestStep(const std::string& step, float t, bool& handled);
+	bool m_SelfTestHandPosePhotos = false;
+	float m_SelfTestHandPoseGripAt = 0.0f;
 	static bool SelfTestRunsWithoutPlayer(const std::string& step);
 	void SelfTestLogOverlays(const char* label);
 	bool SelfTestCheckUi(const std::string& predicate, char* detail, size_t detailSize);

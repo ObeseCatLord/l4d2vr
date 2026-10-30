@@ -2098,6 +2098,7 @@ void VR::Update()
     UpdateTracking();
     UpdateNativeViewmodelLeftHandOpenVRFingerCurls();
     UpdateNativeViewmodelRightHandOpenVRFingerCurls();
+    UpdateHandPoseTargets();
     UpdateKillSoundFeedback();
     UpdateMeleeHitHaptics();
     PumpSpeechToTextCapture();

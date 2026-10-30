@@ -14562,6 +14562,161 @@ namespace
         return true;
     }
 
+    // Hand pose library (vr_hand_poses.inl, vr_hand_pose_library.h). `absolute`
+    // sets every finger joint of that side from its bind (rest) local: the
+    // joint turns about its local -Z by (target flex - bind flex), the knuckle
+    // spreads about local Y and the thumb root takes its extra rotation.
+    // Otherwise the trigger overlay turns the animated index finger joints by
+    // the trigger delta. Bones below the fingers follow. Source orders bones
+    // parents first, so one ascending pass rebuilds the subtree.
+    inline bool HooksNativeHandPoseApply(
+        void* drawState,
+        int boneIndex,
+        int stride,
+        const std::vector<std::string>& boneNames,
+        const std::vector<int>& boneParents,
+        int numBones,
+        int side,
+        const l4d2vr_handpose::HandOutput& pose,
+        vr_vm_stabilize::Mat3x4* currentBones)
+    {
+        namespace hp = l4d2vr_handpose;
+        if (!currentBones || (side != -1 && side != 1) || numBones <= 0 || numBones > 512 ||
+            static_cast<int>(boneNames.size()) < numBones ||
+            static_cast<int>(boneParents.size()) < numBones ||
+            (!pose.absolute && !pose.triggerOverlay))
+        {
+            return false;
+        }
+
+        struct FingerMap
+        {
+            std::vector<std::string> names;
+            int hand = -1;
+            int bones[hp::kFingers][hp::kJoints] = {};
+        };
+        static thread_local FingerMap s_maps[2];
+        FingerMap& map = s_maps[side < 0 ? 0 : 1];
+        if (map.names != boneNames)
+        {
+            map.names = boneNames;
+            const char sideChar = side < 0 ? 'l' : 'r';
+            char name[40];
+            std::snprintf(name, sizeof(name), "bip01_%c_hand", sideChar);
+            if (!HooksNativeViewmodelHandsOnlyFindBoneByLowerSuffix(boneNames, name, map.hand))
+                map.hand = -1;
+            for (int f = 0; f < hp::kFingers; ++f)
+            {
+                for (int j = 0; j < hp::kJoints; ++j)
+                {
+                    if (j == 0)
+                        std::snprintf(name, sizeof(name), "bip01_%c_finger%d", sideChar, f);
+                    else
+                        std::snprintf(name, sizeof(name), "bip01_%c_finger%d%d", sideChar, f, j);
+                    if (!HooksNativeViewmodelHandsOnlyFindBoneByLowerSuffix(boneNames, name, map.bones[f][j]))
+                        map.bones[f][j] = -1;
+                }
+            }
+        }
+        if (map.hand < 0 || map.hand >= numBones)
+            return false;
+
+        // Locals of the hand's subtree from this frame's bones.
+        static thread_local std::vector<uint8_t> s_subtree;
+        static thread_local std::vector<vr_vm_stabilize::Mat3x4> s_local;
+        s_subtree.assign(static_cast<size_t>(numBones), 0u);
+        s_local.resize(static_cast<size_t>(numBones));
+        for (int bone = map.hand + 1; bone < numBones; ++bone)
+        {
+            const int parent = boneParents[static_cast<size_t>(bone)];
+            if (parent < 0 || parent >= bone)
+                continue;
+            if (parent != map.hand && !s_subtree[static_cast<size_t>(parent)])
+                continue;
+            vr_vm_stabilize::Mat3x4 parentWorld{};
+            vr_vm_stabilize::Mat3x4 world{};
+            vr_vm_stabilize::Mat3x4 inverseParent{};
+            if (!vr_vm_stabilize::SafeRead(currentBones + parent, parentWorld) ||
+                !vr_vm_stabilize::SafeRead(currentBones + bone, world) ||
+                !HooksNativeViewmodelHandsOnlyMatrixFinite(parentWorld) ||
+                !HooksNativeViewmodelHandsOnlyMatrixFinite(world) ||
+                !vr_vm_stabilize::InvertAffine(parentWorld, inverseParent))
+            {
+                return false;
+            }
+            vr_vm_stabilize::Mul(inverseParent, world, s_local[static_cast<size_t>(bone)]);
+            s_subtree[static_cast<size_t>(bone)] = 1u;
+        }
+
+        constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+        auto rotate = [](vr_vm_stabilize::Mat3x4& local, int axis, float degrees)
+            {
+                if (!std::isfinite(degrees) || std::fabs(degrees) < 0.001f)
+                    return;
+                const vr_vm_stabilize::Mat3x4 r =
+                    HooksNativeViewmodelHandsOnlyMakeLocalAxisRotation(axis, degrees * kDegToRad);
+                vr_vm_stabilize::Mat3x4 out{};
+                vr_vm_stabilize::Mul(local, r, out);
+                local = out;
+            };
+
+        int posed = 0;
+        for (int f = 0; f < hp::kFingers; ++f)
+        {
+            for (int j = 0; j < hp::kJoints; ++j)
+            {
+                const int bone = map.bones[f][j];
+                if (bone < 0 || bone >= numBones || !s_subtree[static_cast<size_t>(bone)])
+                    continue;
+                vr_vm_stabilize::Mat3x4& local = s_local[static_cast<size_t>(bone)];
+                if (pose.absolute)
+                {
+                    vr_vm_stabilize::Mat3x4 rest{};
+                    if (!HooksNativeViewmodelHandsOnlyReadBoneRestLocalTransform(drawState, boneIndex, stride, bone, rest))
+                        continue;
+                    rest.m[0][3] = local.m[0][3];
+                    rest.m[1][3] = local.m[1][3];
+                    rest.m[2][3] = local.m[2][3];
+                    local = rest;
+                    if (f == 0 && j == 0)
+                    {
+                        // Thumb root: extra X, Y, Z rotation from its bind pose.
+                        for (int axis = 0; axis < 3; ++axis)
+                            rotate(local, axis, pose.pose.thumb[axis] * (axis == 2 ? 1.0f : static_cast<float>(-side)));
+                    }
+                    else
+                    {
+                        const float bindFlex = hp::BindFlexDegrees(rest.m[0][0], rest.m[1][0]);
+                        rotate(local, 2, -hp::JointDelta(pose.pose.flex[f][j], bindFlex));
+                        if (j == 0 && f != 2)
+                            rotate(local, 1, hp::SplayAxisSign(f, side) * pose.pose.splay[f]);
+                    }
+                    ++posed;
+                }
+                else if (f == 1)
+                {
+                    rotate(local, 2, -pose.indexDelta[j]);
+                    ++posed;
+                }
+            }
+        }
+        if (posed == 0)
+            return false;
+
+        for (int bone = map.hand + 1; bone < numBones; ++bone)
+        {
+            if (!s_subtree[static_cast<size_t>(bone)])
+                continue;
+            const int parent = boneParents[static_cast<size_t>(bone)];
+            vr_vm_stabilize::Mat3x4 world{};
+            vr_vm_stabilize::Mul(currentBones[parent], s_local[static_cast<size_t>(bone)], world);
+            if (!HooksNativeViewmodelHandsOnlyMatrixFinite(world))
+                return false;
+            currentBones[bone] = world;
+        }
+        return true;
+    }
+
     inline bool HooksNativeViewmodelHandsOnlyApplyOpenVRFingerPose(
         VR* vr,
         void* drawState,
@@ -14574,6 +14729,20 @@ namespace
         const vr_vm_stabilize::Mat3x4* sourcePoseBones,
         vr_vm_stabilize::Mat3x4* currentBones)
     {
+        // Hand pose library: a held item's pose, the free hand from its curls, or
+        // the trigger finger on an animated gun grip. Off: the legacy curls below.
+        {
+            l4d2vr_handpose::HandOutput handPose{};
+            if (vr && currentBones && vr->GetHandPoseOutput(keepSide.side, handPose))
+            {
+                if (handPose.absolute || handPose.triggerOverlay)
+                {
+                    return HooksNativeHandPoseApply(drawState, boneIndex, stride, boneNames, boneParents,
+                        numBones, keepSide.side, handPose, currentBones);
+                }
+                return false;
+            }
+        }
         const bool emptyHandsPlaceholderActive =
             vr && vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
         const bool applyLeftHand = keepSide.side == -1;
@@ -15805,8 +15974,14 @@ namespace
             HooksNativeViewmodelHandsOnlyShouldUseFixedFreezePlaneLockForSide(vr, keepSide.side);
         const bool useCanonicalFreezeLock =
             HooksNativeViewmodelHandsOnlyUseCanonicalFreezeLock(vr);
+        // Hand pose library: the support arm keeps the game's animated fingers
+        // whenever its pose is not a held/free pose (two-handed grip, the left
+        // gun of dual pistols); off: only the two-handed grip does.
+        l4d2vr_handpose::HandOutput handPose{};
+        const bool handPoseValid = vr->GetHandPoseOutput(keepSide.side, handPose);
         const bool keepSourceViewmodelAnimation =
-            keepSide.side == -1 && vr->IsVrHandsTwoHandedGripPoseActive();
+            keepSide.side == -1 &&
+            (handPoseValid ? !handPose.absolute : vr->IsVrHandsTwoHandedGripPoseActive());
         if (useFixedFreezePlaneLock)
         {
             if (useCanonicalFreezeLock)
@@ -16053,6 +16228,11 @@ namespace
                 keepSide,
                 sourceBones,
                 isolated);
+        }
+        else if (handPoseValid && handPose.triggerOverlay)
+        {
+            HooksNativeHandPoseApply(drawState, boneIndex, stride, boneNames, boneParents,
+                numBones, keepSide.side, handPose, isolated);
         }
 
         HooksNativeViewmodelHandsOnlyLogIsolationDebug(
@@ -19973,9 +20153,14 @@ namespace
                 const bool leftTwoHandedGrip =
                     chain.side == -1 &&
                     vr->IsVrHandsTwoHandedGripPoseActive();
-                const bool useAnimatedFingerPose =
-                    leftTwoHandedGrip ||
-                    (chain.side == 1 && !emptyHandsPlaceholderActive);
+                // Hand pose library: its held/free poses replace the animation;
+                // gun grips and support grips keep it (plus the trigger finger).
+                l4d2vr_handpose::HandOutput handPose{};
+                const bool handPoseValid = vr->GetHandPoseOutput(chain.side, handPose);
+                const bool useAnimatedFingerPose = handPoseValid
+                    ? !handPose.absolute
+                    : (leftTwoHandedGrip ||
+                        (chain.side == 1 && !emptyHandsPlaceholderActive));
 
                 // Match cropped hands instead of treating every state alike:
                 //   * weapon hand and two-handed support hand use this frame's
@@ -19994,6 +20179,11 @@ namespace
                     {
                         logSideSolveFailure(chain, "animated-fingers");
                         return false;
+                    }
+                    if (handPoseValid && handPose.triggerOverlay)
+                    {
+                        HooksNativeHandPoseApply(drawState, boneIndex, stride, boneNames, boneParents,
+                            numBones, chain.side, handPose, candidate);
                     }
                 }
                 else if (!HooksNativeViewmodelArmIkApplyCroppedEmptyFingerPose(

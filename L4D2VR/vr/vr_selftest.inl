@@ -3983,6 +3983,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                     m_SelfTestMeasure, g.boltRange, state());
                 return fail("rack after seating", detail);
             }
+            if (m_SelfTestHandPosePhotos)
+                SelfTestRequestShot(gun + "_bolt_held", 1);
             m_SelfTestMeasureB = g.boltRequiredPull;
             glide(pullBack(g.boltRequiredPull + 0.05f), 0.35f);
             go(33);
@@ -3990,6 +3992,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 33:
             m_SelfTestMeasure = (std::max)(0.0f, g.boltPull);
             if (!glideDone(0.1f)) return false;
+            if (m_SelfTestHandPosePhotos)
+                SelfTestRequestShot(gun + "_bolt_pulled", 1);
             button(reloadHand, false);
             go(34);
             return false;
@@ -4096,6 +4100,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                     m_SelfTestMeasure, g.boltRange, state());
                 return fail("pump", detail);
             }
+            if (m_SelfTestHandPosePhotos)
+                SelfTestRequestShot(gun + "_pump_held", 1);
             m_SelfTestPoint = leftNow();
             m_SelfTestMeasureB = g.boltRequiredPull;
             m_SelfTestMeasure = 0.0f;

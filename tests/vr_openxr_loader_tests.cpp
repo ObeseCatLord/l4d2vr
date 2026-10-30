@@ -91,6 +91,30 @@ int main()
         std::printf("log line: [VR] %s\n", line.c_str());
     }
 
+    // M6: the registry/file facts and the preflight the release uses to pick
+    // desktop mode before touching the loader.
+    const xrm::RuntimeFacts facts = xrm::GatherRuntimeFacts(false);
+    std::printf("facts: 32-bit '%s' (exists %d), 64-bit '%s', XR_RUNTIME_JSON '%s'\n", facts.activeRuntime32.c_str(),
+        facts.activeRuntime32Exists ? 1 : 0, facts.activeRuntime64.c_str(), facts.runtimeJsonEnv.c_str());
+    const xrm::Preflight preflight = xrm::CheckPreflight(facts);
+    if (facts.activeRuntime32.empty() && facts.activeRuntime64.empty() && facts.runtimeJsonEnv.empty())
+    {
+        Check(!preflight.tryRuntime && preflight.reason.find("no OpenXR runtime is installed") == 0,
+            "no registered runtime: desktop without loading the loader");
+        Check(!usable, "no registered runtime and the loader agrees");
+    }
+    std::printf("preflight: %s\n", preflight.tryRuntime ? "try the runtime" : preflight.reason.c_str());
+    xrm::LoaderProbe withFacts;
+    const bool usableWithFacts = xrm::ProbeLoader(loaderPath, false, withFacts, &facts, xrm::kWineVrStateUnknown);
+    Check(usableWithFacts == usable, "the diagnosis does not change the outcome");
+    if (withFacts.module)
+        FreeLibrary(withFacts.module);
+    if (!usableWithFacts && withFacts.enumerateResult == XR_ERROR_RUNTIME_UNAVAILABLE)
+    {
+        Check(withFacts.reason.find("(result -51)") != std::string::npos, "the diagnosed reason carries the result");
+        std::printf("diagnosed: %s\n", withFacts.reason.c_str());
+    }
+
     std::printf("vr_openxr_loader: %d checks passed\n", checks);
     return 0;
 }

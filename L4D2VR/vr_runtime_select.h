@@ -1,21 +1,31 @@
 #pragma once
 
-// VR runtime selection (OpenXR port M1): VrRuntime=auto|openxr|openvr in
-// VR/config.txt, overridden by the -l4d2vr_openxr / -l4d2vr_openvr launch
-// options. The decision is made once, before Direct3DCreate9 (DXVK's Vulkan
-// extension provider depends on it), and published through
-// L4D2VR_SelectedVrRuntime(). Desktop mode ignores it.
+// VR runtime selection. Two builds share this header:
 //
-// Policy:
+// Release build (the default; what players get): OpenXR is the only runtime.
+// The OpenVR backend is not compiled in, the DLL does not link openvr_api, and
+// the release ships no openvr_api.dll or SteamVR action manifest. VrRuntime in
+// VR/config.txt and the -l4d2vr_openxr / -l4d2vr_openvr launch options are
+// ignored (a request for OpenVR is logged as ignored). Without a usable OpenXR
+// runtime the game starts in desktop mode and logs why (DesktopModeAuto=true,
+// the default) or shows the error (DesktopModeAuto=false).
+//
+// Legacy build (developers only; MSBuild /p:L4D2VRLegacyOpenVR=true, which
+// defines L4D2VR_LEGACY_OPENVR=1 and links openvr_api.lib): the M1-M5 policy
+// below with both backends. VrRuntime=auto|openxr|openvr, overridden by
+// -l4d2vr_openxr / -l4d2vr_openvr:
 //   * A launch option beats the config key. With both options present,
-//     -l4d2vr_openvr wins (the runtime that works everywhere today).
-//   * auto = OpenVR, until the OpenXR backend reaches parity.
-//   * openxr without an OpenXR backend in this build, or without a usable
-//     OpenXR runtime (no loader next to d3d9.dll, no active runtime, no HMD,
-//     no XR_KHR_vulkan_enable, Proton without 32-bit wineopenxr), falls back
-//     to OpenVR and says why in the log. The runtime is only probed when
-//     OpenXR was explicitly requested (DecideWithProbe).
+//     -l4d2vr_openvr wins.
+//   * auto = OpenVR.
+//   * openxr without a usable OpenXR runtime (no loader next to d3d9.dll, no
+//     active runtime, no HMD, no XR_KHR_vulkan_enable, Proton without 32-bit
+//     wineopenxr) falls back to OpenVR and says why in the log. The runtime is
+//     only probed when OpenXR was explicitly requested (DecideWithProbe).
 //   * An unknown config value is treated as auto and logged.
+//
+// Either way the decision is made once, before Direct3DCreate9 (DXVK's Vulkan
+// extension provider depends on it), and published through
+// L4D2VR_SelectedVrRuntime(). Desktop mode and -nohmd ignore it.
 
 #include <cctype>
 #include <cwctype>
@@ -25,9 +35,19 @@
 
 namespace l4d2vr_runtime_select
 {
+    // True in the legacy developer build that still contains the OpenVR backend.
+#if defined(L4D2VR_LEGACY_OPENVR) && L4D2VR_LEGACY_OPENVR
+    constexpr bool kLegacyOpenVrBuild = true;
+#else
+    constexpr bool kLegacyOpenVrBuild = false;
+#endif
+
     // Published values (L4D2VR_SelectedVrRuntime, l4d2vr_backend::RuntimeKind).
+    // None (release build only): -nohmd or desktop mode requested, so no VR
+    // runtime is used at all; DXVK then adds no VR extension provider.
     enum class Runtime : int
     {
+        None = 0,
         OpenVR = 1,
         OpenXR = 2,
     };
@@ -53,7 +73,12 @@ namespace l4d2vr_runtime_select
 
     inline const char* Name(Runtime runtime)
     {
-        return runtime == Runtime::OpenXR ? "OpenXR" : "OpenVR";
+        switch (runtime)
+        {
+        case Runtime::OpenXR: return "OpenXR";
+        case Runtime::None: return "none";
+        default: return "OpenVR";
+        }
     }
 
     inline const char* Name(Preference preference)
@@ -142,6 +167,8 @@ namespace l4d2vr_runtime_select
         bool openXrUnavailable = false;            // openxr requested, fell back to OpenVR
         bool openXrProbed = false;                 // the OpenXR runtime probe ran
         std::string openXrUnavailableReason;       // empty = backend not built
+        bool openXrOnlyBuild = false;              // release build: no OpenVR backend
+        bool openVrRequestIgnored = false;         // VrRuntime=openvr / -l4d2vr_openvr in a release build
     };
 
     // configValueValid=false means the config held an unknown value (treated as auto).
@@ -216,6 +243,32 @@ namespace l4d2vr_runtime_select
         return decision;
     }
 
+    // Release (OpenXR-only) build: always OpenXR. The config key and the
+    // launch options are still parsed so that a request for OpenVR can be
+    // reported as ignored; nothing is probed here (an unusable OpenXR runtime
+    // leads to desktop mode, see L4D2VR_DesktopModeActive).
+    inline Decision DecideOpenXrOnly(Preference config, bool configValueValid, Switch commandLine)
+    {
+        Decision decision = Decide(config, configValueValid, commandLine, true);
+        decision.openXrOnlyBuild = true;
+        decision.openVrRequestIgnored = decision.requested == Preference::OpenVR;
+        decision.runtime = Runtime::OpenXR;
+        decision.openXrUnavailable = false;
+        decision.openXrProbed = false;
+        decision.openXrUnavailableReason.clear();
+        return decision;
+    }
+
+    // The policy of the build this header is compiled into (kLegacyOpenVrBuild),
+    // or of the other build for tests.
+    inline Decision DecideForBuild(bool legacyOpenVrBuild, Preference config, bool configValueValid, Switch commandLine,
+        const OpenXrProbe& probe)
+    {
+        if (!legacyOpenVrBuild)
+            return DecideOpenXrOnly(config, configValueValid, commandLine);
+        return DecideWithProbe(config, configValueValid, commandLine, true, probe);
+    }
+
     // One log line describing the decision (without the "[VR] " prefix).
     inline std::string Describe(const Decision& decision, std::string_view rawConfigValue)
     {
@@ -225,7 +278,8 @@ namespace l4d2vr_runtime_select
         if (decision.fromCommandLine)
         {
             if (decision.conflictingSwitches)
-                text += "both -l4d2vr_openxr and -l4d2vr_openvr given; using -l4d2vr_openvr";
+                text += decision.openXrOnlyBuild ? "both -l4d2vr_openxr and -l4d2vr_openvr given"
+                                                 : "both -l4d2vr_openxr and -l4d2vr_openvr given; using -l4d2vr_openvr";
             else
                 text += decision.requested == Preference::OpenXR ? "-l4d2vr_openxr" : "-l4d2vr_openvr";
         }
@@ -236,6 +290,13 @@ namespace l4d2vr_runtime_select
             text += Name(decision.requested);
         }
         text += ")";
+        if (decision.openXrOnlyBuild)
+        {
+            text += decision.openVrRequestIgnored
+                ? "; OpenVR is not part of this build (OpenXR-only release; VrRuntime and -l4d2vr_openvr only work in "
+                  "legacy builds made with L4D2VR_LEGACY_OPENVR), using OpenXR"
+                : "; OpenXR-only build";
+        }
         if (decision.unknownConfigValue)
         {
             text += "; unknown ";

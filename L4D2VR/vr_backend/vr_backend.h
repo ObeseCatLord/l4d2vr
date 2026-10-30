@@ -12,14 +12,17 @@
 // they are header-only and need no runtime.
 //
 // Backends:
-//   vr_backend_openvr.cpp  pass-through to openvr_api (today's behaviour).
+//   vr_backend_openvr.cpp  pass-through to openvr_api (the pre-OpenXR
+//                          behaviour); legacy developer builds only
+//                          (L4D2VR_LEGACY_OPENVR=1). The release is OpenXR-only.
 //   vr_backend_openxr.cpp  OpenXR on DXVK's Vulkan device: HMD pose and eye
 //                          frames (M2), controllers and input (M3,
 //                          openxr_input_runtime.inl), overlays as composition
 //                          layers with a laser mouse and keyboard (M4,
 //                          openxr_overlay_runtime.inl).
-//                          Selected by VrRuntime=openxr or -l4d2vr_openxr
-//                          (vr_runtime_select.h).
+//                          The only backend of the release build; in legacy
+//                          builds selected by VrRuntime=openxr or
+//                          -l4d2vr_openxr (vr_runtime_select.h).
 //
 // Every accessor returns nullptr when the runtime has no such interface (for
 // OpenVR: before VR_Init, or in desktop mode), exactly like the vr::VRxxx()
@@ -244,6 +247,10 @@ namespace l4d2vr_backend
 
     // The OpenXR backend (vr_backend_openxr.cpp).
     IVrBackend& OpenXrBackendInstance();
+#if defined(L4D2VR_LEGACY_OPENVR) && L4D2VR_LEGACY_OPENVR
+    // The OpenVR backend (vr_backend_openvr.cpp; legacy developer builds only).
+    IVrBackend& OpenVrBackendInstance();
+#endif
     // Loads openxr_loader.dll and creates the OpenXR instance and HMD system
     // (once; the result is cached). False with a player-readable reason when
     // OpenXR is unusable. Runs only when OpenXR was explicitly selected.
@@ -252,6 +259,13 @@ namespace l4d2vr_backend
     // The backend chosen for this process (L4D2VR_SelectedVrRuntime()). It is
     // created on first use and lives until the process exits.
     IVrBackend& Active();
+
+    // Start of the message for a failed Init: "VR_Init failed" (OpenVR, as
+    // before) or "OpenXR could not start".
+    inline const char* InitFailurePrefix(const IVrBackend& backend)
+    {
+        return backend.Kind() == RuntimeKind::OpenXR ? "OpenXR could not start" : "VR_Init failed";
+    }
 
     // Shorthands for the free-function style the mod used with OpenVR
     // (vr::VROverlay() -> l4d2vr_backend::Overlay()).
@@ -295,7 +309,7 @@ extern "C"
     int L4D2VR_SelectedVrRuntime();
     // Starts the selected runtime for D3D9 device creation and reports the
     // recommended per-eye render size. On failure writes "VR_Init failed: ..."
-    // into errorString and returns false.
+    // (OpenVR) or "OpenXR could not start: ..." into errorString and returns false.
     bool L4D2VR_VrBackendInitForDevice(uint32_t* renderWidth, uint32_t* renderHeight, char* errorString, uint32_t errorStringSize);
 
     // OpenXR only (DXVK's native OpenXR extension provider and adapter pin).
@@ -310,4 +324,9 @@ extern "C"
     // DXVK created the D3D9 device: the OpenXR backend creates its session on it.
     // No-op for OpenVR.
     void L4D2VR_VrBackendDeviceCreated(const L4D2VR_VkDeviceInfo* info);
+    // DXVK is destroying a D3D9 device (VkDevice handle; not called during
+    // process detach). If the OpenXR session lives on it, the backend asks the
+    // runtime to end the session and waits briefly for xrEndSession. No-op
+    // otherwise.
+    void L4D2VR_VrBackendDeviceDestroying(void* vkDevice);
 }

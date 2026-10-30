@@ -48,9 +48,12 @@ class MonadoTests(TempDirTest):
         self.game = make_game(self.steam)
         (self.game / "left4dead2.exe").write_bytes(pe32())
         (self.game / "d3d9.dll").write_bytes(b"MZ")
-        (self.game / "openvr_api.dll").write_bytes(b"MZ")
+        (self.game / "openxr_loader.dll").write_bytes(b"MZ")
         self.proton = self.steam / "steamapps/common/Proton Hotfix"
         executable(self.proton / "proton")
+        wineopenxr32 = self.proton / "files/lib/wine/i386-windows/wineopenxr.dll"
+        wineopenxr32.parent.mkdir(parents=True)
+        wineopenxr32.write_bytes(b"MZ")
         executable(self.steam / "steamapps/common/Proton 9.0/proton")
         self.entry = executable(self.steam / "steamapps/common/SteamLinuxRuntime_4/_v2-entry-point")
         envision = self.home / ".local/share/envision/prefixes/abc/share/openxr/1/openxr_monado.json"
@@ -105,13 +108,33 @@ class MonadoTests(TempDirTest):
         self.assertTrue(any("d3d9.dll" in p for p in problems))
         self.assertTrue(vrlaunch.validate(vrlaunch.MonadoConfig(), lambda: False)[0])
 
+    def test_validate_needs_openxr_loader_and_32bit_openxr_proton(self):
+        os.remove(self.game / "openxr_loader.dll")
+        problems, _ = vrlaunch.validate(self.config(), lambda: False)
+        self.assertTrue(any("openxr_loader.dll" in p for p in problems))
+        (self.game / "openxr_loader.dll").write_bytes(b"MZ")
+        config = self.config()
+        config.proton_dir = str(self.steam / "steamapps/common/Proton 9.0")
+        problems, _ = vrlaunch.validate(config, lambda: False)
+        self.assertTrue(any("no 32-bit OpenXR" in p and "Proton Hotfix" in p for p in problems))
+        # The old OpenVR DLL is not needed any more.
+        self.assertFalse(any("openvr_api" in p for p in vrlaunch.validate(self.config(), lambda: False)[0]))
+
+    def test_autodetect_prefers_a_proton_with_32bit_openxr(self):
+        os.remove(self.proton / "files/lib/wine/i386-windows/wineopenxr.dll")
+        experimental = self.steam / "steamapps/common/Proton - Experimental"
+        executable(experimental / "proton")
+        (experimental / "files/lib/wine/i386-windows").mkdir(parents=True)
+        (experimental / "files/lib/wine/i386-windows/wineopenxr.dll").write_bytes(b"MZ")
+        self.assertEqual(vrlaunch.detect_proton([self.steam])[0], experimental)
+
     def test_build_command_matches_handoff_launcher(self):
         command, env = vrlaunch.build_command(self.config(), "1.2.3.4:1", "pw", ["-extra"], base_env={})
         self.assertEqual(command[:6], [str(self.entry), "--verb=run", "--", str(self.proton / "proton"),
                                        "waitforexitandrun", str(self.game / "left4dead2.exe")])
         self.assertIn("-dx9", command)
         self.assertEqual(command[-5:], ["+password", "pw", "+connect", "1.2.3.4:1", "-extra"])
-        self.assertEqual(env["WINEDLLOVERRIDES"], "d3d9,openvr_api=n,b")
+        self.assertEqual(env["WINEDLLOVERRIDES"], "d3d9=n,b")
         self.assertEqual(env["PROTON_USE_WOW64"], "1")
         self.assertEqual(env["SteamAppId"], "550")
         self.assertEqual(env["VR_OVERRIDE"], str(self.xrizer))

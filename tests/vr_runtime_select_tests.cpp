@@ -117,7 +117,49 @@ int main()
     d = sel::DecideWithProbe(Preference::OpenXR, true, Switch::None, true, sel::OpenXrProbe());
     Check(d.runtime == Runtime::OpenVR && d.openXrUnavailable, "no probe function declines");
 
-    // Published values are stable (DXVK compares against 1 = OpenVR).
+    // M6 release (OpenXR-only) policy: always OpenXR, OpenVR requests ignored and said so, no probe.
+    const int probesBefore = probes;
+    d = sel::DecideOpenXrOnly(Preference::Auto, true, Switch::None);
+    Check(d.runtime == Runtime::OpenXR && d.openXrOnlyBuild && !d.openVrRequestIgnored && !d.openXrProbed,
+        "release: auto selects OpenXR");
+    Check(sel::Describe(d, "auto") == "VR runtime: OpenXR (VrRuntime=auto); OpenXR-only build", "release: log line for auto");
+    d = sel::DecideOpenXrOnly(Preference::OpenVR, true, Switch::None);
+    Check(d.runtime == Runtime::OpenXR && d.openVrRequestIgnored, "release: VrRuntime=openvr is ignored");
+    Check(Contains(sel::Describe(d, "openvr"), "VR runtime: OpenXR (VrRuntime=openvr); OpenVR is not part of this build"),
+        "release: the ignored openvr request is logged");
+    Check(Contains(sel::Describe(d, "openvr"), "L4D2VR_LEGACY_OPENVR"), "release: the log names the legacy build option");
+    d = sel::DecideOpenXrOnly(Preference::Auto, true, Switch::OpenVR);
+    Check(d.runtime == Runtime::OpenXR && d.openVrRequestIgnored && d.fromCommandLine, "release: -l4d2vr_openvr is ignored");
+    Check(Contains(sel::Describe(d, ""), "(-l4d2vr_openvr); OpenVR is not part of this build"), "release: the ignored switch is logged");
+    d = sel::DecideOpenXrOnly(Preference::OpenXR, true, Switch::Both);
+    Check(d.runtime == Runtime::OpenXR && d.conflictingSwitches && d.openVrRequestIgnored, "release: both switches still OpenXR");
+    Check(!Contains(sel::Describe(d, ""), "using -l4d2vr_openvr"), "release: the conflict line never claims OpenVR");
+    d = sel::DecideOpenXrOnly(Preference::OpenXR, true, Switch::None);
+    Check(d.runtime == Runtime::OpenXR && !d.openVrRequestIgnored && !d.openXrUnavailable, "release: openxr selects OpenXR");
+    d = sel::DecideOpenXrOnly(Preference::Auto, false, Switch::None);
+    Check(d.runtime == Runtime::OpenXR && d.unknownConfigValue && Contains(sel::Describe(d, "steamvr"), "'steamvr' treated as auto"),
+        "release: an unknown value is still reported");
+    d = sel::DecideForBuild(false, Preference::OpenVR, true, Switch::None, noRuntime);
+    Check(d.runtime == Runtime::OpenXR && probes == probesBefore, "release: DecideForBuild never probes and never picks OpenVR");
+    d = sel::DecideForBuild(true, Preference::OpenXR, true, Switch::None, noRuntime);
+    Check(d.runtime == Runtime::OpenVR && d.openXrUnavailable && probes == probesBefore + 1,
+        "legacy: DecideForBuild keeps the M2 probe and OpenVR fallback");
+    d = sel::DecideForBuild(true, Preference::Auto, true, Switch::None, noRuntime);
+    Check(d.runtime == Runtime::OpenVR && !d.openXrOnlyBuild, "legacy: auto stays OpenVR");
+
+    // This test binary is built in the configuration under test (CMake L4D2VR_LEGACY_OPENVR).
+    d = sel::DecideForBuild(sel::kLegacyOpenVrBuild, Preference::Auto, true, Switch::None, noRuntime);
+#if defined(L4D2VR_LEGACY_OPENVR) && L4D2VR_LEGACY_OPENVR
+    Check(sel::kLegacyOpenVrBuild && d.runtime == Runtime::OpenVR, "legacy configuration: auto = OpenVR");
+    std::printf("configuration: legacy (OpenVR backend built)\n");
+#else
+    Check(!sel::kLegacyOpenVrBuild && d.runtime == Runtime::OpenXR, "release configuration: auto = OpenXR");
+    std::printf("configuration: release (OpenXR only)\n");
+#endif
+
+    // Published values are stable (DXVK compares against 0 = none, 1 = OpenVR, 2 = OpenXR).
+    Check(static_cast<int>(Runtime::None) == 0, "published none value");
+    Check(std::string(sel::Name(Runtime::None)) == "none", "none name");
     Check(static_cast<int>(Runtime::OpenVR) == 1 && static_cast<int>(Runtime::OpenXR) == 2, "published runtime values");
     Check(std::string(sel::Name(Runtime::OpenXR)) == "OpenXR" && std::string(sel::Name(Preference::OpenVR)) == "openvr", "names");
 

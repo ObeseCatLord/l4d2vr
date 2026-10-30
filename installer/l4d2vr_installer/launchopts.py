@@ -1,10 +1,14 @@
 """Steam launch options for the Proton (Linux) route.
 
-The mod needs Wine to load its own ``d3d9.dll`` and ``openvr_api.dll``
-instead of Proton's built-ins, and the 32-bit game must use Proton's WoW64
-mode. These match the working Linux launcher (tools/launch.py of the Linux
-handoff): ``WINEDLLOVERRIDES=d3d9,openvr_api=n,b``, ``PROTON_USE_WOW64=1`` and
-the ``-dx9`` game argument.
+The mod needs Wine to load its own ``d3d9.dll`` instead of Proton's built-in
+one, and the 32-bit game must use Proton's new WoW64 mode, which is also what
+makes Proton's 32-bit OpenXR (wineopenxr) work: ``WINEDLLOVERRIDES=d3d9=n,b``,
+``PROTON_USE_WOW64=1`` and the ``-dx9`` game argument.
+
+Before the OpenXR-only release (1.3) the override also named ``openvr_api``
+(``d3d9,openvr_api=n,b``) for the mod's own ``openvr_api.dll``. The release no
+longer ships that DLL; old overrides are rewritten to the new one on apply and
+still recognised when removing.
 
 Launch options live in ``<steam>/userdata/<id>/config/localconfig.vdf`` under
 ``UserLocalConfigStore/Software/Valve/Steam/apps/550/LaunchOptions``. Steam
@@ -24,11 +28,12 @@ from typing import List, Optional, Tuple
 from . import APP_ID, vdf
 from .fsutil import InstallerError, atomic_write_text, read_json, atomic_write_json
 
-DLL_OVERRIDES = ("d3d9", "openvr_api")
-REQUIRED_ENV = (("WINEDLLOVERRIDES", "d3d9,openvr_api=n,b"), ("PROTON_USE_WOW64", "1"))
+DLL_OVERRIDES = ("d3d9", "openvr_api")  # managed (openvr_api: pre-1.3 releases)
+OVERRIDE = "d3d9=n,b"
+REQUIRED_ENV = (("WINEDLLOVERRIDES", OVERRIDE), ("PROTON_USE_WOW64", "1"))
 REQUIRED_ARGS = ("-dx9",)
 HARMFUL_ARGS = ("-vulkan",)
-RECOMMENDED = 'WINEDLLOVERRIDES="d3d9,openvr_api=n,b" PROTON_USE_WOW64=1 %command% -dx9'
+RECOMMENDED = 'WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9'
 
 _ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 _SAFE_VALUE = re.compile(r"^[A-Za-z0-9_./:@%+-]*$")
@@ -55,15 +60,15 @@ def _split(text: str) -> List[str]:
 
 
 def merge_overrides(existing: str) -> str:
-    """Add ``d3d9,openvr_api=n,b`` to a WINEDLLOVERRIDES value, keeping other
-    entries (e.g. ``dxgi=n,b`` for ReShade)."""
+    """Add ``d3d9=n,b`` to a WINEDLLOVERRIDES value, keeping other entries
+    (e.g. ``dxgi=n,b`` for ReShade) and dropping the old ``openvr_api`` one."""
     kept = []
     for entry in filter(None, (part.strip() for part in existing.split(";"))):
         names, sep, mode = entry.partition("=")
         rest = [name for name in names.split(",") if name.strip() and name.strip().lower() not in DLL_OVERRIDES]
         if rest:
             kept.append(",".join(rest) + (sep + mode if sep else ""))
-    kept.append("d3d9,openvr_api=n,b")
+    kept.append(OVERRIDE)
     return ";".join(kept)
 
 
@@ -112,6 +117,8 @@ def merge_launch_options(existing: str) -> Tuple[str, List[str]]:
         match = _ASSIGNMENT.match(word)
         if match and match.group(1) == "WINEDLLOVERRIDES":
             seen.add("WINEDLLOVERRIDES")
+            if "openvr_api" in match.group(2).lower():
+                notes.append("Dropped openvr_api from WINEDLLOVERRIDES: the OpenXR release has no openvr_api.dll.")
             new_prefix.append("WINEDLLOVERRIDES=" + merge_overrides(match.group(2)))
         elif match and match.group(1) == "PROTON_USE_WOW64":
             seen.add("PROTON_USE_WOW64")

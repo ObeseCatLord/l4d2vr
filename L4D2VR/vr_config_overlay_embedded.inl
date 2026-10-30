@@ -1101,7 +1101,7 @@ namespace
         { "ManualThrowVelocityWindowMs", "Weapons / Throwables", "Hand Throw Velocity Window", "How many milliseconds of hand motion before the release set a hand throw's velocity (blended toward the fastest part by Peak Velocity Blend).", "Shorter follows the last flick; longer is steadier." },
         { "GripToggle", "Hands / Holsters", "Toggle Grips", "One firm squeeze takes an item and your hand keeps it; the next squeeze lets it go: inside its own holster it is put away, anywhere else it is dropped. Turn off to hold the grip instead.", "The off-hand trigger holds magazines, slides and bolts while pulled; the front of a two-handed gun is its own grip toggle." },
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
-        { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). On SteamVR the runtime's own laser keeps working." },
+        { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). SteamVR and the OpenXR backend bring their own laser, which then works on every panel." },
         { "HolsterInstantDraw", "Hands / Holsters", "Instant Weapon Switches", "Every weapon switch (holster draws, pickups, slot keys, after a throw or a medkit) puts the item straight into your hand: the draw animation never plays.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
         { "AmbidextrousItemHands", "Hands / Holsters", "Ambidextrous Items", "The hand that takes an item holds and uses it: draw a gun with your left hand and it aims and fires from the left trigger, a grenade drawn left is thrown from the left. Your other hand becomes the support hand (foregrip, magazines, slides) and the magazine pouch moves to its hip.", "Hand an item over by squeezing it with your free hand, or let go with the item hand while the free hand holds the foregrip." },
         { "ItemHandOffRadiusMeters", "Hands / Holsters", "Hand-Off Reach", "How close your free hand must be to the item hand for its squeeze to take the item over.", "Squeezes on the foregrip, a magazine, the bolt or slide do those instead." },
@@ -9835,4 +9835,65 @@ void L4D2VRConfigOverlay_Open()
         ? "\xE5\xB7\xB2\xE9\x80\x9A\xE8\xBF\x87 vrconfig \xE6\x89\x93\xE5\xBC\x80\xE9\x85\x8D\xE7\xBD\xAE\xE9\x9D\xA2\xE6\x9D\xBF\xE3\x80\x82"
         : "Config overlay opened by vrconfig.";
     s.dirty = true;
+}
+
+// Self-test (vr_selftest_overlays.inl, OpenXR port M4): scrolls the open panel
+// so option `key` (any case) is the first row and returns that row's centre as
+// v (0 = top of the panel texture) for aiming the laser.
+bool L4D2VRConfigOverlay_TestFocusRow(const char* key, float& rowV)
+{
+    CfgOverlayState& s = g_CfgOverlay;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (!key || !s.visible || s.materialVisible)
+        return false;
+    for (int item = 0; item < (int)s.visibleSpecIndexes.size(); ++item)
+    {
+        const CfgOptionSpec& spec = kCfgOptionSpecs[s.visibleSpecIndexes[item]];
+        if (_stricmp(spec.key, key) != 0)
+            continue;
+        s.scroll = item;
+        s.selected = item;
+        s.hoveredItem = -1;
+        s.dirty = true;
+        // The first row of a page is preceded by its group header.
+        const int y = kCfgRowsY + kCfgOverlayGroupH + kCfgOverlayRowH / 2;
+        rowV = (float)y / (float)kCfgOverlayH;
+        return true;
+    }
+    return false;
+}
+
+// "visible=0|1 material=0|1 keyboard=0|1 edits=0|1 status='...' value='<value of key>'".
+std::string L4D2VRConfigOverlay_TestState(const char* key)
+{
+    CfgOverlayState& s = g_CfgOverlay;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    std::string value;
+    if (key && *key)
+    {
+        for (const CfgOptionSpec& spec : kCfgOptionSpecs)
+            if (_stricmp(spec.key, key) == 0)
+            {
+                value = CfgValueFor(s, spec);
+                break;
+            }
+    }
+    return std::string("visible=") + (s.visible ? "1" : "0") + " material=" + (s.materialVisible ? "1" : "0") +
+        " keyboard=" + (s.keyboardActive ? "1" : "0") + " edits=" + (s.hasUnsavedEdits ? "1" : "0") +
+        " scroll=" + std::to_string(s.scroll) + " advanced=" + (s.advancedMode ? "1" : "0") +
+        " mode=" + (s.panelMode == CfgPanelMode::MagazineCalibration ? "calib" : "config") +
+        " preview=" + std::to_string(s.calibrationPreviewPitchDeg) + "," + std::to_string(s.calibrationPreviewYawDeg) + "," +
+        std::to_string(s.calibrationPreviewRollDeg) +
+        " status='" + s.status + "' value='" + value + "'";
+}
+
+// Self-test: the option's name as config.txt spells it ("" if unknown).
+std::string L4D2VRConfigOverlay_CanonicalKey(const char* key)
+{
+    if (!key)
+        return std::string();
+    for (const CfgOptionSpec& spec : kCfgOptionSpecs)
+        if (_stricmp(spec.key, key) == 0)
+            return spec.key;
+    return std::string();
 }

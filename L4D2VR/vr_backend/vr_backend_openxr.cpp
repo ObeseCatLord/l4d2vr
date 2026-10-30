@@ -29,7 +29,9 @@
 //     pseudo devices 1 (left) and 2 (right) whose poses are the OpenVR raw
 //     pose rebuilt from the grip pose; the IVRInput facade maps the mod's
 //     actions onto OpenXR actions with per-profile suggested bindings.
-//   * Overlays are kept as state but not composited yet (M4).
+//   * Overlays (M4): openxr_overlay_runtime.inl. Quad/cylinder layers after
+//     the projection, the layer budget, the wineopenxr layer workaround, the
+//     overlay laser mouse and the in-mod keyboard.
 
 #include "vr_backend.h"
 #include "openxr_frame_ring.h"
@@ -37,6 +39,7 @@
 #include "openxr_loader_probe.h"
 #include "openxr_input_profiles.h"
 #include "openxr_input_logic.h"
+#include "openxr_overlay_logic.h"
 
 #include "../game.h"
 
@@ -55,12 +58,16 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
@@ -111,7 +118,7 @@ namespace
     X(vkResetCommandBuffer) X(vkCmdPipelineBarrier) X(vkCmdCopyImage) X(vkCmdCopyImageToBuffer) \
     X(vkQueueSubmit) X(vkCreateFence) X(vkWaitForFences) X(vkResetFences) X(vkCreateBuffer) X(vkDestroyBuffer) \
     X(vkGetBufferMemoryRequirements) X(vkAllocateMemory) X(vkFreeMemory) X(vkBindBufferMemory) X(vkMapMemory) \
-    X(vkUnmapMemory)
+    X(vkUnmapMemory) X(vkCmdCopyBufferToImage)
 
     struct VkApi
     {
@@ -185,6 +192,77 @@ namespace
         return (n > 0 && n < sizeof(buffer)) ? std::string(buffer, n) : std::string();
     }
 
+// Where threads are inside slow or blocking runtime/Vulkan/lock calls, so a
+// stuck frame loop names the call it is stuck in (logged with the 5 s stats).
+class Breadcrumbs
+{
+public:
+    int Enter(const char* what)
+    {
+        for (int i = 0; i < kSlots; ++i)
+        {
+            const char* expected = nullptr;
+            if (m_Slots[i].what.compare_exchange_strong(expected, what))
+            {
+                m_Slots[i].since.store(GetTickCount64(), std::memory_order_relaxed);
+                m_Slots[i].tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+                return i;
+            }
+        }
+        return -1;
+    }
+    void Leave(int i)
+    {
+        if (i >= 0)
+            m_Slots[i].what.store(nullptr, std::memory_order_release);
+    }
+    // Calls in progress for longer than minMs.
+    std::string Describe(uint64_t minMs) const
+    {
+        std::string out;
+        const uint64_t now = GetTickCount64();
+        for (int i = 0; i < kSlots; ++i)
+        {
+            const char* what = m_Slots[i].what.load(std::memory_order_acquire);
+            const uint64_t since = m_Slots[i].since.load(std::memory_order_relaxed);
+            if (!what || now - since < minMs)
+                continue;
+            char line[160];
+            std::snprintf(line, sizeof(line), "%s[tid %lu %.1f s] ", what, static_cast<unsigned long>(m_Slots[i].tid.load()),
+                static_cast<double>(now - since) / 1000.0);
+            out += line;
+        }
+        return out;
+    }
+
+private:
+    static constexpr int kSlots = 16;
+    struct Slot
+    {
+        std::atomic<const char*> what{ nullptr };
+        std::atomic<uint64_t> since{ 0 };
+        std::atomic<unsigned long> tid{ 0 };
+    };
+    Slot m_Slots[kSlots];
+};
+
+Breadcrumbs& Crumbs()
+{
+    static Breadcrumbs crumbs;
+    return crumbs;
+}
+
+class Crumb
+{
+public:
+    explicit Crumb(const char* what) : m_Index(Crumbs().Enter(what)) {}
+    ~Crumb() { Crumbs().Leave(m_Index); }
+    Crumb(const Crumb&) = delete;
+    Crumb& operator=(const Crumb&) = delete;
+private:
+    int m_Index;
+};
+
 #include "openxr_input_runtime.inl"
 
     // ---- The runtime ---------------------------------------------------------
@@ -236,153 +314,7 @@ namespace
         OpenXrRuntime& m_Rt;
     };
 
-    // M2: overlays keep their OpenVR-shaped state (so visibility checks and
-    // transforms read back what was set) but nothing is composited yet (M4).
-    class XrOverlayFacade final : public IVrOverlay
-    {
-    public:
-        vr::EVROverlayError FindOverlay(const char* pchOverlayKey, vr::VROverlayHandle_t* pOverlayHandle) override
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            if (!pchOverlayKey || !pOverlayHandle) return vr::VROverlayError_InvalidParameter;
-            for (const auto& it : m_Overlays)
-            {
-                if (it.second.key == pchOverlayKey)
-                {
-                    *pOverlayHandle = it.first;
-                    return vr::VROverlayError_None;
-                }
-            }
-            *pOverlayHandle = vr::k_ulOverlayHandleInvalid;
-            return vr::VROverlayError_UnknownOverlay;
-        }
-        vr::EVROverlayError CreateOverlay(const char* pchOverlayKey, const char* pchOverlayName, vr::VROverlayHandle_t* pOverlayHandle) override
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            if (!pchOverlayKey || !pOverlayHandle) return vr::VROverlayError_InvalidParameter;
-            for (const auto& it : m_Overlays)
-                if (it.second.key == pchOverlayKey)
-                    return vr::VROverlayError_KeyInUse;
-            const vr::VROverlayHandle_t handle = ++m_NextHandle;
-            OverlayState& state = m_Overlays[handle];
-            state.key = pchOverlayKey;
-            state.name = pchOverlayName ? pchOverlayName : "";
-            *pOverlayHandle = handle;
-            return vr::VROverlayError_None;
-        }
-        vr::EVROverlayError DestroyOverlay(vr::VROverlayHandle_t ulOverlayHandle) override
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            return m_Overlays.erase(ulOverlayHandle) ? vr::VROverlayError_None : vr::VROverlayError_InvalidHandle;
-        }
-        vr::EVROverlayError SetOverlayFlag(vr::VROverlayHandle_t h, vr::VROverlayFlags eOverlayFlag, bool bEnabled) override
-        {
-            return With(h, [&](OverlayState& s) { if (bEnabled) s.flags |= uint64_t(eOverlayFlag); else s.flags &= ~uint64_t(eOverlayFlag); });
-        }
-        vr::EVROverlayError SetOverlayAlpha(vr::VROverlayHandle_t h, float fAlpha) override { return With(h, [&](OverlayState& s) { s.alpha = fAlpha; }); }
-        vr::EVROverlayError SetOverlayTexelAspect(vr::VROverlayHandle_t h, float f) override { return With(h, [&](OverlayState& s) { s.texelAspect = f; }); }
-        vr::EVROverlayError SetOverlaySortOrder(vr::VROverlayHandle_t h, uint32_t u) override { return With(h, [&](OverlayState& s) { s.sortOrder = u; }); }
-        vr::EVROverlayError SetOverlayWidthInMeters(vr::VROverlayHandle_t h, float f) override { return With(h, [&](OverlayState& s) { s.width = f; }); }
-        vr::EVROverlayError GetOverlayWidthInMeters(vr::VROverlayHandle_t h, float* pf) override
-        { return With(h, [&](OverlayState& s) { if (pf) *pf = s.width; }); }
-        vr::EVROverlayError SetOverlayCurvature(vr::VROverlayHandle_t h, float f) override { return With(h, [&](OverlayState& s) { s.curvature = f; }); }
-        vr::EVROverlayError GetOverlayCurvature(vr::VROverlayHandle_t h, float* pf) override
-        { return With(h, [&](OverlayState& s) { if (pf) *pf = s.curvature; }); }
-        vr::EVROverlayError SetOverlayTextureBounds(vr::VROverlayHandle_t h, const vr::VRTextureBounds_t* b) override
-        { return With(h, [&](OverlayState& s) { if (b) s.bounds = *b; }); }
-        vr::EVROverlayError GetOverlayTransformType(vr::VROverlayHandle_t h, vr::VROverlayTransformType* pe) override
-        { return With(h, [&](OverlayState&) { if (pe) *pe = vr::VROverlayTransform_Absolute; }); }
-        vr::EVROverlayError SetOverlayTransformAbsolute(vr::VROverlayHandle_t h, vr::ETrackingUniverseOrigin origin,
-            const vr::HmdMatrix34_t* m) override
-        { return With(h, [&](OverlayState& s) { s.origin = origin; if (m) s.transform = *m; }); }
-        vr::EVROverlayError GetOverlayTransformAbsolute(vr::VROverlayHandle_t h, vr::ETrackingUniverseOrigin* origin,
-            vr::HmdMatrix34_t* m) override
-        { return With(h, [&](OverlayState& s) { if (origin) *origin = s.origin; if (m) *m = s.transform; }); }
-        vr::EVROverlayError GetOverlayTransformTrackedDeviceRelative(vr::VROverlayHandle_t, vr::TrackedDeviceIndex_t* punTrackedDevice,
-            vr::HmdMatrix34_t*) override
-        {
-            if (punTrackedDevice) *punTrackedDevice = vr::k_unTrackedDeviceIndexInvalid;
-            return vr::VROverlayError_RequestFailed;
-        }
-        vr::EVROverlayError ShowOverlay(vr::VROverlayHandle_t h) override { return With(h, [&](OverlayState& s) { s.visible = true; }); }
-        vr::EVROverlayError HideOverlay(vr::VROverlayHandle_t h) override { return With(h, [&](OverlayState& s) { s.visible = false; }); }
-        bool IsOverlayVisible(vr::VROverlayHandle_t h) override
-        {
-            bool visible = false;
-            With(h, [&](OverlayState& s) { visible = s.visible; });
-            return visible;
-        }
-        bool PollNextOverlayEvent(vr::VROverlayHandle_t, vr::VREvent_t*, uint32_t) override { return false; }
-        vr::EVROverlayError SetOverlayInputMethod(vr::VROverlayHandle_t h, vr::VROverlayInputMethod e) override
-        { return With(h, [&](OverlayState& s) { s.inputMethod = e; }); }
-        vr::EVROverlayError SetOverlayMouseScale(vr::VROverlayHandle_t h, const vr::HmdVector2_t* v) override
-        { return With(h, [&](OverlayState& s) { if (v) s.mouseScale = *v; }); }
-        bool ComputeOverlayIntersection(vr::VROverlayHandle_t, const vr::VROverlayIntersectionParams_t*,
-            vr::VROverlayIntersectionResults_t*) override { return false; }
-        vr::EVROverlayError SetOverlayTexture(vr::VROverlayHandle_t h, const vr::Texture_t*) override
-        {
-            NoteContent(h);
-            return With(h, [&](OverlayState& s) { ++s.contentUpdates; });
-        }
-        vr::EVROverlayError SetOverlayRaw(vr::VROverlayHandle_t h, void*, uint32_t, uint32_t, uint32_t) override
-        {
-            NoteContent(h);
-            return With(h, [&](OverlayState& s) { ++s.contentUpdates; });
-        }
-        vr::EVROverlayError ShowKeyboardForOverlay(vr::VROverlayHandle_t, vr::EGamepadTextInputMode, vr::EGamepadTextInputLineMode,
-            uint32_t, const char*, uint32_t, const char*, uint64_t) override { return vr::VROverlayError_RequestFailed; }
-        uint32_t GetKeyboardText(char* pchText, uint32_t cchText) override
-        {
-            if (pchText && cchText) pchText[0] = '\0';
-            return 0;
-        }
-        void HideKeyboard() override {}
-
-    private:
-        struct OverlayState
-        {
-            std::string key, name;
-            bool visible = false;
-            float alpha = 1.0f, texelAspect = 1.0f, width = 1.0f, curvature = 0.0f;
-            uint32_t sortOrder = 0;
-            uint64_t flags = 0;
-            vr::ETrackingUniverseOrigin origin = vr::TrackingUniverseStanding;
-            vr::HmdMatrix34_t transform{};
-            vr::VRTextureBounds_t bounds{ 0.0f, 0.0f, 1.0f, 1.0f };
-            vr::VROverlayInputMethod inputMethod = vr::VROverlayInputMethod_None;
-            vr::HmdVector2_t mouseScale{};
-            uint64_t contentUpdates = 0;
-        };
-
-        template<class F>
-        vr::EVROverlayError With(vr::VROverlayHandle_t handle, F&& f)
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            auto it = m_Overlays.find(handle);
-            if (it == m_Overlays.end())
-                return vr::VROverlayError_InvalidHandle;
-            f(it->second);
-            return vr::VROverlayError_None;
-        }
-
-        void NoteContent(vr::VROverlayHandle_t handle)
-        {
-            std::string key;
-            {
-                std::lock_guard<std::mutex> lock(m_Mutex);
-                auto it = m_Overlays.find(handle);
-                if (it == m_Overlays.end() || !m_LoggedContent.insert(it->second.key).second)
-                    return;
-                key = it->second.key;
-            }
-            Game::logMsg("[VR][OpenXR] overlay '%s' has content but overlays are not composited yet (M4); it is not shown", key.c_str());
-        }
-
-        std::mutex m_Mutex;
-        std::map<vr::VROverlayHandle_t, OverlayState> m_Overlays;
-        std::set<std::string> m_LoggedContent;
-        vr::VROverlayHandle_t m_NextHandle = 0;
-    };
+#include "openxr_overlay_runtime.inl"
 
     // The controller tip component (vr_controller_tip.h): the aim pose in the
     // raw frame (SteamVR derives its OpenXR aim pose from the same component).
@@ -421,9 +353,17 @@ namespace
     {
     public:
         OpenXrRuntime()
-            : m_Input(m_Xr), m_SystemFacade(*this), m_CompositorFacade(*this), m_RenderModelsFacade(m_Input)
+            : m_Input(m_Xr), m_SystemFacade(*this), m_CompositorFacade(*this), m_Overlays(m_Xr, m_Vk, m_Input), m_RenderModelsFacade(m_Input)
         {
             m_Ring.SetAssertHook(&OpenXrRuntime::OnRingViolation, this);
+            m_Input.SetPointerHook(&m_Overlays);
+            m_Overlays.hmdPose = [this](vr::HmdMatrix34_t& out) {
+                std::lock_guard<std::mutex> lock(m_Mutex);
+                if (!m_LastHmdPose.bPoseIsValid)
+                    return false;
+                out = m_LastHmdPose.mDeviceToAbsoluteTracking;
+                return true;
+            };
         }
 
         // ---- Instance -------------------------------------------------------
@@ -559,6 +499,16 @@ namespace
             for (int64_t f : m_SwapchainFormats)
                 formats += std::to_string(static_cast<long long>(f)) + " ";
             Game::logMsg("[VR][OpenXR] session created; swapchain formats: %s", formats.c_str());
+            XrOverlayDevice od;
+            od.session = m_Session;
+            od.base = m_BaseSpace;
+            od.view = m_ViewSpace;
+            od.device = static_cast<VkDevice>(info.device);
+            od.queue = static_cast<VkQueue>(info.queue);
+            od.queueFamily = info.queueFamilyIndex;
+            od.memory = m_MemoryProperties;
+            od.formats = m_SwapchainFormats;
+            m_Overlays.SessionCreated(od);
             m_SessionCv.notify_all();
         }
 
@@ -602,7 +552,11 @@ namespace
             XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
             XrFrameState frameState{ XR_TYPE_FRAME_STATE };
             const auto waitStart = std::chrono::steady_clock::now();
-            const XrResult r = m_Xr.xrWaitFrame(m_Session, &waitInfo, &frameState);
+            XrResult r = XR_SUCCESS;
+            {
+                Crumb crumb("xrWaitFrame");
+                r = m_Xr.xrWaitFrame(m_Session, &waitInfo, &frameState);
+            }
             const double waitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
             {
                 std::lock_guard<std::mutex> lock(m_Mutex);
@@ -660,7 +614,11 @@ namespace
             }
             const int e = eye == vr::Eye_Right ? 1 : 0;
 
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::unique_lock<std::mutex> lock(m_Mutex, std::defer_lock);
+            {
+                Crumb crumb("Submit waiting for the frame lock");
+                lock.lock();
+            }
             BeginForGameLocked();
             if (!EnsureSwapchainLocked(e, data->m_nWidth, data->m_nHeight, static_cast<VkFormat>(data->m_nFormat)))
                 return vr::VRCompositorError_RequestFailed;
@@ -836,7 +794,8 @@ namespace
         IVrCompositor* CompositorFacade() { return &m_CompositorFacade; }
         IVrInput* InputFacade() { return &m_Input; }
         XrInputRuntime& Input() { return m_Input; }
-        IVrOverlay* OverlayFacade() { return &m_OverlayFacade; }
+        IVrOverlay* OverlayFacade() { return &m_Overlays; }
+        XrOverlayRuntime& Overlays() { return m_Overlays; }
         IVrRenderModels* RenderModelsFacade() { return &m_RenderModelsFacade; }
         IVrApplications* ApplicationsFacade() { return &m_ApplicationsFacade; }
 
@@ -868,6 +827,7 @@ namespace
             {
                 if (m_Rt.m_Device.lockQueue)
                 {
+                    Crumb crumb("waiting for DXVK's queue lock");
                     m_Rt.m_Device.lockQueue(m_Rt.m_Device.queueContext);
                     m_Locked = true;
                 }
@@ -1007,6 +967,8 @@ namespace
                 XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME,
                 XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
                 XR_EXT_LOCAL_FLOOR_EXTENSION_NAME,
+                XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME,
+                XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME,
             };
             for (const char* name : optional)
             {
@@ -1085,6 +1047,8 @@ namespace
 
             // Input: action sets, actions and suggested bindings (before any session).
             m_Input.CreateActions(m_Instance, m_Extensions, m_RuntimeName);
+            m_Overlays.Configure(wine, m_Extensions.count(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME) != 0,
+                m_Extensions.count(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME) != 0, m_MaxLayers);
 
             std::string enabledList;
             for (const char* name : enable)
@@ -1296,7 +1260,7 @@ namespace
                 return;
             xrm::FrameRingStats stats;
             double waitAvg = 0.0, waitMax = 0.0;
-            uint64_t ends = 0, projectionEnds = 0, emptyEnds = 0, endErrors = 0, eyes = 0, dropped = 0;
+            uint64_t ends = 0, projectionEnds = 0, overlayEnds = 0, emptyEnds = 0, endErrors = 0, eyes = 0, dropped = 0;
             XrResult lastEndError = XR_SUCCESS;
             float hz = 0.0f;
             vr::TrackedDevicePose_t hmd{};
@@ -1310,7 +1274,7 @@ namespace
                 m_StatsPrevWaits = stats.waits;
                 m_WaitMsSum = 0.0;
                 m_WaitMsMax = 0.0;
-                ends = m_EndCalls; projectionEnds = m_ProjectionEnds; emptyEnds = m_EmptyEnds; endErrors = m_EndErrors;
+                ends = m_EndCalls; projectionEnds = m_ProjectionEnds; overlayEnds = m_OverlayOnlyEnds; emptyEnds = m_EmptyEnds; endErrors = m_EndErrors;
                 lastEndError = m_LastEndError;
                 eyes = m_SubmittedEyes;
                 dropped = m_DroppedSubmits;
@@ -1324,16 +1288,20 @@ namespace
             const float fx = -m.m[0][2], fy = -m.m[1][2], fz = -m.m[2][2];
             const float yawDeg = std::atan2(-fx, -fz) * 57.29578f;
             const float pitchDeg = std::asin(std::clamp(fy, -1.0f, 1.0f)) * 57.29578f;
-            Game::logMsg("[VR][OpenXR][Frames] state=%s hz=%.1f waits=%llu waitFail=%llu begins=%llu ends=%llu (xrEndFrame %llu: projection %llu, empty %llu, errors %llu last=%d) stale=%llu discarded=%llu violations=%llu eyes=%llu droppedEyes=%llu wait avg=%.2f max=%.2f ms hmd=%d pos=(%.3f %.3f %.3f) yaw=%.1f pitch=%.1f",
+            Game::logMsg("[VR][OpenXR][Frames] state=%s hz=%.1f waits=%llu waitFail=%llu begins=%llu ends=%llu (xrEndFrame %llu: projection %llu, overlays only %llu, empty %llu, errors %llu last=%d) stale=%llu discarded=%llu violations=%llu eyes=%llu droppedEyes=%llu wait avg=%.2f max=%.2f ms hmd=%d pos=(%.3f %.3f %.3f) yaw=%.1f pitch=%.1f",
                 SessionStateName(m_State), hz,
                 static_cast<unsigned long long>(stats.waits), static_cast<unsigned long long>(stats.waitFailures),
                 static_cast<unsigned long long>(stats.begins), static_cast<unsigned long long>(stats.ends),
                 static_cast<unsigned long long>(ends), static_cast<unsigned long long>(projectionEnds),
-                static_cast<unsigned long long>(emptyEnds), static_cast<unsigned long long>(endErrors), static_cast<int>(lastEndError),
+                static_cast<unsigned long long>(overlayEnds), static_cast<unsigned long long>(emptyEnds), static_cast<unsigned long long>(endErrors), static_cast<int>(lastEndError),
                 static_cast<unsigned long long>(stats.staleEnds), static_cast<unsigned long long>(stats.discarded),
                 static_cast<unsigned long long>(stats.violations), static_cast<unsigned long long>(eyes),
                 static_cast<unsigned long long>(dropped), waitAvg, waitMax,
                 hmd.bPoseIsValid ? 1 : 0, m.m[0][3], m.m[1][3], m.m[2][3], yawDeg, pitchDeg);
+            Game::logMsg("[VR][OpenXR][Overlays] %s", m_Overlays.StatsLine().c_str());
+            const std::string stuck = Crumbs().Describe(2000);
+            if (!stuck.empty())
+                Game::logMsg("[VR][OpenXR][Stuck] %s", stuck.c_str());
             const vr::HmdMatrix34_t& l = hands[0].mDeviceToAbsoluteTracking;
             const vr::HmdMatrix34_t& r = hands[1].mDeviceToAbsoluteTracking;
             Game::logMsg("[VR][OpenXR][Controllers] %s | left valid=%d pos=(%.3f %.3f %.3f) fwd=(%.2f %.2f %.2f) | right valid=%d pos=(%.3f %.3f %.3f) fwd=(%.2f %.2f %.2f)",
@@ -1354,7 +1322,11 @@ namespace
         void CallBeginFrameLocked()
         {
             XrFrameBeginInfo bi{ XR_TYPE_FRAME_BEGIN_INFO };
-            const XrResult r = m_Xr.xrBeginFrame(m_Session, &bi);
+            XrResult r = XR_SUCCESS;
+            {
+                Crumb crumb("xrBeginFrame");
+                r = m_Xr.xrBeginFrame(m_Session, &bi);
+            }
             if (XR_FAILED(r))
             {
                 // The runtime refused the frame: forget it so we never end it.
@@ -1395,8 +1367,7 @@ namespace
                 return;
             XrCompositionLayerProjectionView views[2] = { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
             XrCompositionLayerProjection projection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
-            const XrCompositionLayerBaseHeader* layers[1] = {};
-            uint32_t layerCount = 0;
+            const XrCompositionLayerBaseHeader* projectionLayer = nullptr;
             const bool haveProjection = ticket.shouldRender && m_BaseSpace != XR_NULL_HANDLE &&
                 m_Layer[0].valid && m_Layer[1].valid;
             if (haveProjection)
@@ -1413,15 +1384,26 @@ namespace
                 projection.space = m_BaseSpace;
                 projection.viewCount = 2;
                 projection.views = views;
-                layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
-                layerCount = 1;
+                projectionLayer = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
             }
+            // Overlays (menus, HUD, panels) are composited even while the game
+            // renders no scene (menus, loading): quads only. A frame the
+            // runtime will not display carries nothing.
+            static const std::vector<const XrCompositionLayerBaseHeader*> kNoLayers;
+            const std::vector<const XrCompositionLayerBaseHeader*>& layers = ticket.shouldRender
+                ? m_Overlays.BuildLayers(projectionLayer) : kNoLayers;
+            const uint32_t layerCount = static_cast<uint32_t>(layers.size());
             XrFrameEndInfo ei{ XR_TYPE_FRAME_END_INFO };
             ei.displayTime = ticket.displayTime;
             ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
             ei.layerCount = layerCount;
-            ei.layers = layerCount ? layers : nullptr;
-            const XrResult r = m_Xr.xrEndFrame(m_Session, &ei);
+            ei.layers = layerCount ? layers.data() : nullptr;
+            XrResult r = XR_SUCCESS;
+            {
+                Crumb crumb("xrEndFrame");
+                r = m_Xr.xrEndFrame(m_Session, &ei);
+            }
+            m_Overlays.FrameEnded(r);
             ++m_EndCalls;
             if (XR_FAILED(r))
             {
@@ -1431,8 +1413,10 @@ namespace
                     Game::logMsg("[VR][OpenXR] xrEndFrame failed: %s (frame %llu, %u layers)", ResultName(r).c_str(),
                         static_cast<unsigned long long>(ticket.id), layerCount);
             }
-            else if (layerCount)
+            else if (projectionLayer)
                 ++m_ProjectionEnds;
+            else if (layerCount)
+                ++m_OverlayOnlyEnds;
             else
                 ++m_EmptyEnds;
         }
@@ -1730,6 +1714,7 @@ namespace
             {
                 XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
                 uint32_t acquiredIndex = 0;
+                Crumb crumb("eye xrAcquireSwapchainImage");
                 r = m_Xr.xrAcquireSwapchainImage(sc.handle, &ai, &acquiredIndex);
                 if (XR_FAILED(r))
                 {
@@ -1741,7 +1726,10 @@ namespace
             const uint32_t index = static_cast<uint32_t>(sc.acquired);
             XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
             wi.timeout = 100000000;  // 100 ms
-            r = m_Xr.xrWaitSwapchainImage(sc.handle, &wi);
+            {
+                Crumb crumb("eye xrWaitSwapchainImage");
+                r = m_Xr.xrWaitSwapchainImage(sc.handle, &wi);
+            }
             if (r != XR_SUCCESS)
             {
                 Game::logMsg("[VR][OpenXR] xrWaitSwapchainImage(eye %d) returned %s", eye, ResultName(r).c_str());
@@ -1810,7 +1798,10 @@ namespace
             const VkResult vr = m_Vk.vkQueueSubmit(static_cast<VkQueue>(m_Device.queue), 1, &si, m_Fence);
             bool copied = vr == VK_SUCCESS;
             if (copied)
+            {
+                Crumb crumb("eye copy fence");
                 copied = m_Vk.vkWaitForFences(device, 1, &m_Fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
+            }
             if (!copied)
                 Game::logMsg("[VR][OpenXR] eye %d copy failed (vkQueueSubmit %d)", eye, static_cast<int>(vr));
 
@@ -1974,7 +1965,7 @@ namespace
         bool m_LoggedFlippedBounds = false;
         bool m_LoggedNoFormat = false;
 
-        uint64_t m_EndCalls = 0, m_ProjectionEnds = 0, m_EmptyEnds = 0, m_EndErrors = 0;
+        uint64_t m_EndCalls = 0, m_ProjectionEnds = 0, m_OverlayOnlyEnds = 0, m_EmptyEnds = 0, m_EndErrors = 0;
         XrResult m_LastEndError = XR_SUCCESS;
         uint64_t m_SubmittedEyes = 0, m_DroppedSubmits = 0, m_JoinedWaits = 0;
         uint64_t m_StatsPrevWaits = 0;
@@ -1983,7 +1974,7 @@ namespace
         XrInputRuntime m_Input;
         XrSystemFacade m_SystemFacade;
         XrCompositorFacade m_CompositorFacade;
-        XrOverlayFacade m_OverlayFacade;
+        XrOverlayRuntime m_Overlays;
         XrRenderModelsFacade m_RenderModelsFacade;
         XrApplicationsFacade m_ApplicationsFacade;
     };
@@ -2123,7 +2114,10 @@ namespace
 
         Caps GetCaps() const override
         {
-            Caps caps;  // no overlay mouse, intersection or keyboard (M4), no skeletal bones (M5), no runtime assets
+            Caps caps;  // no skeletal bones (M5), no runtime assets
+            caps.nativeOverlayMouse = true;   // the backend's laser (openxr_overlay_runtime.inl)
+            caps.overlayIntersection = true;
+            caps.vrKeyboard = true;           // in-mod keyboard panel
             caps.maxOverlayLayers = Runtime().MaxLayers();
             return caps;
         }
@@ -2169,6 +2163,15 @@ namespace
             return Runtime().Input().SetFake(spec, error);
         }
         std::string DescribeControllers() override { return Runtime().InstanceReady() ? Runtime().Input().Describe() : std::string(); }
+        bool OverlayTestCommand(const char* spec, std::string& result) override
+        {
+            if (!Runtime().InstanceReady() || !spec)
+            {
+                result = "OpenXR is not running";
+                return false;
+            }
+            return Runtime().Overlays().TestCommand(spec, result);
+        }
     };
 }
 

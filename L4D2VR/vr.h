@@ -3468,7 +3468,7 @@ public:
 	bool m_RecoilTestLeftGun = false;
 	Vector m_RecoilTestRefCtrl{ 1.0f, 0.0f, 0.0f };
 	uint64_t m_RecoilTestTraceMs = 0;
-	struct RecoilTestSample { uint64_t ms; Vector pos; };
+	struct RecoilTestSample { uint64_t ms; Vector pos; Vector vel; };
 	std::vector<RecoilTestSample> m_RecoilTestProjectile;
 	int m_RecoilTestProjectileEnt = -1;
 	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;

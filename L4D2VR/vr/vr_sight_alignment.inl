@@ -18,11 +18,19 @@ void VR::PublishSightPoints(const std::string& modelLower, const Vector& rearWor
     Vector forward{}, right{}, up{};
     QAngle::AngleVectors(GetRightControllerAbsAngle(), &forward, &right, &up);
     const Vector r = rearWorld - handPos, f = frontWorld - handPos;
+    const uint64_t nowMs = GetTickCount64();
     std::lock_guard<std::mutex> lock(m_SightBoreMutex);
-    m_SightRearInHand = Vector(DotProduct(r, forward), DotProduct(r, right), DotProduct(r, up));
-    m_SightFrontInHand = Vector(DotProduct(f, forward), DotProduct(f, right), DotProduct(f, up));
+    // While firing keep the sights where they were relative to the hand: the
+    // drawn gun can trail the kicked hand by a frame (two-handed placement), and
+    // the bullets must follow the recoil itself, not that lag.
+    const bool firing = nowMs - m_LastLocalShotMs.load(std::memory_order_acquire) < 1000u;
+    if (!firing || m_SightPointsModel != modelLower || nowMs - m_SightPointsAtMs > 250u)
+    {
+        m_SightRearInHand = Vector(DotProduct(r, forward), DotProduct(r, right), DotProduct(r, up));
+        m_SightFrontInHand = Vector(DotProduct(f, forward), DotProduct(f, right), DotProduct(f, up));
+    }
     m_SightPointsModel = modelLower;
-    m_SightPointsAtMs = GetTickCount64();
+    m_SightPointsAtMs = nowMs;
 }
 
 bool VR::GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut, bool evenWhenDisabled) const
@@ -60,10 +68,15 @@ void VR::PublishLeftPistolSightPoints(const Vector& rearWorld, const Vector& fro
     Vector forward{}, right{}, up{};
     QAngle::AngleVectors(GetLeftControllerAbsAngle(), &forward, &right, &up);
     const Vector r = rearWorld - handPos, f = frontWorld - handPos;
+    const uint64_t nowMs = GetTickCount64();
     std::lock_guard<std::mutex> lock(m_SightBoreMutex);
-    m_SightLeftRearInHand = Vector(DotProduct(r, forward), DotProduct(r, right), DotProduct(r, up));
-    m_SightLeftFrontInHand = Vector(DotProduct(f, forward), DotProduct(f, right), DotProduct(f, up));
-    m_SightLeftPointsAtMs = GetTickCount64();
+    const bool firing = nowMs - m_LastLocalShotMs.load(std::memory_order_acquire) < 1000u;
+    if (!firing || nowMs - m_SightLeftPointsAtMs > 250u)
+    {
+        m_SightLeftRearInHand = Vector(DotProduct(r, forward), DotProduct(r, right), DotProduct(r, up));
+        m_SightLeftFrontInHand = Vector(DotProduct(f, forward), DotProduct(f, right), DotProduct(f, up));
+    }
+    m_SightLeftPointsAtMs = nowMs;
 }
 
 bool VR::GetLeftPistolSightRay(Vector& origin, Vector& direction, bool evenWhenDisabled) const

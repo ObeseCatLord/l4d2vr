@@ -13,6 +13,20 @@
 
 namespace
 {
+    bool vr_selftest_ReadVector(const void* base, int offset, Vector& out)
+    {
+        __try
+        {
+            out = *reinterpret_cast<const Vector*>(reinterpret_cast<const unsigned char*>(base) + offset);
+            return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            out = Vector(0.0f, 0.0f, 0.0f);
+            return false;
+        }
+    }
+
     float VR_RecoilAngleDiff(float a, float b)
     {
         float d = a - b;
@@ -344,7 +358,16 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 {
                     const Vector p = e->GetAbsOrigin();
                     if (m_RecoilTestProjectile.empty() || VectorLength(p - m_RecoilTestProjectile.back().pos) > 0.01f)
-                        m_RecoilTestProjectile.push_back({ GetTickCount64(), p });
+                    {
+                        // The networked velocity gives the launch direction even
+                        // when the client sees the grenade only once in flight.
+                        Vector velocity(0.0f, 0.0f, 0.0f);
+                        int offset = m_Game->FindRecvPropOffset("DT_BaseGrenade", "m_vecVelocity");
+                        if (offset <= 0) offset = m_Game->FindRecvPropOffset("DT_BaseEntity", "m_vecVelocity");
+                        if (offset > 0 && offset < 0x4000)
+                            vr_selftest_ReadVector(e, offset, velocity);
+                        m_RecoilTestProjectile.push_back({ GetTickCount64(), p, velocity });
+                    }
                 }
             }
         }
@@ -385,8 +408,45 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 VectorNormalize(upPerp);
                 float lateralDeg = 0.0f, verticalDeg = 0.0f, along = 0.0f, firstOffCm = -1.0f;
                 bool ok = false;
+                // Preferred: the grenade's own velocity when first seen.
                 for (const auto& sample : s)
                 {
+                    Vector v = sample.vel;
+                    if (VectorNormalize(v) < 1.0f)
+                        continue;
+                    const float a = DotProduct(v, m_RecoilTestSightDir);
+                    lateralDeg = std::atan2(DotProduct(v, side), a) * 57.29578f;
+                    verticalDeg = std::atan2(DotProduct(v, upPerp), a) * 57.29578f;
+                    along = DotProduct(sample.pos - m_RecoilTestSightRear, m_RecoilTestSightDir);
+                    firstOffCm = VR_RecoilLineDistance(m_RecoilTestSightRear, m_RecoilTestSightDir, sample.pos) / m_VRScale * 100.0f;
+                    ok = true;
+                    Game::logMsg("[VR][SelfTest] sightcheck grenade_launcher: velocity (%.1f %.1f %.1f) at %.2f m", sample.vel.x, sample.vel.y,
+                        sample.vel.z, along / m_VRScale);
+                    break;
+                }
+                // Else the direction between the first and the last sample seen
+                // (a short flight: gravity bends it by well under a degree).
+                if (!ok && s.size() >= 2)
+                {
+                    Vector v = s.back().pos - s.front().pos;
+                    if (VectorNormalize(v) > 0.25f * m_VRScale)
+                    {
+                        const float a = DotProduct(v, m_RecoilTestSightDir);
+                        lateralDeg = std::atan2(DotProduct(v, side), a) * 57.29578f;
+                        verticalDeg = std::atan2(DotProduct(v, upPerp), a) * 57.29578f;
+                        along = DotProduct(s.back().pos - m_RecoilTestSightRear, m_RecoilTestSightDir);
+                        firstOffCm = VR_RecoilLineDistance(m_RecoilTestSightRear, m_RecoilTestSightDir, s.front().pos) / m_VRScale * 100.0f;
+                        ok = true;
+                    }
+                }
+                for (const auto& sample : s)
+                    Game::logMsg("[VR][SelfTest] sightcheck grenade_launcher: sample t=%llu pos (%.1f %.1f %.1f) vel (%.1f %.1f %.1f)",
+                        static_cast<unsigned long long>(sample.ms - s.front().ms), sample.pos.x, sample.pos.y, sample.pos.z,
+                        sample.vel.x, sample.vel.y, sample.vel.z);
+                for (const auto& sample : s)
+                {
+                    if (ok)
+                        break;
                     const Vector d = sample.pos - m_RecoilTestSightRear;
                     const float a = DotProduct(d, m_RecoilTestSightDir);
                     if (firstOffCm < 0.0f)
@@ -401,8 +461,12 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 std::snprintf(detail, sizeof(detail), "grenade_launcher: %zu projectile sample(s); %.2f m along the sight line it is "
                     "%.2f deg sideways and %.2f deg above (gravity: below) the line; first seen %.1f cm from it",
                     s.size(), along / m_VRScale, lateralDeg, verticalDeg, firstOffCm);
-                SelfTestReport("grenade leaves along the sight line", m_SelfTestValueA == 1 && ok && std::fabs(lateralDeg) <= 0.5f &&
-                    verticalDeg <= 0.3f && verticalDeg > -6.0f, detail);
+                // L4D2's LaunchGrenade adds grenadelauncher_vel_up (a lob of ~4 deg
+                // at the stock 1200 u/s) and a random grenadelauncher_vel_variance
+                // to the aim: the grenade must leave along the sight line within
+                // those (sideways within the variance, up by the lob).
+                SelfTestReport("grenade leaves along the sight line (plus L4D2's lob)", m_SelfTestValueA == 1 && ok &&
+                    std::fabs(lateralDeg) <= 1.5f && verticalDeg >= 2.0f && verticalDeg <= 6.5f, detail);
                 return m_SelfTestStage >= 7 && t >= 7.0f;
             }
             const float limitCm = 1.0f + 0.0025f * distance * 100.0f; // 1 cm + 0.15 deg
@@ -499,6 +563,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         }
         m_RecoilTestPeakPitch = m_RecoilTestPeakYaw = m_RecoilTestPeakBack = 0.0f;
         m_RecoilTestFireStart = t + 0.6f;
+        m_VmAnimTraceUntilMs.store(GetTickCount64() + 2500u, std::memory_order_release);
         {
             std::lock_guard<std::mutex> lock(m_RecoilShotLogMutex);
             m_RecoilShotLog.clear();
@@ -552,6 +617,13 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         QAngle::VectorAngles(m_RecoilTestRefDir, refWorld);
         QAngle::VectorAngles(m_RecoilPreKickForward, handWorld);
         const l4d2vr_recoil::Offset& o = m_RecoilHands[0].offset;
+        Vector sightInHand{};
+        {
+            std::lock_guard<std::mutex> lock(m_SightBoreMutex);
+            sightInHand = m_SightFrontInHand - m_SightRearInHand;
+        }
+        Game::logMsg("[VR][SelfTest] recoiltrace sight-in-hand p=%.2f y=%.2f", std::atan2(sightInHand.z, sightInHand.x) * 57.29578f,
+            std::atan2(sightInHand.y, sightInHand.x) * 57.29578f);
         Game::logMsg("[VR][SelfTest] recoiltrace t=%.2f shots=%llu offset p=%.2f y=%.2f b=%.2f | aim-in-hand p=%.2f y=%.2f | "
             "hand world p=%.2f y=%.2f (ref aim %.2f %.2f) | head yaw %.2f body yaw %.2f | foregrip=%d",
             t - fireStart, static_cast<unsigned long long>(m_RecoilHands[0].shots), o.pitchDeg, o.yawDeg, o.backCm,

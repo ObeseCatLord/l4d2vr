@@ -8941,7 +8941,26 @@ namespace
         vr_vm_stabilize::Mat3x4 bone{};
         if (!vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pFinalBoneToWorld) + weaponBone, bone))
             return;
-        const Vector boreWorld(bone.m[0][2], bone.m[1][2], bone.m[2][2]);
+        Vector boreWorld(bone.m[0][2], bone.m[1][2], bone.m[2][2]);
+        // The gun's iron sight (or scope axis) in weapon_bone space: align that
+        // line, not the bore, with the aim ray, and publish where it is relative
+        // to the hand so bullets run along it.
+        if (const l4d2vr_iron_sights::Sight* sight = l4d2vr_iron_sights::ForModel(lowerModel.c_str()))
+        {
+            auto toWorld = [&](const float* p)
+            {
+                return Vector(bone.m[0][0] * p[0] + bone.m[0][1] * p[1] + bone.m[0][2] * p[2] + bone.m[0][3],
+                    bone.m[1][0] * p[0] + bone.m[1][1] * p[1] + bone.m[1][2] * p[2] + bone.m[1][3],
+                    bone.m[2][0] * p[0] + bone.m[2][1] * p[1] + bone.m[2][2] * p[2] + bone.m[2][3]);
+            };
+            const Vector rearWorld = toWorld(sight->rear), frontWorld = toWorld(sight->front);
+            Vector sightDir = frontWorld - rearWorld;
+            if (VectorNormalize(sightDir) > 0.5f && std::isfinite(sightDir.x) && std::isfinite(sightDir.y) && std::isfinite(sightDir.z))
+            {
+                boreWorld = sightDir;
+                vr->PublishSightPoints(lowerModel, rearWorld, frontWorld);
+            }
+        }
         Vector forward{}, right{}, up{};
         QAngle::AngleVectors(info.angles, &forward, &right, &up);
         const Vector boreLocal(DotProduct(boreWorld, forward), -DotProduct(boreWorld, right), DotProduct(boreWorld, up));

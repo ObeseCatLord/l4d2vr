@@ -408,6 +408,7 @@ Hooks::Hooks(Game* game)
 	hkCalcViewModelView.enableHook();
 	hkServerFireTerrorBullets.enableHook();
 	hkClientFireTerrorBullets.enableHook();
+	EnableRecoilHooks();
     if (hkClientFxTracer.pTarget) hkClientFxTracer.enableHook();
 	hkProcessUsercmds.enableHook();
 	if (hkServerGameClientsClientCommand.pTarget)
@@ -607,6 +608,7 @@ int Hooks::initSourceHooks()
 
 	LPVOID clientFireTerrorBulletsAddr = (LPVOID)(m_Game->m_Offsets->ClientFireTerrorBullets.address);
 	hkClientFireTerrorBullets.createHook(clientFireTerrorBulletsAddr, &dClientFireTerrorBullets);
+	InitRecoilHooks();
     if (m_Game->m_Offsets->ClientFxTracer.valid)
         hkClientFxTracer.createHook(reinterpret_cast<void*>(m_Game->m_Offsets->ClientFxTracer.address), dClientFxTracer);
 

@@ -1917,6 +1917,11 @@ void VR::UpdateTracking()
         ResetPavlovTwoHandedAimSmoothing();
     }
 
+    // Pavlov recoil: kick the gun (aim basis and grip position) relative to
+    // the hand, after the two-handed aim line, before the scope, aim line and
+    // viewmodel read the basis.
+    UpdateWeaponRecoil(localPlayer);
+
     // Update scope camera pose + look-through activation
     const bool forceScopeForThirdPersonFrontView = m_ThirdPersonFrontViewEnabled && m_IsThirdPersonCamera;
     const bool scopePosFromEyeInFrontView = forceScopeForThirdPersonFrontView && (localPlayer != nullptr);

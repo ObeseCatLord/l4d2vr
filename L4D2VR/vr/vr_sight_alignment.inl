@@ -12,6 +12,48 @@ void VR::PublishSightBore(const std::string& modelLower, const Vector& boreLocal
     ++m_SightBoreSerial;
 }
 
+void VR::PublishSightPoints(const std::string& modelLower, const Vector& rearWorld, const Vector& frontWorld)
+{
+    const Vector handPos = GetRightControllerAbsPos();
+    Vector forward{}, right{}, up{};
+    QAngle::AngleVectors(GetRightControllerAbsAngle(), &forward, &right, &up);
+    const Vector r = rearWorld - handPos, f = frontWorld - handPos;
+    std::lock_guard<std::mutex> lock(m_SightBoreMutex);
+    m_SightRearInHand = Vector(DotProduct(r, forward), DotProduct(r, right), DotProduct(r, up));
+    m_SightFrontInHand = Vector(DotProduct(f, forward), DotProduct(f, right), DotProduct(f, up));
+    m_SightPointsModel = modelLower;
+    m_SightPointsAtMs = GetTickCount64();
+}
+
+bool VR::GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut) const
+{
+    if (!m_IronSightAimEnabled || !m_SightAutoAlignEnabled || m_MouseModeEnabled || m_IsThirdPersonCamera)
+        return false;
+    Vector rear{}, front{};
+    {
+        std::lock_guard<std::mutex> lock(m_SightBoreMutex);
+        // Only while the drawn gun is the one being aimed (fresh, same model).
+        if (m_SightPointsModel.empty() || m_SightPointsModel != m_SightBoreModel ||
+            GetTickCount64() - m_SightPointsAtMs > 250u)
+            return false;
+        rear = m_SightRearInHand;
+        front = m_SightFrontInHand;
+    }
+    const Vector& p = m_RightControllerPosAbs;
+    const Vector& f = m_RightControllerForward;
+    const Vector& r = m_RightControllerRight;
+    const Vector& u = m_RightControllerUp;
+    const Vector rearWorld = p + f * rear.x + r * rear.y + u * rear.z;
+    const Vector frontWorld = p + f * front.x + r * front.y + u * front.z;
+    Vector dir = frontWorld - rearWorld;
+    if (VectorNormalize(dir) < 0.5f || !l4d2vr_calibration::Finite(rearWorld) || !l4d2vr_calibration::Finite(dir))
+        return false;
+    origin = rearWorld;
+    direction = dir;
+    if (frontOut) *frontOut = frontWorld;
+    return true;
+}
+
 void VR::UpdateSightAlignment(const QAngle& baseOffset)
 {
     m_SightActiveCorrection = QAngle(0.0f, 0.0f, 0.0f);
@@ -62,7 +104,9 @@ void VR::UpdateSightAlignment(const QAngle& baseOffset)
     if (m_SightBoreAverage.count < 45)
         return;
 
-    Vector aim = m_AimLineEnd - m_AimLineStart;
+    // The aim line now follows the sights themselves, so align the sights to
+    // where the hand points (the controller's aim direction).
+    Vector aim = m_RightControllerForward;
     const float length = VectorLength(aim);
     if (!std::isfinite(length) || length < 1.0f)
     {

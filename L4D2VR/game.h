@@ -164,6 +164,10 @@ struct Player
     Vector prevControllerPos = { 0.f, 0.f, 0.f };
     bool hasPrevControllerPose = false;
     bool dualPistolShotPose = false;
+    // Listen host: this VR player opted into Pavlov shotgun pellets
+    // (l4d2vr_shotgun_pattern 1).
+    bool shotgunPattern = false;
+    unsigned shotgunPatternSerial = 0u;
     int pistolDropLastCommand = 0;
     l4d2vr_magazine::NativeReloadLedger physicalReloadLedger;
 
@@ -304,6 +308,8 @@ public:
     void PublishPistolAmmoState(int index, const l4d2vr_pistol::AmmoSnapshot& snapshot, int command);
     void ResetPistolAmmoServerClients();
     bool HandlePistolAmmoCommand(edict_t* entity, const void* command);
+    bool HandleShotgunPatternCommand(edict_t* entity, const void* command);
+    bool PlayerUsesShotgunPattern(int playerIndex) const;
     bool PistolAmmoClientReady(int index, unsigned ownerSerial);
     bool RelinquishPistolPhysicalReload(int index, const l4d2vr_pistol::AmmoSnapshot& snapshot, int command);
     bool HandlePistolMagazineCommand(edict_t* entity, const void* command);

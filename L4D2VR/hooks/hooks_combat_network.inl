@@ -1291,8 +1291,14 @@ void __fastcall Hooks::dPistolPlayerRunCommand(void* owner, void*, CUserCmd* com
         ManualPistolReadAmmo(owner, reinterpret_cast<void*>(context.reloadWeapon.pointer), before, ammoIndex) &&
         ammoIndex == context.index;
     const HandThrowExecution handThrow = HandThrowBeginCommand(owner, command);
+    const int previousRecoilCommand = g_RecoilServerCommand;
+    const void* previousRecoilOwner = g_RecoilServerOwner;
+    g_RecoilServerCommand = command ? command->command_number : 0;
+    g_RecoilServerOwner = owner;
     l4d2vr_native_scope::Run<const ServerPistolExecution>(g_ServerPistolExecution, &context,
         [&]() { hkPistolPlayerRunCommand.fOriginal(owner, command, moveHelper); });
+    g_RecoilServerCommand = previousRecoilCommand;
+    g_RecoilServerOwner = previousRecoilOwner;
     HandThrowEndCommand(handThrow);
     if (trackAmmo)
     {
@@ -1366,6 +1372,14 @@ int Hooks::dServerFireTerrorBullets(int playerId, const Vector& vecOrigin, const
 {
 	Vector vecNewOrigin = vecOrigin;
 	QAngle vecNewAngles = vecAngles;
+    // Pavlov shotgun pellets for VR players who opted in (listen host).
+    const bool localHostShooter = m_VR && m_VR->m_IsVREnabled && m_Game && m_Game->m_EngineClient &&
+        playerId == m_Game->m_EngineClient->GetLocalPlayer();
+    const bool pelletPattern = hkServerSharedRandomFloat.isEnabled && m_Game &&
+        (localHostShooter ? (m_VR->m_SpreadDisabled && m_VR->m_ShotgunPavlovPattern && !m_VR->m_ForceNonVRServerMovement)
+            : (m_Game->IsValidPlayerIndex(playerId) && m_Game->m_PlayersVRInfo[playerId].isUsingVR &&
+                m_Game->PlayerUsesShotgunPattern(playerId)));
+    PelletShotScope pellets(g_ServerPelletShot, pelletPattern ? l4d2vr_shotgun_pattern::WeaponFor(a4) : nullptr);
 
     if (g_ServerPistolExecution && g_ServerPistolExecution->index == playerId &&
         g_ServerPistolExecution->poseValid && ServerExecutionWeaponIsPistol(*g_ServerPistolExecution))
@@ -1387,6 +1401,16 @@ int Hooks::dServerFireTerrorBullets(int playerId, const Vector& vecOrigin, const
 	// Server host
 	if (m_VR->m_IsVREnabled && playerId == m_Game->m_EngineClient->GetLocalPlayer())
 	{
+        // The host runs its own command a frame after creating it: fire it
+        // along the pose captured with the command, not the current (possibly
+        // already kicked) gun.
+        if (!m_VR->m_MouseModeEnabled && !m_VR->ScopeChangesAim() && !m_VR->m_ForceNonVRServerMovement &&
+            g_RecoilServerCommand > 0 && RecoilShotPoseForCommand(g_RecoilServerCommand, vecNewOrigin, vecNewAngles))
+        {
+            if (m_VR->m_RecoilShotLogActive.load(std::memory_order_acquire))
+                m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, true, a4);
+            return hkServerFireTerrorBullets.fOriginal(playerId, vecNewOrigin, vecNewAngles, a4, a5, a6, a7);
+        }
 		const bool scopeActive = m_VR->ScopeChangesAim();
 		if (m_VR->m_MouseModeEnabled)
 		{
@@ -1476,6 +1500,8 @@ int Hooks::dServerFireTerrorBullets(int playerId, const Vector& vecOrigin, const
 		vecNewAngles = m_Game->m_PlayersVRInfo[playerId].controllerAngle;
 	}
 
+    if (localHostShooter && m_VR->m_RecoilShotLogActive.load(std::memory_order_acquire))
+        m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, true, a4);
 	return hkServerFireTerrorBullets.fOriginal(playerId, vecNewOrigin, vecNewAngles, a4, a5, a6, a7);
 }
 
@@ -1574,8 +1600,11 @@ void __fastcall Hooks::dClientPistolRunCommand(void* prediction, void*, void* pl
 {
     ClientPistolExecution context{};
     ReadClientPistolExecution(player, command, context);
+    const int previousRecoilCommand = g_RecoilClientCommand;
+    g_RecoilClientCommand = command ? command->command_number : 0;
     l4d2vr_native_scope::Run<const ClientPistolExecution>(g_ClientPistolExecution, &context,
         [&]() { hkClientPistolRunCommand.fOriginal(prediction, player, command, moveHelper); });
+    g_RecoilClientCommand = previousRecoilCommand;
 }
 
 void __fastcall Hooks::dClientPistolGunFire(void* weapon, void*)
@@ -1999,6 +2028,22 @@ int Hooks::dClientFireTerrorBullets(
 		const auto original = hkClientFireTerrorBullets.fOriginal;
 		if (!original)
 			return 0;
+        // Pavlov shotgun pellets (predicted the same way the server fires them)
+        // and the recoil kick of this shot, applied after the shot so it moves
+        // the gun for the next one.
+        PelletShotScope pellets(g_ClientPelletShot,
+            !preserveNativeDualRay && m_VR->ShotgunPatternActiveForLocalShot(a4) ? l4d2vr_shotgun_pattern::WeaponFor(a4) : nullptr);
+        if (!preserveNativeDualRay && m_VR->m_RecoilShotLogActive.load(std::memory_order_acquire))
+            m_VR->RecordRecoilShotRay(vecNewOrigin, vecNewAngles, false, a4);
+        struct RecoilAfterShot
+        {
+            bool active;
+            int weaponId;
+            bool leftPistol;
+            uintptr_t weapon;
+            ~RecoilAfterShot() { if (active) Hooks::RecoilAfterLocalShot(weaponId, leftPistol, weapon); }
+        } recoilAfterShot{ !preserveNativeDualRay, a4, dualShotPose && dualShotHand == l4d2vr_dual::Hand::Left,
+            dualShotPose ? shotSession.weapon : 0u };
 
         if (dualShotPose && scopedDualShot && g_ClientPistolExecution)
         {
@@ -2047,6 +2092,7 @@ void __fastcall Hooks::dServerGameClientsClientCommand(
     if (m_Game && m_Game->HandleRemoteMagazineCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandlePistolAmmoCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandlePistolMagazineCommand(player, sourceCommand)) return;
+    if (m_Game && m_Game->HandleShotgunPatternCommand(player, sourceCommand)) return;
 	if (m_Game &&
 		m_Game->HandleBuiltinVRPoseRelayCommand(
 			player,
@@ -3125,6 +3171,7 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 
 	Vector controllerPos{};
 	QAngle controllerAngles{};
+    bool recoilShotPose = false;
     l4d2vr_physical::MeleeCommand meleeCommand{};
     const bool meleePose = !hasObjectPullCommand && m_VR->GetMeleeCommand(originalCommandNum, meleeCommand);
     l4d2vr_dual::Hand dualHand = l4d2vr_dual::Hand::None;
@@ -3152,6 +3199,12 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 		controllerPos = objectPullPosition;
 		controllerAngles = objectPullAngles;
 	}
+    else if ((to->buttons & 1) != 0 && RecoilShotPoseForCommand(originalCommandNum, controllerPos, controllerAngles))
+    {
+        // Firing command: the pose captured when it was created (recoil from
+        // this command's own shot must not reach the server for it).
+        recoilShotPose = true;
+    }
 	else if (!TryGetManualThrowUsercmdControllerPose(
 		m_VR,
 		originalCommandNum,
@@ -3185,7 +3238,7 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 		activeWeaponIsFirearm = activeWeapon &&
 			l4d2vr_calibration::IsFirearm(static_cast<int>(activeWeapon->GetWeaponID()));
 	}
-	if (!meleePose && m_VR->CanCalibrateBulletAim() &&
+	if (!meleePose && !recoilShotPose && m_VR->CanCalibrateBulletAim() &&
 		l4d2vr_calibration::ShouldEncodeRay(primaryAttack, activeWeaponIsFirearm,
 			localUsingMountedWeapon, m_VR->m_MouseModeEnabled, m_VR->ScopeChangesAim(),
 			objectPullOverridePose, dualShotPose))

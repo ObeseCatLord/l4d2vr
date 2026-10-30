@@ -238,7 +238,7 @@ namespace
         Check(bundle[1] == "l4d2vr_interaction_ack 1\n");
         Check(bundle[2] == "l4d2vr_shell_capability 1 41\n");
         Check(bundle[3] == "l4d2vr_mag_capability 3 42\n");
-        Check(bundle[4] == "l4d2vr_feature_ack 7ff 1\n");
+        Check(bundle[4] == "l4d2vr_feature_ack fff 1\n");
         Check(s.EffectiveFeatures(2) == kFeatureAllMask);
         // The client answers server_ack with another hello: no duplicate bundle.
         host.sent.clear();
@@ -253,10 +253,24 @@ namespace
         host.Advance(1000);
         s.GameFrame();
         Check(host.sent.empty());
+        // Pavlov shotgun pellets are opt-in per player (old clients never send it).
+        Check(!s.ShotgunPattern(2) && !s.ShotgunPattern(1));
+        Check(Dispatch(s, 2, &vr, { "l4d2vr_shotgun_pattern", "1" }) == CommandResult::Stop);
+        Check(s.ShotgunPattern(2));
+        Check(Dispatch(s, 2, &vr, { "l4d2vr_shotgun_pattern", "2" }) == CommandResult::Stop);
+        Check(s.ShotgunPattern(2)); // malformed: unchanged
+        Dispatch(s, 2, &vr, { "l4d2vr_shotgun_pattern", "0" });
+        Check(!s.ShotgunPattern(2));
+        Dispatch(s, 2, &vr, { "l4d2vr_shotgun_pattern", "1" });
+        Check(s.ShotgunPattern(2));
+        Dispatch(s, 1, &desktop, { "l4d2vr_shotgun_pattern", "1" });
+        Check(!s.ShotgunPattern(1)); // no hello: no features
+        host.sent.clear();
         // Feature hello narrows this player's features and re-acks.
         Dispatch(s, 2, &vr, { "l4d2vr_feature_hello", "0x105", "1" });
         Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_feature_ack 105 1\n" });
         Check(s.EffectiveFeatures(2) == 0x105u);
+        Check(!s.ShotgunPattern(2)); // the opt-in needs the feature requested too
         Check(Dispatch(s, 2, &vr, { "l4d2vr_feature_hello", "zz", "1" }) == CommandResult::Stop);
         Check(s.EffectiveFeatures(2) == 0x105u);
 

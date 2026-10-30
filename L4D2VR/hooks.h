@@ -90,6 +90,7 @@ typedef void(__thiscall* tRenderView)(void* thisptr, CViewSetup& setup, CViewSet
 typedef bool(__thiscall* tCreateMove)(void* thisptr, float flInputSampleTime, CUserCmd* cmd);
 typedef void(__thiscall* tEndFrame)(PVOID);
 typedef void(__thiscall* tCalcViewModelView)(void* thisptr, void* owner, const Vector& eyePosition, const QAngle& eyeAngles);
+typedef float(__cdecl* tSharedRandomFloat)(const char* name, float minValue, float maxValue, int additionalSeed);
 typedef int(__cdecl* tFireTerrorBullets)(int playerId, const Vector& vecOrigin, const QAngle& vecAngles, int a4, int a5, int a6, float a7);
 typedef void(__cdecl* tClientFxTracer)(const Vector&, const Vector&, int, int, float, bool, const char*, int);
 typedef float(__thiscall* tProcessUsercmds)(void* thisptr, edict_t* player, void* buf, int numcmds, int totalcmds, int dropped_packets, bool ignore, bool paused);
@@ -176,6 +177,8 @@ public:
 	static inline Hook<tCalcViewModelView> hkCalcViewModelView;
 	static inline Hook<tFireTerrorBullets> hkServerFireTerrorBullets;
 	static inline Hook<tFireTerrorBullets> hkClientFireTerrorBullets;
+	static inline Hook<tSharedRandomFloat> hkClientSharedRandomFloat;
+	static inline Hook<tSharedRandomFloat> hkServerSharedRandomFloat;
     static inline Hook<tClientFxTracer> hkClientFxTracer;
 	static inline Hook<tProcessUsercmds> hkProcessUsercmds;
 	static inline Hook<tServerGameClientsClientCommand>
@@ -250,6 +253,15 @@ public:
 	// Listen host features: the static set plus HandThrow once its server.dll
 	// grenade fields resolved (hooks_throwables.inl).
 	static uint32_t ListenHostFeatureMask();
+	// Pavlov recoil / exact aim (hooks/hooks_recoil.inl).
+	static void InitRecoilHooks();
+	static void EnableRecoilHooks();
+	static bool ListenHostShotgunPatternReady();
+	static void RecoilCacheShotPose(int commandNumber, bool attack);
+	static bool RecoilShotPoseForCommand(int commandNumber, Vector& position, QAngle& angles);
+	static void RecoilAfterLocalShot(int weaponId, bool leftPistol, uintptr_t weaponTag);
+	static float __cdecl dClientSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed);
+	static float __cdecl dServerSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed);
 	static inline bool s_ManualCarryThrowHookReady = false;
 	static inline bool s_ManualCarryThrowPropSpawnHookReady = false;
 	static inline bool s_ManualCarryImpactKnockbackReady = false;

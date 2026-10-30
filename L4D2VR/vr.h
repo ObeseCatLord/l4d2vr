@@ -34,6 +34,8 @@
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
 #include "vr_melee_inertia.h"
+#include "vr_recoil.h"
+#include "vr_shotgun_pattern.h"
 #include "vr_selftest.h"
 #include "vr_one_euro.h"
 #include "vr_grip_toggle.h"
@@ -42,6 +44,7 @@
 #include "vr_hand_throw.h"
 #include "vr_scope_lens.h"
 #include "vr_sight_correction.h"
+#include "vr_iron_sights.h"
 #include "vr_server_features.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
@@ -1018,6 +1021,17 @@ public:
 	std::chrono::steady_clock::time_point m_SightCalibrationModelSince{};
 	l4d2vr_sight_correction::BoreAverage m_SightBoreAverage;
 	uint32_t m_SightLastSerial = 0;
+	// Iron sight line of the drawn gun (vr_iron_sights.h) in the gun hand's
+	// aim frame (forward, right, up; game units), published by the render
+	// pass. Bullets and the aim line run along it, so a shot lands on the
+	// sight picture at every distance.
+	bool m_IronSightAimEnabled = true;
+	Vector m_SightRearInHand{ 0.0f, 0.0f, 0.0f };
+	Vector m_SightFrontInHand{ 0.0f, 0.0f, 0.0f };
+	uint64_t m_SightPointsAtMs = 0;
+	std::string m_SightPointsModel;
+	void PublishSightPoints(const std::string& modelLower, const Vector& rearWorld, const Vector& frontWorld);
+	bool GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut = nullptr) const;
 	QAngle m_SightActiveCorrection{ 0.0f, 0.0f, 0.0f };
 	void PublishSightBore(const std::string& modelLower, const Vector& boreLocal);
 	void UpdateSightAlignment(const QAngle& baseOffset);
@@ -1095,7 +1109,7 @@ public:
 	Vector m_LastUnforcedAimDirection = { 0,0,0 };
 	bool m_HasAimLine = false;
 	float m_AimLineThickness = 0.15f;
-	bool m_AimLineEnabled = true;
+	bool m_AimLineEnabled = false;
 	bool m_AimLineConfigEnabled = true;
 	bool m_AimLineOnlyWhenLaserSight = false;
 	bool m_ScopeForcingAimLine = false;
@@ -1103,7 +1117,7 @@ public:
 	bool m_D3DAimLineOverlayEnabled = false;
 	// Dynamic spread crosshair (Workshop 1.1.7 style): an X or plus whose gap
 	// grows with the weapon's current inaccuracy, drawn at the aim point.
-	bool m_CrosshairEnabled = true;
+	bool m_CrosshairEnabled = false;
 	int m_CrosshairStyle = 1;
 	float m_CrosshairArmPixels = 7.0f;
 	float m_CrosshairThicknessPixels = 2.0f;
@@ -3343,6 +3357,70 @@ public:
 	std::chrono::steady_clock::time_point m_ConsumableUseHoldUntil{};
 	C_WeaponCSBase* m_ConsumableUseWeapon = nullptr;
 	void UpdateMeleeMotion(C_BasePlayer* localPlayer);
+	// Pavlov-style recoil (vr/vr_recoil.inl, vr_recoil.h): each shot kicks the
+	// held gun relative to the hand; the aim ray follows the kicked gun.
+	bool m_RecoilEnabled = true;
+	float m_RecoilScale = 1.0f;
+	// Bullets go exactly along the aim ray for VR players: no artificial VR
+	// spread, the crosshair shows no spread gap, and (where the server
+	// supports it) shotguns use Pavlov's even pellet pattern.
+	bool m_SpreadDisabled = true;
+	bool m_ShotgunPavlovPattern = true;
+	bool m_RecoilDebugLog = false;
+	struct RecoilHand
+	{
+		l4d2vr_recoil::State state;
+		l4d2vr_recoil::ShotGate gate;
+		int weaponId = 0;
+		uintptr_t weaponTag = 0;
+		l4d2vr_recoil::Offset offset{};
+		uint64_t shots = 0;
+		float peakPitch = 0.0f;
+		float peakYaw = 0.0f;
+		float peakBack = 0.0f;
+	};
+	RecoilHand m_RecoilHands[2]{}; // 0 = gun hand (logical right), 1 = left pistol
+	std::atomic<uint32_t> m_RecoilShotSerial{ 0u };
+	int m_RecoilClipWatchWeaponId = 0;
+	uintptr_t m_RecoilClipWatchWeapon = 0;
+	int m_RecoilClipWatchClip = -1;
+	// Selftest override: <0 follows the foregrip, 0 one hand, 1 two hands.
+	int m_RecoilForceTwoHanded = -1;
+	void UpdateWeaponRecoil(C_BasePlayer* localPlayer);
+	void OnRecoilShot(int weaponId, bool leftPistol, int commandNumber, uintptr_t weaponTag);
+	bool ShotgunPatternActiveForLocalShot(int weaponId) const;
+	void SendShotgunPatternPreference();
+	std::atomic<int> m_ShotgunPatternAcked{ -1 };
+	int m_ShotgunPatternSent = -1;
+	// Self-test record of fired shot rays (client prediction and, on a listen
+	// host, the server's own) with the recoil offset the shot was fired with.
+	struct RecoilShotRecord
+	{
+		uint64_t ms = 0;
+		Vector origin{};
+		QAngle angles{};
+		bool server = false;
+		int weaponId = 0;
+		l4d2vr_recoil::Offset offset{};
+	};
+	std::mutex m_RecoilShotLogMutex;
+	std::vector<RecoilShotRecord> m_RecoilShotLog;
+	std::atomic<bool> m_RecoilShotLogActive{ false };
+	void RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool server, int weaponId);
+	bool RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
+	// Self-test scratch for the recoil and sight steps.
+	Vector m_RecoilTestRefDir{ 1.0f, 0.0f, 0.0f };
+	float m_RecoilTestPeakPitch = 0.0f;
+	float m_RecoilTestPeakYaw = 0.0f;
+	float m_RecoilTestPeakBack = 0.0f;
+	bool m_RecoilTestSavedEnabled = true;
+	bool m_RecoilTestAligning = false;
+	float m_RecoilTestEyeRelief = 0.10f;
+	Vector m_RecoilTestSightHit{ 0.0f, 0.0f, 0.0f };
+	Vector m_RecoilTestSightRear{ 0.0f, 0.0f, 0.0f };
+	Vector m_RecoilTestSightDir{ 1.0f, 0.0f, 0.0f };
+	std::vector<uint64_t> m_RecoilTestShotTimes;
+	void RecoilTestAlignSightsToEye();
 	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
 	std::chrono::steady_clock::time_point m_ReloadGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_JumpGestureHoldUntil{};

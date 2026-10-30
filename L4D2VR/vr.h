@@ -1031,7 +1031,7 @@ public:
 	uint64_t m_SightPointsAtMs = 0;
 	std::string m_SightPointsModel;
 	void PublishSightPoints(const std::string& modelLower, const Vector& rearWorld, const Vector& frontWorld);
-	bool GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut = nullptr) const;
+	bool GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut = nullptr, bool evenWhenDisabled = false) const;
 	QAngle m_SightActiveCorrection{ 0.0f, 0.0f, 0.0f };
 	void PublishSightBore(const std::string& modelLower, const Vector& boreLocal);
 	void UpdateSightAlignment(const QAngle& baseOffset);
@@ -3391,6 +3391,8 @@ public:
 	bool ShotgunPatternActiveForLocalShot(int weaponId) const;
 	void SendShotgunPatternPreference();
 	std::atomic<int> m_ShotgunPatternAcked{ -1 };
+	std::atomic<uint32_t> m_PelletDrawsClient{ 0u };   // pellet loop draws replaced (client prediction)
+	std::atomic<uint32_t> m_PelletDrawsServer{ 0u };   // ... and on this listen host's server
 	int m_ShotgunPatternSent = -1;
 	// Self-test record of fired shot rays (client prediction and, on a listen
 	// host, the server's own) with the recoil offset the shot was fired with.

@@ -115,13 +115,17 @@ namespace
 
     template <typename Original>
     float PelletDraw(l4d2vr_shotgun_pattern::ShotContext* shot, Original original,
-        const char* name, float minValue, float maxValue, int additionalSeed)
+        const char* name, float minValue, float maxValue, int additionalSeed, bool& replaced)
     {
         float value = 0.0f;
+        replaced = false;
         if (shot && original && l4d2vr_shotgun_pattern::Override(*shot, name, minValue, maxValue, additionalSeed,
                 [&]() { return static_cast<int>(original(l4d2vr_shotgun_pattern::kStartIndexName, 0.0f, 32767.0f, 0)); },
                 value))
+        {
+            replaced = true;
             return value;
+        }
         return original ? original(name, minValue, maxValue, additionalSeed) : minValue;
     }
 }

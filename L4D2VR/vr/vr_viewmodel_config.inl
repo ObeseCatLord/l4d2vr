@@ -3255,6 +3255,7 @@ void VR::ParseConfigFile()
     m_SpreadDisabled = getBool("SpreadDisabled", true);
     m_ShotgunPavlovPattern = getBool("ShotgunPavlovPattern", true);
     m_RecoilDebugLog = getBool("RecoilDebugLog", false);
+    m_IronSightAimEnabled = getBool("IronSightAimEnabled", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     m_LoadingFramePumpEnabled = getBool("LoadingFramePumpEnabled", true);
     m_BackgroundAudioEnabled = getBool("BackgroundAudio", true);

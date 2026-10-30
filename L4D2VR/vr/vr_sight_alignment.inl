@@ -25,9 +25,9 @@ void VR::PublishSightPoints(const std::string& modelLower, const Vector& rearWor
     m_SightPointsAtMs = GetTickCount64();
 }
 
-bool VR::GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut) const
+bool VR::GetIronSightRay(Vector& origin, Vector& direction, Vector* frontOut, bool evenWhenDisabled) const
 {
-    if (!m_IronSightAimEnabled || !m_SightAutoAlignEnabled || m_MouseModeEnabled || m_IsThirdPersonCamera)
+    if ((!evenWhenDisabled && (!m_IronSightAimEnabled || !m_SightAutoAlignEnabled)) || m_MouseModeEnabled || m_IsThirdPersonCamera)
         return false;
     Vector rear{}, front{};
     {

@@ -3211,6 +3211,7 @@ namespace
         sampleKeys.insert("SpreadDisabled");
         sampleKeys.insert("ShotgunPavlovPattern");
         sampleKeys.insert("RecoilDebugLog");
+        sampleKeys.insert("IronSightAimEnabled");
         sampleKeys.insert("MeleeInertiaEnabled");
         sampleKeys.insert("PhysicalShoveEnabled");
         sampleKeys.insert("GunBashSweepEnabled");

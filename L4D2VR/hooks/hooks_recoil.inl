@@ -4,12 +4,18 @@
 
 float __cdecl Hooks::dClientSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed)
 {
-    return PelletDraw(g_ClientPelletShot, hkClientSharedRandomFloat.fOriginal, name, minValue, maxValue, additionalSeed);
+    bool replaced = false;
+    const float value = PelletDraw(g_ClientPelletShot, hkClientSharedRandomFloat.fOriginal, name, minValue, maxValue, additionalSeed, replaced);
+    if (replaced && m_VR) m_VR->m_PelletDrawsClient.fetch_add(1u, std::memory_order_relaxed);
+    return value;
 }
 
 float __cdecl Hooks::dServerSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed)
 {
-    return PelletDraw(g_ServerPelletShot, hkServerSharedRandomFloat.fOriginal, name, minValue, maxValue, additionalSeed);
+    bool replaced = false;
+    const float value = PelletDraw(g_ServerPelletShot, hkServerSharedRandomFloat.fOriginal, name, minValue, maxValue, additionalSeed, replaced);
+    if (replaced && m_VR) m_VR->m_PelletDrawsServer.fetch_add(1u, std::memory_order_relaxed);
+    return value;
 }
 
 void Hooks::InitRecoilHooks()

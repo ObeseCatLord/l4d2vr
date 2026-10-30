@@ -78,7 +78,7 @@ void VR::RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool se
 void VR::RecoilTestAlignSightsToEye()
 {
     Vector rear{}, dir{};
-    if (!GetIronSightRay(rear, dir))
+    if (!GetIronSightRay(rear, dir, nullptr, true))
         return;
     const Vector eye = GetViewOriginLeft();
     Vector eyeForward = m_HmdForward;
@@ -100,6 +100,81 @@ void VR::RecoilTestAlignSightsToEye()
 
 bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled)
 {
+    // ironsight=0|1: fire along the sight line (1) or the old bore alignment
+    // (0); forgets the measured per-model corrections so they are re-measured.
+    if (step.rfind("ironsight=", 0) == 0)
+    {
+        handled = true;
+        m_IronSightAimEnabled = step.substr(10) != "0";
+        m_SightCorrections.clear();
+        m_SightCalibrationModel.clear();
+        Game::logMsg("[VR][SelfTest] iron sight aim %s", m_IronSightAimEnabled ? "on" : "off (bore alignment)");
+        return true;
+    }
+    // pellets=<give>:<1|0>: Pavlov (1) or stock (0) shotgun pellets: sights on
+    // a wall ~6 m away, one shot, a photograph of the pellet holes, and the
+    // count of pellet-loop draws the client and the listen host replaced.
+    if (step.rfind("pellets=", 0) == 0)
+    {
+        handled = true;
+        const std::string rest = step.substr(8);
+        const size_t colon = rest.find(':');
+        const std::string gun = rest.substr(0, colon);
+        const bool pavlov = colon == std::string::npos || rest.substr(colon + 1) != "0";
+        bool fired = false;
+        auto atP = [&](int stage, float when) { if (fired || m_SelfTestStage != stage || t < when) return false; m_SelfTestStage = stage + 1; fired = true; return true; };
+        if (atP(0, 0.0f))
+        {
+            m_RecoilTestSavedEnabled = m_RecoilEnabled;
+            m_RecoilEnabled = false;
+            m_ShotgunPavlovPattern = pavlov;
+            char text[96];
+            std::snprintf(text, sizeof(text), "give %s", gun.c_str());
+            if (m_Game) m_Game->ClientCmd_Unrestricted(text);
+            std::snprintf(text, sizeof(text), "use weapon_%s", gun.c_str());
+            if (m_Game) m_Game->ClientCmd_Unrestricted(text);
+            m_RecoilTestAligning = true;
+            m_SelfTestRightWorldValid = false;
+        }
+        if (m_RecoilTestAligning)
+            RecoilTestAlignSightsToEye();
+        if (atP(1, 4.0f))
+        {
+            m_SelfTestValueA = static_cast<int>(m_PelletDrawsClient.load());
+            m_SelfTestValueB = static_cast<int>(m_PelletDrawsServer.load());
+            l4d2vr_selftest::SetButton(m_ActionPrimaryAttack, true);
+        }
+        if (atP(2, 4.1f))
+            l4d2vr_selftest::SetButton(m_ActionPrimaryAttack, false);
+        if (atP(3, 4.6f))
+        {
+            char name[96];
+            std::snprintf(name, sizeof(name), "pellets_%s_%s", gun.c_str(), pavlov ? "pavlov" : "stock");
+            SelfTestRequestShot(name, 1);
+            m_SelfTestSerial = m_SelfTestShotRequest.load(std::memory_order_acquire);
+        }
+        if (m_SelfTestStage == 4 && (m_SelfTestShotDone.load(std::memory_order_acquire) == m_SelfTestSerial || t > 9.0f))
+        {
+            m_SelfTestStage = 5;
+            m_RecoilTestAligning = false;
+            m_RecoilEnabled = m_RecoilTestSavedEnabled;
+            const int client = static_cast<int>(m_PelletDrawsClient.load()) - m_SelfTestValueA;
+            const int server = static_cast<int>(m_PelletDrawsServer.load()) - m_SelfTestValueB;
+            const l4d2vr_shotgun_pattern::Weapon* w = l4d2vr_shotgun_pattern::WeaponFor(
+                player && player->GetActiveWeapon() ? static_cast<int>(static_cast<C_WeaponCSBase*>(player->GetActiveWeapon())->GetWeaponID()) : 0);
+            char detail[192];
+            std::snprintf(detail, sizeof(detail), "%s %s: pellet draws replaced client=%d server=%d (pattern active=%d, opt-in sent=%d)",
+                gun.c_str(), pavlov ? "Pavlov" : "stock", client, server, ShotgunPatternActiveForLocalShot(w ? w->weaponId : 0) ? 1 : 0,
+                m_ShotgunPatternSent);
+            // Pavlov: every pellet after the first replaces two draws on both
+            // sides (an even count > 0); stock: none.
+            const bool ok = w && (pavlov ? (client > 0 && client % 2 == 0 && (server == client || server == 0))
+                                         : (client == 0 && server == 0));
+            SelfTestReport(pavlov ? "shotgun fires Pavlov's pellet pattern" : "shotgun keeps stock pellets", ok, detail);
+            m_ShotgunPavlovPattern = true;
+        }
+        return m_SelfTestStage >= 5;
+    }
     const bool sight = step.rfind("sightcheck=", 0) == 0;
     const bool recoil = step.rfind("recoiltest=", 0) == 0;
     handled = sight || recoil;
@@ -183,7 +258,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         if (at(3, 5.5f))
         {
             Vector rear{}, dir{};
-            const bool ok = GetIronSightRay(rear, dir);
+            const bool ok = GetIronSightRay(rear, dir, nullptr, true);
             m_RecoilTestSightRear = rear;
             m_RecoilTestSightDir = dir;
             Vector hit{};

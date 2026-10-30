@@ -359,7 +359,8 @@ ViewmodelAutoGripTargetRotationOffsetDeg=0,0,0
 ViewmodelAutoGripPalmCenterFraction=0.45
 ViewmodelAutoGripAlignDebugLog=false
 
-AimLineEnabled=true
+// The red aim line. Off by default: aim with the sights. The aim ray is still traced for bullets.
+AimLineEnabled=false
 AimLineOnlyWhenLaserSight=false
 AimLineTimingAligned=true
 MeleeAimLineEnabled=false
@@ -385,14 +386,27 @@ BodyGripInventoryEnabled=true
 // Reach to a holster and hold the weapon-hand grip to draw it instantly; release a held item inside its
 // own holster to put it away. Offsets are metres from the head: forward, toward the dominant side, up.
 // Dynamic spread crosshair at the aim point (X or plus); the gap grows with the weapon's current
-// inaccuracy like the desktop crosshair. Works with or without the aim line.
-CrosshairEnabled=true
+// inaccuracy like the desktop crosshair. Works with or without the aim line. Off by default: with
+// Pavlov-style recoil you aim with the sights (CrosshairStyle=off also turns it off).
+CrosshairEnabled=false
 CrosshairStyle=x
 CrosshairArmPixels=7
 CrosshairThicknessPixels=2
 CrosshairMinGapPixels=2
 CrosshairColorRGB=255,255,255
 CrosshairAlpha=210
+// Pavlov VR recoil: each shot kicks the gun in your hand (muzzle up, sideways over a burst, slide back),
+// then it settles. Bullets follow the kicked gun, so you counter the kick yourself. Holding the foregrip
+// with the other hand tames the guns that need two hands (rifles, shotguns); one-handed they kick hard.
+// Values are each gun's Pavlov equivalent. RecoilScale multiplies the kick (0 = none, 1 = Pavlov).
+RecoilEnabled=true
+RecoilScale=1.0
+// Bullets go exactly where the gun points (no artificial VR spread, no crosshair spread gap). On servers
+// running the mod, shotguns fire Pavlov's even pellet pattern (pellets in a tight square around the
+// aim). Plain servers keep L4D2's own spread for every gun.
+SpreadDisabled=true
+ShotgunPavlovPattern=true
+RecoilDebugLog=false
 // Turn each drawn gun so its bore is parallel to the aim ray: the crosshair then sits on the sights.
 SightAutoAlignEnabled=true
 // Melee weapons lag the hand slightly so swings match the regular melee speed; a swing is detected

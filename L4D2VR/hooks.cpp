@@ -3004,6 +3004,7 @@ static bool TryGetExecutingPistolNativeReload(void* owner, int index,
 static bool TryGetExecutingPistolPickup(void* owner, int& index, l4d2vr_pistol::Hand& hand);
 static void RefreshGripPickupContact(VR* vr, Game* game, C_BasePlayer* player, bool left);
 
+#include "hooks/hooks_recoil_state.inl"
 #include "hooks/hooks_background_audio.inl"
 #include "hooks/hooks_init.inl"
 #include "hooks/hooks_render.inl"
@@ -3011,3 +3012,4 @@ static void RefreshGripPickupContact(VR* vr, Game* game, C_BasePlayer* player, b
 #include "hooks/hooks_throwables.inl"
 #include "hooks/hooks_combat_network.inl"
 #include "hooks/hooks_misc.inl"
+#include "hooks/hooks_recoil.inl"

@@ -41,6 +41,7 @@
 #include "../server_core/vr_server_session.h"
 #include "../server_core/vr_usercmd_codec.h"
 #include "../server_core/vr_x86_prologue.h"
+#include "../vr_shotgun_pattern.h"
 #include "l4d2vr_libstdcxx_shims.h"
 #include "l4d2vr_linux_targets.h"
 
@@ -465,6 +466,7 @@ namespace
     using FnAmmoDef = void* (*)();
     using FnInfinite = bool (*)(void*, int);
     using FnChangeAccessor = std::uint16_t* (*)(edict_t*);
+    using FnSharedRandomFloat = float (*)(const char*, float, float, int);
 
     struct Natives
     {
@@ -499,6 +501,7 @@ namespace
         FnAmmoDef ammoDef = nullptr;
         FnInfinite infiniteAmmo = nullptr;
         FnChangeAccessor changeAccessor = nullptr;
+        FnSharedRandomFloat sharedRandomFloat = nullptr; // Pavlov shotgun pellets
         std::uintptr_t gpGlobalsVar = 0u;
         std::uintptr_t serverClassHeadVar = 0u;
         int weaponIdSlot = -1;
@@ -522,7 +525,7 @@ namespace
 
     Natives g_N;
     Netprops g_P;
-    InlineHook g_HookReadUsercmd, g_HookFireBullets, g_HookMolotov, g_HookPipe, g_HookVomit;
+    InlineHook g_HookReadUsercmd, g_HookFireBullets, g_HookMolotov, g_HookPipe, g_HookVomit, g_HookSharedRandom;
     VtableHook g_HookProcessUsercmds, g_HookRunCommand, g_HookEyePosition, g_HookEyeAngles, g_HookShootPosition,
         g_HookGunReload, g_HookShotgunReload;
 
@@ -883,12 +886,42 @@ namespace
         g_Session.NoteVRUsercmd(g_DecodeIndex);
     }
 
+    // Pavlov shotgun pellets: the pellet loop's shared random draws are
+    // replaced while a VR player who opted in fires a shotgun.
+    thread_local l4d2vr_shotgun_pattern::ShotContext* g_PelletShot = nullptr;
+
+    float DetourSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed)
+    {
+        float value = 0.0f;
+        if (g_PelletShot && g_N.sharedRandomFloat &&
+            l4d2vr_shotgun_pattern::Override(*g_PelletShot, name, minValue, maxValue, additionalSeed,
+                [&]() { return static_cast<int>(g_N.sharedRandomFloat(l4d2vr_shotgun_pattern::kStartIndexName, 0.0f, 32767.0f, 0)); },
+                value))
+            return value;
+        return g_N.sharedRandomFloat(name, minValue, maxValue, additionalSeed);
+    }
+
+    int FireBulletsMaybePattern(int playerId, const Vector& position, const QAngle& aim, int weaponId, int a5, int a6, float a7)
+    {
+        const l4d2vr_shotgun_pattern::Weapon* pattern = g_N.sharedRandomFloat && g_Session.ShotgunPattern(playerId)
+            ? l4d2vr_shotgun_pattern::WeaponFor(weaponId) : nullptr;
+        if (!pattern)
+            return g_N.fireBullets(playerId, position, aim, weaponId, a5, a6, a7);
+        l4d2vr_shotgun_pattern::ShotContext shot{};
+        shot.weapon = pattern;
+        l4d2vr_shotgun_pattern::ShotContext* previous = g_PelletShot;
+        g_PelletShot = &shot;
+        const int result = g_N.fireBullets(playerId, position, aim, weaponId, a5, a6, a7);
+        g_PelletShot = previous;
+        return result;
+    }
+
     int DetourFireTerrorBullets(int playerId, const Vector& origin, const QAngle& angles, int weaponId, int a5, int a6, float a7)
     {
         if (g_Exec && g_Exec->index == playerId && g_Exec->ctx.poseValid)
         {
             const Vector position = ToVector(g_Exec->ctx.position);
-            return g_N.fireBullets(playerId, position, g_Exec->angles, weaponId, a5, a6, a7);
+            return FireBulletsMaybePattern(playerId, position, g_Exec->angles, weaponId, a5, a6, a7);
         }
         if (IsValidPlayerIndex(playerId))
         {
@@ -899,7 +932,7 @@ namespace
                 ClampHandReach(ToVec(origin), hand, g_Config.MaxHandReachUnits());
                 const Vector position = ToVector(hand);
                 const QAngle aim = ToQAngle(NormalizeAndClampViewAngles(p.latestAngles));
-                return g_N.fireBullets(playerId, position, aim, weaponId, a5, a6, a7);
+                return FireBulletsMaybePattern(playerId, position, aim, weaponId, a5, a6, a7);
             }
         }
         return g_N.fireBullets(playerId, origin, angles, weaponId, a5, a6, a7);
@@ -1437,6 +1470,7 @@ namespace
 
     void UninstallHooks()
     {
+        g_HookSharedRandom.Remove();
         g_HookMolotov.Remove();
         g_HookPipe.Remove();
         g_HookVomit.Remove();
@@ -1609,7 +1643,18 @@ namespace
                 g_HookVomit.Remove();
                 groups &= ~l4d2vr_linux::kGroupThrow;
             }
+            if ((groups & l4d2vr_linux::kGroupPattern) != 0u &&
+                inlineHook(g_HookSharedRandom, "SharedRandomFloat", reinterpret_cast<void*>(&DetourSharedRandomFloat)))
+                g_N.sharedRandomFloat = reinterpret_cast<FnSharedRandomFloat>(g_HookSharedRandom.trampoline);
+            else
+            {
+                g_HookSharedRandom.Remove();
+                g_N.sharedRandomFloat = nullptr;
+                groups &= ~l4d2vr_linux::kGroupPattern;
+            }
         }
+        else
+            groups &= ~l4d2vr_linux::kGroupPattern;
 
         l4d2vr_linux::FeatureInputs inputs{};
         inputs.groups = groups;

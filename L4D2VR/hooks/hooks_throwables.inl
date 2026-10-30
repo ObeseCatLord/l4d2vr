@@ -4879,5 +4879,7 @@ uint32_t Hooks::ListenHostFeatureMask()
     uint32_t mask = l4d2vr_features::kListenHostMask;
     if (HandThrowListenBackendReady())
         mask |= l4d2vr_features::HandThrow;
+    if (ListenHostShotgunPatternReady())
+        mask |= l4d2vr_features::ShotgunPattern;
     return mask;
 }

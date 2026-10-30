@@ -187,6 +187,9 @@ static bool ManualEmptyHandsPlaceholderOwnerIsLiveSurvivor(void* object)
 struct HandThrowExecution {};
 static HandThrowExecution HandThrowBeginCommand(void*, const CUserCmd*) { return {}; }
 static void HandThrowEndCommand(const HandThrowExecution&) {}
+// Recoil's executing-command bookkeeping (hooks_recoil_state.inl); tested separately.
+thread_local int g_RecoilServerCommand = 0;
+thread_local const void* g_RecoilServerOwner = nullptr;
 #include "pistol_native_functions.inl"
 
 static void NativePlayerOriginal(void* owner, CUserCmd*, void*)

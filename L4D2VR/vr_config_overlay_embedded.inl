@@ -355,9 +355,13 @@ namespace
         { "VrHandsTwoHandedStabilizerEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Two-hand aim stabilizer", 0.0f, 0.0f, "true" },
         { "VrHandsTwoHandedStabilizerMinCutoffHz", CfgOptionType::Float, "Hands / VR Hands", "Two-hand stabilizer (still)", 0.2f, 10.0f, "1.2" },
         { "VrHandsTwoHandedStabilizerBeta", CfgOptionType::Float, "Hands / VR Hands", "Two-hand stabilizer (moving)", 0.0f, 10.0f, "1.5" },
-        { "CrosshairEnabled", CfgOptionType::Bool, "Weapons / Aim", "Dynamic spread crosshair", 0.0f, 0.0f, "true" },
+        { "CrosshairEnabled", CfgOptionType::Bool, "Weapons / Aim", "Dynamic spread crosshair", 0.0f, 0.0f, "false" },
         { "CrosshairArmPixels", CfgOptionType::Float, "Weapons / Aim", "Crosshair arm length", 1.0f, 64.0f, "7" },
         { "SightAutoAlignEnabled", CfgOptionType::Bool, "Weapons / Aim", "Align crosshair with sights", 0.0f, 0.0f, "true" },
+        { "RecoilEnabled", CfgOptionType::Bool, "Weapons / Aim", "Pavlov recoil", 0.0f, 0.0f, "true" },
+        { "RecoilScale", CfgOptionType::Float, "Weapons / Aim", "Recoil strength", 0.0f, 4.0f, "1.0" },
+        { "SpreadDisabled", CfgOptionType::Bool, "Weapons / Aim", "No bullet spread", 0.0f, 0.0f, "true" },
+        { "ShotgunPavlovPattern", CfgOptionType::Bool, "Weapons / Aim", "Pavlov shotgun pellets", 0.0f, 0.0f, "true" },
         { "ScopePictureInPictureLens", CfgOptionType::Bool, "Weapons / Aim", "Picture-in-picture scope lens", 0.0f, 0.0f, "true" },
         { "ScopeEyeboxDeg", CfgOptionType::Float, "Weapons / Aim", "Scope eyebox", 1.0f, 45.0f, "8" },
         { "LoadingFramePumpEnabled", CfgOptionType::Bool, "Display", "Keep loading screens live", 0.0f, 0.0f, "true" },
@@ -1117,7 +1121,11 @@ namespace
         { "VrHandsTwoHandedStabilizerMinCutoffHz", "Hands / VR Hands", "Stabilizer Still Cutoff", "Smoothing cutoff while the weapon is held still. Lower is steadier.", "1.2 Hz by default." },
         { "VrHandsTwoHandedStabilizerBeta", "Hands / VR Hands", "Stabilizer Motion Response", "How fast the stabilizer loosens as you swing the weapon. Higher has less lag.", "1.5 by default." },
         { "ConsumableGesturesEnabled", "Hands / Items", "Consumable Gestures", "Bring pills to your mouth or stab adrenaline into your chest or other arm to use them.", "The trigger still works." },
-        { "CrosshairEnabled", "Weapons / Aim", "Dynamic Spread Crosshair", "Shows an X crosshair at the aim point whose gap grows with the weapon's current inaccuracy.", "" },
+        { "CrosshairEnabled", "Weapons / Aim", "Dynamic Spread Crosshair", "Shows an X crosshair at the aim point whose gap grows with the weapon's current inaccuracy.", "Off by default: aim with the sights." },
+        { "RecoilEnabled", "Weapons / Aim", "Pavlov Recoil", "Each shot kicks the gun in your hand like the same gun in Pavlov VR; bullets follow the kicked gun, so you counter it yourself. Hold the foregrip to tame two-handed guns.", "" },
+        { "RecoilScale", "Weapons / Aim", "Recoil Strength", "Multiplies the recoil kick. 1 is Pavlov's, 0 turns the kick off.", "1.0 by default." },
+        { "SpreadDisabled", "Weapons / Aim", "No Bullet Spread", "Bullets go exactly where the gun points; only recoil moves the aim.", "Plain servers keep L4D2's spread." },
+        { "ShotgunPavlovPattern", "Weapons / Aim", "Pavlov Shotgun Pellets", "Shotguns fire Pavlov's even pellet pattern, a tight square around the aim, instead of L4D2's random scatter.", "Needs a server running the mod." },
         { "SightAutoAlignEnabled", "Weapons / Aim", "Align Crosshair With Sights", "Turns each drawn gun so its sights line up with the crosshair and bullets.", "" },
         { "ScopePictureInPictureLens", "Weapons / Aim", "Picture-in-picture Scope", "The scope image shifts with your eye and darkens at the edge when your eye leaves the eyebox.", "" },
         { "LoadingFramePumpEnabled", "Display", "Keep Loading Screens Live", "Keeps the headset updating during map loads and chapter transitions.", "" },
@@ -1882,6 +1890,9 @@ namespace
             "ConsumableGesturesEnabled",
             "CrosshairEnabled",
             "SightAutoAlignEnabled",
+            "RecoilEnabled",
+            "SpreadDisabled",
+            "ShotgunPavlovPattern",
             "ObjectPullEnabled",
             "MotionGesturesEnabled",
             "ScopeEnabled",
@@ -2605,7 +2616,7 @@ ViewmodelAutoGripTargetRotationOffsetDeg=0,0,0
 ViewmodelAutoGripPalmCenterFraction=0.45
 ViewmodelAutoGripAlignDebugLog=false
 
-AimLineEnabled=true
+AimLineEnabled=false
 AimLineOnlyWhenLaserSight=false
 AimLineTimingAligned=true
 MeleeAimLineEnabled=false

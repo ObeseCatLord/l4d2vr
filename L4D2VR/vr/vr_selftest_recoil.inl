@@ -75,10 +75,10 @@ void VR::RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool se
         m_RecoilShotLog.push_back(record);
 }
 
-void VR::RecoilTestAlignSightsToEye()
+void VR::RecoilTestAlignSightsToEye(bool leftGun)
 {
     Vector rear{}, dir{};
-    if (!GetIronSightRay(rear, dir, nullptr, true))
+    if (leftGun ? !GetLeftPistolSightRay(rear, dir, true) : !GetIronSightRay(rear, dir, nullptr, true))
         return;
     const Vector eye = GetViewOriginLeft();
     Vector eyeForward = m_HmdForward;
@@ -87,6 +87,24 @@ void VR::RecoilTestAlignSightsToEye()
     QAngle want{}, have{};
     QAngle::VectorAngles(eyeForward, want);
     QAngle::VectorAngles(dir, have);
+    const Vector desired = eye + eyeForward * (m_RecoilTestEyeRelief * m_VRScale);
+    if (leftGun)
+    {
+        if (!m_SelfTestLeftAngWorldValid)
+        {
+            m_SelfTestLeftAngWorld = m_LeftControllerTrackedAngAbs;
+            m_SelfTestLeftAngWorldValid = true;
+        }
+        m_SelfTestLeftAngWorld.x += 0.5f * VR_RecoilAngleDiff(want.x, have.x);
+        m_SelfTestLeftAngWorld.y += 0.5f * VR_RecoilAngleDiff(want.y, have.y);
+        if (!m_SelfTestLeftWorldValid)
+        {
+            m_SelfTestLeftWorld = m_LeftControllerPosAbs;
+            m_SelfTestLeftWorldValid = true;
+        }
+        m_SelfTestLeftWorld += (desired - rear) * 0.5f;
+        return;
+    }
     m_SelfTestRightAngLocal.x += 0.5f * VR_RecoilAngleDiff(want.x, have.x);
     m_SelfTestRightAngLocal.y += 0.5f * VR_RecoilAngleDiff(want.y, have.y);
     if (!m_SelfTestRightWorldValid)
@@ -94,7 +112,6 @@ void VR::RecoilTestAlignSightsToEye()
         m_SelfTestRightWorld = m_RightControllerPosAbs;
         m_SelfTestRightWorldValid = true;
     }
-    const Vector desired = eye + eyeForward * (m_RecoilTestEyeRelief * m_VRScale);
     m_SelfTestRightWorld += (desired - rear) * 0.5f;
 }
 
@@ -218,19 +235,23 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
     if (sight)
     {
         const float metres = args.size() > 1 ? std::clamp(static_cast<float>(std::atof(args[1].c_str())), 2.0f, 60.0f) : 15.0f;
+        // "dual_left": the dual pistols' left gun, aimed with the left hand and
+        // fired with the left trigger (dual pistols must already be held).
+        const bool leftGun = give == "dual_left";
         if (at(0, 0.0f))
         {
             m_RecoilTestSavedEnabled = m_RecoilEnabled;
             m_RecoilEnabled = false;
             char text[96];
             // A second pistol makes dual pistols: "pistol" uses the one held.
-            if (give != "pistol")
+            if (give != "pistol" && !leftGun)
             {
                 std::snprintf(text, sizeof(text), "give %s", give.c_str());
                 cmd(text);
             }
-            std::snprintf(text, sizeof(text), "use weapon_%s", give.c_str());
+            std::snprintf(text, sizeof(text), "use weapon_%s", leftGun ? "pistol" : give.c_str());
             cmd(text);
+            m_RecoilTestLeftGun = leftGun;
         }
         if (at(1, 1.0f))
         {
@@ -256,13 +277,15 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         {
             m_RecoilTestAligning = true;
             m_SelfTestRightWorldValid = false;
+            m_SelfTestLeftWorldValid = false;
+            m_SelfTestLeftAngWorldValid = false;
         }
         if (m_RecoilTestAligning)
-            RecoilTestAlignSightsToEye();
+            RecoilTestAlignSightsToEye(leftGun);
         if (at(3, 5.5f))
         {
             Vector rear{}, dir{};
-            const bool ok = GetIronSightRay(rear, dir, nullptr, true);
+            const bool ok = leftGun ? GetLeftPistolSightRay(rear, dir, true) : GetIronSightRay(rear, dir, nullptr, true);
             m_RecoilTestSightRear = rear;
             m_RecoilTestSightDir = dir;
             Vector hit{};
@@ -280,14 +303,15 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
                 m_RecoilShotLog.clear();
             }
             m_RecoilShotLogActive.store(true, std::memory_order_release);
-            button(m_ActionPrimaryAttack, true);
+            button(leftGun ? m_ActionSecondaryAttack : m_ActionPrimaryAttack, true);
         }
         if (at(4, 5.6f))
-            button(m_ActionPrimaryAttack, false);
+            button(leftGun ? m_ActionSecondaryAttack : m_ActionPrimaryAttack, false);
         if (at(5, 6.0f))
         {
             char name[96];
-            std::snprintf(name, sizeof(name), "sight_%s_%.0fm", give.c_str(), metres);
+            std::snprintf(name, sizeof(name), "sight_%s%s_%.0fm", give.c_str(),
+                !leftGun && give == "pistol" && m_DualPistolsActive.load(std::memory_order_acquire) ? "_dual_right" : "", metres);
             SelfTestRequestShot(name, 1);
             m_SelfTestSerial = m_SelfTestShotRequest.load(std::memory_order_acquire);
         }
@@ -297,6 +321,8 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
             m_RecoilShotLogActive.store(false, std::memory_order_release);
             m_RecoilTestAligning = false;
             m_RecoilEnabled = m_RecoilTestSavedEnabled;
+            m_SelfTestLeftWorldValid = false;
+            m_SelfTestLeftAngWorldValid = false;
             const auto log = shots();
             const float distance = VectorLength(m_RecoilTestSightHit - m_RecoilTestSightRear) / m_VRScale;
             float worst = -1.0f;

@@ -403,8 +403,8 @@ CrosshairAlpha=210
 RecoilEnabled=true
 RecoilScale=1.0
 // Bullets go exactly where the gun points (no artificial VR spread, no crosshair spread gap). On servers
-// running the mod, shotguns fire Pavlov's even pellet pattern (pellets in a tight square around the
-// aim). Plain servers keep L4D2's own spread for every gun.
+// running the mod, shotguns fire the same evenly spread pellet pattern every shot (L4D2's own pattern
+// size, no randomness). Plain servers keep L4D2's own spread for every gun.
 SpreadDisabled=true
 ShotgunPavlovPattern=true
 RecoilDebugLog=false

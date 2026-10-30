@@ -19,7 +19,7 @@ namespace l4d2vr_features
     constexpr std::uint32_t PoseV3 = 0x100u;
     constexpr std::uint32_t InstantDeploy = 0x200u;
     constexpr std::uint32_t HandThrow = 0x400u;      // grenades leave the hand in the release command
-    // Pavlov even shotgun pellets for VR players who send
+    // Fixed (non-random) shotgun pellets for VR players who send
     // "l4d2vr_shotgun_pattern 1" (vr_shotgun_pattern.h).
     constexpr std::uint32_t ShotgunPattern = 0x800u;
     constexpr std::uint32_t kKnownMask = 0xFFFu;

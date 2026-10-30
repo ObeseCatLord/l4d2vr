@@ -886,17 +886,14 @@ namespace
         g_Session.NoteVRUsercmd(g_DecodeIndex);
     }
 
-    // Pavlov shotgun pellets: the pellet loop's shared random draws are
+    // Fixed shotgun pellets: the pellet loop's shared random draws are
     // replaced while a VR player who opted in fires a shotgun.
     thread_local l4d2vr_shotgun_pattern::ShotContext* g_PelletShot = nullptr;
 
     float DetourSharedRandomFloat(const char* name, float minValue, float maxValue, int additionalSeed)
     {
         float value = 0.0f;
-        if (g_PelletShot && g_N.sharedRandomFloat &&
-            l4d2vr_shotgun_pattern::Override(*g_PelletShot, name, minValue, maxValue, additionalSeed,
-                [&]() { return static_cast<int>(g_N.sharedRandomFloat(l4d2vr_shotgun_pattern::kStartIndexName, 0.0f, 32767.0f, 0)); },
-                value))
+        if (g_PelletShot && l4d2vr_shotgun_pattern::Override(*g_PelletShot, name, minValue, maxValue, additionalSeed, value))
             return value;
         return g_N.sharedRandomFloat(name, minValue, maxValue, additionalSeed);
     }

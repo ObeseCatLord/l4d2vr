@@ -116,7 +116,7 @@ namespace l4d2vr_server
             return m_Caps.features & c->requestedFeatures;
         }
 
-        // Pavlov shotgun pellets apply only to players that opted in, and only
+        // Fixed shotgun pellets apply only to players that opted in, and only
         // while the feature is resolved and requested.
         bool ShotgunPattern(int index) const
         {

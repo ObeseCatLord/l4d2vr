@@ -167,7 +167,7 @@ struct Player
     Vector prevControllerPos = { 0.f, 0.f, 0.f };
     bool hasPrevControllerPose = false;
     bool dualPistolShotPose = false;
-    // Listen host: this VR player opted into Pavlov shotgun pellets
+    // Listen host: this VR player opted into fixed shotgun pellets
     // (l4d2vr_shotgun_pattern 1).
     bool shotgunPattern = false;
     unsigned shotgunPatternSerial = 0u;

@@ -9,7 +9,7 @@
 //   client: l4d2vr_pose_hello 2  existing clients answer pose_ack / server_ack>=3.
 //   client: l4d2vr_pose_hello 3  (new) opt into pose protocol v3 relay.
 //   client: l4d2vr_shotgun_pattern <0|1>
-//                                (new, optional) Pavlov shotgun pellets for
+//                                (new, optional) fixed shotgun pellets for
 //                                this player; needs ShotgunPattern (0x800).
 //   client: l4d2vr_feature_hello <hexmask> <version>
 //                                (new, optional) restrict the server-side
@@ -157,8 +157,8 @@ namespace l4d2vr_server
     constexpr char kFeatureHelloCommand[] = "l4d2vr_feature_hello";
     constexpr char kShellInsertCommand[] = "l4d2vr_shell_insert_v1";
     constexpr char kMagActionCommand[] = "l4d2vr_mag_action_v2";
-    // client: l4d2vr_shotgun_pattern <0|1>  opt this VR player into Pavlov's
-    // even shotgun pellet pattern (only sent when ShotgunPattern is advertised).
+    // client: l4d2vr_shotgun_pattern <0|1>  opt this VR player into the fixed
+    // shotgun pellet pattern (only sent when ShotgunPattern is advertised).
     constexpr char kShotgunPatternCommand[] = "l4d2vr_shotgun_pattern";
     constexpr char kPoseAckText[] = "l4d2vr_pose_ack 2\n";   // byte-identical to the proven relay
 

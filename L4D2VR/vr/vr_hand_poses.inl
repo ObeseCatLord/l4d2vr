@@ -155,6 +155,24 @@ void VR::UpdateHandPoseTargets()
         }
     }
 
+    if (m_HandPoseDebugLog && std::chrono::duration<float>(now - m_HandPoseLastDebugLog).count() >= 1.0f)
+    {
+        m_HandPoseLastDebugLog = now;
+        for (int side = 0; side < 2; ++side)
+        {
+            const std::array<float, 5>& c = side == 1 ? itemCurls : supportCurls;
+            const bool cv = side == 1 ? itemCurlsValid : supportCurlsValid;
+            const auto& o = outputs[side];
+            Game::logMsg("[VR][HandPose] %s: %s curls=%d (%.2f %.2f %.2f %.2f %.2f) absolute=%d trigger=%d pull=%.1f discipline=%.2f"
+                " index=(%.0f %.0f %.0f) | render calls=%u posed=%u restFail=%u noHand=%u",
+                side == 0 ? "support" : "item", HandPoseActivityName(o.activity), cv ? 1 : 0, c[0], c[1], c[2], c[3], c[4],
+                o.absolute ? 1 : 0, o.triggerOverlay ? 1 : 0, o.pullDegrees, o.disciplineWeight,
+                o.pose.flex[1][0], o.pose.flex[1][1], o.pose.flex[1][2],
+                m_HandPoseApplyCalls[side].exchange(0u), m_HandPoseApplyPosed[side].exchange(0u),
+                m_HandPoseApplyRestFail[side].exchange(0u), m_HandPoseApplyNoHand[side].exchange(0u));
+        }
+    }
+
     std::lock_guard<std::mutex> lock(m_HandPoseMutex);
     for (int side = 0; side < 2; ++side)
     {

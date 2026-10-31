@@ -14570,6 +14570,7 @@ namespace
     // the trigger delta. Bones below the fingers follow. Source orders bones
     // parents first, so one ascending pass rebuilds the subtree.
     inline bool HooksNativeHandPoseApply(
+        VR* vr,
         void* drawState,
         int boneIndex,
         int stride,
@@ -14618,8 +14619,15 @@ namespace
                 }
             }
         }
+        const int counterSide = side < 0 ? 0 : 1;
+        if (vr)
+            vr->m_HandPoseApplyCalls[counterSide].fetch_add(1u, std::memory_order_relaxed);
         if (map.hand < 0 || map.hand >= numBones)
+        {
+            if (vr)
+                vr->m_HandPoseApplyNoHand[counterSide].fetch_add(1u, std::memory_order_relaxed);
             return false;
+        }
 
         // Locals of the hand's subtree from this frame's bones.
         static thread_local std::vector<uint8_t> s_subtree;
@@ -14673,7 +14681,11 @@ namespace
                 {
                     vr_vm_stabilize::Mat3x4 rest{};
                     if (!HooksNativeViewmodelHandsOnlyReadBoneRestLocalTransform(drawState, boneIndex, stride, bone, rest))
+                    {
+                        if (vr)
+                            vr->m_HandPoseApplyRestFail[counterSide].fetch_add(1u, std::memory_order_relaxed);
                         continue;
+                    }
                     rest.m[0][3] = local.m[0][3];
                     rest.m[1][3] = local.m[1][3];
                     rest.m[2][3] = local.m[2][3];
@@ -14709,6 +14721,8 @@ namespace
         }
         if (posed == 0)
             return false;
+        if (vr)
+            vr->m_HandPoseApplyPosed[counterSide].fetch_add(1u, std::memory_order_relaxed);
 
         for (int bone = map.hand + 1; bone < numBones; ++bone)
         {
@@ -14744,7 +14758,7 @@ namespace
             {
                 if (handPose.absolute || handPose.triggerOverlay)
                 {
-                    return HooksNativeHandPoseApply(drawState, boneIndex, stride, boneNames, boneParents,
+                    return HooksNativeHandPoseApply(vr, drawState, boneIndex, stride, boneNames, boneParents,
                         numBones, keepSide.side, handPose, currentBones);
                 }
                 return false;
@@ -16238,7 +16252,7 @@ namespace
         }
         else if (handPoseValid && handPose.triggerOverlay)
         {
-            HooksNativeHandPoseApply(drawState, boneIndex, stride, boneNames, boneParents,
+            HooksNativeHandPoseApply(vr, drawState, boneIndex, stride, boneNames, boneParents,
                 numBones, keepSide.side, handPose, isolated);
         }
 
@@ -20189,7 +20203,7 @@ namespace
                     }
                     if (handPoseValid && handPose.triggerOverlay)
                     {
-                        HooksNativeHandPoseApply(drawState, boneIndex, stride, boneNames, boneParents,
+                        HooksNativeHandPoseApply(vr, drawState, boneIndex, stride, boneNames, boneParents,
                             numBones, chain.side, handPose, candidate);
                     }
                 }

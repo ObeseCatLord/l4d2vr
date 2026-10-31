@@ -2402,6 +2402,12 @@ public:
 	std::chrono::steady_clock::time_point m_HandPoseLastUpdate{};
 	l4d2vr_handpose::HandActivity m_HandPoseLoggedActivity[2] = { l4d2vr_handpose::HandActivity::Free, l4d2vr_handpose::HandActivity::Free };
 	std::atomic<int> m_SelfTestHandPoseForced[2] = { -1, -1 };  // self-test handact=: activity | weapon << 8
+	// Render-thread counters of the finger pose writes (HandPoseDebugLog prints them once a second).
+	std::atomic<uint32_t> m_HandPoseApplyCalls[2] = { 0u, 0u };
+	std::atomic<uint32_t> m_HandPoseApplyPosed[2] = { 0u, 0u };
+	std::atomic<uint32_t> m_HandPoseApplyRestFail[2] = { 0u, 0u };
+	std::atomic<uint32_t> m_HandPoseApplyNoHand[2] = { 0u, 0u };
+	std::chrono::steady_clock::time_point m_HandPoseLastDebugLog{};
 	l4d2vr_handpose::HandInput ResolveHandPoseInput(int gameplaySide) const;
 	void UpdateHandPoseTargets();
 	bool GetHandPoseOutput(int viewmodelSide, l4d2vr_handpose::HandOutput& out) const;

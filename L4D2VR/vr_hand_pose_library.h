@@ -8,19 +8,28 @@
 //                finger (j = 0 knuckle, 1 middle joint, 2 tip joint). The mod
 //                turns a joint by (flex - the bind pose's own flex) about the
 //                bone's local -Z, so the result does not depend on the bind pose.
+//                The thumb's root (j = 0) is not flexed: it takes `thumb`.
 //   splay[f]     knuckle spread in degrees about the knuckle's local Y,
 //                positive away from the middle finger.
 //   thumb[3]     extra local X/Y/Z rotation of the thumb's root bone (Finger0)
-//                relative to its bind pose, degrees (opposition and roll).
+//                relative to its bind pose, degrees.
 //
-// The numbers come from Pavlov VR's hand pose animations, measured per joint
-// (research notes, outside the repo) and mapped onto the survivor skeleton;
-// only angles are used, no assets. Which pose is used when follows Pavlov too:
-// the gun hand keeps the game's own animated grip (it was authored around that
-// exact model) with the trigger finger following the trigger; a hand holding a
-// magazine, a shell or a slide/bolt/charging handle takes that item's pose; a
-// free hand goes from a relaxed open hand toward a fist with the controller's
-// finger curls (point with the index off the trigger).
+// The numbers come from Pavlov VR's hand pose animations (frame 0, the only
+// frame Pavlov's first-person hand blueprint evaluates), fitted per finger so
+// each survivor phalanx points like Pavlov's in a palm frame (research notes
+// outside the repo; only angles are used, no assets). The behaviour follows
+// Pavlov's hand blueprint:
+//   * the gun hand keeps the game's own animated grip (made around that exact
+//     model) plus Pavlov's trigger finger: the gun's TriggerAngle added to the
+//     middle index joint as the trigger is pulled, and after 2 s off the
+//     trigger the index straightens along the frame (trigger discipline,
+//     weighted per gun);
+//   * a hand on a magazine, shell, slide, charging handle, bolt or pump takes
+//     Pavlov's pose for that item on that gun, blended in like Pavlov's grab
+//     blend (0.2 s, 0.12 s for handles, cubic ease-out, finger tips faster);
+//   * a free hand is Pavlov's empty hand: each finger between its Open, Rest
+//     and Close samples by a finger value from the trigger and grip (or the
+//     tracked finger), 0.25 = resting.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -40,24 +49,38 @@ namespace l4d2vr_handpose
         float thumb[3];
     };
 
+    // Pavlov's poses (frame 0 of each pose animation: the closed grip on the item).
     enum class PoseId : int
     {
-        Relaxed,        // free hand, nothing pressed (Pavlov resting extended)
-        Fist,           // free hand, everything squeezed (Pavlov resting closed)
-        Point,          // index straight, others closed (grip held, index off the trigger)
-        PistolGrip,     // gun hand on a pistol grip, index on the trigger (Pavlov M9/Glock "Weapon")
-        RifleGrip,      // gun hand on a rifle grip (Pavlov M4/AK "Weapon")
-        Foregrip,       // support hand around a handguard (Pavlov M4/AK "TwoHand")
-        PistolSupport,  // support hand cupping a pistol grip (Pavlov M9 "TwoHand")
-        PumpGrip,       // support hand on a shotgun pump (Pavlov shotgun "TwoHand")
-        MagazineHold,   // holding a rifle/SMG magazine (Pavlov AK/M4 "Magazine")
-        PistolMagHold,  // holding a pistol magazine (Pavlov M9 "Magazine")
-        ShellHold,      // a shotgun shell between thumb and fingers (Pavlov ShotgunAmmo)
-        SlidePinch,     // pinching a pistol slide's rear serrations (Pavlov slider pinch)
-        SlideOverhand,  // palm over a pistol slide (Pavlov rack large palm)
-        ChargingHandle, // two fingers hooked on a rifle charging handle (Pavlov AR9 ChargingHandle / rack small)
-        BoltHandle,     // thumb and index on a bolt-action handle (Pavlov Kar98 / generic racking)
-        GrenadeHold,    // fist around a grenade (Pavlov hand_nade)
+        EmptyOpen,        // empty hand, finger value -0.25 (Pavlov's Open sample)
+        EmptyRest,        // empty hand, finger value 0.375 (Rest sample)
+        EmptyClosed,      // empty hand, finger value 1 (Close sample: a fist)
+        TriggerDiscipline,// index straight along the frame (A_TriggerDiscipline1, finger off)
+        PistolGrip,       // M9 primary grip (a gun hand the game does not animate)
+        RifleGrip,        // M4 primary grip
+        PumpGrip,         // pump shotgun support hand on the pump
+        MagPistol,        // magazines: M9
+        MagMagnum,        // Desert Eagle
+        MagSmg,           // Uzi
+        MagMp5,           // MP5
+        MagM16,           // M16
+        MagM4,            // M4 (SCAR)
+        MagAk,            // AK-47
+        MagAug,           // AUG (SG552)
+        MagHunting,       // hunting rifle
+        MagAutoSniper,    // auto sniper (military sniper)
+        MagAwp,           // AWP (AWP, scout)
+        MagLmg,           // LMG (M60)
+        Shell,            // a shotgun shell
+        GrenadeRound,     // a launcher round (Pavlov special ammo)
+        RackSmall,        // slides and charging handles: pistol slide overhand (M9, Glock)
+        RackLargePalm,    // Desert Eagle slide, whole palm
+        SliderPinch,      // pinch (MP5, Uzi, AUG left hand)
+        SliderPinchUp,    // pinch from below (AK-47 and auto shotgun left hand)
+        SliderPinchDown,  // pinch from above (SCAR-20)
+        ChargingHandleAR, // AR charging handle
+        BoltBall,         // bolt-action bolt knob (AWP, hunting rifle, Kar98 left hand)
+        StenSlide,        // LMG charging handle
         Count
     };
 
@@ -67,85 +90,148 @@ namespace l4d2vr_handpose
     // Generated by testtools/hand-poses/scripts/gen_pose_table.py from the measured Pavlov poses.
     // BEGIN GENERATED POSES
     // Pavlov sources (frame 0 = the closed grip on the item):
-    //   Relaxed         hand_hand_resting_extended [last] free hand at rest (extended rest, open end)
-    //   Fist            hand_fist_hand_hand_resting [0] closed fist
-    //   Point           - [-] index from Relaxed, rest from Fist
+    //   EmptyOpen       empty_fully_open [0] empty hand, every finger value -0.25 (Open sample)
+    //   EmptyRest       empty_rest_sample [0] empty hand, every finger value 0.375 (Rest sample)
+    //   EmptyClosed     empty_grip_and_trigger_full [0] empty hand, every finger value 1.0 (Close sample)
+    //   TriggerDiscipline A_TriggerDiscipline1 [t1.00s_finger_off_trigger] index straight along the frame
     //   PistolGrip      hand_wpn_m9_hand_Weapon [0] M9 primary grip
     //   RifleGrip       hand_wpn_m4_hand_Weapon [0] M4 primary grip
-    //   Foregrip        hand_wpn_m4_hand_TwoHand [0] M4 handguard
-    //   PistolSupport   hand_wpn_m9_hand_TwoHand [0] M9 support hand
-    //   PumpGrip        hand_wpn_shotgun_hand_TwoHand [0] pump shotgun pump
-    //   MagazineHold    hand_wpn_m4_hand_Magazine [0] M4 magazine
-    //   PistolMagHold   hand_wpn_m9_hand_Magazine [0] M9 magazine
-    //   ShellHold       hand_wpn_ammo_hand_ShotgunAmmo [0] shotgun shell
-    //   SlidePinch      hand_wpn_1911_hand_MagSlide [0] 1911 hand on the slide
-    //   SlideOverhand   hand_rack_hand_large_palm [0] palm over a slide
-    //   ChargingHandle  hand_wpn_ar9_hand_ChargingHandle [0] AR charging handle
-    //   BoltHandle      hand_wpn_Hunting_hand_MagSlide [0] bolt-action hunting rifle bolt
-    //   GrenadeHold     hand_nade [0] grenade
+    //   PumpGrip        hand_wpn_shotgun_hand_TwoHand [0] pump shotgun pump (support hand)
+    //   MagPistol       hand_wpn_m9_hand_Magazine [0] M9 magazine
+    //   MagMagnum       hand_wpn_de_hand_Magazine [0] Desert Eagle magazine
+    //   MagSmg          hand_wpn_uzi_hand_Magazine [0] Uzi magazine
+    //   MagMp5          hand_wpn_mp5_hand_Magazine [0] MP5 magazine
+    //   MagM16          hand_wpn_m16_hand_Magazine [0] M16 magazine
+    //   MagM4           hand_wpn_m4_hand_Magazine [0] M4 magazine
+    //   MagAk           hand_wpn_ak47_hand_Magazine [0] AK-47 magazine
+    //   MagAug          hand_wpn_aug_hand_Magazine [0] AUG magazine
+    //   MagHunting      hand_wpn_Hunting_hand_Magazine [0] hunting rifle magazine
+    //   MagAutoSniper   hand_wpn_autosniper_hand_Magazine [0] auto sniper magazine
+    //   MagAwp          hand_wpn_awp_hand_Magazine [0] AWP magazine
+    //   MagLmg          hand_wpn_lmg_hand_Magazine [0] LMG magazine
+    //   Shell           hand_wpn_ammo_hand_ShotgunAmmo [0] shotgun shell
+    //   GrenadeRound    hand_wpn_ammo_hand_SpecialAmmo [0] special ammo (launcher round)
+    //   RackSmall       hand_rack_hand_small [0] M9/Glock slide
+    //   RackLargePalm   hand_rack_hand_large_palm [0] Desert Eagle slide
+    //   SliderPinch     hand_slider_hand_pinch [0] MP5/Uzi/AUG charging handle
+    //   SliderPinchUp   hand_slider_hand_pinch_up [0] AK-47/auto shotgun charging handle (left hand)
+    //   SliderPinchDown hand_slider_hand_pinch_down [0] SCAR-20 charging handle
+    //   ChargingHandleAR hand_wpn_ar9_hand_ChargingHandle [0] AR charging handle
+    //   BoltBall        hand_ball_hand_left [0] AWP/hunting rifle bolt (left hand)
+    //   StenSlide       hand_sten_slide_hand_slide_right [0] LMG charging handle
     inline const std::array<Pose, kPoseCount>& Library()
     {
         static const std::array<Pose, kPoseCount> kPoses = { {
-            // Relaxed
-            { { { 0.0f, 13.1f, 0.3f }, { 20.9f, -1.6f, 0.2f }, { 22.7f, 9.7f, 5.4f }, { 23.2f, 31.1f, 9.5f }, { 23.4f, 22.3f, 33.8f } },
-              { 0.0f, 0.0f, 0.0f, 0.0f, 9.1f }, { 38.5f, -7.7f, 37.0f } },
-            // Fist
-            { { { 0.0f, 11.9f, 65.2f }, { 62.9f, 74.8f, 79.5f }, { 61.8f, 76.0f, 67.9f }, { 61.3f, 86.7f, 48.2f }, { 67.1f, 70.5f, 79.1f } },
-              { 0.0f, 4.6f, 0.0f, 0.0f, -12.2f }, { -18.2f, -32.0f, -8.9f } },
-            // Point
-            { { { 0.0f, 11.9f, 65.2f }, { 20.9f, -1.6f, 0.2f }, { 61.8f, 76.0f, 67.9f }, { 61.3f, 86.7f, 48.2f }, { 67.1f, 70.5f, 79.1f } },
-              { 0.0f, 0.0f, 0.0f, 0.0f, -12.2f }, { -18.2f, -32.0f, -8.9f } },
+            // EmptyOpen
+            { { { 0.0f, -0.6f, -3.0f }, { 30.0f, -13.3f, 17.5f }, { 3.9f, -1.2f, -5.4f }, { 11.6f, -3.6f, -6.5f }, { 18.1f, -2.9f, -5.5f } },
+              { 0.0f, 4.5f, 0.0f, 8.9f, 17.4f }, { -44.0f, -32.9f, -1.5f } },
+            // EmptyRest
+            { { { 0.0f, 14.2f, 8.4f }, { 30.0f, 8.0f, 17.5f }, { 32.8f, 21.9f, 17.5f }, { 40.0f, 28.3f, 8.3f }, { 46.7f, 21.1f, 16.1f } },
+              { 0.0f, 4.3f, 0.0f, -7.0f, -12.8f }, { 32.2f, -15.7f, 29.7f } },
+            // EmptyClosed
+            { { { 0.0f, 32.1f, 20.9f }, { 29.9f, 72.1f, 17.4f }, { 67.6f, 68.6f, 73.5f }, { 71.7f, 76.5f, 63.7f }, { 80.0f, 66.6f, 76.1f } },
+              { 0.0f, 0.0f, 0.0f, -8.7f, -16.2f }, { 23.6f, -21.2f, 23.1f } },
+            // TriggerDiscipline
+            { { { 0.0f, 10.0f, 8.0f }, { 8.8f, -19.7f, -30.4f }, { 26.1f, 12.5f, 7.7f }, { 29.4f, 17.6f, 1.2f }, { 32.4f, 5.3f, 12.8f } },
+              { 0.0f, 0.5f, 0.0f, 0.0f, -2.5f }, { 36.6f, -12.5f, 31.5f } },
             // PistolGrip
             { { { 0.0f, 4.3f, 42.1f }, { 20.9f, 36.6f, 57.5f }, { 57.9f, 56.5f, 54.5f }, { 58.8f, 65.2f, 38.0f }, { 61.1f, 42.0f, 58.3f } },
               { 0.0f, 5.4f, 0.0f, -9.3f, -19.1f }, { 39.9f, -28.0f, 27.5f } },
             // RifleGrip
             { { { 0.0f, 16.5f, 38.9f }, { 24.7f, 33.7f, 53.6f }, { 63.3f, 61.7f, 54.9f }, { 70.3f, 62.4f, 37.2f }, { 79.2f, 38.4f, 57.0f } },
               { 0.0f, 9.5f, 0.0f, -15.4f, -25.0f }, { 32.7f, -28.4f, 18.9f } },
-            // Foregrip
-            { { { 0.0f, 10.0f, 8.0f }, { 18.3f, 36.8f, 53.5f }, { 42.2f, 48.3f, 41.2f }, { 55.4f, 57.9f, 30.3f }, { 70.1f, 32.7f, 55.0f } },
-              { 0.0f, 0.0f, 0.0f, -13.4f, -17.9f }, { 36.6f, -12.5f, 31.5f } },
-            // PistolSupport
-            { { { 0.0f, -9.3f, 46.4f }, { 39.8f, 31.9f, 49.1f }, { 46.3f, 39.2f, 35.1f }, { 48.4f, 49.2f, 22.1f }, { 62.6f, 25.5f, 38.5f } },
-              { 0.0f, 3.7f, 0.0f, -7.7f, -12.2f }, { 10.9f, -14.8f, 25.9f } },
             // PumpGrip
             { { { 0.0f, 24.5f, 8.1f }, { 15.5f, 43.6f, 65.0f }, { 33.1f, 59.2f, 52.3f }, { 48.4f, 63.6f, 37.0f }, { 68.9f, 38.0f, 57.9f } },
               { 0.0f, -2.8f, 0.0f, -11.0f, -20.9f }, { 23.7f, -18.0f, 32.6f } },
-            // MagazineHold
-            { { { 0.0f, 8.4f, 40.8f }, { 8.9f, 34.9f, 51.8f }, { 13.1f, 54.2f, 42.3f }, { 25.1f, 53.2f, 25.2f }, { 32.3f, 25.7f, 34.9f } },
-              { 0.0f, 5.4f, 0.0f, -8.4f, -9.5f }, { 28.9f, -18.6f, 30.6f } },
-            // PistolMagHold
+            // MagPistol
             { { { 0.0f, -8.1f, 59.4f }, { 26.8f, 57.3f, 78.4f }, { 34.2f, 61.9f, 60.8f }, { 38.7f, 30.9f, 9.4f }, { 32.9f, 14.2f, 25.2f } },
               { 0.0f, 0.0f, 0.0f, -6.9f, -4.1f }, { 37.5f, -19.9f, 21.4f } },
-            // ShellHold
+            // MagMagnum
+            { { { 0.0f, -8.1f, 59.4f }, { 14.4f, 47.4f, 77.3f }, { 20.4f, 55.2f, 62.1f }, { 38.7f, 30.9f, 9.4f }, { 32.9f, 14.2f, 25.2f } },
+              { 0.0f, 0.0f, 0.0f, -6.9f, -4.1f }, { 37.5f, -19.9f, 21.4f } },
+            // MagSmg
+            { { { 0.0f, 12.5f, 61.5f }, { 42.5f, 50.5f, 75.1f }, { 49.2f, 58.5f, 54.4f }, { 33.7f, 31.5f, 10.3f }, { 29.6f, 18.5f, 32.0f } },
+              { 0.0f, 10.6f, 0.0f, -12.3f, -13.1f }, { 26.0f, -30.7f, 31.9f } },
+            // MagMp5
+            { { { 0.0f, -2.8f, 60.3f }, { 34.1f, 47.2f, 69.8f }, { 30.0f, 57.8f, 51.7f }, { 28.7f, 24.2f, 5.3f }, { 30.3f, 10.2f, 22.1f } },
+              { 0.0f, 11.9f, 0.0f, -15.6f, -14.4f }, { 27.9f, -17.6f, 30.2f } },
+            // MagM16
+            { { { 0.0f, 20.5f, 42.9f }, { 20.1f, 40.9f, 56.4f }, { 30.6f, 50.1f, 36.9f }, { 35.9f, 51.3f, 23.1f }, { 37.5f, 30.1f, 40.1f } },
+              { 0.0f, 4.6f, 0.0f, -15.9f, -20.8f }, { 16.6f, -26.3f, 25.1f } },
+            // MagM4
+            { { { 0.0f, 8.4f, 40.8f }, { 8.9f, 34.9f, 51.8f }, { 13.1f, 54.2f, 42.3f }, { 25.1f, 53.2f, 25.2f }, { 32.3f, 25.7f, 34.9f } },
+              { 0.0f, 5.4f, 0.0f, -8.4f, -9.5f }, { 28.9f, -18.6f, 30.6f } },
+            // MagAk
+            { { { 0.0f, -2.8f, 60.3f }, { 14.7f, 32.5f, 52.5f }, { 17.2f, 44.4f, 36.8f }, { 21.0f, 37.6f, 15.1f }, { 28.2f, 10.5f, 22.4f } },
+              { 0.0f, 18.4f, 0.0f, -15.9f, -13.3f }, { 27.9f, -17.6f, 30.2f } },
+            // MagAug
+            { { { 0.0f, -2.8f, 60.3f }, { 14.1f, 37.3f, 58.1f }, { 16.5f, 20.7f, 13.9f }, { 14.9f, 8.3f, -2.4f }, { 18.7f, -0.5f, 3.3f } },
+              { 0.0f, 18.5f, 0.0f, -1.8f, 0.0f }, { 27.9f, -17.6f, 30.2f } },
+            // MagHunting
+            { { { 0.0f, 16.6f, 17.9f }, { 17.6f, 48.0f, 40.4f }, { 46.8f, 43.4f, 46.7f }, { 50.3f, 50.0f, 48.5f }, { 63.9f, 44.9f, 51.3f } },
+              { 0.0f, 15.1f, 0.0f, -14.7f, -18.1f }, { 53.8f, -6.5f, 36.9f } },
+            // MagAutoSniper
+            { { { 0.0f, -2.8f, 60.3f }, { 14.9f, 18.0f, 34.8f }, { 15.9f, 41.8f, 33.9f }, { 14.9f, 8.3f, -2.4f }, { 18.7f, -0.5f, 3.3f } },
+              { 0.0f, 12.0f, 0.0f, -1.8f, 0.0f }, { 27.9f, -17.6f, 30.2f } },
+            // MagAwp
+            { { { 0.0f, -2.8f, 60.3f }, { 10.4f, 33.5f, 51.3f }, { 14.8f, 43.8f, 31.8f }, { 14.9f, 8.3f, -2.4f }, { 18.7f, -0.5f, 3.3f } },
+              { 0.0f, 13.8f, 0.0f, -1.8f, 0.0f }, { 27.9f, -17.6f, 30.2f } },
+            // MagLmg
+            { { { 0.0f, -11.0f, 53.2f }, { 27.4f, 35.3f, 54.2f }, { 16.0f, 55.9f, 51.9f }, { 15.5f, 64.7f, 35.2f }, { 28.2f, 30.1f, 43.0f } },
+              { 0.0f, 5.7f, 0.0f, 0.0f, -8.5f }, { 9.5f, -19.7f, 33.5f } },
+            // Shell
             { { { 0.0f, 16.8f, 35.3f }, { 22.1f, 26.2f, 45.4f }, { 29.1f, 41.1f, 28.7f }, { 40.9f, 38.8f, 14.5f }, { 51.4f, 21.0f, 28.8f } },
               { 0.0f, 14.1f, 0.0f, -21.6f, -25.0f }, { -22.3f, -35.9f, 4.8f } },
-            // SlidePinch
-            { { { 0.0f, -10.7f, 26.2f }, { 38.5f, 26.0f, 48.5f }, { 35.8f, 34.8f, 40.1f }, { 42.5f, 36.0f, 13.7f }, { 48.1f, 17.3f, 28.1f } },
-              { 0.0f, 6.9f, 0.0f, -13.2f, -16.0f }, { 19.8f, -24.9f, 12.7f } },
-            // SlideOverhand
+            // GrenadeRound
+            { { { 0.0f, 1.1f, 45.6f }, { 23.3f, 38.1f, 56.2f }, { 32.6f, 42.3f, 28.5f }, { 35.5f, 40.3f, 16.0f }, { 35.4f, 23.5f, 39.2f } },
+              { 0.0f, 14.8f, 0.0f, -19.8f, -22.2f }, { -44.9f, -28.9f, -19.5f } },
+            // RackSmall
+            { { { 0.0f, -4.1f, 39.3f }, { 33.0f, 55.0f, 72.6f }, { 47.0f, 83.3f, 71.0f }, { 36.5f, 87.4f, 51.9f }, { 43.6f, 63.2f, 85.6f } },
+              { 0.0f, 0.0f, 0.0f, 0.0f, -14.1f }, { 17.7f, -22.2f, 21.9f } },
+            // RackLargePalm
             { { { 0.0f, 9.4f, 38.1f }, { 49.9f, 49.7f, 71.7f }, { 46.2f, 57.3f, 51.3f }, { 42.5f, 67.4f, 34.0f }, { 48.3f, 14.7f, 24.9f } },
               { 0.0f, 0.0f, 0.0f, 0.0f, -11.7f }, { 30.4f, -12.7f, 29.8f } },
-            // ChargingHandle
+            // SliderPinch
+            { { { 0.0f, 10.0f, 8.0f }, { 39.6f, 36.3f, 55.3f }, { 66.8f, 73.6f, 66.5f }, { 66.1f, 84.7f, 50.8f }, { 73.6f, 58.7f, 68.3f } },
+              { 0.0f, 24.8f, 0.0f, -11.2f, -22.8f }, { 36.6f, -12.5f, 31.5f } },
+            // SliderPinchUp
+            { { { 0.0f, 10.0f, 8.0f }, { 39.6f, 36.3f, 55.3f }, { 66.8f, 73.6f, 66.5f }, { 66.1f, 84.7f, 50.8f }, { 73.6f, 58.7f, 68.3f } },
+              { 0.0f, 24.8f, 0.0f, -11.2f, -22.8f }, { 36.6f, -12.5f, 31.5f } },
+            // SliderPinchDown
+            { { { 0.0f, 9.3f, 8.9f }, { 21.7f, 62.2f, 74.5f }, { 28.3f, 80.6f, 68.6f }, { 66.5f, 83.3f, 51.1f }, { 73.4f, 57.6f, 68.4f } },
+              { 0.0f, 15.3f, 0.0f, -14.0f, -25.0f }, { 36.6f, -3.9f, 9.6f } },
+            // ChargingHandleAR
             { { { 0.0f, 14.3f, 47.6f }, { 42.2f, 42.9f, 54.3f }, { 51.3f, 56.7f, 36.9f }, { 52.9f, 67.2f, 28.3f }, { 67.6f, 53.7f, 49.6f } },
               { 0.0f, 9.5f, 0.0f, 0.0f, 0.0f }, { -18.8f, -35.4f, 5.1f } },
-            // BoltHandle
-            { { { 0.0f, 2.7f, 9.0f }, { 27.6f, 68.7f, 64.2f }, { 57.3f, 62.6f, 59.7f }, { 58.2f, 69.3f, 53.1f }, { 71.6f, 62.1f, 69.8f } },
-              { 0.0f, 10.1f, 0.0f, -15.6f, -17.3f }, { 84.2f, 16.8f, 34.4f } },
-            // GrenadeHold
-            { { { 0.0f, -16.8f, 83.9f }, { 24.0f, 59.1f, 67.3f }, { 66.8f, 73.6f, 66.5f }, { 66.1f, 84.7f, 50.8f }, { 73.6f, 58.7f, 68.3f } },
-              { 0.0f, 6.0f, 0.0f, -11.2f, -22.8f }, { 11.2f, -29.5f, -7.3f } },
+            // BoltBall
+            { { { 0.0f, 4.8f, 34.2f }, { 26.4f, 42.7f, 62.9f }, { 72.0f, 71.5f, 64.4f }, { 71.3f, 81.7f, 47.9f }, { 76.6f, 62.3f, 77.5f } },
+              { 0.0f, 0.0f, 0.0f, -13.0f, -23.8f }, { 4.2f, -25.2f, 6.1f } },
+            // StenSlide
+            { { { 0.0f, -3.1f, 64.9f }, { 60.5f, 69.1f, 83.5f }, { 72.0f, 71.5f, 64.4f }, { 71.3f, 81.7f, 47.9f }, { 76.6f, 62.3f, 77.5f } },
+              { 0.0f, 2.7f, 0.0f, -13.0f, -23.8f }, { 50.8f, -30.4f, 34.2f } },
         } };
         return kPoses;
     }
-    // Trigger finger of the gun hand, added to the game's animated grip (degrees per joint):
-    //   index curl 0 (finger off the trigger) lifts it by Pavlov's grip sweep (M4 grip, last frame minus
-    //   frame 0), the touch value (0.3) leaves the animation as it is (on the trigger), a full pull adds
-    //   kTriggerPull (Pavlov has none; a few degrees so the pull shows).
-    constexpr float kTriggerOff[kJoints] = { -8.3f, -30.7f, -37.7f };
-    constexpr float kTriggerPull[kJoints] = { 4.0f, 8.0f, 4.0f };
     // END GENERATED POSES
 
-    constexpr float kTriggerTouchCurl = 0.3f;  // the OpenXR curl fallback's index-on-trigger value
+    // ---- Pavlov hand blueprint constants -------------------------------------------------------------
+    constexpr float kFingerValueIdle = 0.25f;        // GetFingerBlend with nothing pressed
+    constexpr float kFingerValueOpen = -0.25f;       // the Open/Rest/Close blendspace samples
+    constexpr float kFingerValueRest = 0.375f;
+    constexpr float kFingerValueClosed = 1.0f;
+    constexpr float kTriggerOnCurl = 0.05f;          // a trigger above 0.05 (or touched) counts as on it
+    constexpr float kTriggerTouchCurl = 0.3f;        // the OpenXR curl fallback's index-on-trigger curl
+    constexpr float kDisciplineReleaseSeconds = 2.0f;  // MinTriggerDisciplineReleaseTime
+    constexpr float kDisciplineOn = 0.45f;           // TriggerDiscipline while on the trigger
+    constexpr float kDisciplineSpeed = 20.0f;        // TriggerDisciplineSpeed (FInterpTo, per s)
+    constexpr float kTriggerPullUpPerSecond = 20.0f; // TriggerRatio alpha interp
+    constexpr float kTriggerPullDownPerSecond = 30.0f;
+    constexpr float kTriggerDisciplineDefault = 0.5f;  // Gun.TriggerDisciplineBlend default
+    constexpr float kTriggerAngleDefault = 20.0f;      // Gun.TriggerAngle default (-20, extra index PIP curl)
+    constexpr float kGrabBlendSeconds = 0.2f;          // GrabBlendTime
+    constexpr float kHandleBlendScale = 0.6f;          // 0.12 s on a slide/bolt/pump
+    // GrabsBlendProfile: the middle and tip joints close 2x and 3x faster than the knuckles.
+    constexpr float kJointBlendSpeed[kJoints] = { 1.0f, 2.0f, 3.0f };
 
     inline const Pose& Get(PoseId id)
     {
@@ -170,122 +256,206 @@ namespace l4d2vr_handpose
         return out;
     }
 
-    // Free hand from the controller's (or tracked hand's) curls, thumb..pinky 0..1: each finger
-    // goes from the relaxed hand to the fist by its own curl. With the other fingers closed and
-    // the index open the index takes the pointing pose's straight finger.
-    inline Pose FromCurls(const float curls[kFingers])
+    // Pavlov's Curve_HandBlending: cubic ease-out from (0,0) with tangent 1.0442 to (1,1) flat.
+    inline float HandBlendCurve(float t)
     {
-        const Pose& relaxed = Get(PoseId::Relaxed);
-        const Pose& fist = Get(PoseId::Fist);
-        const Pose& point = Get(PoseId::Point);
-        Pose out = relaxed;
+        t = Clamp01(t);
+        const float t2 = t * t, t3 = t2 * t;
+        return 1.0442f * (t3 - 2.0f * t2 + t) + (3.0f * t2 - 2.0f * t3);
+    }
+
+    // ---- Free hand -------------------------------------------------------------------------------------
+    // Pavlov finger values (thumb..pinky) from the mod's finger curls (OpenXR controller fallback,
+    // tracked fingers or OpenVR skeletal summaries, 0 open .. 1 closed). Nothing pressed rests at
+    // 0.25; the grip held with the index finger off the trigger points (index 0).
+    inline void FingerValuesFromCurls(const float curls[kFingers], float out[kFingers])
+    {
         float others = 0.0f;
         for (int f = 2; f < kFingers; ++f)
             others += Clamp01(curls[f]);
         others /= 3.0f;
         for (int f = 0; f < kFingers; ++f)
+            out[f] = kFingerValueIdle + (kFingerValueClosed - kFingerValueIdle) * Clamp01(curls[f]);
+        const float index = Clamp01(curls[1]);
+        if (index < kTriggerOnCurl && others > 0.5f)
         {
-            const float c = Clamp01(curls[f]);
-            for (int j = 0; j < kJoints; ++j)
-            {
-                float open = relaxed.flex[f][j];
-                if (f == 1)  // pointing: the open index straightens as the hand closes
-                    open = open + (point.flex[1][j] - open) * others;
-                out.flex[f][j] = open + (fist.flex[f][j] - open) * c;
-            }
-            out.splay[f] = relaxed.splay[f] + (fist.splay[f] - relaxed.splay[f]) * c;
+            // Grip only: the index lifts toward pointing as the hand closes.
+            const float t = Clamp01((others - 0.5f) / 0.5f);
+            out[1] = kFingerValueIdle + (0.0f - kFingerValueIdle) * t;
         }
-        const float thumb = Clamp01(curls[0]);
-        for (int k = 0; k < 3; ++k)
-            out.thumb[k] = relaxed.thumb[k] + (fist.thumb[k] - relaxed.thumb[k]) * thumb;
+    }
+
+    // The empty hand for finger values: each finger between Open, Rest and Close (Pavlov's per-finger
+    // additive blendspaces with samples at -0.25, 0.375 and 1.0).
+    inline Pose EmptyHand(const float values[kFingers])
+    {
+        const Pose& open = Get(PoseId::EmptyOpen);
+        const Pose& rest = Get(PoseId::EmptyRest);
+        const Pose& closed = Get(PoseId::EmptyClosed);
+        Pose out = rest;
+        for (int f = 0; f < kFingers; ++f)
+        {
+            float v = std::isfinite(values[f]) ? values[f] : kFingerValueIdle;
+            v = std::clamp(v, kFingerValueOpen, kFingerValueClosed);
+            const Pose* a = &open;
+            const Pose* b = &rest;
+            float t = (v - kFingerValueOpen) / (kFingerValueRest - kFingerValueOpen);
+            if (v > kFingerValueRest)
+            {
+                a = &rest;
+                b = &closed;
+                t = (v - kFingerValueRest) / (kFingerValueClosed - kFingerValueRest);
+            }
+            for (int j = 0; j < kJoints; ++j)
+                out.flex[f][j] = a->flex[f][j] + (b->flex[f][j] - a->flex[f][j]) * t;
+            out.splay[f] = a->splay[f] + (b->splay[f] - a->splay[f]) * t;
+            if (f == 0)
+                for (int k = 0; k < 3; ++k)
+                    out.thumb[k] = a->thumb[k] + (b->thumb[k] - a->thumb[k]) * t;
+        }
         return out;
     }
 
-    // Degrees added to each index joint of an animated gun grip for an index curl (0 off the
-    // trigger, kTriggerTouchCurl resting on it, 1 fully pulled).
-    inline void TriggerIndexDelta(float indexCurl, float out[kJoints], float scale = 1.0f)
+    inline Pose FromCurls(const float curls[kFingers])
     {
-        const float c = Clamp01(indexCurl);
-        const float s = std::isfinite(scale) ? std::clamp(scale, 0.0f, 2.0f) : 0.0f;
-        for (int j = 0; j < kJoints; ++j)
-        {
-            float v;
-            if (c <= kTriggerTouchCurl)
-                v = kTriggerOff[j] * (1.0f - c / kTriggerTouchCurl);
-            else
-                v = kTriggerPull[j] * ((c - kTriggerTouchCurl) / (1.0f - kTriggerTouchCurl));
-            out[j] = v * s;
-        }
+        float values[kFingers];
+        FingerValuesFromCurls(curls, values);
+        return EmptyHand(values);
     }
 
     // ---- What a hand is doing ----------------------------------------------------------------------
     enum class HandActivity : int
     {
-        Free,            // nothing held: curls drive Relaxed -> Fist (Point)
-        GunGrip,         // the game's animated grip on a gun, trigger finger overlay
+        Free,            // nothing held: Pavlov's empty hand from the finger curls
+        GunGrip,         // the game's animated grip on a gun, plus the trigger finger
         Animated,        // the game's animation as it is (melee, grenades, medical items, carried props)
         Support,         // two-handed grip: the game's animated support hand
         Magazine,        // holding a magazine (fresh, retained or pulled out)
-        Shell,           // holding a shotgun shell
-        Slide,           // holding a pistol slide
-        ChargingHandle,  // holding a rifle/SMG charging handle or bolt
-        Pump,            // holding a pump (manual pump stroke)
-        BoltAction,      // holding a bolt-action handle
-        GunGripPosed,    // a gun held in a hand the game does not animate (left gun of dual pistols)
+        Shell,           // holding a shotgun shell or a launcher round
+        Handle,          // on the gun's slide, charging handle, bolt or pump (Pavlov's handle pose per gun)
+        GunGripPosed,    // a gun held in a hand the game does not animate (Pavlov's grip plus the trigger finger)
     };
 
-    // Gun families by L4D2 weapon id (C_WeaponCSBase::WeaponID).
-    enum class GunFamily : int { None, Pistol, Magnum, Smg, Rifle, Sniper, BoltSniper, PumpShotgun, AutoShotgun, M60, GrenadeLauncher };
-
-    inline GunFamily FamilyOf(int weaponId)
+    // Which Pavlov gun each L4D2 gun takes its poses from (C_WeaponCSBase::WeaponID): its magazine
+    // pose, the support hand's pose on its slide/charging handle/bolt/pump, Pavlov's
+    // TriggerDisciplineBlend (how far the index straightens off the trigger) and TriggerAngle
+    // (degrees of extra middle-joint curl at a full pull).
+    struct GunPoses
     {
-        switch (weaponId)
-        {
-        case 1: return GunFamily::Pistol;                  // PISTOL
-        case 32: return GunFamily::Magnum;                 // MAGNUM
-        case 2: case 7: case 33: return GunFamily::Smg;    // UZI, MAC10 (silenced), MP5
-        case 5: case 9: case 26: case 34: return GunFamily::Rifle;  // M16, SCAR, AK47, SG552
-        case 6: case 10: return GunFamily::Sniper;         // HUNTING_RIFLE, SNIPER_MILITARY
-        case 35: case 36: return GunFamily::BoltSniper;    // AWP, SCOUT
-        case 3: case 8: return GunFamily::PumpShotgun;     // PUMPSHOTGUN, SHOTGUN_CHROME
-        case 4: case 11: return GunFamily::AutoShotgun;    // AUTOSHOTGUN, SPAS
-        case 37: return GunFamily::M60;                    // M60
-        case 21: return GunFamily::GrenadeLauncher;        // GRENADE_LAUNCHER
-        default: return GunFamily::None;
-        }
+        int weaponId;
+        const char* pavlovGun;
+        PoseId magazine;
+        PoseId handle;
+        float triggerDiscipline;
+        float triggerAngle;
+        bool pistolGrip;  // pistol (M9) grip when a hand the game does not animate holds it
+    };
+
+    inline const GunPoses* GunPosesFor(int weaponId)
+    {
+        static const GunPoses kGuns[] = {
+            { 1, "M9", PoseId::MagPistol, PoseId::RackSmall, 0.36f, 20.0f, true },                 // PISTOL
+            { 32, "DE", PoseId::MagMagnum, PoseId::RackLargePalm, 0.40f, 20.0f, true },            // MAGNUM
+            { 2, "Uzi", PoseId::MagSmg, PoseId::SliderPinch, 0.66f, 20.0f, false },                // UZI
+            { 7, "Uzi", PoseId::MagSmg, PoseId::SliderPinch, 0.66f, 20.0f, false },                // MAC10 (silenced SMG)
+            { 33, "MP5", PoseId::MagMp5, PoseId::SliderPinch, 0.62f, 20.0f, false },               // MP5
+            { 5, "M16", PoseId::MagM16, PoseId::ChargingHandleAR, 0.48f, 15.0f, false },           // M16A1
+            { 9, "SCAR20", PoseId::MagM4, PoseId::SliderPinchDown, 0.53f, 15.0f, false },          // SCAR (desert rifle)
+            { 26, "AK47", PoseId::MagAk, PoseId::SliderPinchUp, 0.48f, 20.0f, false },             // AK47
+            { 34, "AUG", PoseId::MagAug, PoseId::SliderPinch, 0.48f, 20.0f, false },               // SG552
+            { 6, "SKS", PoseId::MagHunting, PoseId::SliderPinchUp, 0.33f, 15.0f, false },          // HUNTING_RIFLE (semi-auto)
+            { 10, "AutoSniper", PoseId::MagAutoSniper, PoseId::SliderPinch, 0.27f, 20.0f, false }, // SNIPER_MILITARY
+            { 35, "AWP", PoseId::MagAwp, PoseId::BoltBall, 0.14f, 20.0f, false },                  // AWP
+            { 36, "AWP", PoseId::MagAwp, PoseId::BoltBall, 0.14f, 20.0f, false },                  // SCOUT
+            { 3, "Shotgun", PoseId::Shell, PoseId::PumpGrip, 0.14f, 12.0f, false },                // PUMPSHOTGUN
+            { 8, "Shotgun", PoseId::Shell, PoseId::PumpGrip, 0.14f, 12.0f, false },                // SHOTGUN_CHROME
+            { 4, "AutoShotgun", PoseId::Shell, PoseId::SliderPinchUp, 0.52f, 15.0f, false },       // AUTOSHOTGUN
+            { 11, "AutoShotgun", PoseId::Shell, PoseId::SliderPinchUp, 0.52f, 15.0f, false },      // SPAS
+            { 37, "LMGA", PoseId::MagLmg, PoseId::StenSlide, 0.19f, 20.0f, false },                // M60
+            { 21, "FlarePistol", PoseId::GrenadeRound, PoseId::RackLargePalm, 0.12f, 15.0f, false }, // GRENADE_LAUNCHER
+        };
+        for (const GunPoses& g : kGuns)
+            if (g.weaponId == weaponId)
+                return &g;
+        return nullptr;
     }
 
-    inline bool IsGun(int weaponId) { return FamilyOf(weaponId) != GunFamily::None; }
+    inline bool IsGun(int weaponId) { return GunPosesFor(weaponId) != nullptr; }
 
     // The held pose for a hand activity (Free and the animated activities have none).
     inline bool HeldPose(HandActivity activity, int weaponId, PoseId& out)
     {
-        const GunFamily family = FamilyOf(weaponId);
-        const bool pistol = family == GunFamily::Pistol || family == GunFamily::Magnum;
+        const GunPoses* gun = GunPosesFor(weaponId);
         switch (activity)
         {
-        case HandActivity::Magazine: out = pistol ? PoseId::PistolMagHold : PoseId::MagazineHold; return true;
-        case HandActivity::Shell: out = PoseId::ShellHold; return true;
-        case HandActivity::Slide: out = PoseId::SlidePinch; return true;
-        case HandActivity::ChargingHandle: out = PoseId::ChargingHandle; return true;
-        case HandActivity::Pump: out = PoseId::PumpGrip; return true;
-        case HandActivity::BoltAction: out = PoseId::BoltHandle; return true;
-        case HandActivity::GunGripPosed: out = pistol ? PoseId::PistolGrip : PoseId::RifleGrip; return true;
+        case HandActivity::Magazine: out = gun ? gun->magazine : PoseId::MagM16; return true;
+        case HandActivity::Shell: out = gun && gun->magazine == PoseId::GrenadeRound ? PoseId::GrenadeRound : PoseId::Shell; return true;
+        case HandActivity::Handle: out = gun ? gun->handle : PoseId::SliderPinch; return true;
+        case HandActivity::GunGripPosed: out = gun && gun->pistolGrip ? PoseId::PistolGrip : PoseId::RifleGrip; return true;
         default: return false;
         }
     }
 
-    // How the bolt/slide stage of a gun is held (Pavlov: pistols pinch the slide, ARs hook the
-    // charging handle, bolt actions take the bolt knob, pump guns grip the pump).
-    inline HandActivity BoltActivity(int weaponId)
+    inline float TriggerDisciplineFor(int weaponId)
     {
-        switch (FamilyOf(weaponId))
+        const GunPoses* gun = GunPosesFor(weaponId);
+        return gun ? gun->triggerDiscipline : kTriggerDisciplineDefault;
+    }
+
+    inline float TriggerAngleFor(int weaponId)
+    {
+        const GunPoses* gun = GunPosesFor(weaponId);
+        return gun ? gun->triggerAngle : kTriggerAngleDefault;
+    }
+
+    // ---- Trigger finger ------------------------------------------------------------------------------
+    // Pavlov's trigger finger for a gun hand: `Step` with the index curl (0 off the trigger,
+    // kTriggerTouchCurl resting on it, 1 fully pulled) every frame.
+    //   pull       TriggerRatio, 0..1 (rises at 20/s, falls at 30/s)
+    //   discipline the trigger-discipline layer weight: 0 on the trigger; after 2 s off it, up to the
+    //              gun's TriggerDisciplineBlend
+    struct TriggerFinger
+    {
+        float offSeconds = 0.0f;
+        float disciplineValue = kDisciplineOn;
+        float pull = 0.0f;
+
+        void Reset() { *this = TriggerFinger{}; }
+
+        void Step(float indexCurl, float dt)
         {
-        case GunFamily::Pistol: case GunFamily::Magnum: return HandActivity::Slide;
-        case GunFamily::PumpShotgun: return HandActivity::Pump;
-        case GunFamily::BoltSniper: return HandActivity::BoltAction;
-        default: return HandActivity::ChargingHandle;
+            const float c = Clamp01(indexCurl);
+            if (!(dt >= 0.0f) || dt > 0.5f)
+                dt = 0.5f;
+            offSeconds = c < kTriggerOnCurl ? offSeconds + dt : 0.0f;
+            const float target = offSeconds >= kDisciplineReleaseSeconds ? 1.0f : kDisciplineOn;
+            disciplineValue += (target - disciplineValue) * (std::min)(1.0f, dt * kDisciplineSpeed);
+            if (std::fabs(target - disciplineValue) < 0.05f)
+                disciplineValue = target;
+            const float wantPull = c <= kTriggerTouchCurl ? 0.0f : (c - kTriggerTouchCurl) / (1.0f - kTriggerTouchCurl);
+            if (wantPull > pull)
+                pull = (std::min)(wantPull, pull + kTriggerPullUpPerSecond * dt);
+            else
+                pull = (std::max)(wantPull, pull - kTriggerPullDownPerSecond * dt);
         }
+
+        float DisciplineWeight(float gunBlend) const
+        {
+            const float layer = Clamp01((disciplineValue - 0.5f) / 0.5f);
+            const float blend = std::isfinite(gunBlend) ? std::clamp(gunBlend, 0.0f, 1.0f) : kTriggerDisciplineDefault;
+            return layer * blend;
+        }
+    };
+
+    // Index joint flex (degrees) with the trigger finger applied to a grip's index (`gripFlex`).
+    inline void ApplyTriggerFinger(const float gripFlex[kJoints], float disciplineWeight, float pullDegrees,
+        float out[kJoints])
+    {
+        const Pose& d = Get(PoseId::TriggerDiscipline);
+        const float w = Clamp01(disciplineWeight);
+        for (int j = 0; j < kJoints; ++j)
+            out[j] = gripFlex[j] + (d.flex[1][j] - gripFlex[j]) * w;
+        out[1] += std::isfinite(pullDegrees) ? pullDegrees : 0.0f;
     }
 
     // ---- Per-hand state: the target this frame and the blended pose ------------------------------
@@ -301,8 +471,9 @@ namespace l4d2vr_handpose
     {
         bool absolute = false;          // set every finger joint to `pose`
         Pose pose{};
-        bool triggerOverlay = false;    // add `indexDelta` to the animated index finger
-        float indexDelta[kJoints] = {};
+        bool triggerOverlay = false;    // apply the trigger finger to the animated index
+        float disciplineWeight = 0.0f;  // toward the TriggerDiscipline index
+        float pullDegrees = 0.0f;       // extra middle-joint curl
         HandActivity activity = HandActivity::Free;
     };
 
@@ -311,19 +482,34 @@ namespace l4d2vr_handpose
         Pose current{};
         bool valid = false;
         bool wasAbsolute = false;
-        float indexDelta[kJoints] = {};
+        int lastKey = -1;
+        Pose from{};
+        float blendElapsed = 0.0f;
+        float blendDuration = 0.0f;
+        TriggerFinger trigger;
 
         void Reset() { *this = HandBlender{}; }
 
-        // blendSeconds: time constant of the exponential blend (Pavlov blends its hand poses in
-        // about a tenth of a second). dt <= 0 or a long gap snaps to the target.
-        HandOutput Step(const HandInput& in, float dt, float blendSeconds, float triggerScale = 1.0f)
+        // blendSeconds: Pavlov's GrabBlendTime (0.2 s; 0.6 of it on a handle). dt <= 0 or a long gap
+        // snaps to the target.
+        HandOutput Step(const HandInput& in, float dt, float blendSeconds = kGrabBlendSeconds, float triggerScale = 1.0f)
         {
             HandOutput out{};
             out.activity = in.activity;
+            const bool gap = !(dt > 0.0f) || dt >= 0.5f;
+            const float scale = std::isfinite(triggerScale) ? std::clamp(triggerScale, 0.0f, 2.0f) : 0.0f;
+            const bool gunHand = in.activity == HandActivity::GunGrip || in.activity == HandActivity::GunGripPosed;
+            if (gunHand)
+                trigger.Step(in.curlsValid ? in.curls[1] : kTriggerTouchCurl, gap ? 0.5f : dt);
+            else
+                trigger.Reset();
+            const float discipline = trigger.DisciplineWeight(TriggerDisciplineFor(in.weaponId)) * (std::min)(scale, 1.0f);
+            const float pull = trigger.pull * TriggerAngleFor(in.weaponId) * scale;
+
             PoseId held{};
             Pose target{};
             bool absolute = true;
+            int key = static_cast<int>(in.activity) * 256;
             if (in.activity == HandActivity::Free)
             {
                 float curls[kFingers] = {};
@@ -334,13 +520,14 @@ namespace l4d2vr_handpose
             }
             else if (HeldPose(in.activity, in.weaponId, held))
             {
+                key += static_cast<int>(held);
                 target = Get(held);
                 if (in.activity == HandActivity::GunGripPosed)
                 {
-                    float delta[kJoints] = {};
-                    TriggerIndexDelta(in.curlsValid ? in.curls[1] : kTriggerTouchCurl, delta, triggerScale);
+                    float index[kJoints];
+                    ApplyTriggerFinger(target.flex[1], discipline, pull, index);
                     for (int j = 0; j < kJoints; ++j)
-                        target.flex[1][j] += delta[j];
+                        target.flex[1][j] = index[j];
                 }
             }
             else
@@ -348,33 +535,57 @@ namespace l4d2vr_handpose
                 absolute = false;
             }
 
-            const float t = (dt > 0.0f && dt < 0.5f && blendSeconds > 0.0005f)
-                ? 1.0f - std::exp(-dt / blendSeconds)
-                : 1.0f;
             if (absolute)
             {
-                current = (valid && wasAbsolute) ? Lerp(current, target, t) : target;
+                if (!valid || !wasAbsolute || gap)
+                {
+                    current = target;
+                    blendDuration = 0.0f;
+                }
+                else
+                {
+                    if (key != lastKey)
+                    {
+                        // A new pose: blend from where the fingers are now.
+                        from = current;
+                        blendElapsed = 0.0f;
+                        const float seconds = std::isfinite(blendSeconds) ? std::clamp(blendSeconds, 0.0f, 2.0f) : kGrabBlendSeconds;
+                        blendDuration = seconds * (in.activity == HandActivity::Handle ? kHandleBlendScale : 1.0f);
+                    }
+                    if (blendDuration > 0.0f && blendElapsed < blendDuration)
+                    {
+                        blendElapsed += dt;
+                        for (int f = 0; f < kFingers; ++f)
+                        {
+                            for (int j = 0; j < kJoints; ++j)
+                            {
+                                const float k = HandBlendCurve(blendElapsed * kJointBlendSpeed[j] / blendDuration);
+                                current.flex[f][j] = from.flex[f][j] + (target.flex[f][j] - from.flex[f][j]) * k;
+                            }
+                            const float k0 = HandBlendCurve(blendElapsed / blendDuration);
+                            current.splay[f] = from.splay[f] + (target.splay[f] - from.splay[f]) * k0;
+                        }
+                        const float kt = HandBlendCurve(blendElapsed / blendDuration);
+                        for (int a = 0; a < 3; ++a)
+                            current.thumb[a] = from.thumb[a] + (target.thumb[a] - from.thumb[a]) * kt;
+                    }
+                    else
+                    {
+                        current = target;
+                    }
+                }
                 valid = true;
                 out.absolute = true;
                 out.pose = current;
             }
             wasAbsolute = absolute;
+            lastKey = key;
 
             if (in.activity == HandActivity::GunGrip)
             {
-                float delta[kJoints] = {};
-                TriggerIndexDelta(in.curlsValid ? in.curls[1] : kTriggerTouchCurl, delta, triggerScale);
-                for (int j = 0; j < kJoints; ++j)
-                {
-                    indexDelta[j] += (delta[j] - indexDelta[j]) * t;
-                    out.indexDelta[j] = indexDelta[j];
-                }
                 out.triggerOverlay = true;
-            }
-            else
-            {
-                for (float& d : indexDelta)
-                    d = 0.0f;
+                out.disciplineWeight = discipline;
+                out.pullDegrees = pull;
             }
             return out;
         }

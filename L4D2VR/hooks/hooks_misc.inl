@@ -14695,7 +14695,14 @@ namespace
                 }
                 else if (f == 1)
                 {
-                    rotate(local, 2, -pose.indexDelta[j]);
+                    // Trigger finger on the animated grip: toward Pavlov's trigger-discipline
+                    // index, plus the trigger pull on the middle joint.
+                    const float animatedFlex = hp::BindFlexDegrees(local.m[0][0], local.m[1][0]);
+                    const float discipline = hp::Get(hp::PoseId::TriggerDiscipline).flex[1][j];
+                    float delta = (discipline - animatedFlex) * hp::Clamp01(pose.disciplineWeight);
+                    if (j == 1)
+                        delta += pose.pullDegrees;
+                    rotate(local, 2, -delta);
                     ++posed;
                 }
             }

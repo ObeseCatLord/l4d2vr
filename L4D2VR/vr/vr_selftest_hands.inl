@@ -64,6 +64,12 @@ namespace l4d2vr_selftest_hands
 bool VR::RunHandSelfTestStep(const std::string& step, float t, bool& handled)
 {
     namespace sh = l4d2vr_selftest_hands;
+    {
+        // Hand pose steps (vr_selftest_handposes.inl).
+        const bool done = RunHandPoseSelfTestStep(step, t, handled);
+        if (handled)
+            return done;
+    }
     handled = true;
     char detail[256];
 

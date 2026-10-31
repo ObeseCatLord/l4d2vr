@@ -583,3 +583,62 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
     }
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// Mirrored left-hand rendering (ItemHandMirror, vr_hand_mirror.h).
+bool VR::ItemHandMirrorWanted() const
+{
+    l4d2vr_hand_mirror::MirrorInput in{};
+    in.enabled = m_ItemHandMirror;
+    in.vrActive = m_IsVREnabled && !m_MouseModeEnabled && m_FirstPersonControlReady.load(std::memory_order_acquire);
+    in.itemInPhysicalLeft = ItemHandIsPhysicalLeft();
+    in.dualPistols = m_DualPistolsActive.load(std::memory_order_acquire);
+    in.fullArmIk = true;  // checked by the render path
+    return l4d2vr_hand_mirror::ShouldMirror(in);
+}
+
+namespace
+{
+    bool ItemHandMirrorPlane(const Vector& point, const Vector& normal, l4d2vr_hand_mirror::Mat34& out)
+    {
+        const float p[3] = { point.x, point.y, point.z };
+        const float n[3] = { normal.x, normal.y, normal.z };
+        return l4d2vr_hand_mirror::Reflection(p, n, out);
+    }
+}
+
+bool VR::GetItemHandMirrorPlanes(l4d2vr_hand_mirror::Mat34& gunMirror, l4d2vr_hand_mirror::Mat34& supportMirror)
+{
+    // Item hand: a gun or melee weapon is mirrored across its own centre plane
+    // through the grip (the viewmodel's right axis), so it stays where it is;
+    // anything else across the controller's plane (vr_hand_mirror.h).
+    const int itemId = m_ActiveGunWeaponId.load(std::memory_order_acquire);
+    const auto plane = l4d2vr_hand_mirror::PlaneForItem(l4d2vr_handpose::IsGun(itemId),
+        itemId == static_cast<int>(C_WeaponCSBase::WeaponID::MELEE),
+        m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire));
+    Vector gunPoint{};
+    Vector gunRight{};
+    if (plane == l4d2vr_hand_mirror::Plane::Controller)
+    {
+        gunPoint = GetRightControllerAbsPos();
+        QAngle::AngleVectors(GetRightControllerAbsAngle(), nullptr, &gunRight, nullptr);
+    }
+    else
+    {
+        gunPoint = GetRightControllerViewmodelAbsPos();
+        QAngle::AngleVectors(GetRecommendedViewmodelAbsAngle(), nullptr, &gunRight, nullptr);
+    }
+    if (!ItemHandMirrorPlane(gunPoint, gunRight, gunMirror))
+        return false;
+
+    // Free hand: on the foregrip it is part of the gun; otherwise the plane of
+    // its own controller (controllers are mirror images of each other).
+    if (IsVrHandsTwoHandedGripPoseActive())
+    {
+        supportMirror = gunMirror;
+        return true;
+    }
+    Vector supportRight{};
+    QAngle::AngleVectors(GetLeftControllerAbsAngle(), nullptr, &supportRight, nullptr);
+    return ItemHandMirrorPlane(GetLeftControllerAbsPos(), supportRight, supportMirror);
+}

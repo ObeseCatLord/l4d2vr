@@ -45,7 +45,7 @@ namespace l4d2vr_server
         // Hand throws (HandThrow, impulse 244): the client measures the hand
         // velocity at headset rate; projectile = hand * scale + body velocity,
         // clamped to throwMaxSpeed. 3.0 is Pavlov's grenade ProjectileSpeedMul.
-        float throwHandVelocityScale = 3.0f;
+        float throwHandVelocityScale = 1.5f;   // the throw boost (l4d2vr_hand_throw::kDefaultThrowBoost)
         int handThrowMinIntervalMs = 250;
 
         // Eye override windows, in executed commands.

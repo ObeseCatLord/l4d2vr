@@ -1200,7 +1200,14 @@ namespace dxvk {
     // command stream and never performs a CPU readback or GPU wait.
     void UpdateReShadeVrDepthAtlas(VR* vr);
 
+    // L4D2VR: draws with reflected bone matrices (mirrored left-hand
+    // viewmodel) wind their triangles the other way; flip the front face for
+    // them so back-face culling keeps the outside of the model.
+    void L4D2VRSetMirroredFrontFace(bool mirrored);
+
   private:
+
+    bool m_l4d2vrMirroredFrontFace = false;
 
     template<bool AllowFlush = true, typename Cmd>
     void EmitCs(Cmd&& command, bool disableFlush = false) {

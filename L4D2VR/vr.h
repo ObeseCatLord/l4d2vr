@@ -51,6 +51,8 @@
 #include "vr_dual_reload.h"
 #include "vr_hand_pose_library.h"
 #include "vr_item_hand.h"
+#include "vr_hand_mirror.h"
+#include "vr_two_hand_aim.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
@@ -1682,11 +1684,14 @@ public:
 	int m_ManualThrowVelocityWindowTicks = 5;
 	float m_ManualThrowPeakVelocityBlend = 0.5f;
 	float m_ManualThrowMaxVelocity = 1400.0f;
-	// Pavlov-style hand throws (servers with the HandThrow feature): the grip
-	// holds the grenade, the trigger pulls the pin, letting go of the grip
-	// throws it from the hand with the hand's measured release velocity.
+	// Hand throws (servers with the HandThrow feature): hold the trigger of the
+	// hand holding the grenade (pin), swing, let go of the trigger: it leaves the
+	// hand with the hand's measured release velocity times a modest boost.
 	bool m_ManualThrowPinRequired = true;
-	float m_ManualThrowHandVelocityScale = 3.0f;   // listen host: hand velocity multiplier
+	float m_ManualThrowHandVelocityScale = l4d2vr_hand_throw::kDefaultThrowBoost;   // listen host + plain-server aim: the throw boost
+	// A held grenade, molotov or bile jar is turned by this (pitch, yaw, roll
+	// degrees) in the hand: the game's own hold leans it in toward the body.
+	QAngle m_ThrowableHoldAngleOffset = { 0.0f, 0.0f, 20.0f };
 	int m_ManualThrowVelocityWindowMs = 80;
 	struct HandThrowUsercmd
 	{
@@ -2163,6 +2168,10 @@ public:
 	// (poses, trigger, weapon grip, haptics, viewmodel, aim) is that controller.
 	bool m_AmbidextrousItemHands = true;
 	float m_ItemHandOffRadiusMeters = 0.14f;
+	// ItemHandMirror (vr_hand_mirror.h): an item in the physical left hand is
+	// drawn held by a mirrored (left) survivor hand and the free right
+	// controller shows a right hand, instead of the model's hands crossing over.
+	bool m_ItemHandMirror = true;
 	std::atomic<bool> m_ItemHandSwapped{ false };
 	std::atomic<uint64_t> m_ItemHandSwapAtMs{ 0u };
 	std::atomic<uint32_t> m_ItemHandSwapSerial{ 0u };
@@ -2181,6 +2190,11 @@ public:
 		return ItemHandIsPhysicalLeft() ? l4d2vr_dual::Hand::Left : l4d2vr_dual::Hand::Right;
 	}
 	bool ItemHandSwappedWithinMs(uint64_t ms) const;
+	// Mirrored left-hand rendering (vr_hand_mirror.h). The decision without the
+	// render path's own arm-IK readiness, and the two local mirrors (gun plane,
+	// free-hand controller plane) from the render-frame snapshot.
+	bool ItemHandMirrorWanted() const;
+	bool GetItemHandMirrorPlanes(l4d2vr_hand_mirror::Mat34& gunMirror, l4d2vr_hand_mirror::Mat34& supportMirror);
 	// Moves the item to the given physical hand at the next tracking update.
 	void RequestItemHand(bool physicalLeft, l4d2vr_item_hand::Reason reason);
 	void CommitItemHandSwitch();
@@ -2465,6 +2479,9 @@ public:
 	bool m_VrHandsVirtualStockEnabled = false;
 	bool m_VrHandsTwoHandedGripPistol = false;
 	float m_VrHandsTwoHandedAimStrength = 1.0f;
+	// Short guns (pistols, magnum, SMGs; vr_two_hand_aim.h): the support hand
+	// steadies the gun (recoil) but only the trigger hand aims it.
+	bool m_VrHandsTwoHandedAimShortGunsRearHandOnly = true;
 	float m_VrHandsTwoHandedAimSmoothingSeconds = 0.025f;
 	// Half-Life 2 VR style two-hand stabilizer (One Euro filter on the aim direction).
 	bool m_VrHandsTwoHandedStabilizerEnabled = true;

@@ -8985,7 +8985,9 @@ namespace dxvk {
         // native viewmodel draws so Vulkan clamps near-plane depth instead of
         // slicing the gun/arms, while retaining the scene's depth mapping.
         state.setDepthClip(rs[D3DRS_CLIPPING] != FALSE);
-        state.setFrontFace(VK_FRONT_FACE_CLOCKWISE);
+        state.setFrontFace(m_l4d2vrMirroredFrontFace
+            ? VK_FRONT_FACE_COUNTER_CLOCKWISE
+            : VK_FRONT_FACE_CLOCKWISE);
         state.setPolygonMode(DecodeFillMode(D3DFILLMODE(rs[D3DRS_FILLMODE])));
         state.setFlatShading(m_state.renderStates[D3DRS_SHADEMODE] == D3DSHADE_FLAT);
 
@@ -10789,4 +10791,20 @@ namespace dxvk {
             return GpuFlushType::ImplicitWeakHint;
     }
 
+
+    void D3D9DeviceEx::L4D2VRSetMirroredFrontFace(bool mirrored) {
+        D3D9DeviceLock lock = LockDevice();
+        if (m_l4d2vrMirroredFrontFace == mirrored)
+            return;
+        m_l4d2vrMirroredFrontFace = mirrored;
+        m_flags.set(D3D9DeviceFlag::DirtyRasterizerState);
+    }
+
+}
+
+// L4D2VR/hooks/hooks_misc.inl: bracket a mirrored viewmodel draw.
+extern "C" void L4D2VR_DxvkSetMirroredFrontFace(IDirect3DDevice9* device, int mirrored) {
+    if (!device)
+        return;
+    static_cast<dxvk::D3D9DeviceEx*>(device)->L4D2VRSetMirroredFrontFace(mirrored != 0);
 }

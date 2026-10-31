@@ -330,13 +330,15 @@ namespace
         { "HolsterInstantDraw", CfgOptionType::Bool, "Hands / Holsters", "Instant weapon switches", 0.0f, 0.0f, "true" },
         { "AmbidextrousItemHands", CfgOptionType::Bool, "Hands / Holsters", "Use items in the hand that takes them", 0.0f, 0.0f, "true" },
         { "ItemHandOffRadiusMeters", CfgOptionType::Float, "Hands / Holsters", "Hand-off reach (m)", 0.05f, 0.3f, "0.14" },
+        { "ItemHandMirror", CfgOptionType::Bool, "Hands / Holsters", "Mirror the hands for a left-held item", 0.0f, 0.0f, "true" },
         { "MeleeGripReachMeters", CfgOptionType::Float, "Hands / Melee", "Melee grip reach (m)", 0.0f, 0.4f, "0.12" },
         { "MotionOnlyMeleeAndShove", CfgOptionType::Bool, "Hands / Melee", "Motion-only melee and shove", 0.0f, 0.0f, "true" },
         { "MenuLaserPointerEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Menu laser pointer", 0.0f, 0.0f, "true" },
         { "HolsterReleaseDrop", CfgOptionType::Bool, "Hands / Holsters", "Drop held items on grip release", 0.0f, 0.0f, "true" },
         { "GripToggle", CfgOptionType::Bool, "Hands / Holsters", "Toggle grips", 0.0f, 0.0f, "true" },
         { "ManualThrowPinRequired", CfgOptionType::Bool, "Weapons / Throwables", "Pull the pin before a grip throw", 0.0f, 0.0f, "true" },
-        { "ManualThrowHandVelocityScale", CfgOptionType::Float, "Weapons / Throwables", "Hand throw velocity scale", 0.0f, 10.0f, "3.0" },
+        { "ManualThrowHandVelocityScale", CfgOptionType::Float, "Weapons / Throwables", "Hand throw boost", 0.0f, 10.0f, "1.5" },
+        { "ThrowableHoldAngleOffsetDeg", CfgOptionType::Vec3, "Weapons / Throwables", "Grenade hold turn (deg)", -90.0f, 90.0f, "0,0,20" },
         { "ManualThrowVelocityWindowMs", CfgOptionType::Int, "Weapons / Throwables", "Hand throw velocity window (ms)", 20.0f, 250.0f, "80" },
         { "ReloadPavlovTuning", CfgOptionType::Bool, "Hands / Manual Reload", "Pavlov reload tuning", 0.0f, 0.0f, "true" },
         { "MagazineSlapEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Magazine slap", 0.0f, 0.0f, "true" },
@@ -362,6 +364,7 @@ namespace
         { "ConsumableGesturesEnabled", CfgOptionType::Bool, "Hands / Items", "Pills and adrenaline gestures", 0.0f, 0.0f, "true" },
         { "ConsumableGiveEnabled", CfgOptionType::Bool, "Hands / Items", "Hand pills/adrenaline to teammates", 0.0f, 0.0f, "true" },
         { "VrHandsTwoHandedStabilizerEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Two-hand aim stabilizer", 0.0f, 0.0f, "true" },
+        { "VrHandsTwoHandedAimShortGunsRearHandOnly", CfgOptionType::Bool, "Hands / VR Hands", "Short guns aim from the trigger hand", 0.0f, 0.0f, "true" },
         { "HandPosesEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Pavlov hand poses", 0.0f, 0.0f, "true" },
         { "HandPoseBlendSeconds", CfgOptionType::Float, "Hands / VR Hands", "Hand pose blend time", 0.0f, 1.0f, "0.2" },
         { "HandPoseTriggerFingerScale", CfgOptionType::Float, "Hands / VR Hands", "Trigger finger movement", 0.0f, 2.0f, "1.0" },
@@ -1118,14 +1121,16 @@ namespace
         { "MagazineSlapEnabled", "Hands / Manual Reload", "Magazine Slap", "On the AK-47, SG552 and military sniper you can take a fresh magazine from your off-hand waist while the old one is still in. Strike the old magazine out with it (Pavlov VR's mag slap), then insert the fresh one; let go of the trigger (the grip with trigger interactions off) to put it back.", "The magazines collide: the strike must push the old one out of the well or toward the muzzle at 0.43 m/s (AK-47) or 0.55 m/s (others); slow pushes, glancing touches and pushes into the well never knock it out. With a release button you can also press it while holding the fresh magazine." },
         { "ReloadPavlovTuning", "Hands / Manual Reload", "Pavlov Reload Tuning", "Each gun uses Pavlov VR's numbers for how far you pull the slide, bolt or pump, where the round chambers on the way back, and how deep a magazine must go in.", "Your own per-weapon MagazineInteraction...Overrides still take priority." },
         { "ManualReloadMagazineHandRotationOffsetDeg", "Hands / Manual Reload", "Spare Magazine Turn In Hand", "A spare magazine or shell from your waist is held the way it sits in the gun: with your off hand turned like your gun hand and raised a little nose-up (Pavlov VR's lean, 15 degrees, 5 for pistols, Uzi and MAC-10) it lines up with the well. This turns it further in your hand.", "Degrees about the controller's x (right), y (up) and z (back) axes; 0,0,0 keeps the natural hold." },
-        { "ManualThrowPinRequired", "Weapons / Throwables", "Pin Before Grip Throw", "Grenades (Pavlov style, on servers with hand throws): the grip holds the grenade, the trigger pulls the pin, letting go of the grip throws it from your hand. Without the pin, letting go drops the grenade as an item. Holding the trigger through the swing and letting go of it throws too.", "Turn off to throw live grenades on every grip release, without pulling the pin first." },
-        { "ManualThrowHandVelocityScale", "Weapons / Throwables", "Hand Throw Velocity Scale", "Multiplies the hand's measured release speed for grenades thrown from the hand when you host the game (dedicated servers use their own ThrowHandVelocityScale). Your own walking or running speed is added unscaled.", "3.0 is Pavlov's grenade speed multiplier; lower it for shorter, more literal throws." },
+        { "ManualThrowPinRequired", "Weapons / Throwables", "Pin Before Grip Throw", "Grenades (on servers with hand throws): hold the trigger of the hand holding the grenade to pull the pin, swing, and let go of the trigger to throw. Letting go of the grip with the trigger held throws too; without the pin, letting go of the grip drops the grenade as an item.", "Turn off to throw live grenades on every grip release, without pulling the pin first." },
+        { "ManualThrowHandVelocityScale", "Weapons / Throwables", "Hand Throw Velocity Scale", "The grenade leaves with your hand's release speed times this boost (when you host the game, and for aiming the throw on plain servers; dedicated servers use their own ThrowHandVelocityScale). Your own walking or running speed is added unscaled.", "1.5 is a bit more than your arm; 1.0 is literal, higher throws further." },
+        { "ThrowableHoldAngleOffsetDeg", "Weapons / Throwables", "Grenade Hold Turn", "Turns a held grenade, molotov or bile jar in your hand (pitch, yaw, roll in degrees). The game's own hold leans it in toward your body; the default roll stands it up.", "Mirrored automatically when the grenade is in your left hand." },
         { "ManualThrowVelocityWindowMs", "Weapons / Throwables", "Hand Throw Velocity Window", "How many milliseconds of hand motion before the release set a hand throw's velocity (blended toward the fastest part by Peak Velocity Blend).", "Shorter follows the last flick; longer is steadier." },
         { "GripToggle", "Hands / Holsters", "Toggle Grips", "One firm squeeze takes an item and your hand keeps it; the next squeeze lets it go: inside its own holster it is put away, anywhere else it is dropped. Turn off to hold the grip instead.", "The off-hand trigger holds magazines, slides and bolts while pulled; the front of a two-handed gun is its own grip toggle." },
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). SteamVR and the OpenXR backend bring their own laser, which then works on every panel." },
         { "HolsterInstantDraw", "Hands / Holsters", "Instant Weapon Switches", "Every weapon switch (holster draws, pickups, slot keys, after a throw or a medkit) puts the item straight into your hand: the draw animation never plays.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
         { "AmbidextrousItemHands", "Hands / Holsters", "Ambidextrous Items", "The hand that takes an item holds and uses it: draw a gun with your left hand and it aims and fires from the left trigger, a grenade drawn left is thrown from the left. Your other hand becomes the support hand (foregrip, magazines, slides) and the magazine pouch moves to its hip.", "Hand an item over by squeezing it with your free hand, or let go with the item hand while the free hand holds the foregrip." },
+        { "ItemHandMirror", "Hands / Holsters", "Mirrored Left Hand", "An item in your left hand is held by a proper left hand (the survivor's right hand mirrored, finger poses included) and your free right hand shows a right hand.", "Off: the survivor's right hand holds it on your left controller and the hands cross over." },
         { "ItemHandOffRadiusMeters", "Hands / Holsters", "Hand-Off Reach", "How close your free hand must be to the item hand for its squeeze to take the item over.", "Squeezes on the foregrip, a magazine, the bolt or slide do those instead." },
         { "MagazineEmptyGlowEnabled", "Hands / Manual Reload", "Glow Empty Magazine", "An empty gun never reloads by itself; its magazine glows instead.", "" },
         { "MagazineDropEnabled", "Hands / Manual Reload", "Drop Released Magazines", "Released magazines fall to the floor and disappear after a while.", "" },
@@ -1141,6 +1146,7 @@ namespace
         { "PhysicalShoveEnabled", "Weapons / Melee", "Physical Shove", "Thrust a melee weapon forward or bash with a gun to shove in that direction.", "" },
         { "GunBashSweepEnabled", "Weapons / Melee", "Sweep Bash", "A fast, level, sideways swing of the gun in front of you also shoves, toward the gun.", "Pushing the gun forward along the barrel always bashes." },
         { "ConsumableGiveEnabled", "Hands / Items", "Give To Teammates", "Hold pills or adrenaline against a teammate's chest for a moment to hand them over.", "Works on every server." },
+        { "VrHandsTwoHandedAimShortGunsRearHandOnly", "Hands / VR Hands", "Short Guns: Trigger Hand Aims", "Pistols, the magnum and the SMGs (Uzi, silenced SMG, MP5) aim from the trigger hand only; your other hand on them steadies the recoil but does not turn the gun. Rifles, shotguns and the rest keep two-handed aim.", "Off: the support hand steers short guns too." },
         { "VrHandsTwoHandedStabilizerEnabled", "Hands / VR Hands", "Two-hand Stabilizer", "Adaptive smoothing of two-handed aim, like Half-Life 2 VR: steady while holding still, responsive while moving.", "Replaces Two-hand Aim Smoothing while on." },
         { "HandPosesEnabled", "Hands / VR Hands", "Pavlov Hand Poses", "The survivor's hands hold things like Pavlov VR: each gun's magazine, shell, slide, charging handle, pump or bolt gets its Pavlov grip, the trigger finger curls with the pull and straightens along the frame after two seconds off the trigger, and a free hand rests, points and makes a fist with your fingers.", "Off: the older finger curls only." },
         { "HandPoseBlendSeconds", "Hands / VR Hands", "Hand Pose Blend Time", "How quickly the fingers close on an item (Pavlov's grab blend; 60% of it on a slide, bolt or pump).", "0.2 s by default; 0 snaps." },
@@ -2681,7 +2687,7 @@ ManualThrowVelocityWindowTicks=5
 ManualThrowPeakVelocityBlend=0.5
 ManualThrowMaxVelocity=1400.0
 ManualThrowPinRequired=true
-ManualThrowHandVelocityScale=3.0
+ManualThrowHandVelocityScale=1.5
 ManualThrowVelocityWindowMs=80
 
 # Object pull uses the existing weapon-hand Grip binding; there is no separate SteamVR Object Pull action.

@@ -133,6 +133,8 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     // lags and pivots about it.
     bool lagValid = false;
     l4d2vr_melee_inertia::Pose delta{};
+    // The unlagged viewmodel axes, for the drawn-weapon self-test reference.
+    const Vector unlaggedForward = m_ViewmodelForward, unlaggedRight = m_ViewmodelRight, unlaggedUp = m_ViewmodelUp;
     if (meleeActive && m_MeleeInertiaEnabled)
     {
         const Vector gripWorld = GetRightControllerViewmodelAbsPos();
@@ -188,6 +190,28 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         m_MeleeInertiaDeltaValid = lagValid;
     }
     m_MeleeLaggedPoseValid = lagValid;
+    // Self-test reference for the drawn weapon: with mat_queue_mode 0 this
+    // frame's viewmodel is drawn from exactly this pose (under queued
+    // rendering ApplyMeleeInertiaToViewmodel publishes the render thread's).
+    if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+    {
+        l4d2vr_melee_inertia::Quat serverLag{};
+        if (lagValid)
+        {
+            // The rotation from the controller to the pose the usercmd carries
+            // (BuildEncodedVRUsercmdControllerPose / the melee command snapshot).
+            Vector sentForward{}, sentRight{}, sentUp{};
+            QAngle::AngleVectors(m_MeleeLaggedControllerAng, &sentForward, &sentRight, &sentUp);
+            l4d2vr_melee_inertia::Quat controller{}, sent{};
+            if (l4d2vr_melee_inertia::QuatFromAxes(m_RightControllerForward, m_RightControllerRight, m_RightControllerUp, controller) &&
+                l4d2vr_melee_inertia::QuatFromAxes(sentForward, sentRight, sentUp, sent))
+                serverLag = l4d2vr_melee_inertia::QuatNormalize(l4d2vr_melee_inertia::QuatMultiply(sent,
+                    l4d2vr_melee_inertia::QuatConjugate(controller)));
+        }
+        PublishMeleeDrawnState(meleeActive, serverLag, lagValid ? m_MeleeInertiaSpring.LagDeg() : 0.0f);
+        if (!m_Game || m_Game->GetMatQueueMode() == 0)
+            PublishMeleeDrawnPose(GetRightControllerViewmodelAbsPos(), unlaggedForward, unlaggedRight, unlaggedUp);
+    }
 
     // Gesture sample from the weapon hand (the lagged pose when it exists), in
     // tracking space. Without a lag the hand and head come straight from the
@@ -421,6 +445,11 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
 
 bool VR::ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const
 {
+    // Queued rendering: the render thread's fresher controller pose is what the
+    // drawn weapon is built from, so it is the drawn-weapon test's reference.
+    if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+        PublishMeleeDrawnPose(position + forward * m_ViewmodelPosOffset.x + right * m_ViewmodelPosOffset.y +
+            up * m_ViewmodelPosOffset.z, forward, right, up);
     l4d2vr_melee_inertia::Pose delta{};
     {
         std::lock_guard<std::mutex> lock(m_MeleeInertiaMutex);
@@ -435,24 +464,114 @@ bool VR::ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up
     const l4d2vr_melee_inertia::Pose lagged = l4d2vr_melee_inertia::ApplyLagDelta(current, delta);
     if (!l4d2vr_melee_inertia::PoseFinite(lagged))
         return false;
-    const Vector gripBefore = position + forward * m_ViewmodelPosOffset.x + right * m_ViewmodelPosOffset.y +
-        up * m_ViewmodelPosOffset.z;
     l4d2vr_melee_inertia::QuatToAxes(lagged.orientation, forward, right, up);
     position = lagged.position * scale;
-    // What the drawn weapon shows, for the meleelag self-test: its angle to the
-    // controller and how far the grip moved off the hand (0 when welded).
-    if (m_MeleeDrawnLagRecord.load(std::memory_order_acquire))
-    {
-        const float lagDeg = l4d2vr_melee_inertia::QuatAngleBetween(current.orientation, lagged.orientation) *
-            l4d2vr_melee_inertia::kRadToDeg;
-        const Vector gripAfter = position + forward * m_ViewmodelPosOffset.x + right * m_ViewmodelPosOffset.y +
-            up * m_ViewmodelPosOffset.z;
-        const float drift = (gripAfter - gripBefore).Length() / scale;
-        float seen = m_MeleeDrawnLagMaxDeg.load(std::memory_order_relaxed);
-        while (lagDeg > seen && !m_MeleeDrawnLagMaxDeg.compare_exchange_weak(seen, lagDeg)) {}
-        seen = m_MeleeDrawnGripDriftMax.load(std::memory_order_relaxed);
-        while (drift > seen && !m_MeleeDrawnGripDriftMax.compare_exchange_weak(seen, drift)) {}
-        m_MeleeDrawnFrames.fetch_add(1u, std::memory_order_relaxed);
-    }
     return true;
+}
+
+void VR::PublishMeleeDrawnState(bool melee, const l4d2vr_melee_inertia::Quat& serverLag, float springLagDeg) const
+{
+    std::lock_guard<std::mutex> lock(m_MeleeDrawnReferenceMutex);
+    m_MeleeDrawnReference.melee = melee;
+    m_MeleeDrawnReference.serverLag = serverLag;
+    m_MeleeDrawnReference.springLagDeg = springLagDeg;
+}
+
+void VR::PublishMeleeDrawnPose(const Vector& grip, const Vector& forward, const Vector& right, const Vector& up) const
+{
+    l4d2vr_melee_inertia::Quat unlagged{};
+    const bool valid = l4d2vr_melee_inertia::Finite(grip) && l4d2vr_melee_inertia::QuatFromAxes(forward, right, up, unlagged);
+    std::lock_guard<std::mutex> lock(m_MeleeDrawnReferenceMutex);
+    m_MeleeDrawnReference.poseValid = valid;
+    if (!valid)
+        return;
+    m_MeleeDrawnReference.grip = grip;
+    m_MeleeDrawnReference.unlagged = unlagged;
+}
+
+// The viewmodel's root bone as submitted for drawing (after every viewmodel
+// bone hook). At rest (spring lag under 0.25 deg) it calibrates where the
+// root bone and the hand sit in the unlagged viewmodel frame; while the
+// meleelag self-test records, it measures how far the drawn weapon is turned
+// from the unlagged pose, how far the drawn grip left the hand, and how far
+// the drawn weapon is from the pose the usercmd sends to the server.
+void VR::RecordMeleeDrawnBones(const void* model, const float (*rootBones)[3][4], const char* modelName,
+    bool viewmodelClass) const
+{
+    namespace mi = l4d2vr_melee_inertia;
+    MeleeDrawnReference reference{};
+    {
+        std::lock_guard<std::mutex> lock(m_MeleeDrawnReferenceMutex);
+        reference = m_MeleeDrawnReference;
+    }
+    // Why draws were not measured (self-test diagnostics, once a second while recording).
+    static uint32_t s_Calls = 0u, s_NoReference = 0u, s_NoBones = 0u, s_Collapsed = 0u, s_Calibrations = 0u,
+        s_Uncalibrated = 0u;
+    static uint64_t s_LastLogMs = 0u;
+    ++s_Calls;
+    const uint64_t nowMs = GetTickCount64();
+    if (m_MeleeDrawnLagRecord.load(std::memory_order_acquire) && nowMs - s_LastLogMs >= 1000u)
+    {
+        s_LastLogMs = nowMs;
+        Game::logMsg("[VR][SelfTest] meleelag draws: model=%s class=%d calls=%u noReference=%u (melee=%d pose=%d) noBones=%u collapsed=%u calibrations=%u uncalibrated=%u",
+            modelName ? modelName : "?", viewmodelClass ? 1 : 0, s_Calls, s_NoReference, reference.melee ? 1 : 0,
+            reference.poseValid ? 1 : 0, s_NoBones, s_Collapsed, s_Calibrations, s_Uncalibrated);
+    }
+    MeleeDrawnCalibration& calibration = m_MeleeDrawnCalibration;
+    if (!reference.melee || !reference.poseValid || !model)
+    {
+        ++s_NoReference;
+        return;
+    }
+    if (!rootBones)
+    {
+        ++s_NoBones;
+        return;
+    }
+    const float (&root)[3][4] = *rootBones;
+    if (calibration.model != model)
+    {
+        calibration = MeleeDrawnCalibration{};
+        calibration.model = model;
+    }
+    // Source bone matrices: columns are the bone's x (forward), y (left), z (up).
+    const Vector forward(root[0][0], root[1][0], root[2][0]);
+    const Vector left(root[0][1], root[1][1], root[2][1]);
+    const Vector up(root[0][2], root[1][2], root[2][2]);
+    const Vector origin(root[0][3], root[1][3], root[2][3]);
+    mi::Quat drawn{};
+    if (forward.Length() < 0.5f || up.Length() < 0.5f || !mi::QuatFromAxes(forward, -left, up, drawn) || !mi::Finite(origin))
+    {
+        ++s_Collapsed;
+        return; // collapsed (hidden) bones
+    }
+    const bool recording = m_MeleeDrawnLagRecord.load(std::memory_order_acquire);
+    if (!recording && reference.springLagDeg < 0.25f)
+    {
+        calibration.rootLocal = mi::QuatNormalize(mi::QuatMultiply(mi::QuatConjugate(reference.unlagged), drawn));
+        calibration.gripLocal = mi::QuatRotate(mi::QuatConjugate(drawn), reference.grip - origin);
+        calibration.valid = true;
+        ++s_Calibrations;
+        return;
+    }
+    if (!recording || !calibration.valid)
+    {
+        s_Uncalibrated += recording ? 1u : 0u;
+        return;
+    }
+    const float scale = std::max(0.001f, m_VRScale);
+    // World rotation from the unlagged weapon to the drawn one.
+    const mi::Quat expected = mi::QuatNormalize(mi::QuatMultiply(reference.unlagged, calibration.rootLocal));
+    const mi::Quat drawnDelta = mi::QuatNormalize(mi::QuatMultiply(drawn, mi::QuatConjugate(expected)));
+    const float lagDeg = mi::QuatAngleBetween(mi::Quat{}, drawnDelta) * mi::kRadToDeg;
+    const float mismatchDeg = mi::QuatAngleBetween(drawnDelta, reference.serverLag) * mi::kRadToDeg;
+    const float drift = (origin + mi::QuatRotate(drawn, calibration.gripLocal) - reference.grip).Length() / scale;
+    auto raise = [](std::atomic<float>& value, float sample) {
+        float seen = value.load(std::memory_order_relaxed);
+        while (sample > seen && !value.compare_exchange_weak(seen, sample)) {}
+    };
+    raise(m_MeleeDrawnLagMaxDeg, lagDeg);
+    raise(m_MeleeDrawnGripDriftMax, drift);
+    raise(m_MeleeDrawnServerMismatchMaxDeg, mismatchDeg);
+    m_MeleeDrawnFrames.fetch_add(1u, std::memory_order_relaxed);
 }

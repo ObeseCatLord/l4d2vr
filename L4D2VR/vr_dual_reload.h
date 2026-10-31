@@ -38,6 +38,9 @@ namespace l4d2vr_dual_reload
     constexpr int kGunCapacity = 15;
     constexpr int kMaxCapacity = 64;
     constexpr int kMaxReserve = 5000;
+    // How far the request's command may be from the newest command the host
+    // decoded, either way (a stalled host or a long frame queue).
+    constexpr std::int64_t kCommandWindow = 64;
 
     // ---- Vectors ----------------------------------------------------------------------------------
     struct V3 { float x = 0.0f, y = 0.0f, z = 0.0f; };
@@ -502,8 +505,8 @@ namespace l4d2vr_dual_reload
             if (!state.eligible || !l4d2vr_shell::ValidHandle(request.handle) || request.handle != state.handle)
                 reply.status = Status::Weapon;
             else if (!request.command || !state.latestCommand ||
-                static_cast<std::int64_t>(state.latestCommand) - request.command > 48 ||
-                static_cast<std::int64_t>(request.command) - state.latestCommand > 8 ||
+                static_cast<std::int64_t>(state.latestCommand) - request.command > kCommandWindow ||
+                static_cast<std::int64_t>(request.command) - state.latestCommand > kCommandWindow ||
                 state.clip != request.clip || state.reserve != request.reserve)
                 reply.status = Status::Stale;
             else if (!NativeReload(state.clip, state.reserve, state.infinite, state.capacity, result) || result.added <= 0)

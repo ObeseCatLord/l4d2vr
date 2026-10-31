@@ -2089,6 +2089,7 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
 
     Vector origin = useAutoGripAimPose ? originBase : originBase + direction * 2.0f;
 
+    bool ironSightRay = false;
     // Iron sights: the bullet ray is the drawn gun's sight line (rear sight
     // to front sight), so the shot lands where the sights point at every
     // distance. A scope that changes the aim keeps its own camera ray.
@@ -2101,6 +2102,7 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
             origin = sightOrigin;
             direction = sightDirection;
             m_LastAimDirection = direction;
+            ironSightRay = true;
         }
     }
 
@@ -2137,7 +2139,11 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
 
     // Treat the aim line as a viewmodel-layer ray in every server mode. Remote
     // non-VR servers still get a separate eye-ray solve below for cmd->viewangles.
-    if (VR_FormatAimLineSegmentToViewmodelLayer(this, origin, target))
+    // The iron sight ray is already where the drawn gun is in the world (the
+    // viewmodel is rendered with the eye's own projection), so it is not
+    // reprojected: that would tilt it away from the visible sights whenever the
+    // gun is off the view centre (the render aspect differs from the FOV's).
+    if (!ironSightRay && VR_FormatAimLineSegmentToViewmodelLayer(this, origin, target))
     {
         Vector formattedDirection = target - origin;
         if (!formattedDirection.IsZero())

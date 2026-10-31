@@ -25624,6 +25624,21 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     if (info.pModel)
     {
         modelName = m_Game->m_ModelInfo->GetModelName(info.pModel);
+        if (m_VR->m_MeleeDrawnLagRecord.load(std::memory_order_relaxed) &&
+            modelName.find("v_") != std::string::npos)
+        {
+            // meleelag self-test diagnostics: viewmodel draws entering this hook.
+            static uint32_t s_Entered = 0u;
+            static uint64_t s_LastLogMs = 0u;
+            ++s_Entered;
+            const uint64_t nowMs = GetTickCount64();
+            if (nowMs - s_LastLogMs >= 1000u)
+            {
+                s_LastLogMs = nowMs;
+                Game::logMsg("[VR][SelfTest] meleelag draw entered: model=%s bones=%d entered=%u flags=0x%X",
+                    modelName.c_str(), pCustomBoneToWorld ? 1 : 0, s_Entered, static_cast<unsigned>(info.flags));
+            }
+        }
         // In desktop-mirror overlay hide mode, special-infected arrows are cached
         // from the RenderView hook at a fixed stereo-pass point. Never scan from
         // DrawModelExecute in that mode: under mat_queue_mode 2 this hook can run
@@ -26452,6 +26467,21 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
 
     // Capture the final matrices, including the independent pistol transform.
     MaybeCaptureViewmodelMuzzleSmokePose(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
+    // The meleelag self-test measures the melee weapon as it is drawn: its root
+    // bone after every viewmodel bone hook above.
+    if (m_VR && m_VR->m_IsVREnabled && !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
+        l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
+    {
+        const std::string lowerDrawn = vr_vm_stabilize::ToLowerAscii(modelName);
+        if ((drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerDrawn)) &&
+            !HooksModelNameIsArmsOrHands(lowerDrawn) && !HooksDrawIsHolsteredItem(m_VR, info))
+        {
+            vr_vm_stabilize::Mat3x4 root{};
+            const bool haveBones = pBonesToWorldFinal && vr_vm_stabilize::SafeRead(pBonesToWorldFinal, root);
+            m_VR->RecordMeleeDrawnBones(info.pModel, haveBones ? &root.m : nullptr, lowerDrawn.c_str(),
+                drawEntityIsViewmodelClass);
+        }
+    }
     if (drawEntityIsViewmodelClass && !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass)
         CapturePhysicalScopeLens(m_VR, state, modelName, reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBonesToWorldFinal));
     MaybeCaptureVrHandsVmPose(

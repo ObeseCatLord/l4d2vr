@@ -3103,10 +3103,34 @@ public:
 	bool m_MeleeSwingStartHaptics = false;         // MeleeSwingStartHaptics: pulse when a swing starts (hits always pulse)
 	uint64_t m_MeleeSwingNearMissLogMs = 0u;
 	std::atomic<float> m_MeleeLagDeg{ 0.0f };      // current lag of the held melee weapon (main thread)
-	// Drawn-weapon lag record for the meleelag self-test (render thread writes).
+	// Drawn-weapon lag record for the meleelag self-test. The reference is the
+	// unlagged viewmodel pose the drawn frame was built from (UpdateMeleeMotion
+	// under mat_queue_mode 0, the render thread's ApplyMeleeInertiaToViewmodel
+	// under queued rendering); RecordMeleeDrawnBones compares the root bone of
+	// the viewmodel that is actually submitted for drawing with it.
+	struct MeleeDrawnReference
+	{
+		bool melee = false;                       // a melee weapon is held (main thread)
+		bool poseValid = false;
+		Vector grip{ 0.0f, 0.0f, 0.0f };          // the hand (world)
+		l4d2vr_melee_inertia::Quat unlagged{};    // viewmodel orientation without the lag (world)
+		l4d2vr_melee_inertia::Quat serverLag{};   // controller -> pose the usercmd carries (world rotation)
+		float springLagDeg = 0.0f;
+	};
+	mutable std::mutex m_MeleeDrawnReferenceMutex;
+	mutable MeleeDrawnReference m_MeleeDrawnReference{};
+	struct MeleeDrawnCalibration
+	{
+		const void* model = nullptr;
+		bool valid = false;
+		l4d2vr_melee_inertia::Quat rootLocal{};   // root bone in the unlagged viewmodel frame (at rest)
+		Vector gripLocal{ 0.0f, 0.0f, 0.0f };     // the hand in the root bone's frame (at rest)
+	};
+	mutable MeleeDrawnCalibration m_MeleeDrawnCalibration{}; // draw thread only
 	std::atomic<bool> m_MeleeDrawnLagRecord{ false };
 	mutable std::atomic<float> m_MeleeDrawnLagMaxDeg{ 0.0f };
 	mutable std::atomic<float> m_MeleeDrawnGripDriftMax{ 0.0f };
+	mutable std::atomic<float> m_MeleeDrawnServerMismatchMaxDeg{ 0.0f };
 	mutable std::atomic<uint32_t> m_MeleeDrawnFrames{ 0u };
 	bool m_GunBashSweepEnabled = true; // GunBashSweepEnabled: a fast sideways swing of the gun also bashes
 	std::chrono::steady_clock::time_point m_MeleeMotionLastUpdate{};
@@ -3472,6 +3496,9 @@ public:
 	std::vector<RecoilTestSample> m_RecoilTestProjectile;
 	int m_RecoilTestProjectileEnt = -1;
 	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
+	void PublishMeleeDrawnState(bool melee, const l4d2vr_melee_inertia::Quat& serverLag, float springLagDeg) const;
+	void PublishMeleeDrawnPose(const Vector& grip, const Vector& forward, const Vector& right, const Vector& up) const;
+	void RecordMeleeDrawnBones(const void* model, const float (*root)[3][4], const char* modelName, bool viewmodelClass) const;
 	std::chrono::steady_clock::time_point m_ReloadGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_JumpGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_SecondaryGestureCooldownEnd{};

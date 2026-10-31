@@ -5,10 +5,14 @@
 //       count), 0.3 s, 0.2 s and 0.14 s (must count once each), each after a
 //       slow wind-up that must not count either. For every slash it records the
 //       weapon's lag behind the controller on the update thread and on the
-//       drawn (rendered) weapon, how far the drawn grip left the hand, and
-//       compares the lag with the lag spring replayed on the same path at
-//       90 Hz. Then three photographed slashes at 0.2 s: meleelag_<w>_rest (held
-//       still), _mid (halfway through the slash) and _late (three quarters).
+//       drawn weapon (the root bone of the viewmodel as submitted for drawing,
+//       after every viewmodel bone hook; VR::RecordMeleeDrawnBones), how far
+//       the drawn grip left the hand, how far the drawn weapon is from the
+//       pose the usercmd sends to the server, and compares the lag with the lag
+//       spring replayed on the same path at 90 Hz. Then photographed slashes at
+//       0.2 s: meleelag_<w>_rest (held still), _mid (halfway through the
+//       slash), _late (three quarters) and _mid_nolag (halfway, with the lag
+//       turned off for the comparison).
 
 namespace
 {
@@ -16,7 +20,7 @@ namespace
     {
         float seconds = 0.0f;   // slash duration
         bool counts = false;    // must register as a swing
-        float laggedPeak = 0.0f, drawnPeak = 0.0f, drift = 0.0f, model = 0.0f;
+        float laggedPeak = 0.0f, drawnPeak = 0.0f, drift = 0.0f, model = 0.0f, serverMismatch = 0.0f;
         uint32_t swings = 0u, frames = 0u;
     };
 
@@ -53,9 +57,34 @@ namespace
     }
 
     float s_MeleeLagFastestPeak[2] = { -1.0f, -1.0f }; // [0] long weapon, [1] short weapon, for the comparison
+
+    // A melee weapon with the same lag spring and swing gates (same weapon
+    // class), for a weapon the map does not offer: the server only creates
+    // the melee weapons the campaign's mission file lists (Dead Air has no
+    // machete and no fire axe). machete -> tonfa, fireaxe -> electric_guitar.
+    std::string MeleeLagStandIn(const std::string& name)
+    {
+        namespace mi = l4d2vr_melee_inertia;
+        std::size_t count = 0;
+        const mi::MeleeProfile* const profiles = mi::MeleeProfiles(count);
+        const mi::MeleeProfile* asked = nullptr;
+        for (std::size_t i = 0; i < count; ++i)
+            if (name == profiles[i].name) asked = &profiles[i];
+        if (!asked)
+            return std::string();
+        const bool askedShort = asked->reach < mi::kShortWeaponReach;
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const mi::MeleeProfile& p = profiles[i];
+            if (&p != asked && p.hz == asked->hz && p.zeta == asked->zeta && p.maxLagDeg == asked->maxLagDeg &&
+                (p.reach < mi::kShortWeaponReach) == askedShort && name != "chainsaw" && std::string(p.name) != "chainsaw")
+                return p.name;
+        }
+        return std::string();
+    }
 }
 
-bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled)
+bool VR::RunMeleeSelfTestStep(const std::string& step, float stepTime, C_BasePlayer* player, bool& handled)
 {
     if (step.rfind("meleelag=", 0) != 0)
         return false;
@@ -67,7 +96,16 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
     static float s_LaggedPeak = 0.0f;
     static float s_SwingStart = 0.0f;
     static bool s_Measuring = false;
+    static bool s_InertiaWasEnabled = true;
     static std::string s_ScriptName;
+    static std::string s_StandIn;   // the stand-in being drawn instead of `weapon`, if any
+    static float s_TimeShift = 0.0f; // the timeline restarts when a stand-in is drawn
+    if (m_SelfTestStage == 0)
+    {
+        s_TimeShift = 0.0f;
+        s_StandIn.clear();
+    }
+    const float t = stepTime - s_TimeShift;
     bool fired = false;
     auto at = [&](int stage, float when) {
         if (fired || m_SelfTestStage != stage || t < when) return false;
@@ -109,14 +147,31 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
         const bool melee = SelfTestActiveWeaponId(player) == C_WeaponCSBase::MELEE;
         Game::logMsg("[VR][SelfTest] INFO meleelag: asked for %s, holding %s (weapon id %d)", weapon.c_str(),
             s_ScriptName.empty() ? "nothing" : s_ScriptName.c_str(), SelfTestActiveWeaponId(player));
-        if (!melee || s_ScriptName != weapon)
+        const std::string& wanted = s_StandIn.empty() ? weapon : s_StandIn;
+        if (!melee || s_ScriptName != wanted)
         {
+            const std::string standIn = s_StandIn.empty() ? MeleeLagStandIn(weapon) : std::string();
+            if (!standIn.empty())
+            {
+                // Not on this map's melee list: measure the weapon with the same
+                // lag spring and swing gates instead, from a fresh timeline.
+                Game::logMsg("[VR][SelfTest] INFO meleelag: %s is not on this map's melee list (holding '%s'); measuring %s, which has the same lag spring and swing gates",
+                    weapon.c_str(), s_ScriptName.c_str(), standIn.c_str());
+                s_StandIn = standIn;
+                cmd("give " + standIn);
+                s_TimeShift = stepTime;
+                m_SelfTestStage = 1;
+                return false;
+            }
             char detail[192];
-            std::snprintf(detail, sizeof(detail), "%s is not available on this map (holding '%s')", weapon.c_str(),
+            std::snprintf(detail, sizeof(detail), "%s is not available on this map (holding '%s')", wanted.c_str(),
                 s_ScriptName.c_str());
             SelfTestReport("meleelag: weapon drawn", false, detail);
             return true;
         }
+        if (!s_StandIn.empty())
+            Game::logMsg("[VR][SelfTest] INFO meleelag: measuring %s in place of %s (its checks below carry the stand-in's name)",
+                s_StandIn.c_str(), weapon.c_str());
         windUp();
     }
 
@@ -134,6 +189,7 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             s_LaggedPeak = 0.0f;
             m_MeleeDrawnLagMaxDeg.store(0.0f, std::memory_order_release);
             m_MeleeDrawnGripDriftMax.store(0.0f, std::memory_order_release);
+            m_MeleeDrawnServerMismatchMaxDeg.store(0.0f, std::memory_order_release);
             m_MeleeDrawnFrames.store(0u, std::memory_order_release);
             m_MeleeDrawnLagRecord.store(true, std::memory_order_release);
             s_SwingStart = t;
@@ -147,13 +203,14 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             swing.laggedPeak = s_LaggedPeak;
             swing.drawnPeak = m_MeleeDrawnLagMaxDeg.load(std::memory_order_acquire);
             swing.drift = m_MeleeDrawnGripDriftMax.load(std::memory_order_acquire);
+            swing.serverMismatch = m_MeleeDrawnServerMismatchMaxDeg.load(std::memory_order_acquire);
             swing.frames = m_MeleeDrawnFrames.load(std::memory_order_acquire);
             swing.swings = m_MeleeSwingStartSerial.load(std::memory_order_acquire) - s_SerialBase;
             swing.model = MeleeLagModelPeak(m_MeleeMotionParams, swing.seconds);
-            Game::logMsg("[VR][SelfTest] INFO meleelag %s: %.2f s slash (peak %.0f deg/s, hand %.1f m/s): lag %.1f deg (drawn %.1f, model %.1f), grip drift %.2f cm over %u drawn frames, %u swing(s)",
+            Game::logMsg("[VR][SelfTest] INFO meleelag %s: %.2f s slash (peak %.0f deg/s, hand %.1f m/s): lag %.1f deg (drawn %.1f, model %.1f), grip drift %.2f cm, drawn vs usercmd pose %.2f deg over %u drawn frames, %u swing(s)",
                 s_ScriptName.c_str(), swing.seconds, 1.5f * 120.0f / swing.seconds,
                 1.5f * l4d2vr_selftest::Distance(kMeleeLagFrom, kMeleeLagTo) / swing.seconds, swing.laggedPeak,
-                swing.drawnPeak, swing.model, swing.drift * 100.0f, swing.frames, swing.swings);
+                swing.drawnPeak, swing.model, swing.drift * 100.0f, swing.serverMismatch, swing.frames, swing.swings);
         }
     }
     if (s_Measuring)
@@ -161,13 +218,22 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
 
     // Photographed slashes (a picture stalls the game, so none is measured).
     const float photos = base + 2.2f * 4.0f;
-    const char* const names[3] = { "rest", "mid", "late" };
-    for (int i = 0; i < 3; ++i)
+    // The last one is the mid-slash photo again with the lag turned off, so the
+    // two pictures show what the lag does to the drawn weapon.
+    const char* const names[4] = { "rest", "mid", "late", "mid_nolag" };
+    for (int i = 0; i < 4; ++i)
     {
         const float start = photos + 2.0f * static_cast<float>(i);
         const int stage = 14 + i * 3;
         if (at(stage, start))
+        {
+            if (i == 3)
+            {
+                s_InertiaWasEnabled = m_MeleeInertiaEnabled;
+                m_MeleeInertiaEnabled = false;
+            }
             windUp();
+        }
         if (at(stage + 1, start + 1.1f))
         {
             if (i == 0)
@@ -175,18 +241,19 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             else
                 slash(0.2f);
         }
-        if (at(stage + 2, start + 1.1f + (i == 1 ? 0.10f : i == 2 ? 0.15f : 0.5f)))
+        if (at(stage + 2, start + 1.1f + (i == 2 ? 0.15f : i == 0 ? 0.5f : 0.10f)))
         {
             if (i > 0)
                 SelfTestRequestShot("meleelag_" + s_ScriptName + "_" + names[i], 1);
         }
     }
 
-    if (at(23, photos + 6.5f))
+    if (at(26, photos + 8.5f))
     {
+        m_MeleeInertiaEnabled = s_InertiaWasEnabled;
         char detail[256];
         const MeleeLagSwing& slow = s_Swings[0];
-        bool countsOk = true, modelOk = true, drawnOk = true, weldOk = true, rising = true;
+        bool countsOk = true, modelOk = true, drawnOk = true, weldOk = true, serverOk = true, rising = true;
         std::string counts, lags;
         for (size_t i = 0; i < s_Swings.size(); ++i)
         {
@@ -194,7 +261,8 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             countsOk = countsOk && s.swings == (s.counts ? 1u : 0u);
             modelOk = modelOk && std::fabs(s.laggedPeak - s.model) <= std::max(3.0f, 0.25f * s.model);
             drawnOk = drawnOk && s.frames > 0u && std::fabs(s.drawnPeak - s.laggedPeak) <= std::max(4.0f, 0.2f * s.laggedPeak);
-            weldOk = weldOk && s.drift < 0.005f;
+            weldOk = weldOk && s.frames > 0u && s.drift < 0.005f;
+            serverOk = serverOk && s.frames > 0u && s.serverMismatch <= 2.0f;
             if (i > 0) rising = rising && s.laggedPeak > s_Swings[i - 1].laggedPeak;
             char part[96];
             std::snprintf(part, sizeof(part), "%s%.2fs:%u", i ? " " : "", s.seconds, s.swings);
@@ -208,10 +276,20 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
         SelfTestReport(("meleelag " + s_ScriptName + ": lag grows with swing speed and matches the lag spring").c_str(),
             modelOk && rising, detail);
         SelfTestReport(("meleelag " + s_ScriptName + ": the drawn weapon shows the lag").c_str(), drawnOk, detail);
-        float drift = 0.0f;
-        for (const MeleeLagSwing& s : s_Swings) drift = std::max(drift, s.drift);
-        std::snprintf(detail, sizeof(detail), "the drawn grip moved at most %.2f cm off the hand", drift * 100.0f);
+        float drift = 0.0f, mismatch = 0.0f;
+        uint32_t frames = 0u;
+        for (const MeleeLagSwing& s : s_Swings)
+        {
+            drift = std::max(drift, s.drift);
+            mismatch = std::max(mismatch, s.serverMismatch);
+            frames += s.frames;
+        }
+        std::snprintf(detail, sizeof(detail), "the drawn grip moved at most %.2f cm off the hand (%u drawn frames)",
+            drift * 100.0f, frames);
         SelfTestReport(("meleelag " + s_ScriptName + ": grip welded to the hand").c_str(), weldOk, detail);
+        std::snprintf(detail, sizeof(detail), "drawn weapon at most %.2f deg from the pose the usercmd sends (%u drawn frames)",
+            mismatch, frames);
+        SelfTestReport(("meleelag " + s_ScriptName + ": the server's melee sweep follows the drawn weapon").c_str(), serverOk, detail);
         // Short weapons trail less at full speed (lower lag limit, snappier spring).
         const bool shortWeapon = l4d2vr_melee_inertia::ShortWeapon(m_MeleeMotionParams);
         s_MeleeLagFastestPeak[shortWeapon ? 1 : 0] = s_Swings.back().laggedPeak;

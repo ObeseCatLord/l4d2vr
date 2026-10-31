@@ -8894,6 +8894,8 @@ namespace
             vr->m_RenderFrameSeq.load(std::memory_order_relaxed), false, outBones);
     }
 
+    inline bool HooksDrawIsHolsteredItem(const VR* vr, const ModelRenderInfo_t& info);
+
     // Publish the drawn bore direction (weapon_bone +Z) in the viewmodel's own
     // frame for crosshair-to-sights alignment.
     inline void PublishViewmodelSightBore(
@@ -8907,6 +8909,15 @@ namespace
             return;
         const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
         if (!HooksModelNameIsViewmodel(lowerModel) || HooksModelNameIsArmsOrHands(lowerModel))
+            return;
+        // Only the gun in the hand: guns on the holsters are drawn with their
+        // v_ models too, and their sights must never steer the aim or the
+        // sight calibration.
+        if (HooksDrawIsHolsteredItem(vr, info))
+            return;
+        const int stockId = l4d2vr_weapon_models::StockWeaponId(lowerModel);
+        const int activeId = vr->m_ActiveGunWeaponId.load(std::memory_order_acquire);
+        if (stockId != 0 && activeId != 0 && stockId != activeId)
             return;
 
         static std::unordered_map<std::string, int> s_weaponBoneByModel;

@@ -618,12 +618,14 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         QAngle::VectorAngles(m_RecoilPreKickForward, handWorld);
         const l4d2vr_recoil::Offset& o = m_RecoilHands[0].offset;
         Vector sightInHand{};
+        std::string sightModel;
         {
             std::lock_guard<std::mutex> lock(m_SightBoreMutex);
             sightInHand = m_SightFrontInHand - m_SightRearInHand;
+            sightModel = m_SightPointsModel;
         }
-        Game::logMsg("[VR][SelfTest] recoiltrace sight-in-hand p=%.2f y=%.2f", std::atan2(sightInHand.z, sightInHand.x) * 57.29578f,
-            std::atan2(sightInHand.y, sightInHand.x) * 57.29578f);
+        Game::logMsg("[VR][SelfTest] recoiltrace sight-in-hand p=%.2f y=%.2f from %s", std::atan2(sightInHand.z, sightInHand.x) * 57.29578f,
+            std::atan2(sightInHand.y, sightInHand.x) * 57.29578f, sightModel.c_str());
         Game::logMsg("[VR][SelfTest] recoiltrace t=%.2f shots=%llu offset p=%.2f y=%.2f b=%.2f | aim-in-hand p=%.2f y=%.2f | "
             "hand world p=%.2f y=%.2f (ref aim %.2f %.2f) | head yaw %.2f body yaw %.2f | foregrip=%d",
             t - fireStart, static_cast<unsigned long long>(m_RecoilHands[0].shots), o.pitchDeg, o.yawDeg, o.backCm,

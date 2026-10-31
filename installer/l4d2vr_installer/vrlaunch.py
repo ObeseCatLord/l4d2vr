@@ -421,6 +421,8 @@ def launch_monado(config: MonadoConfig, server: Optional[str] = None, password: 
     if created:
         log(f"Created OpenVR path registry {created}")
     state.mkdir(parents=True, exist_ok=True)
+    # Proton creates its prefix inside this folder but needs the folder itself.
+    (state / "proton-prefix").mkdir(parents=True, exist_ok=True)
     lock = open(state / "launch.lock", "a+")
     try:
         try:

@@ -75,6 +75,14 @@ CHANGES = [
     "OpenXR: the mod now talks to the headset through OpenXR only (no SteamVR/OpenVR files). Windows needs a 32-bit OpenXR runtime: SteamVR 2.17 or newer, Virtual Desktop or Meta Quest Link. Linux needs Proton Hotfix or Experimental with PROTON_USE_WOW64=1 (the installer sets both).",
     "OpenXR: controller bindings are built into the mod (SteamVR's binding screen no longer applies); menus use the controller laser and the in-mod keyboard.",
     "OpenXR: without a usable OpenXR runtime the game starts in desktop mode and vrmod_log.txt and the game console say why.",
+    "2.0.0: Pavlov VR recoil per gun (same values as Pavlov's equivalent guns): the gun kicks in your hand and recovers; holding the foregrip with the other hand tames heavy recoil. The gun no longer sways or plays L4D2's firing animation in your hand (GunRigidInHand).",
+    "2.0.0: no bullet spread for VR players: bullets go exactly along the iron sights, aligned on every gun; the crosshair is off by default (desktop players keep vanilla spread and crosshair).",
+    "2.0.0: shotguns fire the same evenly spread pellet pattern every shot, at L4D2's own pattern size (on servers running the mod).",
+    "2.0.0: ambidextrous: the hand that grabs an item holds and uses it; grips grab, triggers do magazines, slides, bolts and pumps (as in Pavlov); right stick click toggles the flashlight; no draw animation when switching.",
+    "2.0.0: physical magazine slap, hand-thrown grenades that leave your hand with its real motion, items you let go drop at your hand, and a more reliable motion bash that never triggers from turning.",
+    "2.0.0: dual pistols reload physically: magazine release, bring one pistol to the other hand to stack them, take the double magazine with the free hand, then rack each empty slide (DualPistolsPhysicalReloadEnabled).",
+    "2.0.0: melee swings feel like Ancient Dungeon VR: the grip stays in your hand and the blade trails behind fast swings; only fast, committed swings count; hits are felt in the controller.",
+    "2.0.0: survivor hand poses follow Pavlov's hand poses for holding guns, magazines, slides, grenades and items. The separate SteamVR glove models are retired.",
 ]
 
 

@@ -435,6 +435,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (handled)
             return done;
     }
+    // Physical dual-pistol reload (vr_selftest_dual_reload.inl).
+    {
+        bool handled = false;
+        const bool done = RunDualReloadSelfTestStep(step, t, player, handled);
+        if (handled)
+            return done;
+    }
 
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
@@ -442,9 +449,10 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "features")
     {
         const uint32_t mask = m_ServerFeatureMask.load(std::memory_order_acquire);
-        std::snprintf(detail, sizeof(detail), "serverAck=%d interaction=%u features=0x%03X handThrow=%d magProto=%d shellProto=%d",
+        std::snprintf(detail, sizeof(detail), "serverAck=%d interaction=%u features=0x%03X handThrow=%d magProto=%d shellProto=%d dualReloadTxn=%d",
             Hooks::s_ServerUnderstandsVR ? 1 : 0, m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire),
-            mask, HandThrowServerReady() ? 1 : 0, RemoteMagazineProtocolSupported() ? 1 : 0, RemoteShellProtocolSupported() ? 1 : 0);
+            mask, HandThrowServerReady() ? 1 : 0, RemoteMagazineProtocolSupported() ? 1 : 0, RemoteShellProtocolSupported() ? 1 : 0,
+            DualReloadHostTransactionAvailable() ? 1 : 0);
         // Dedicated plugin: every bit. Modded listen host: its own set.
         // Dedicated plugin: every bit (an older plugin: all but HandThrow).
         // Modded listen host: its own set, with HandThrow when its fields resolved.
@@ -452,6 +460,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         const uint32_t core = mask & ~l4d2vr_features::ShotgunPattern;
         SelfTestReport("server capabilities", Hooks::s_ServerUnderstandsVR &&
             (core == (l4d2vr_features::kKnownMask & ~l4d2vr_features::ShotgunPattern) ||
+                core == (l4d2vr_features::kPreDualMagTxnMask & ~l4d2vr_features::ShotgunPattern) ||
                 core == l4d2vr_features::kPreHandThrowMask ||
                 core == l4d2vr_features::kListenHostMask ||
                 core == (l4d2vr_features::kListenHostMask | l4d2vr_features::HandThrow)), detail);

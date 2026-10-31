@@ -3146,9 +3146,18 @@ bool VR::MagazineReloadSupportIsLeft() const
 
 unsigned VR::MagazineGripPhysicalMask() const
 {
-    return l4d2vr_dual::ReloadGripPhysicalMask(
+    unsigned mask = l4d2vr_dual::ReloadGripPhysicalMask(
         m_MagazineInteractionLeftHandPoseActive.load(std::memory_order_acquire) != 0u,
         GetPrimaryPistolHand(), ItemHandIsPhysicalLeft());
+    // Dual reload: the free hand closes around the double magazine or a slide
+    // (named targets HandRole::StackedMagazines / Slide, vr_dual_reload.h).
+    for (int hand = 0; hand < 2; ++hand)
+    {
+        const auto role = GetDualReloadHandRole(hand == 1);
+        if (role == l4d2vr_dual_reload::HandRole::StackedMagazines || role == l4d2vr_dual_reload::HandRole::Slide)
+            mask |= IsGameplayHandLeftPhysical(hand == 1) ? 1u : 2u;
+    }
+    return mask;
 }
 
 bool VR::BuildPistolControllerWorld(bool left, VrHandMatrix4& outWorld) const
@@ -3801,8 +3810,16 @@ l4d2vr_shell::ClientRequest::Poll VR::PollRemoteShellReply(uint32_t handle, int 
 
 void VR::OfferRemoteMagazineProtocol(unsigned version, uint32_t token)
 {
-    std::lock_guard<std::mutex> lock(m_RemoteMagazineMutex);
-    m_RemoteMagazineRequest.Offer(version, token);
+    {
+        std::lock_guard<std::mutex> lock(m_RemoteMagazineMutex);
+        m_RemoteMagazineRequest.Offer(version, token);
+    }
+    // The dual-pistol reload transaction shares the magazine token.
+    if (version == l4d2vr_remote_mag::kVersion && token)
+    {
+        std::lock_guard<std::mutex> lock(m_DualReloadMutex);
+        m_DualReloadRequest.Offer(token);
+    }
 }
 void VR::OfferPistolAmmoProtocol(unsigned version, uint32_t token)
 {
@@ -4139,6 +4156,14 @@ bool VR::BlockPhysicalNativeReload(C_WeaponCSBase* candidate)
 {
     if (BlockPistolNativeReload(candidate))
         return true;
+    // Dual pistols reloaded through the host transaction: the host refuses the
+    // stock reload, so the client must not predict one either.
+    if (candidate && m_Game && m_DualReloadHostOwned.load(std::memory_order_acquire) &&
+        m_Game->IsDualPistolWeapon(candidate) && !m_DualReloadNativePulse.load(std::memory_order_acquire))
+    {
+        MagazineInteractionClearPistolReloadFlags(candidate);
+        return true;
+    }
     if (!m_Game || !candidate || !m_IsVREnabled || !m_MagazineInteractionEnabled ||
         !m_PhysicalReloadOwnsStockInput.load(std::memory_order_acquire) ||
         m_NativeAmmoReloadFallbackActive.load(std::memory_order_acquire) ||
@@ -4176,8 +4201,12 @@ void VR::ReceiveRemoteMagazineReply(const l4d2vr_remote_mag::Reply& reply)
 }
 void VR::DisconnectRemoteMagazineProtocol()
 {
-    std::lock_guard<std::mutex> lock(m_RemoteMagazineMutex);
-    m_RemoteMagazineRequest.Disconnect();
+    {
+        std::lock_guard<std::mutex> lock(m_RemoteMagazineMutex);
+        m_RemoteMagazineRequest.Disconnect();
+    }
+    std::lock_guard<std::mutex> lock(m_DualReloadMutex);
+    m_DualReloadRequest.Disconnect();
 }
 void VR::CancelRemoteMagazineRequest()
 {
@@ -5072,7 +5101,8 @@ bool VR::IsMagazineInteractionManualActive() const
 
 bool VR::MagazineInteractionOwnsGrip(bool gameplayLeft) const
 {
-    return gameplayLeft == MagazineReloadSupportIsLeft() && IsMagazineInteractionLeftHandActive();
+    return (gameplayLeft == MagazineReloadSupportIsLeft() && IsMagazineInteractionLeftHandActive()) ||
+        DualReloadActive();   // a physical dual reload owns both grips (no holster, pickup or drop)
 }
 
 bool VR::IsMagazineInteractionNativeReloadSuppressActive() const
@@ -5181,6 +5211,8 @@ bool VR::ShouldSuppressMagazineInteractionEmptyClipAutoReload(C_BasePlayer* loca
 
 bool VR::IsMagazineInteractionBlockingFire() const
 {
+    // Physical dual reload: from the release until both guns are back in their hands.
+    if (DualReloadActive()) return true;
     const uint32_t nativeDualReload = m_DualPistolNativeReloadState.load(std::memory_order_acquire);
     if ((nativeDualReload & 1u) != 0u) return (nativeDualReload & 2u) != 0u;
     if (m_ManualPumpBlockingFire.load(std::memory_order_acquire))
@@ -6098,9 +6130,12 @@ bool VR::UpdateMagazineInteraction(
             m_NativeRefillWatchGaps = gaps;
     }
 
-    if (!authoritativePistol && m_DualPistolsNativeReloadFallbackEnabled && m_Game && localPlayer &&
-        (m_LeftHandPistolActive.load(std::memory_order_acquire) ||
-            m_Game->IsDualPistolWeapon(reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon()))))
+    const bool activeDualPistols = m_Game && localPlayer &&
+        m_Game->IsDualPistolWeapon(reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon()));
+    // Dual pistols reload through UpdateDualPistolReload (physical) or the native button.
+    if (!authoritativePistol && m_Game && localPlayer &&
+        ((m_DualPistolsNativeReloadFallbackEnabled && (m_LeftHandPistolActive.load(std::memory_order_acquire) || activeDualPistols)) ||
+            (activeDualPistols && DualReloadUsesPhysicalPath())))
     {
         m_PhysicalReloadChambers.Forget(reinterpret_cast<uintptr_t>(activeWeapon));
         m_PhysicalReloadObservedEmpty = false;
@@ -11179,3 +11214,5 @@ bool VR::GetTwoHandedGripTargetPoint(Vector& point) const
         MagazineInteractionMatrixAxis(world, 1) * c.y + MagazineInteractionMatrixAxis(world, 2) * c.z;
     return true;
 }
+
+#include "vr_dual_reload_bridge.inl"

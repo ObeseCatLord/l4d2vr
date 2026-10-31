@@ -2090,6 +2090,7 @@ void __fastcall Hooks::dServerGameClientsClientCommand(
 	(void)edx;
     if (m_Game && m_Game->HandleRemoteShellCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandleRemoteMagazineCommand(player, sourceCommand)) return;
+    if (m_Game && m_Game->HandleDualMagazineCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandlePistolAmmoCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandlePistolMagazineCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandleShotgunPatternCommand(player, sourceCommand)) return;

@@ -793,6 +793,50 @@ namespace
             return true;
         }
 
+        // Physical dual-pistol reload (l4d2vr_mag_dual_v1): the VR player's own
+        // active dual pistols. The pair shares one clip of 2 x MaxClip1.
+        bool ReadDualPistolAmmo(int index, AmmoState& state, bool& unsupported) override
+        {
+            state = AmmoState{};
+            unsupported = !g_P.ammoOk || !g_N.isDualWielding;
+            if (unsupported || !IsValidPlayerIndex(index) || !g_EdictList) return false;
+            edict_t* edict = &g_EdictList[index];
+            void* player = EntityFromEdict(edict);
+            PlayerVRState& vr = g_Players[static_cast<std::size_t>(index)];
+            if (!player || !vr.isUsingVR) return false;
+            const Status status = ReadStatus(player);
+            if (!status.live || status.incap || status.controlled) return false;
+            void* weapon = g_N.getActiveWeapon(player);
+            if (!weapon || g_N.getOwner(weapon) != player) return false;
+            if (WeaponId(weapon) != weapon::kPistol || !g_N.isDualWielding(weapon)) return false;
+            const int weaponIndex = g_N.entindex(weapon);
+            const auto activeHandle = Field<std::uint32_t>(player, g_P.activeWeapon);
+            if (activeHandle == 0xFFFFFFFFu || static_cast<int>(activeHandle & 0xFFFu) != weaponIndex) return false;
+            const std::uint32_t handle = (activeHandle & 0xFFFu) | (((activeHandle >> 12) & 0x3FFu) << 12);
+            if (!l4d2vr_shell::ValidHandle(handle)) return false;
+            const int ammoType = Field<int>(weapon, g_P.primaryAmmoType);
+            if (ammoType < 0 || ammoType >= 32) { unsupported = true; return false; }
+            void* def = g_N.ammoDef();
+            if (!def) { unsupported = true; return false; }
+            const bool infinite = g_N.infiniteAmmo(def, ammoType);
+            const int clip = Field<int>(weapon, g_P.clip1);
+            const int reserve = Field<int>(player, g_P.ammo + ammoType * 4);
+            if (!infinite && g_N.ammoCount(player, ammoType) != reserve) { unsupported = true; return false; }
+            const std::uint64_t now = SteadyMs();
+            state.eligible = true;
+            state.handle = handle;
+            state.latestCommand = vr.InputFresh(now) ? vr.lastDecodedCommand : 0u;
+            state.weaponId = weapon::kPistol;
+            state.clip = clip;
+            state.reserve = reserve;
+            state.capacity = l4d2vr_dual_reload::DualCapacity(MaxClip1(weapon));
+            state.infinite = infinite;
+            state.nativeWeapon = weapon;
+            state.nativePlayer = player;
+            state.ammoType = ammoType;
+            return true;
+        }
+
         bool WriteAmmo(const AmmoState& s, int clip, int reserve, bool magazine) override
         {
             if (!s.nativeWeapon || !s.nativePlayer || s.ammoType < 0 || s.ammoType >= 32) return false;

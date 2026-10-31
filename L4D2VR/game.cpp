@@ -924,6 +924,16 @@ namespace
         g_Game->m_VR->ReceiveRemoteMagazineReply(reply);
     }
 
+    void __cdecl OnL4D2VRDualMagazineResult(const SourceCCommand& command)
+    {
+        if (!g_Game || !g_Game->m_VR || command.ArgC() != 10) return;
+        const char* argv[10]{};
+        for (int arg = 0; arg < 10; ++arg) argv[arg] = command.Arg(arg);
+        l4d2vr_dual_reload::Reply reply{};
+        if (!l4d2vr_dual_reload::ParseReply(10, argv, reply)) return;
+        g_Game->m_VR->ReceiveDualReloadReply(reply);
+    }
+
     void __cdecl OnL4D2VRPoseReceiveCommand(const SourceCCommand& command)
     {
         unsigned long playerIndex = 0;
@@ -988,6 +998,9 @@ namespace
     SourceRegisteredConCommand g_L4D2VRMagazineResultCommand(
         "l4d2vr_mag_result", &OnL4D2VRMagazineResult,
         "Receive a physical magazine transaction result.", kFcvarServerCanExecute);
+    SourceRegisteredConCommand g_L4D2VRDualMagazineResultCommand(
+        l4d2vr_dual_reload::kResultCommand, &OnL4D2VRDualMagazineResult,
+        "Receive a physical dual-pistol reload result.", kFcvarServerCanExecute);
     SourceRegisteredConCommand g_L4D2VRPistolAmmoCapabilityCommand(
         "l4d2vr_pistol_ammo_cap", &OnL4D2VRPistolAmmoCapability,
         "Negotiate per-hand pistol ammunition snapshots.", kFcvarServerCanExecute);
@@ -1037,6 +1050,8 @@ namespace
                 cvar->RegisterConCommand(&g_L4D2VRMagazineCapabilityCommand);
             if (!cvar->FindCommandBase("l4d2vr_mag_result"))
                 cvar->RegisterConCommand(&g_L4D2VRMagazineResultCommand);
+            if (!cvar->FindCommandBase(l4d2vr_dual_reload::kResultCommand))
+                cvar->RegisterConCommand(&g_L4D2VRDualMagazineResultCommand);
             if (!cvar->FindCommandBase("l4d2vr_pistol_ammo_cap"))
                 cvar->RegisterConCommand(&g_L4D2VRPistolAmmoCapabilityCommand);
             if (!cvar->FindCommandBase("l4d2vr_pistol_ammo_state"))

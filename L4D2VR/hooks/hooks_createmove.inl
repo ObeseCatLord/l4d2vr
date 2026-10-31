@@ -2027,7 +2027,11 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             // Diagnostics: did the grip own the held item before this sample's release?
             const bool gripOwnedBeforeRelease = s_weaponGripRelease.Owns() ||
                 (pistolGripMode && s_pistolOwnership.Owns(l4d2vr_dual::Hand::Right));
-            const l4d2vr_dual::Hand pistolDropHand = pistolGripMode && gripDropEligible
+            // A physical dual reload moves the guns between the hands: no grip
+            // lets a pistol go while it runs (the grips take nothing either).
+            const bool dualReloadHoldsGuns = m_VR->DualReloadActive();
+            if (dualReloadHoldsGuns) s_pistolOwnership.CancelInteractions();
+            const l4d2vr_dual::Hand pistolDropHand = pistolGripMode && gripDropEligible && !dualReloadHoldsGuns
                 ? s_pistolOwnership.Release(weaponGripActionActive, weaponGripDown,
                     (leftGrip & 1u) != 0u, (leftGrip & 2u) != 0u, gripNowMs,
                     l4d2vr_input::GripSample::Generation(weaponGripInputState),
@@ -2035,7 +2039,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                 : l4d2vr_dual::Hand::None;
             m_VR->m_PistolOwnershipMask.store(s_pistolOwnership.Mask(), std::memory_order_release);
 			const bool gripDropRequested = s_weaponGripRelease.Update(
-                gripDropEligible && !pistolGripMode,
+                gripDropEligible && !pistolGripMode && !dualReloadHoldsGuns,
 				weaponGripActionActive,
 				weaponGripDown,
 				activeWeaponTag, l4d2vr_input::GripSample::Generation(weaponGripInputState), gripDropHere) ||

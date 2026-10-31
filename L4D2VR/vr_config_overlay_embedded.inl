@@ -320,6 +320,9 @@ namespace
         { "BodyGripInventoryEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Grip body inventory", 0.0f, 0.0f, "true" },
         { "ManualPumpEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Manual shotgun pump", 0.0f, 0.0f, "true" },
         { "DualPistolsNativeReloadFallbackEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol button reload", 0.0f, 0.0f, "true" },
+        { "DualPistolsPhysicalReloadEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol stacking reload", 0.0f, 0.0f, "true" },
+        { "DualPistolsStackDistanceMeters", CfgOptionType::Float, "Hands / Manual Reload", "Dual pistol stack reach (m)", 0.04f, 0.4f, "0.12" },
+        { "DualPistolsStackMaxAngleDeg", CfgOptionType::Float, "Hands / Manual Reload", "Dual pistol stack angle (deg)", 5.0f, 90.0f, "45" },
         { "DualPistolsIndependentHandsEnabled", CfgOptionType::Bool, "Weapons / Throwables", "Independent dual pistol hands", 0.0f, 0.0f, "true" },
         { "MagazineReleaseButtonRequired", CfgOptionType::Bool, "Hands / Manual Reload", "Require magazine release button", 0.0f, 0.0f, "true" },
         { "HolsterPavlovLayoutEnabled", CfgOptionType::Bool, "Hands / Holsters", "Pavlov holster layout", 0.0f, 0.0f, "true" },
@@ -1094,7 +1097,10 @@ namespace
         { "RightAmmoHudZOffset", "HUD (Hand)", "Ammo HUD Position Z", "Moves the gun-hand ammo HUD up or down in controller-local space.", "Adjust one axis at a time until the ammo display sits naturally near the weapon hand." },
         
         { "GripReleaseDropEnabled", "Weapons / Throwables", "Grip Pickup and Release", "Hold Weapon Grip near a usable weapon to pick it up; release the same grip to drop it on a VR-capable server.", "Requires Manual Throw. Keyboard and joystick switches require a fresh grip. Menus and tracking/action loss cancel a pending drop." },
-        { "DualPistolsNativeReloadFallbackEnabled", "Hands / Manual Reload", "Dual Pistol Button Reload", "Use Magazine Release to reload both pistols together with the native reload. Enabled by default.", "Single pistols retain magazine and slide interactions where supported. A retained single pistol without manual reload support also uses the native reload. Native empty-clip auto reload and reload audio are allowed for dual pistols." },
+        { "DualPistolsPhysicalReloadEnabled", "Hands / Manual Reload", "Dual Pistol Stacking Reload", "Magazine Release drops both magazines. Bring one pistol into the other hand to stack them, take the double magazine from the pouch with the free hand and push it into both guns, pull back each empty gun's slide, then grip the stacked guns to take your pistol back.", "Fire is blocked until both guns are back in their hands. A gun that still had a round chambered needs no slide. On servers without the dual transaction the native reload runs when the magazines seat. Off: the button reload." },
+        { "DualPistolsStackDistanceMeters", "Hands / Manual Reload", "Dual Pistol Stack Reach", "How close the two pistol hands must come for the guns to stack (controller to controller).", "The guns must also point roughly the same way (Dual Pistol Stack Angle)." },
+        { "DualPistolsStackMaxAngleDeg", "Hands / Manual Reload", "Dual Pistol Stack Angle", "The largest angle between the two barrels that still stacks the pistols.", "Larger values stack more easily; smaller ones need the guns held parallel." },
+        { "DualPistolsNativeReloadFallbackEnabled", "Hands / Manual Reload", "Dual Pistol Button Reload", "Use Magazine Release to reload both pistols together with the native reload when the stacking reload is off (it also lets servers without the dual transaction run the native reload when the magazines seat). Enabled by default.", "Single pistols retain magazine and slide interactions where supported. A retained single pistol without manual reload support also uses the native reload. Native empty-clip auto reload and reload audio are allowed for dual pistols." },
         { "DualPistolsIndependentHandsEnabled", "Weapons / Throwables", "Independent Dual Pistols", "Each pistol follows its own controller. Primary and secondary triggers fire from their corresponding hand on a VR-capable server.", "Left trigger replaces shove while dual pistols are equipped. Both held triggers alternate at the native weapon rate. Ammo, reload and firing animation remain the game's shared dual-pistol system." },
         { "BodyGripInventoryEnabled", "Hands / Manual Reload", "Body Grip Inventory", "Draw carried items by holding the weapon-hand grip near their body slot. Ammo pickup uses the same stable body reference.", "Back: primary. Weapon-side waist: secondary. Other waist: throwable/ammo. Chest: medical kit. Chest side: pills. Uses native inventory slots; items must already be carried." },
         { "ManualPumpEnabled", "Hands / Manual Reload", "Manual Shotgun Pump", "Pump and chrome shotguns require a full rear and forward fore-end stroke after a shot.", "Releasing the fore-end preserves its position. Automatic shotguns retain their normal cycling. Requires VR hands, manual reload and the shotgun server hook. Disable this option if an unsupported model has no usable pump pose." },
@@ -1900,6 +1906,7 @@ namespace
             "ManualPumpEnabled",
             "DualPistolsIndependentHandsEnabled",
             "DualPistolsNativeReloadFallbackEnabled",
+            "DualPistolsPhysicalReloadEnabled",
             "MagazineReleaseButtonRequired",
             "HolsterPavlovLayoutEnabled",
             "HolsterItemsVisible",
@@ -2654,6 +2661,9 @@ BodyGripInventoryEnabled=true
 ManualPumpEnabled=true
 DualPistolsIndependentHandsEnabled=true
 DualPistolsNativeReloadFallbackEnabled=true
+DualPistolsPhysicalReloadEnabled=true
+DualPistolsStackDistanceMeters=0.12
+DualPistolsStackMaxAngleDeg=45
 MagazineReleaseButtonRequired=true
 ManualThrowVelocityScale=4.0
 ManualThrowHorizontalVelocityScale=1.0

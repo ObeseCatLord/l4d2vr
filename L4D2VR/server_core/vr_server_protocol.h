@@ -24,6 +24,9 @@
 //   l4d2vr_shell_capability 1 <token>   (PR409 shell transactions)
 //   l4d2vr_mag_capability 3 <token>     (PR409 magazine transactions; v3
 //                                returns ejected rounds to the reserve)
+//                                With DualMagTxn (0x1000) the same token also
+//                                serves l4d2vr_mag_dual_v1 (physical dual-pistol
+//                                reload, vr_dual_reload.h).
 //   l4d2vr_feature_ack <hexmask> 1      resolved feature bits, lowercase hex
 //                                without a 0x prefix.
 //
@@ -60,8 +63,9 @@ namespace l4d2vr_server
         kFeatureInstantDeploy = 0x200u,
         kFeatureHandThrow = 0x400u,
         kFeatureShotgunPattern = 0x800u,
+        kFeatureDualMagTxn = 0x1000u,
     };
-    constexpr std::uint32_t kFeatureAllMask = 0xFFFu;
+    constexpr std::uint32_t kFeatureAllMask = 0x1FFFu;
     constexpr unsigned kFeatureAckVersion = 1u;
 
     inline const char* FeatureName(std::uint32_t bit)
@@ -80,6 +84,7 @@ namespace l4d2vr_server
         case kFeatureInstantDeploy: return "InstantDeploy";
         case kFeatureHandThrow: return "HandThrow";
         case kFeatureShotgunPattern: return "ShotgunPattern";
+        case kFeatureDualMagTxn: return "DualMagTxn";
         default: return "?";
         }
     }

@@ -58,6 +58,7 @@ void VR::ProcessInput()
         ReleaseCustomActionInputs();
         if (m_MagazineInteractionSession.Observe(false, 0u, 0u, 0, 0u))
             ResetMagazineInteractionSession();
+        UpdateDualPistolReload(nullptr, false, DualReloadButtons{});
         m_DualPistolsActive.store(false, std::memory_order_release);
         if (m_ObjectPullPhase != ObjectPullClientPhase::Idle ||
             m_ObjectPullDesiredWireCommand != kObjectPullWireNone)
@@ -180,6 +181,7 @@ void VR::ProcessInput()
         {
             (void)UpdateMagazineInteraction(nullptr, false, false, false, false, false);
             CancelMagazineInteractionManual();
+            UpdateDualPistolReload(nullptr, false, DualReloadButtons{});
         }
         else
         {
@@ -388,8 +390,14 @@ void VR::ProcessInput()
                 m_MagazineInteractionPistolHandle != 0u &&
                 m_MagazineInteractionWeapon == reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon()) &&
                 m_MagazineInteractionSession.OwnerTag() == reinterpret_cast<uintptr_t>(localPlayer)));
+    // Physical dual reload (vr_dual_reload.h): with a host transaction the stock
+    // reload stays gated like any physical gun; without one the stock reload
+    // is pulsed when both magazines seat (UpdateDualPistolReload).
+    const bool dualPhysicalReload = dualPistolsActive && DualReloadUsesPhysicalPath();
+    const bool dualHostReload = dualPhysicalReload && DualReloadHostTransactionAvailable() &&
+        GetTickCount64() >= m_DualReloadNativeWindowUntilMs.load(std::memory_order_acquire);
     const bool nativeDualReload = m_DualPistolsNativeReloadFallbackEnabled &&
-        (nativeDualPistols || (leftHeldPistol && !leftPistolPhysicalReload));
+        ((nativeDualPistols && !dualHostReload) || (leftHeldPistol && !leftPistolPhysicalReload));
     nativeDualReloadState = nativeDualReload ? 1u : 0u;
 
     const bool jumpGestureActive = m_MotionGesturesEnabled && currentTime < m_JumpGestureHoldUntil;
@@ -812,7 +820,9 @@ void VR::ProcessInput()
     m_MagazineReleaseJustPressed = magazineReleaseJustPressed;
     const bool nativeDualReloadPulse = m_DualPistolNativeReloadPulse.Update(
         nativeDualReload && !m_SuppressPlayerInput,
-        magazineReleaseJustPressed, static_cast<uint32_t>(GetTickCount64()));
+        dualPhysicalReload && nativeDualPistols
+            ? m_DualReloadNativePulse.exchange(false, std::memory_order_acq_rel) : magazineReleaseJustPressed,
+        static_cast<uint32_t>(GetTickCount64()));
     if (nativeDualReloadPulse) nativeDualReloadState |= 2u;
 
     vr::InputDigitalActionData_t secondaryAttackActionData{};
@@ -1160,6 +1170,20 @@ void VR::ProcessInput()
         foregripSplit,
         foregripSplitDown,
         foregripSplitJustPressed);
+    {
+        // Physical dual-pistol reload. Each gameplay hand's reload input is its
+        // trigger with trigger interactions (Pavlov), else its grip; the grip
+        // always takes a gun back. The triggers never fire while it runs.
+        DualReloadButtons dualButtons{};
+        dualButtons.release = magazineReleaseJustPressed;
+        const bool rightGripRaw = m_WeaponGripPhysicalDown;
+        const bool leftGripRaw = offHandGripValid && offHandGripDown;
+        dualButtons.grip[0] = rightGripRaw;
+        dualButtons.grip[1] = leftGripRaw;
+        dualButtons.grab[0] = m_MagazineInteractionTriggerInteractions ? primaryAttackDown : rightGripRaw;
+        dualButtons.grab[1] = m_MagazineInteractionTriggerInteractions ? offHandTriggerDown : leftGripRaw;
+        UpdateDualPistolReload(localPlayer, dualPhysicalReload && nativeDualPistols && !isObserverOrIdle, dualButtons);
+    }
     // Ambidextrous hand-off: whatever the magazine/foregrip logic took first wins.
     UpdateItemHandOff(localPlayer, isObserverOrIdle, leftHeldPistol || dualPistolsActive,
         offHandGripValid && offHandGripJustPressed);
@@ -1747,7 +1771,8 @@ void VR::ProcessInput()
             const bool ready = localPlayer && !isObserverOrIdle &&
                 !m_SuppressPlayerInput && m_FirstPersonControlReady.load(std::memory_order_acquire) &&
                 !m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
-                !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
+                !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) &&
+                !DualReloadActive();   // a dual reload owns both hands' grips
 
             std::uint32_t occupiedMask = 0u;
             int activeSlot = -1;
@@ -2187,9 +2212,10 @@ void VR::ProcessInput()
     }
     const bool magazineInteractionBlocksFire = nativeDualReloadPulse || IsMagazineInteractionBlockingFire();
     const bool usingMountedWeaponForPrimary = vrAwareServerSupportPath && localPlayer && IsUsingMountedGun(localPlayer);
+    // (The right trigger of the free hand in a dual reload works the magazines and slides: no click.)
     if (!usingMountedWeaponForPrimary &&
         (magazineInteractionBlocksFire || suppressMagazineEmptyClipAutoReload) &&
-        primaryAttackJustPressed)
+        primaryAttackJustPressed && !(DualReloadActive() && m_DualReload.FreeHand() == 0))
     {
         PlayMagazineInteractionBlockedFireEmptySound();
     }

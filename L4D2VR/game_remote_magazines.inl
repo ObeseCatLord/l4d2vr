@@ -74,3 +74,62 @@ bool Game::HandleRemoteMagazineCommand(edict_t* entity, const void* sourceComman
         request.weaponId, reply.clip, reply.reserve);
     return true;
 }
+
+// Physical dual-pistol reload (vr_dual_reload.h): one transaction commits
+// L4D2's own dual reload numbers when both magazines seat. It shares the
+// magazine token; the ledger is the one the dedicated plugin uses.
+bool Game::HandleDualMagazineCommand(edict_t* entity, const void* sourceCommand)
+{
+    VRPoseRelayCommandView view{};
+    if (!VRPoseRelayReadCommand(sourceCommand, view) || std::strcmp(view.name, l4d2vr_dual_reload::kRequestCommand) != 0)
+        return false;
+    const auto& command = *static_cast<const SourceCCommand*>(sourceCommand);
+    const char* argv[7]{};
+    if (command.ArgC() != 7) return true;
+    for (int arg = 0; arg < 7; ++arg) argv[arg] = command.Arg(arg);
+    l4d2vr_dual_reload::Request request{};
+    if (!l4d2vr_dual_reload::ParseRequest(7, argv, request)) return true;
+    int index = -1; unsigned serial = 0u;
+    if (!VRPoseRelayReadEdictIdentity(entity, index, serial)) return true;
+    l4d2vr_dual_reload::Reply reply{};
+    l4d2vr_pistol::AmmoSnapshot settled{};
+    uint32_t latestCommand = 0u;
+    {
+        std::lock_guard<std::mutex> lock(m_RemoteMagazineServerMutex);
+        auto& client = m_RemoteMagazineServerClients[index];
+        if (client.entity != entity || client.serial != serial || !client.ledger.Token() ||
+            request.token != client.ledger.Token()) return true;
+        if (client.dual.Token() != client.ledger.Token()) client.dual.Reset(client.ledger.Token());
+        const l4d2vr_shell::Request ammoRequest{request.token, request.sequence, request.handle, request.command,
+            1, request.clip, request.reserve};
+        l4d2vr_shell::Snapshot ammo{}; RemoteShellNativeState native{};
+        bool unsupported = false;
+        const bool read = ReadRemoteShellNative(this, entity, index, ammoRequest, ammo, native, unsupported, true, true);
+        latestCommand = ammo.latestCommand;
+        if (!latestCommand)
+        {
+            // The listen host's own player: its commands are not decoded as a
+            // remote VR player's are; the pistol ammo hook tracks the executed one.
+            std::lock_guard<std::mutex> pistolLock(m_PistolAmmoServerMutex);
+            const auto& pistol = m_PistolAmmoServerClients[index];
+            if (pistol.entity == entity && pistol.serial == serial) latestCommand = pistol.executedCommand;
+        }
+        const l4d2vr_dual_reload::Snapshot snapshot{read && ammo.eligible && native.dualPistol, ammo.handle,
+            latestCommand, ammo.clip, ammo.reserve, l4d2vr_dual_reload::DualCapacity(ammo.capacity), native.infinite};
+        reply = unsupported ? client.dual.Unsupported(request) :
+            client.dual.Apply(request, snapshot, GetTickCount64(),
+                [&](int clip, int reserve) { return WriteRemoteShellNative(native, clip, reserve); });
+        if (reply.status == l4d2vr_shell::Status::Applied && native.playerObject && native.weaponObject && native.weapon)
+            settled = {reinterpret_cast<uintptr_t>(native.playerObject), reinterpret_cast<uintptr_t>(native.weaponObject),
+                serial, static_cast<unsigned>(native.weapon->m_NetworkSerialNumber), reply.clip, true, ammo.capacity};
+    }
+    char response[192]{};
+    if (l4d2vr_dual_reload::FormatReply(reply, response, sizeof(response)))
+        VRPoseRelaySendClientCommand(m_ServerPluginHelpers, entity, response);
+    Game::logMsg("[VR][DualReload][server] player=%d seq=%u status=%u clip=%d->%d reserve=%d->%d command=%u latest=%u",
+        index, request.sequence, static_cast<unsigned>(reply.status), request.clip, reply.clip,
+        request.reserve, reply.reserve, request.command, latestCommand);
+    // The per-hand pistol ledger re-splits the new shared clip (15/15 when full).
+    if (settled.Valid()) PublishPistolAmmoState(index, settled, static_cast<int>(request.command));
+    return true;
+}

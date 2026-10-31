@@ -3253,6 +3253,10 @@ namespace
         sampleKeys.insert("ScopeVignetteExponent");
         sampleKeys.insert("DualPistolsAkimboOnAnyServer");
         sampleKeys.insert("VrHandsTwoHandedStabilizerEnabled");
+        sampleKeys.insert("HandPosesEnabled");
+        sampleKeys.insert("HandPoseBlendSeconds");
+        sampleKeys.insert("HandPoseTriggerFingerScale");
+        sampleKeys.insert("HandPoseDebugLog");
         sampleKeys.insert("VrHandsTwoHandedStabilizerMinCutoffHz");
         sampleKeys.insert("VrHandsTwoHandedStabilizerBeta");
         sampleKeys.insert("HolsterReleaseDrop");

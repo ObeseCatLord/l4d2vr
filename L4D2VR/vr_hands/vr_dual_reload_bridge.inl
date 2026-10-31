@@ -219,6 +219,7 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
     }
 
     const dr::Stage before = m_DualReload.GetStage();
+    const int receivingBefore = m_DualReload.Receiving();
     unsigned events = m_DualReload.Update(config, in);
     const int freeHand = m_DualReload.FreeHand();
     const int recvHand = m_DualReload.Receiving();
@@ -267,9 +268,24 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
         both(0.06f, 90.0f, 1.0f);
         DualReloadSound(this, kDualClipInSound, true, "dual clip-in");
         m_DualReloadCommitByHost = hostTxn && beginHost();
-        m_DualReloadLastCommitByHost = m_DualReloadCommitByHost;
+        m_DualReloadLastCommitByHost = false;
+        m_DualReloadRetryAtMs = 0u;
+        if (geometryFresh && geometry.seatValid && receivingBefore >= 0)
+            Game::logMsg("[VR][DualReload] seated: wells %.3f m below/beside the receiving hand, slides %.3f / %.3f m from it",
+                geometry.seatCenterLocal.Length() / scale,
+                geometry.slideValid[0] ? geometry.slideLocal[0].Length() / scale : -1.0f,
+                geometry.slideValid[1] ? geometry.slideLocal[1].Length() / scale : -1.0f);
         if (!m_DualReloadCommitByHost)
             commitPredicted(hostTxn ? "the host transaction could not start" : "no host transaction");
+    }
+    else if (m_DualReload.GetStage() == dr::Stage::Committing && m_DualReloadCommitByHost && m_DualReloadRetryAtMs)
+    {
+        // A refused (stale) request is asked again a little later, with fresh counts.
+        if (now >= m_DualReloadRetryAtMs)
+        {
+            m_DualReloadRetryAtMs = 0u;
+            if (!beginHost()) commitPredicted("the host transaction could not restart");
+        }
     }
     else if (m_DualReload.GetStage() == dr::Stage::Committing && m_DualReloadCommitByHost)
     {
@@ -292,6 +308,7 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
             {
                 dr::Split(reply.clip, right, left);
                 events |= m_DualReload.Commit(right, left);
+                m_DualReloadLastCommitByHost = true;
             }
             else if (reply.status == dr::Status::NoSpaceOrAmmo)
             {
@@ -299,9 +316,8 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
                 events |= m_DualReload.Commit(right, left);
             }
             else if ((reply.status == dr::Status::Stale || reply.status == dr::Status::RateLimited) &&
-                m_DualReloadCommitAttempts < 3 && beginHost())
-            {
-            }
+                m_DualReloadCommitAttempts < 8)
+                m_DualReloadRetryAtMs = now + 150u;
             else commitPredicted("the host refused the transaction");
         }
         else if (poll == dr::ClientRequest::Poll::Timeout)
@@ -341,7 +357,15 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
                     VrHandMath::Multiply(raised, geometry.clipSeatLocal[gun]), freeHand == 1);
         }
     }
-    if ((events & dr::kEventSlideGrabbed) != 0u) haptic(freeHand, 0.02f, 200.0f, 0.4f);
+    if ((events & dr::kEventSlideGrabbed) != 0u)
+    {
+        haptic(freeHand, 0.02f, 200.0f, 0.4f);
+        const int gun = m_DualReload.SlideHeld();
+        if (gun >= 0 && freeHand >= 0)
+            Game::logMsg("[VR][DualReload] slide %d taken: hand %.3f m from it, slide %.3f m from the receiving hand",
+                gun, dr::Distance(in.hands[static_cast<std::size_t>(freeHand)].position, in.slide[static_cast<std::size_t>(gun)]),
+                geometry.slideLocal[gun].Length() / scale);
+    }
     if ((events & dr::kEventSlideRacked) != 0u)
     {
         haptic(freeHand, 0.04f, 220.0f, 0.8f);

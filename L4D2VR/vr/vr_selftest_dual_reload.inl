@@ -52,7 +52,8 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
     char detail[400];
     char name[128];
     auto label = [&](const char* text) { std::snprintf(name, sizeof(name), "dual %s: %s", variant.c_str(), text); return name; };
-    auto shot = [&](const char* stage) { SelfTestRequestShot(std::string("dual_") + variant + "_" + stage, 1); };
+    auto shot = [&](const char* stage)
+    { SelfTestRequestShot(std::string(m_LeftHanded ? "dual_lh_" : "dual_") + variant + "_" + stage, 1); };
     // The moving hand and the receiving hand (gameplay 0 right, 1 left).
     const int moving = variant == "right" ? 0 : 1;
     const int receiving = 1 - moving;
@@ -74,6 +75,12 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
     const dr::Stage stage = static_cast<dr::Stage>(p.stage);
     auto events = [&](int bit) { return m_DualReloadEventCount[bit].load(std::memory_order_acquire) - s_DualEvents0[bit]; };
     auto handNow = [&](int h) { return h == 0 ? m_RightControllerPosAbs : m_LeftControllerPosAbs; };
+    // Where the script holds a hand (the tracked pose trails it by a frame or more).
+    auto scripted = [&](int h)
+    {
+        if (h == 0) return m_SelfTestRightWorldValid ? m_SelfTestRightWorld : handNow(0);
+        return m_SelfTestLeftWorldValid ? m_SelfTestLeftWorld : handNow(1);
+    };
     // Scripted hands: world targets with straight glides.
     auto setHand = [&](int h, const Vector& world)
     {
@@ -112,10 +119,10 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
         m_SelfTestLeftAngWorldValid = false;
         m_SelfTestRightAngLocal = QAngle(0.0f, 0.0f, 0.0f);
         m_SelfTestLeftAngLocal = QAngle(0.0f, 0.0f, 0.0f);
-        SelfTestHoldRight(SelfTestVec(0.40f, 0.20f, -0.25f), QAngle(0.0f, 0.0f, 0.0f));
+        SelfTestHoldRight(SelfTestVec(0.40f, 0.13f, -0.28f), QAngle(0.0f, 0.0f, 0.0f));
         m_SelfTestLeftWorldValid = false;
         m_SelfTestLeftPathActive = false;
-        m_SelfTestLeftLocal = SelfTestVec(0.40f, -0.20f, -0.25f);
+        m_SelfTestLeftLocal = SelfTestVec(0.40f, -0.13f, -0.28f);
         if (variant == "cancel") cmd("give smg");
         cmd("give pistol");
         go(1);
@@ -237,7 +244,7 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
         {
             // Into the other hand from its side, guns parallel.
             const Vector lateral = VrHandMath::Normalize(s_DualRest[0] - s_DualRest[1]);
-            const Vector target = handNow(receiving) + lateral * ((moving == 1 ? -0.065f : 0.065f) * scale);
+            const Vector target = scripted(receiving) + lateral * ((moving == 1 ? -0.065f : 0.065f) * scale);
             glide(moving, target, 0.6f);
         }
         go(33);
@@ -259,7 +266,7 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
         shot(s_DualCancelDone ? "stacked2" : "stacked");
         if (variant == "cancel" && !s_DualCancelDone) { go(80); return false; }
         // Off the stack, then to the pouch.
-        glide(moving, handNow(moving) + (handNow(moving) - handNow(receiving)) * 1.5f, 0.3f);
+        glide(moving, scripted(moving) + (scripted(moving) - scripted(receiving)) * 1.5f, 0.3f);
         go(34);
         return false;
     }
@@ -321,14 +328,19 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
             return fail("the rounds go in", "still committing after 4 s");
         }
         if (inPhase < 0.3f) return false;
-        const bool tactical = variant == "tactical";
-        std::snprintf(detail, sizeof(detail), "stage %s, slides needed %d/%d (right/left), host transaction %d, clip %d -> %d",
-            stageName(), p.needsRack[0] ? 1 : 0, p.needsRack[1] ? 1 : 0, p.lastCommitByHost ? 1 : 0, s_DualClipBefore, p.clip);
-        SelfTestReport(label(tactical ? "both seat; a chambered pair needs no slide" : "both seat; both empty guns need their slides"),
-            tactical ? (stage == dr::Stage::Ready && !p.needsRack[0] && !p.needsRack[1])
-                     : (stage == dr::Stage::Racking && p.needsRack[0] && p.needsRack[1]), detail);
+        // A gun needs its slide only when it had no round before (the shared clip split as the ledger does).
+        int beforeRight = 0, beforeLeft = 0;
+        dr::Split(s_DualClipBefore, beforeRight, beforeLeft);
+        const bool wantRack[2] = { beforeRight == 0, beforeLeft == 0 };
+        std::snprintf(detail, sizeof(detail), "stage %s, slides needed %d/%d (want %d/%d, right/left), host transaction %d, clip %d -> %d",
+            stageName(), p.needsRack[0] ? 1 : 0, p.needsRack[1] ? 1 : 0, wantRack[0] ? 1 : 0, wantRack[1] ? 1 : 0,
+            p.lastCommitByHost ? 1 : 0, s_DualClipBefore, p.clip);
+        SelfTestReport(label(!wantRack[0] && !wantRack[1] ? "both seat; a chambered pair needs no slide"
+                : "both seat; each empty gun needs its slide"),
+            p.needsRack[0] == wantRack[0] && p.needsRack[1] == wantRack[1] &&
+            stage == (wantRack[0] || wantRack[1] ? dr::Stage::Racking : dr::Stage::Ready), detail);
         // Clear of the guns before reaching for a slide.
-        glide(moving, handNow(moving) - Vector(0.0f, 0.0f, 0.05f * scale), 0.2f);
+        glide(moving, scripted(moving) - Vector(0.0f, 0.0f, 0.05f * scale), 0.2f);
         go(stage == dr::Stage::Racking ? 40 : 50);
         return false;
     }
@@ -356,7 +368,7 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
                 m_SelfTestValueB, p.slideHeld, p.slideDistanceM[m_SelfTestValueB]);
             return fail("free hand takes the slide", detail);
         }
-        glide(moving, handNow(moving) + p.slideBack[m_SelfTestValueB] * (0.045f * scale), 0.25f);
+        glide(moving, scripted(moving) + p.slideBack[m_SelfTestValueB] * (0.045f * scale), 0.3f);
         go(43);
         return false;
     case 43:
@@ -373,7 +385,7 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
     }
     case 44:
         if (inPhase < 0.3f) return false;
-        glide(moving, handNow(moving) - Vector(0.0f, 0.0f, 0.04f * scale), 0.15f);
+        glide(moving, scripted(moving) - Vector(0.0f, 0.0f, 0.04f * scale), 0.15f);
         go(p.needsRack[0] || p.needsRack[1] ? 40 : 50);
         return false;
     case 50: // ready: the rounds are in, the triggers still do nothing
@@ -403,7 +415,7 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
         SelfTestReport(label("no shot while stacked"), p.clip == m_SelfTestValueA, detail);
         {
             const Vector lateral = VrHandMath::Normalize(s_DualRest[0] - s_DualRest[1]);
-            glide(moving, handNow(receiving) + lateral * ((moving == 1 ? -0.07f : 0.07f) * scale), 0.5f);
+            glide(moving, scripted(receiving) + lateral * ((moving == 1 ? -0.07f : 0.07f) * scale), 0.5f);
         }
         go(52);
         return false;
@@ -490,10 +502,15 @@ bool VR::RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlaye
             return fail("dual pistols back after the cancel", "not drawn");
         }
         if (inPhase < 1.5f) return false;
-        std::snprintf(detail, sizeof(detail), "clip %d (was %d: nothing committed), magazines %s, stage %s",
-            p.clip, s_DualClipBefore, p.hideClips ? "hidden" : "back in", stageName());
+        // With the host transaction the stock reload is gated, so nothing may
+        // change. Without it (plain servers, older plugins) the game's own
+        // auto reload may refill the empty pair when it is drawn again.
+        std::snprintf(detail, sizeof(detail), "clip %d (was %d), magazines %s, stage %s, %s",
+            p.clip, s_DualClipBefore, p.hideClips ? "hidden" : "back in", stageName(),
+            p.hostTxn ? "host transaction: the stock reload is gated" : "no host transaction: the stock auto reload may refill an empty pair on the draw");
         SelfTestReport(label("after the cancel nothing was committed and the magazines are back"),
-            p.clip == s_DualClipBefore && !p.hideClips && stage == dr::Stage::Idle, detail);
+            (p.hostTxn ? p.clip == s_DualClipBefore : (p.clip == s_DualClipBefore || p.clip == 30)) &&
+            !p.hideClips && stage == dr::Stage::Idle, detail);
         shot("redrawn");
         s_DualCancelDone = true;
         s_DualRest[0] = handNow(0);

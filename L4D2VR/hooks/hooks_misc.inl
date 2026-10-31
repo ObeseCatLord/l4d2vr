@@ -25336,8 +25336,17 @@ static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string&
             geometry.clipSeatLocal[gun] = HooksMat3x4ToVrHandMatrix(local);
             if (slide[gun] >= 0)
             {
-                const vr_vm_stabilize::Mat3x4 slideWorld = stackedWorld(slide[gun]);
-                const Vector p(slideWorld.m[0][3], slideWorld.m[1][3], slideWorld.m[2][3]);
+                // Where the hand takes the slide: the rear of its top, in the
+                // gun's root frame (v_dual_pistola: the two guns sit
+                // differently on their roots; the slide bone's own origin is
+                // not on the slide).
+                static const float kSlideRear[2][3] = { { 0.63f, 3.1f, 3.0f }, { 0.0f, 1.45f, 2.0f } };
+                const vr_vm_stabilize::Mat3x4 gunRoot = stackedWorld(root[gun]);
+                const float* q = kSlideRear[gun];
+                const Vector p(
+                    gunRoot.m[0][0] * q[0] + gunRoot.m[0][1] * q[1] + gunRoot.m[0][2] * q[2] + gunRoot.m[0][3],
+                    gunRoot.m[1][0] * q[0] + gunRoot.m[1][1] * q[1] + gunRoot.m[1][2] * q[2] + gunRoot.m[1][3],
+                    gunRoot.m[2][0] * q[0] + gunRoot.m[2][1] * q[1] + gunRoot.m[2][2] * q[2] + gunRoot.m[2][3]);
                 const Vector& b = slideBack[gun];
                 geometry.slideLocal[gun] = Vector(
                     inverseController.m[0][0] * p.x + inverseController.m[0][1] * p.y + inverseController.m[0][2] * p.z + inverseController.m[0][3],

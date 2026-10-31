@@ -372,8 +372,8 @@ int main()
         Snapshot single = snap; single.eligible = false;
         CHECK(ledger.Apply(Request{77u, 7u, 0x00103u, 499u, 0, 0}, single, 1400u, writer).status == Status::Weapon);
         // Too old a command, or one from the future.
-        CHECK(ledger.Apply(Request{77u, 8u, 0x00103u, 400u, 0, 0}, snap, 1400u, writer).status == Status::Stale);
-        CHECK(ledger.Apply(Request{77u, 9u, 0x00103u, 520u, 0, 0}, snap, 1400u, writer).status == Status::Stale);
+        CHECK(ledger.Apply(Request{77u, 8u, 0x00103u, 430u, 0, 0}, snap, 1400u, writer).status == Status::Stale);
+        CHECK(ledger.Apply(Request{77u, 9u, 0x00103u, 570u, 0, 0}, snap, 1400u, writer).status == Status::Stale);
         // A finite reserve smaller than two magazines: partial fill, native numbers.
         Snapshot finite{true, 0x00103u, 600u, 2, 12, 30, false};
         reply = ledger.Apply(Request{77u, 10u, 0x00103u, 600u, 2, 12}, finite, 2000u, writer);

@@ -1511,6 +1511,7 @@ public:
     uintptr_t m_DualReloadOwner = 0u;
     uint32_t m_DualReloadHandle = 0u;
     int m_DualReloadCommitAttempts = 0;
+    uint64_t m_DualReloadRetryAtMs = 0u;
     bool m_DualReloadCommitByHost = false;
     int m_DualReloadClipBefore = -1, m_DualReloadReserveBefore = -1;
     int m_DualReloadLastClip = -1, m_DualReloadLastReserve = -1;

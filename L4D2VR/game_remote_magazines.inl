@@ -93,6 +93,7 @@ bool Game::HandleDualMagazineCommand(edict_t* entity, const void* sourceCommand)
     if (!VRPoseRelayReadEdictIdentity(entity, index, serial)) return true;
     l4d2vr_dual_reload::Reply reply{};
     l4d2vr_pistol::AmmoSnapshot settled{};
+    uint32_t latestCommand = 0u;
     {
         std::lock_guard<std::mutex> lock(m_RemoteMagazineServerMutex);
         auto& client = m_RemoteMagazineServerClients[index];
@@ -104,8 +105,17 @@ bool Game::HandleDualMagazineCommand(edict_t* entity, const void* sourceCommand)
         l4d2vr_shell::Snapshot ammo{}; RemoteShellNativeState native{};
         bool unsupported = false;
         const bool read = ReadRemoteShellNative(this, entity, index, ammoRequest, ammo, native, unsupported, true, true);
+        latestCommand = ammo.latestCommand;
+        if (!latestCommand)
+        {
+            // The listen host's own player: its commands are not decoded as a
+            // remote VR player's are; the pistol ammo hook tracks the executed one.
+            std::lock_guard<std::mutex> pistolLock(m_PistolAmmoServerMutex);
+            const auto& pistol = m_PistolAmmoServerClients[index];
+            if (pistol.entity == entity && pistol.serial == serial) latestCommand = pistol.executedCommand;
+        }
         const l4d2vr_dual_reload::Snapshot snapshot{read && ammo.eligible && native.dualPistol, ammo.handle,
-            ammo.latestCommand, ammo.clip, ammo.reserve, l4d2vr_dual_reload::DualCapacity(ammo.capacity), native.infinite};
+            latestCommand, ammo.clip, ammo.reserve, l4d2vr_dual_reload::DualCapacity(ammo.capacity), native.infinite};
         reply = unsupported ? client.dual.Unsupported(request) :
             client.dual.Apply(request, snapshot, GetTickCount64(),
                 [&](int clip, int reserve) { return WriteRemoteShellNative(native, clip, reserve); });
@@ -116,9 +126,9 @@ bool Game::HandleDualMagazineCommand(edict_t* entity, const void* sourceCommand)
     char response[192]{};
     if (l4d2vr_dual_reload::FormatReply(reply, response, sizeof(response)))
         VRPoseRelaySendClientCommand(m_ServerPluginHelpers, entity, response);
-    Game::logMsg("[VR][DualReload][server] player=%d seq=%u status=%u clip=%d->%d reserve=%d->%d",
+    Game::logMsg("[VR][DualReload][server] player=%d seq=%u status=%u clip=%d->%d reserve=%d->%d command=%u latest=%u",
         index, request.sequence, static_cast<unsigned>(reply.status), request.clip, reply.clip,
-        request.reserve, reply.reserve);
+        request.reserve, reply.reserve, request.command, latestCommand);
     // The per-hand pistol ledger re-splits the new shared clip (15/15 when full).
     if (settled.Valid()) PublishPistolAmmoState(index, settled, static_cast<int>(request.command));
     return true;

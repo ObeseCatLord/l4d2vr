@@ -355,10 +355,13 @@ namespace l4d2vr_hand_throw
     }
 
     // ---- Client: hold / pin / release --------------------------------------
-    // Grip holds the grenade, the trigger pulls the pin, letting go of the grip
-    // throws it (Pavlov). Holding the trigger through the swing and letting go
-    // of it throws too (the old habit), as does a trigger release when the grip
-    // does not hold the item (it was selected another way).
+    // Hold the trigger of the hand holding the grenade (that pulls the pin),
+    // make the throwing motion and let go of the trigger: the grenade leaves the
+    // hand in that very command with the hand's release velocity. Every trigger
+    // release after a press throws, however short the hold; a slow release just
+    // drops or lobs it (the velocity is the hand's own). Letting go of the grip
+    // with the trigger still held throws too; letting go of the grip without the
+    // pin drops the grenade as an item (pinRequired).
     struct ReleaseInput
     {
         bool throwable = false;        // a hand-throwable grenade is the active item
@@ -366,7 +369,7 @@ namespace l4d2vr_hand_throw
         bool blocked = false;          // Use held, menus, pinned... (no arming, no throw)
         bool gripOwned = false;        // the weapon-hand grip holds the item
         bool gripReleased = false;     // that grip let go of it away from any holster
-        bool triggerDown = false;
+        bool triggerDown = false;      // the item hand's trigger
         bool pinRequired = true;       // a grip release without the pin drops the item
         std::uint64_t nowMs = 0u;
     };
@@ -376,7 +379,6 @@ namespace l4d2vr_hand_throw
     class ReleaseFsm
     {
     public:
-        static constexpr std::uint32_t kTriggerHoldThrowMs = 300u;   // a held trigger is a "hold and swing"
         static constexpr std::uint32_t kThrownResetMs = 1500u;       // server did not take it: try again
 
         bool Armed() const { return m_Armed; }
@@ -411,17 +413,22 @@ namespace l4d2vr_hand_throw
                 return Action::None;
             }
             if (in.blocked)
+            {
+                // No throw into a menu or while pinned; a release while blocked
+                // disarms (press again to pull the pin).
+                if (released)
+                    m_Armed = false;
                 return Action::None;
+            }
             if (in.gripReleased && in.gripOwned && GripReleaseThrows(in.pinRequired))
+                return Throw(in.nowMs);
+            if (released && m_Armed)
                 return Throw(in.nowMs);
             if (pressed && !m_Armed)
             {
                 m_Armed = true;
-                m_PressMs = in.nowMs;
                 return Action::PinPulled;
             }
-            if (released && m_Armed && (!in.gripOwned || in.nowMs - m_PressMs >= kTriggerHoldThrowMs))
-                return Throw(in.nowMs);
             return Action::None;
         }
 
@@ -429,6 +436,7 @@ namespace l4d2vr_hand_throw
         Action Throw(std::uint64_t nowMs)
         {
             m_Thrown = true;
+            m_Armed = false;
             m_ThrownMs = nowMs;
             return Action::Throw;
         }
@@ -437,7 +445,11 @@ namespace l4d2vr_hand_throw
         bool m_PrevTrigger = false;
         bool m_Armed = false;
         bool m_Thrown = false;
-        std::uint64_t m_PressMs = 0u;
         std::uint64_t m_ThrownMs = 0u;
     };
+
+    // The throw boost: the projectile leaves with the hand's release velocity
+    // times this (a modest boost over the literal arm speed), plus the body's
+    // own motion. ManualThrowHandVelocityScale / the plugin's ThrowHandVelocityScale.
+    constexpr float kDefaultThrowBoost = 1.5f;
 }

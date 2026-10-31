@@ -3069,6 +3069,8 @@ namespace
         // Pavlov-style recoil: aim with the sights, no crosshair or laser line.
         { "2026-10-29_pavlov_recoil_crosshair_off", "CrosshairEnabled", "false" },
         { "2026-10-29_pavlov_recoil_aim_line_off", "AimLineEnabled", "false" },
+        // Headset session 5: hand throws get a modest boost over the arm (was 3x).
+        { "2026-10-31_hand_throw_boost", "ManualThrowHandVelocityScale", "1.5" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3206,6 +3208,8 @@ namespace
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("AmbidextrousItemHands");
         sampleKeys.insert("ItemHandOffRadiusMeters");
+        sampleKeys.insert("ItemHandMirror");
+        sampleKeys.insert("VrHandsTwoHandedAimShortGunsRearHandOnly");
         sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawFollowSpeed");
         sampleKeys.insert("HolsterHeightScale");
@@ -3271,6 +3275,7 @@ namespace
         sampleKeys.insert("ConsumableGiveEnabled");
         sampleKeys.insert("ManualThrowPinRequired");
         sampleKeys.insert("ManualThrowHandVelocityScale");
+        sampleKeys.insert("ThrowableHoldAngleOffsetDeg");
         sampleKeys.insert("ManualThrowVelocityWindowMs");
         for (const auto key : l4d2vr_calibration::kConfigKeys)
             sampleKeys.insert(std::string(key));

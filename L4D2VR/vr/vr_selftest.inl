@@ -4814,10 +4814,11 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         }
         return false;
     case 4:
-        if (next(700u, 10)) { button(m_ActionPrimaryAttack, true); s.pinMs = nowMs; }   // pull the pin
+        // Hold the trigger: pulls the pin and keeps the grenade armed through the swing.
+        if (next(700u, 10)) { button(m_ActionPrimaryAttack, true); s.pinMs = nowMs; }
         return false;
     case 5:
-        if (next(100u, 3)) button(m_ActionPrimaryAttack, false);
+        next(100u, 3);
         return false;
     case 6:
         if (next(500u, 10))
@@ -4851,10 +4852,11 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         }
         return false;
     case 7:
-        // Let go while the hand still moves (drop: the hand is still).
+        // Let go of the trigger while the hand still moves (drop: the hand is
+        // still). The grip keeps holding until the next throw.
         if (next(throwIndex == 0 ? 150u : throwIndex == 1 ? 220u : 300u, 2))
         {
-            button(m_ActionWeaponGrip, false);
+            button(m_ActionPrimaryAttack, false);
             s.released = true;
             s.releaseMs = nowMs;
             s.releaseHand = GetRightControllerViewmodelAbsPos();
@@ -4878,10 +4880,10 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         seenVelocity = (s.seenPos2 - s.seenPos) * (1000.0f / static_cast<float>(s.seenMs2 - s.seenMs));
     if (!s_handMode)
     {
-        // No hand throws on this server: the trigger tap started the native
+        // No hand throws on this server: the held trigger started the native
         // throw (pin-pull animation + throw timer); report its timing only.
-        Game::logMsg("[VR][SelfTest] INFO hand throw %s %s without the HandThrow feature: trigger tap -> projectile seen %.0f ms "
-            "(grip let go %.0f ms after the tap), %.0f units from the hand at the release, slot %s", item.c_str(), style,
+        Game::logMsg("[VR][SelfTest] INFO hand throw %s %s without the HandThrow feature: trigger press -> projectile seen %.0f ms "
+            "(trigger let go %.0f ms after the press), %.0f units from the hand at the release, slot %s", item.c_str(), style,
             s.seen ? static_cast<double>(s.seenMs - s.pinMs) : -1.0, static_cast<double>(s.releaseMs - s.pinMs), seenFromHand,
             slotEmpty ? "empty" : "occupied");
     }
@@ -4906,8 +4908,8 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         const float handSpeed = releaseVelocity.Length();
         const float releaseSpeedMps = handSpeed / (std::max)(1.0f, m_VRScale);
         const float handAlong = handSpeed > 1.0f ? DotProduct(releaseVelocity, s.swingDir) / handSpeed : 0.0f;
-        std::snprintf(detail, sizeof(detail), "%s: release by %s, hand %.2f m/s (%.0f %.0f %.0f), %.2f of it along the scripted swing",
-            style, s.drawn ? "grip" : "trigger", releaseSpeedMps, releaseVelocity.x, releaseVelocity.y, releaseVelocity.z, handAlong);
+        std::snprintf(detail, sizeof(detail), "%s: release by the trigger, hand %.2f m/s (%.0f %.0f %.0f), %.2f of it along the scripted swing",
+            style, releaseSpeedMps, releaseVelocity.x, releaseVelocity.y, releaseVelocity.z, handAlong);
         SelfTestReport("hand throw: release with the measured hand velocity", released &&
             (drop ? releaseSpeedMps < 0.3f : releaseSpeedMps > 1.0f && handAlong > 0.9f), detail);
 

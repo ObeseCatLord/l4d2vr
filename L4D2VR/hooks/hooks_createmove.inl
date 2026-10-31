@@ -631,8 +631,13 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					m_VR->TriggerPhysicalHandHapticPulse(m_VR->IsGameplayHandLeftPhysical(false), 0.025f, 140.0f, 0.2f, 2); // pin pulled
 				if (throwable && !attackDownForThrow && s_t0ThrowPrevAttack && localPlayerForAutoActions)
 				{
-					const Vector handVelocity = m_VR->m_DroppedMagazineHandVelocity[1] *
-						std::max(0.1f, m_VR->m_ManualThrowVelocityScale);
+					// The hand's smoothed release velocity (tracking space, relative
+					// to the body) times the same boost a hand throw gets.
+					Vector releaseVelocity{};
+					if (!m_VR->EstimateHandThrowVelocity(m_VR->ThrowableHandIsLeft(), releaseVelocity))
+						releaseVelocity = m_VR->m_DroppedMagazineHandVelocity[1];
+					const Vector handVelocity = releaseVelocity *
+						std::max(0.1f, m_VR->m_ManualThrowHandVelocityScale);
 					const l4d2vr_ballistics::NativeThrowAim solved = l4d2vr_ballistics::MapHandThrowToNative(
 						m_VR->GetRightControllerAbsPos(), handVelocity, localPlayerForAutoActions->EyePosition(),
 						localPlayerForAutoActions->GetAbsOrigin().z,

@@ -1954,6 +1954,7 @@ void VR::ParseConfigFile()
     m_VrHandsTwoHandedAimMountFriendly = getBool("VrHandsTwoHandedAimMountFriendly", m_VrHandsTwoHandedAimMountFriendly);
     m_VrHandsVirtualStockEnabled = getBool("VrHandsVirtualStockEnabled", m_VrHandsVirtualStockEnabled);
     m_VrHandsTwoHandedAimStrength = std::clamp(getFloat("VrHandsTwoHandedAimStrength", m_VrHandsTwoHandedAimStrength), 0.0f, 1.0f);
+    m_VrHandsTwoHandedAimShortGunsRearHandOnly = getBool("VrHandsTwoHandedAimShortGunsRearHandOnly", m_VrHandsTwoHandedAimShortGunsRearHandOnly);
     m_VrHandsTwoHandedAimSmoothingSeconds = std::clamp(getFloat("VrHandsTwoHandedAimSmoothingSeconds", m_VrHandsTwoHandedAimSmoothingSeconds), 0.0f, 0.25f);
     m_VrHandsTwoHandedStabilizerEnabled = getBool("VrHandsTwoHandedStabilizerEnabled", true);
     m_VrHandsTwoHandedStabilizerMinCutoffHz = std::clamp(getFloat("VrHandsTwoHandedStabilizerMinCutoffHz", 1.2f), 0.2f, 10.0f);
@@ -3323,6 +3324,7 @@ void VR::ParseConfigFile()
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
     m_AmbidextrousItemHands = getBool("AmbidextrousItemHands", true);
     m_ItemHandOffRadiusMeters = std::clamp(getFloat("ItemHandOffRadiusMeters", 0.14f), 0.05f, 0.3f);
+    m_ItemHandMirror = getBool("ItemHandMirror", true);
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
     // Pavlov's inventory follows the head yaw at interpolation speed 20.
     m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 20.0f), 1.0f, 60.0f);
@@ -3351,6 +3353,12 @@ void VR::ParseConfigFile()
     m_ManualThrowPinRequired = getBool("ManualThrowPinRequired", m_ManualThrowPinRequired);
     m_ManualThrowHandVelocityScale = std::clamp(getFloat("ManualThrowHandVelocityScale", m_ManualThrowHandVelocityScale), 0.0f, 10.0f);
     m_ManualThrowVelocityWindowMs = std::clamp(getInt("ManualThrowVelocityWindowMs", m_ManualThrowVelocityWindowMs), 20, 250);
+    {
+        const Vector hold = getVector3("ThrowableHoldAngleOffsetDeg",
+            Vector(m_ThrowableHoldAngleOffset.x, m_ThrowableHoldAngleOffset.y, m_ThrowableHoldAngleOffset.z));
+        m_ThrowableHoldAngleOffset = QAngle(std::clamp(hold.x, -90.0f, 90.0f), std::clamp(hold.y, -90.0f, 90.0f),
+            std::clamp(hold.z, -90.0f, 90.0f));
+    }
     m_ObjectPullEnabled = getBool("ObjectPullEnabled", m_ObjectPullEnabled);
     m_ObjectPullVisualsEnabled = getBool("ObjectPullVisualsEnabled", m_ObjectPullVisualsEnabled);
     m_ObjectPullMaxDistanceMeters = std::clamp(getFloat("ObjectPullMaxDistanceMeters", m_ObjectPullMaxDistanceMeters), 0.1f, 30.0f);

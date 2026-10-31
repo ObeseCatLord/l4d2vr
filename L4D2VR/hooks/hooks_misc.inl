@@ -11,6 +11,8 @@
 static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
     const std::string& modelName, void*& bones);
 namespace vr_vm_stabilize { struct Mat3x4; }
+// DXVK fork (dxvk_new/src/d3d9/d3d9_device.cpp): flip the front face for mirrored draws.
+extern "C" void L4D2VR_DxvkSetMirroredFrontFace(IDirect3DDevice9* device, int mirrored);
 static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string& modelName, void*& bones,
     vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow);
 
@@ -18949,14 +18951,43 @@ namespace
         }
     }
 
+    // Mirrored left-hand rendering (vr_hand_mirror.h) on Source bone matrices.
+    inline vr_vm_stabilize::Mat3x4 HooksHandMirrorApply(
+        const l4d2vr_hand_mirror::Mat34& mirror,
+        const vr_vm_stabilize::Mat3x4& bone)
+    {
+        static_assert(sizeof(l4d2vr_hand_mirror::Mat34) == sizeof(vr_vm_stabilize::Mat3x4),
+            "mirror and bone matrices share the matrix3x4_t layout");
+        l4d2vr_hand_mirror::Mat34 in{};
+        std::memcpy(&in, &bone, sizeof(in));
+        const l4d2vr_hand_mirror::Mat34 product = l4d2vr_hand_mirror::Mul(mirror, in);
+        vr_vm_stabilize::Mat3x4 out{};
+        std::memcpy(&out, &product, sizeof(out));
+        return out;
+    }
+
+    inline void HooksHandMirrorApplyAll(
+        const l4d2vr_hand_mirror::Mat34& mirror,
+        vr_vm_stabilize::Mat3x4* bones,
+        int numBones)
+    {
+        if (!bones)
+            return;
+        for (int bone = 0; bone < numBones; ++bone)
+            bones[bone] = HooksHandMirrorApply(mirror, bones[bone]);
+    }
+
     inline bool HooksNativeViewmodelBuildFullArmIkBones(
         VR* vr,
         void* drawState,
         const std::string& modelName,
         void* pCustomBoneToWorld,
-        vr_vm_stabilize::Mat3x4*& outBones)
+        vr_vm_stabilize::Mat3x4*& outBones,
+        bool* outMirrored = nullptr)
     {
         outBones = nullptr;
+        if (outMirrored)
+            *outMirrored = false;
         if (!HooksNativeViewmodelFullArmIkActive(vr))
         {
             if (vr && !vr->m_FirstPersonControlReady.load(std::memory_order_acquire))
@@ -19287,6 +19318,33 @@ namespace
                     armFrameRight = torsoRight;
                     armFrameUp = torsoUp;
                 }
+            }
+        }
+
+        // Item in the physical left hand (ItemHandMirror): solve a normal
+        // right-handed pose in the mirror world (targets M*P*T), reflect the
+        // result by M below and draw it with the winding flipped. The gun hand
+        // lands on Pg*T (a left hand on the same grip), the free hand on Ps*T'
+        // (a right hand around the right controller).
+        bool handMirror = false;
+        l4d2vr_hand_mirror::Mat34 bodyMirror = l4d2vr_hand_mirror::Identity();
+        l4d2vr_hand_mirror::Mat34 supportLocalMirror = l4d2vr_hand_mirror::Identity();
+        if (outMirrored && vr->ItemHandMirrorWanted())
+        {
+            l4d2vr_hand_mirror::Mat34 gunLocalMirror{};
+            const float bodyPoint[3] = { viewOrigin.x, viewOrigin.y, viewOrigin.z };
+            const float bodyNormal[3] = { bodyRight.x, bodyRight.y, bodyRight.z };
+            if (vr->GetItemHandMirrorPlanes(gunLocalMirror, supportLocalMirror) &&
+                l4d2vr_hand_mirror::Reflection(bodyPoint, bodyNormal, bodyMirror))
+            {
+                l4d2vr_hand_mirror::Mat34 target{};
+                std::memcpy(&target, &rightTarget, sizeof(target));
+                target = l4d2vr_hand_mirror::MirroredWorldTarget(bodyMirror, gunLocalMirror, target);
+                std::memcpy(&rightTarget, &target, sizeof(target));
+                std::memcpy(&target, &leftTarget, sizeof(target));
+                target = l4d2vr_hand_mirror::MirroredWorldTarget(bodyMirror, supportLocalMirror, target);
+                std::memcpy(&leftTarget, &target, sizeof(target));
+                handMirror = true;
             }
         }
 
@@ -20406,7 +20464,22 @@ namespace
             }
         }
 
-        if (solvedSide[0])
+        if (handMirror)
+            HooksHandMirrorApplyAll(bodyMirror, solvedBones, numBones);
+        if (solvedSide[0] && handMirror)
+        {
+            // The magazine logic reads the free hand's wrist as a proper frame
+            // at its controller: undo the free hand's own mirror for it.
+            std::vector<vr_vm_stabilize::Mat3x4> anchorBones(
+                solvedBones, solvedBones + numBones);
+            HooksHandMirrorApplyAll(supportLocalMirror, anchorBones.data(), numBones);
+            HooksNativeViewmodelHandsOnlyPublishLeftWristAnchor(
+                vr,
+                boneNames,
+                numBones,
+                anchorBones.data());
+        }
+        else if (solvedSide[0])
         {
             HooksNativeViewmodelHandsOnlyPublishLeftWristAnchor(
                 vr,
@@ -20467,6 +20540,8 @@ namespace
             solvedSide[1] ? &rightChain : nullptr,
             &boneNames);
         outBones = solvedBones;
+        if (outMirrored)
+            *outMirrored = handMirror;
         return true;
     }
 
@@ -21302,6 +21377,125 @@ namespace
         IDirect3DDevice9* m_Device = nullptr;
         DWORD m_OldClipping = TRUE;
         bool m_Active = false;
+    };
+
+    // Mirrored viewmodel draws (ItemHandMirror) have reflected bone matrices,
+    // so their triangles wind the other way: the DXVK fork flips the front face
+    // for exactly those draws (d3d9_device.cpp). Queued like the depth clamp so
+    // it brackets the draw on Source's render thread.
+    struct HooksQueuedMirroredDrawState
+    {
+        std::atomic<long> refs{ 1 };
+        VR* vr = nullptr;
+        IDirect3DDevice9* device = nullptr;
+
+        explicit HooksQueuedMirroredDrawState(VR* inVr) : vr(inVr) {}
+        void AddRef() { refs.fetch_add(1, std::memory_order_acq_rel); }
+        void Release()
+        {
+            if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                delete this;
+        }
+        void Begin()
+        {
+            if (device || !vr)
+                return;
+            device = HooksNativeViewmodelHandsOnlyGetD3DDevice(vr);
+            if (device)
+                L4D2VR_DxvkSetMirroredFrontFace(device, 1);
+        }
+        void End()
+        {
+            if (!device)
+                return;
+            L4D2VR_DxvkSetMirroredFrontFace(device, 0);
+            device->Release();
+            device = nullptr;
+        }
+        ~HooksQueuedMirroredDrawState() { End(); }
+    };
+
+    class HooksQueuedMirroredDrawFunctor final : public CFunctor
+    {
+    public:
+        HooksQueuedMirroredDrawFunctor(HooksQueuedMirroredDrawState* state, bool begin)
+            : m_State(state), m_Begin(begin)
+        {
+            if (m_State)
+                m_State->AddRef();
+        }
+        ~HooksQueuedMirroredDrawFunctor() override
+        {
+            if (m_State)
+                m_State->Release();
+        }
+        int AddRef() override
+        {
+            return static_cast<int>(m_RefCount.fetch_add(1, std::memory_order_acq_rel) + 1);
+        }
+        int Release() override
+        {
+            const long remaining = m_RefCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            if (remaining == 0)
+                delete this;
+            return static_cast<int>(remaining);
+        }
+        void operator()() override
+        {
+            if (!m_State)
+                return;
+            if (m_Begin)
+                m_State->Begin();
+            else
+                m_State->End();
+        }
+    private:
+        std::atomic<long> m_RefCount{ 0 };
+        HooksQueuedMirroredDrawState* m_State = nullptr;
+        bool m_Begin = true;
+    };
+
+    class ScopedMirroredViewmodelDraw
+    {
+    public:
+        ScopedMirroredViewmodelDraw(bool enabled, VR* vr, Game* game)
+        {
+            if (!enabled || !vr)
+                return;
+            const int queueMode = game ? game->GetMatQueueMode() : 0;
+            m_State = new HooksQueuedMirroredDrawState(vr);
+            if (queueMode != 0 && game && game->m_MaterialSystem)
+            {
+                m_Context = game->m_MaterialSystem->GetRenderContext();
+                m_CallQueue = HooksNativeViewmodelHandsOnlyGetSourceRenderCallQueue(m_Context);
+            }
+            if (m_CallQueue)
+                m_CallQueue->QueueFunctor(new HooksQueuedMirroredDrawFunctor(m_State, true));
+            else if (queueMode == 0)
+                m_State->Begin();
+            else
+            {
+                // Queued rendering without a call queue: drawing unflipped would
+                // show the model inside out, so the caller draws it unmirrored.
+                m_State->Release();
+                m_State = nullptr;
+            }
+        }
+        ~ScopedMirroredViewmodelDraw()
+        {
+            if (!m_State)
+                return;
+            if (m_CallQueue)
+                m_CallQueue->QueueFunctor(new HooksQueuedMirroredDrawFunctor(m_State, false));
+            else
+                m_State->End();
+            m_State->Release();
+        }
+        bool Active() const { return m_State != nullptr; }
+    private:
+        HooksQueuedMirroredDrawState* m_State = nullptr;
+        CRefPtr<IMatRenderContext> m_Context;
+        ICallQueue* m_CallQueue = nullptr;
     };
 
     inline bool HooksFirstPersonBodyGetModelNameSafe(
@@ -27097,14 +27291,17 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
 
         bool nativeHandsOnlyDrawn = false;
         vr_vm_stabilize::Mat3x4* nativeViewmodelFullArmIkBones = nullptr;
+        bool nativeViewmodelFullArmIkMirrored = false;
         if (!hideMagazineInteractionCalibrationOriginalViewmodel &&
             HooksNativeViewmodelBuildFullArmIkBones(
                 m_VR,
                 state,
                 modelName,
                 pBonesToWorldFinal,
-                nativeViewmodelFullArmIkBones))
+                nativeViewmodelFullArmIkBones,
+                &nativeViewmodelFullArmIkMirrored))
         {
+            ScopedMirroredViewmodelDraw mirroredArms(nativeViewmodelFullArmIkMirrored, m_VR, m_Game);
             hkDrawModelExecute.fOriginal(
                 ecx,
                 state,
@@ -27205,16 +27402,47 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             else if (!nativeViewmodelPendingFreezeHide &&
                 !nativeViewmodelFullArmIkFailClosed)
             {
+                // Item in the physical left hand (ItemHandMirror): the gun is
+                // drawn reflected across its own centre plane, matching the
+                // mirrored left hand the arm IK draws around it.
+                void* weaponBones = pBonesToWorldFinal;
+                bool mirrorWeapon = false;
+                if (m_VR && pBonesToWorldFinal && !nativeViewmodelArmsOrHandsModel &&
+                    (drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerModelForCalibrationHide)) &&
+                    !HooksDrawIsHolsteredItem(m_VR, info) &&
+                    m_VR->ItemHandMirrorWanted() &&
+                    HooksNativeViewmodelFullArmIkActive(m_VR) &&
+                    HooksNativeViewmodelFullArmControllerPairReady(m_VR))
+                {
+                    int mirrorBoneCount = 0;
+                    l4d2vr_hand_mirror::Mat34 gunMirror{};
+                    l4d2vr_hand_mirror::Mat34 unusedSupportMirror{};
+                    vr_vm_stabilize::Mat3x4* mirrored = nullptr;
+                    if (vr_vm_stabilize::TryGetNumBonesFromDrawState(state, mirrorBoneCount) &&
+                        mirrorBoneCount > 0 &&
+                        m_VR->GetItemHandMirrorPlanes(gunMirror, unusedSupportMirror) &&
+                        (mirrored = vr_vm_stabilize::AllocStableBones(mirrorBoneCount, 0u)) != nullptr &&
+                        vr_vm_stabilize::SafeReadBytes(pBonesToWorldFinal, mirrored,
+                            static_cast<size_t>(mirrorBoneCount) * sizeof(vr_vm_stabilize::Mat3x4)))
+                    {
+                        HooksHandMirrorApplyAll(gunMirror, mirrored, mirrorBoneCount);
+                        weaponBones = mirrored;
+                        mirrorWeapon = true;
+                    }
+                }
+                ScopedMirroredViewmodelDraw mirroredWeapon(mirrorWeapon, m_VR, m_Game);
+                if (mirrorWeapon && !mirroredWeapon.Active())
+                    weaponBones = pBonesToWorldFinal;
                 ScopedNativeViewmodelHandsOnlyClipPlane nativeHandsOnlyClip(
                     m_VR,
                     state,
                     modelName,
-                    pBonesToWorldFinal);
+                    weaponBones);
                 hkDrawModelExecute.fOriginal(
                     ecx,
                     state,
                     *pDrawInfo,
-                    pBonesToWorldFinal);
+                    weaponBones);
             }
         }
     }

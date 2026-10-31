@@ -276,6 +276,10 @@ bool VR::ResolvePavlovTwoHandedAimBasis(
     if (!IsVrHandsTwoHandedGripPoseActive() || m_MouseModeEnabled ||
         (m_ManualPumpEnabled && m_ManualPumpBlockingFire.load(std::memory_order_acquire)))
         return false;
+    // A short gun (pistol, magnum, SMG) is aimed by the trigger hand alone; the
+    // support hand on it still steadies the recoil (vr_two_hand_aim.h).
+    if (!l4d2vr_two_hand::SupportHandSteersAim(m_VrHandsTwoHandedGripWeaponId, m_VrHandsTwoHandedAimShortGunsRearHandOnly))
+        return false;
 
     if (!VrHandsAimIsFinite(leftControllerPosAbs) ||
         !VrHandsAimIsFinite(rightControllerPosAbs) ||
@@ -2441,6 +2445,20 @@ void VR::UpdateTracking()
         reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon())->GetWeaponID() == C_WeaponCSBase::WeaponID::MELEE)
         m_ViewmodelPosOffset.x += m_MeleeGripReachMeters * m_VRScale;
 	m_ViewmodelAngOffset = viewmodelOffset.angle + m_ViewmodelAngAdjust + m_ViewmodelPoseAngOffset;
+    // A held grenade stands up in the hand (ThrowableHoldAngleOffsetDeg): the
+    // game's hold leans it in toward the body. Mirrored with the hand when the
+    // grenade is in the left hand (vr_hand_mirror.h, controller plane).
+    if (!m_MouseModeEnabled && localPlayer && localPlayer->GetActiveWeapon())
+    {
+        const auto throwableId = reinterpret_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon())->GetWeaponID();
+        if (throwableId == C_WeaponCSBase::WeaponID::MOLOTOV || throwableId == C_WeaponCSBase::WeaponID::PIPE_BOMB ||
+            throwableId == C_WeaponCSBase::WeaponID::VOMITJAR)
+        {
+            m_ViewmodelAngOffset.x += m_ThrowableHoldAngleOffset.x;
+            m_ViewmodelAngOffset.y += m_ThrowableHoldAngleOffset.y;
+            m_ViewmodelAngOffset.z += m_ThrowableHoldAngleOffset.z;
+        }
+    }
     if (!m_MouseModeEnabled)
     {
         // Turn the drawn gun so its bore is parallel to the aim ray; the sights

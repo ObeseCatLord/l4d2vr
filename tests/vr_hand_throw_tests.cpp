@@ -81,6 +81,16 @@ static void Compose()
     Require(ComposeVelocity(V3(std::nanf(""), 0.0f, 0.0f), V3(), 3.0f, 1400.0f).Length() == 0.0f, "NaN is rejected");
     Require(ComposeVelocity(V3(10.0f, 0.0f, 0.0f), V3(), 3.0f, 0.0f).Length() == 0.0f, "max 0 disables");
 
+    // The default boost is modest: an 8 m/s overhand throw (39.37 units/m)
+    // leaves at 12 m/s along the swing; a slow 0.3 m/s release only drops.
+    Require(kDefaultThrowBoost >= 1.3f && kDefaultThrowBoost <= 1.6f, "modest boost");
+    const float upm = 39.3701f;
+    const V3 overhand = ComposeVelocity(V3(8.0f * upm * 0.8f, 0.0f, 8.0f * upm * 0.6f), V3(), kDefaultThrowBoost, 1400.0f);
+    Require(Near(overhand.Length(), 12.0f * upm, 0.5f), "8 m/s hand -> 12 m/s grenade");
+    Require(Near(overhand.z / overhand.x, 0.75f, 0.001f), "direction is the hand's");
+    const V3 slow = ComposeVelocity(V3(0.3f * upm, 0.0f, 0.0f), V3(), kDefaultThrowBoost, 1400.0f);
+    Require(slow.Length() < 0.5f * upm, "a slow release is a gentle drop");
+
     std::array<float, 4> t{ 0.0f, 1.0f / 30.0f, 2.0f / 30.0f, 3.0f / 30.0f };
     std::array<V3, 4> o{ V3(0, 0, 0), V3(7, 0, 0), V3(14, 0, 0), V3(21, 0, 0) };
     V3 pv{};
@@ -152,15 +162,26 @@ static void Fsm()
     in.nowMs = 1000u;
     Require(f.Update(in) == Action::None, "first frame binds the weapon");
 
-    // Pavlov: tap the trigger (pin), swing, let go of the grip.
+    // Hold the trigger (pin), swing, let go of the trigger: it throws however
+    // short the hold was (a slow release lobs or drops it by its own velocity).
     in.triggerDown = true; in.nowMs = 1100u;
     Require(f.Update(in) == Action::PinPulled && f.Armed(), "trigger pulls the pin");
+    in.nowMs = 1130u;
+    Require(f.Update(in) == Action::None && f.Armed(), "held trigger stays armed");
     in.triggerDown = false; in.nowMs = 1150u;
-    Require(f.Update(in) == Action::None, "a quick tap only pulls the pin while the grip holds the grenade");
+    Require(f.Update(in) == Action::Throw && f.Thrown() && !f.Armed(), "a quick release throws too (no minimum hold)");
     in.gripReleased = true; in.nowMs = 1600u;
-    Require(f.Update(in) == Action::Throw && f.Thrown(), "letting go of the grip throws");
+    Require(f.Update(in) == Action::None, "one throw per grenade: the grip release after it does nothing");
     in.gripReleased = false; in.nowMs = 1700u;
     Require(f.Update(in) == Action::None, "one throw per grenade");
+
+    // Letting go of the grip while the trigger is still held throws.
+    ReleaseFsm gt; ReleaseInput gi = in; gi.weapon = 0x150u; gi.triggerDown = false; gi.gripReleased = false; gi.nowMs = 1800u;
+    gt.Update(gi);
+    gi.triggerDown = true; gi.nowMs = 1810u;
+    Require(gt.Update(gi) == Action::PinPulled, "press");
+    gi.gripReleased = true; gi.nowMs = 2100u;
+    Require(gt.Update(gi) == Action::Throw, "grip let go with the trigger held: thrown");
 
     // A grip release without the pin is the ordinary drop (caller keeps it).
     ReleaseFsm g; ReleaseInput d = in; d.weapon = 0x200u; d.nowMs = 2000u;
@@ -173,7 +194,7 @@ static void Fsm()
     np.gripReleased = true;
     Require(h.Update(np) == Action::Throw, "without the pin requirement a grip release throws");
 
-    // Hold the trigger through the swing and let go of it (old habit).
+    // Hold the trigger through the swing and let go of it.
     ReleaseFsm k; ReleaseInput hold = in; hold.weapon = 0x400u; hold.gripReleased = false; hold.nowMs = 3000u;
     hold.triggerDown = false;
     k.Update(hold);
@@ -205,6 +226,26 @@ static void Fsm()
     ReleaseFsm r; ReleaseInput bl = b; bl.weapon = 0x900u; bl.triggerDown = false; r.Update(bl);
     bl.blocked = true; bl.triggerDown = true; bl.nowMs = 7000u;
     Require(r.Update(bl) == Action::None && !r.Armed(), "blocked input cannot arm");
+    // Armed, then blocked (a menu): releasing there does not throw and disarms.
+    ReleaseFsm u; ReleaseInput ub = b; ub.weapon = 0x950u; ub.triggerDown = false; ub.blocked = false; ub.nowMs = 7100u;
+    u.Update(ub);
+    ub.triggerDown = true; ub.nowMs = 7110u;
+    Require(u.Update(ub) == Action::PinPulled, "armed");
+    ub.blocked = true; ub.nowMs = 7120u;
+    Require(u.Update(ub) == Action::None && u.Armed(), "a blocked frame keeps the pin pulled");
+    ub.triggerDown = false; ub.nowMs = 7130u;
+    Require(u.Update(ub) == Action::None && !u.Armed(), "a release while blocked never throws");
+    // Every one of ten deliberate hold-swing-release throws releases, whatever the hold time.
+    for (int i = 0; i < 10; ++i)
+    {
+        ReleaseFsm t; ReleaseInput ti = in; ti.weapon = 0xB00u + static_cast<std::uintptr_t>(i);
+        ti.gripReleased = false; ti.triggerDown = false; ti.nowMs = 9000u;
+        t.Update(ti);
+        ti.triggerDown = true; ti.nowMs = 9016u;
+        Require(t.Update(ti) == Action::PinPulled, "pin");
+        ti.triggerDown = false; ti.nowMs = 9016u + 16u * static_cast<std::uint64_t>(i + 1);
+        Require(t.Update(ti) == Action::Throw, "release throws");
+    }
 
     // The server did not take the throw (e.g. stale): after a while it can be thrown again.
     ReleaseFsm s; ReleaseInput st = in; st.weapon = 0xA00u; st.gripReleased = false; st.triggerDown = false; st.nowMs = 8000u;

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import ssl
 import sys
 import tempfile
 import urllib.error
@@ -76,6 +77,32 @@ class Release:
 # Networking
 # ---------------------------------------------------------------------------
 
+# A frozen (PyInstaller) Linux binary uses the OpenSSL of the system it was
+# built on, whose default CA paths may not exist on the player's distribution
+# (e.g. a Debian build on Arch). Use the first CA bundle that exists.
+_CA_BUNDLES = (
+    "/etc/ssl/certs/ca-certificates.crt",      # Debian, Ubuntu, Arch, Gentoo
+    "/etc/pki/tls/certs/ca-bundle.crt",        # Fedora, RHEL
+    "/etc/ssl/ca-bundle.pem",                  # openSUSE
+    "/etc/ssl/cert.pem",                       # Alpine, macOS
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+)
+_SSL_CONTEXT = None
+
+
+def ssl_context() -> ssl.SSLContext:
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        context = ssl.create_default_context()
+        if sys.platform.startswith("linux") and not os.environ.get("SSL_CERT_FILE"):
+            for bundle in _CA_BUNDLES:
+                if os.path.isfile(bundle):
+                    context.load_verify_locations(cafile=bundle)
+                    break
+        _SSL_CONTEXT = context
+    return _SSL_CONTEXT
+
+
 def open_url(url: str, accept: Optional[str] = None, timeout: float = 30.0):
     headers = {"User-Agent": USER_AGENT}
     if accept:
@@ -87,7 +114,7 @@ def open_url(url: str, accept: Optional[str] = None, timeout: float = 30.0):
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
     try:
-        return urllib.request.urlopen(request, timeout=timeout)
+        return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
     except urllib.error.HTTPError as error:
         if error.code == 403 and host == "api.github.com":
             raise InstallerError(

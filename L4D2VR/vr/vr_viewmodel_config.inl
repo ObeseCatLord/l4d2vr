@@ -1960,7 +1960,7 @@ void VR::ParseConfigFile()
     m_VrHandsTwoHandedStabilizerBeta = std::clamp(getFloat("VrHandsTwoHandedStabilizerBeta", 1.5f), 0.0f, 10.0f);
     // Pavlov hand poses for the survivor hands (vr/vr_hand_poses.inl).
     m_HandPosesEnabled = getBool("HandPosesEnabled", true);
-    m_HandPoseBlendSeconds = std::clamp(getFloat("HandPoseBlendSeconds", 0.06f), 0.0f, 0.5f);
+    m_HandPoseBlendSeconds = std::clamp(getFloat("HandPoseBlendSeconds", 0.2f), 0.0f, 1.0f);
     m_HandPoseTriggerFingerScale = std::clamp(getFloat("HandPoseTriggerFingerScale", 1.0f), 0.0f, 2.0f);
     m_HandPoseDebugLog = getBool("HandPoseDebugLog", false);
     m_VrHandsTwoHandedAimMinHandDistanceMeters = std::clamp(getFloat("VrHandsTwoHandedAimMinHandDistanceMeters", m_VrHandsTwoHandedAimMinHandDistanceMeters), 0.0f, 1.0f);

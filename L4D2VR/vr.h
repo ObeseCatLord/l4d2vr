@@ -2391,7 +2391,7 @@ public:
 	}
 	// Survivor hand finger poses (vr_hand_pose_library.h, vr/vr_hand_poses.inl).
 	bool m_HandPosesEnabled = true;
-	float m_HandPoseBlendSeconds = 0.06f;
+	float m_HandPoseBlendSeconds = 0.2f;
 	float m_HandPoseTriggerFingerScale = 1.0f;
 	bool m_HandPoseDebugLog = false;
 	mutable std::mutex m_HandPoseMutex;

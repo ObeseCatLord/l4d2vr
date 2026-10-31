@@ -3,7 +3,7 @@
 //
 //   handact=<left|right>:<activity>[:<weaponId>] | <hand>:off | off
 //                     force a hand's pose activity (free, gun, animated, support, magazine,
-//                     shell, slide, charginghandle, pump, bolt, gunposed) for a photograph;
+//                     shell, handle, gunposed) for a photograph;
 //                     left = the support hand, right = the item hand
 //   foregrip=1|0      1: the support hand goes onto the held gun's foregrip target and squeezes
 //                     the grip until the two-handed grip holds (PASS/FAIL); 0: lets go again

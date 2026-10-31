@@ -19,10 +19,7 @@ namespace
         case A::Support: return "support";
         case A::Magazine: return "magazine";
         case A::Shell: return "shell";
-        case A::Slide: return "slide";
-        case A::ChargingHandle: return "charginghandle";
-        case A::Pump: return "pump";
-        case A::BoltAction: return "bolt";
+        case A::Handle: return "handle";
         case A::GunGripPosed: return "gunposed";
         }
         return "?";
@@ -33,8 +30,7 @@ namespace
         using A = l4d2vr_handpose::HandActivity;
         static const std::pair<const char*, A> kNames[] = {
             { "free", A::Free }, { "gun", A::GunGrip }, { "animated", A::Animated }, { "support", A::Support },
-            { "magazine", A::Magazine }, { "shell", A::Shell }, { "slide", A::Slide },
-            { "charginghandle", A::ChargingHandle }, { "pump", A::Pump }, { "bolt", A::BoltAction },
+            { "magazine", A::Magazine }, { "shell", A::Shell }, { "handle", A::Handle },
             { "gunposed", A::GunGripPosed } };
         for (const auto& entry : kNames)
             if (name == entry.first) { out = entry.second; return true; }
@@ -64,7 +60,7 @@ l4d2vr_handpose::HandInput VR::ResolveHandPoseInput(int gameplaySide) const
         const int reloadWeapon = m_MagazineInteractionWeaponId != 0 ? m_MagazineInteractionWeaponId : weaponId;
         in.weaponId = reloadWeapon;
         if (state == MagazineInteractionManualState::HoldingBolt)
-            in.activity = hp::BoltActivity(reloadWeapon);
+            in.activity = A::Handle;
         else if (m_MagazineInteractionShotgunShellMode)
             in.activity = A::Shell;
         else

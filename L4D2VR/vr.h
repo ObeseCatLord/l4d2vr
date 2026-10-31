@@ -1027,6 +1027,11 @@ public:
 	// pass. Bullets and the aim line run along it, so a shot lands on the
 	// sight picture at every distance.
 	bool m_IronSightAimEnabled = true;
+	// Keep guns rigid in the hand (no native idle sway or fire-animation kick
+	// on the weapon_bone): bullets and the sights follow the hand and recoil.
+	bool m_GunRigidInHand = true;
+	std::atomic<int> m_ActiveGunWeaponId{ 0 }; // the local player's active weapon id (main thread writes)
+	std::atomic<uint64_t> m_LastLocalShotMs{ 0u };
 	Vector m_SightRearInHand{ 0.0f, 0.0f, 0.0f };
 	Vector m_SightFrontInHand{ 0.0f, 0.0f, 0.0f };
 	uint64_t m_SightPointsAtMs = 0;
@@ -3429,12 +3434,22 @@ public:
 		QAngle angles{};
 		bool server = false;
 		int weaponId = 0;
+		int command = 0;
 		l4d2vr_recoil::Offset offset{};
+		Vector handForward{}, handRight{}, handUp{}; // the gun hand's basis before the kick
 	};
 	std::mutex m_RecoilShotLogMutex;
 	std::vector<RecoilShotRecord> m_RecoilShotLog;
 	std::atomic<bool> m_RecoilShotLogActive{ false };
-	void RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool server, int weaponId);
+	void RecordRecoilShotRay(const Vector& origin, const QAngle& angles, bool server, int weaponId, int command = 0);
+	// The gun hand's aim basis before this frame's kick (self-test reference).
+	Vector m_RecoilPreKickForward{ 1.0f, 0.0f, 0.0f };
+	Vector m_RecoilPreKickRight{ 0.0f, -1.0f, 0.0f };
+	Vector m_RecoilPreKickUp{ 0.0f, 0.0f, 1.0f };
+	float m_RecoilTestFireStart = 0.0f;
+	float m_RecoilTestGripSince = -1.0f;
+	Vector m_RecoilTestRefLocal{ 1.0f, 0.0f, 0.0f };
+	Vector m_RecoilTestRefComp{ 1.0f, 0.0f, 0.0f };
 	bool RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	bool RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	// Self-test scratch for the recoil and sight steps.
@@ -3451,6 +3466,11 @@ public:
 	std::vector<uint64_t> m_RecoilTestShotTimes;
 	void RecoilTestAlignSightsToEye(bool leftGun = false);
 	bool m_RecoilTestLeftGun = false;
+	Vector m_RecoilTestRefCtrl{ 1.0f, 0.0f, 0.0f };
+	uint64_t m_RecoilTestTraceMs = 0;
+	struct RecoilTestSample { uint64_t ms; Vector pos; Vector vel; };
+	std::vector<RecoilTestSample> m_RecoilTestProjectile;
+	int m_RecoilTestProjectileEnt = -1;
 	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
 	std::chrono::steady_clock::time_point m_ReloadGestureHoldUntil{};
 	std::chrono::steady_clock::time_point m_JumpGestureHoldUntil{};
@@ -4896,6 +4916,7 @@ public:
 	bool GetMagazineInteractionBox(MagazineInteractionBoxSnapshot& outSnapshot) const;
 	bool GetMagazineInteractionBoltBox(MagazineInteractionBoxSnapshot& outSnapshot) const;
 	bool GetVrHandsTwoHandedGripWeaponBox(MagazineInteractionBoxSnapshot& outSnapshot) const;
+	bool GetTwoHandedGripTargetPoint(Vector& point) const;
 	bool GetMagazineInteractionNativeLeftWristAnchor(VrHandMatrix4& outWorld) const;
 	void PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld);
 	bool GetMagazineInteractionNativeLeftFist(Vector& outWorld) const;

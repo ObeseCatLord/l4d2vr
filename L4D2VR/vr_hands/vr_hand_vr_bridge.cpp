@@ -11164,3 +11164,18 @@ bool VR::CaptureMagazineInteractionSound(int entityIndex, const char* sample, fl
         static_cast<int>(m_MagazineInteractionState));
     return true;
 }
+
+// Self-test helper: the centre of the box the support hand must touch to take
+// the foregrip (the same box UpdateMagazineInteraction tests).
+bool VR::GetTwoHandedGripTargetPoint(Vector& point) const
+{
+    VrHandMatrix4 world{};
+    Vector mins(0.0f, 0.0f, 0.0f), maxs(0.0f, 0.0f, 0.0f);
+    if (!TryBuildLeftHandTargetDebugBox(m_VRScale, m_VrHandsTwoHandedGripTargetBoxScale, world, mins, maxs) ||
+        !MagazineInteractionMatrixLooksRenderable(world))
+        return false;
+    const Vector c = (mins + maxs) * 0.5f;
+    point = MagazineInteractionMatrixOrigin(world) + MagazineInteractionMatrixAxis(world, 0) * c.x +
+        MagazineInteractionMatrixAxis(world, 1) * c.y + MagazineInteractionMatrixAxis(world, 2) * c.z;
+    return true;
+}

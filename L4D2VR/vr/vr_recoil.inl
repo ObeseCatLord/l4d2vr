@@ -19,6 +19,7 @@ namespace
 
 void VR::OnRecoilShot(int weaponId, bool leftPistol, int commandNumber, uintptr_t weaponTag)
 {
+    m_LastLocalShotMs.store(GetTickCount64(), std::memory_order_release);
     if (!m_IsVREnabled || !m_RecoilEnabled || m_MouseModeEnabled)
         return;
     const l4d2vr_recoil::Profile* profile = l4d2vr_recoil::ProfileForWeapon(weaponId);
@@ -80,6 +81,7 @@ void VR::UpdateWeaponRecoil(C_BasePlayer* localPlayer)
     C_WeaponCSBase* weapon = localPlayer ? static_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon()) : nullptr;
     const int weaponId = weapon ? static_cast<int>(weapon->GetWeaponID()) : 0;
     const uintptr_t weaponTag = reinterpret_cast<uintptr_t>(weapon);
+    m_ActiveGunWeaponId.store(localPlayer && m_IsVREnabled ? weaponId : 0, std::memory_order_release);
     const bool eligible = m_IsVREnabled && m_RecoilEnabled && !m_MouseModeEnabled && localPlayer && weapon &&
         !IsUsingMountedGun(localPlayer) && l4d2vr_recoil::ProfileForWeapon(weaponId) != nullptr;
 
@@ -100,6 +102,9 @@ void VR::UpdateWeaponRecoil(C_BasePlayer* localPlayer)
         m_RecoilClipWatchClip = -1;
     }
 
+    m_RecoilPreKickForward = m_RightControllerForward;
+    m_RecoilPreKickRight = m_RightControllerRight;
+    m_RecoilPreKickUp = m_RightControllerUp;
     const bool dual = m_DualPistolsActive.load(std::memory_order_acquire) ||
         m_LeftHandPistolActive.load(std::memory_order_acquire);
     for (int k = 0; k < 2; ++k)

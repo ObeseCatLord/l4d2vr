@@ -1645,12 +1645,26 @@ namespace
         return (VrHandMath::Dot(visual, input) < -0.15f) ? (visual * -1.0f) : visual;
     }
 
+    // The pump or chrome shotgun with the manual pump: its fore-end follows
+    // l4d2vr_physical::PumpStroke and the ManualPump... settings.
+    bool MagazineInteractionManualPumpWeapon(const VR* vr)
+    {
+        if (!vr || !vr->m_ManualPumpEnabled)
+            return false;
+        const auto weaponId = static_cast<C_WeaponCSBase::WeaponID>(MagazineInteractionResolveWeaponIdForConfig(vr));
+        return weaponId == C_WeaponCSBase::WeaponID::PUMPSHOTGUN ||
+            weaponId == C_WeaponCSBase::WeaponID::SHOTGUN_CHROME;
+    }
+
     float MagazineInteractionResolveBoltGrabPaddingMeters(const VR* vr)
     {
         if (!vr)
             return 0.10f;
 
-        float value = vr->m_MagazineInteractionBoltGrabPaddingMeters;
+        // A pump is caught from further away than a slide or charging handle:
+        // the support hand is already near it and comes to it quickly.
+        float value = MagazineInteractionManualPumpWeapon(vr)
+            ? vr->m_ManualPumpGrabPaddingMeters : vr->m_MagazineInteractionBoltGrabPaddingMeters;
         MagazineInteractionFindProfileOrWeaponOverride(
             vr,
             vr->m_MagazineInteractionBoltGrabPaddingMetersProfileOverrides,
@@ -1665,6 +1679,9 @@ namespace
             return 0.055f;
 
         float value = vr->m_MagazineInteractionBoltPullDistanceMeters;
+        if (MagazineInteractionManualPumpWeapon(vr))
+            value = vr->m_ManualPumpTravelMeters; // the fore-end's full hand travel
+        else
         {
             l4d2vr_reload_tuning::Tuning tuning{};
             if (MagazineInteractionPavlovTuning(vr, tuning))
@@ -1687,6 +1704,12 @@ namespace
             return 0.018f;
 
         float value = vr->m_MagazineInteractionBoltReturnDistanceMeters;
+        if (MagazineInteractionManualPumpWeapon(vr))
+        {
+            // Within this of closed the forward stroke chambers (PumpStroke).
+            return l4d2vr_physical::ResolvePumpThresholds(MagazineInteractionResolveBoltPullDistanceMeters(vr),
+                vr->m_ManualPumpCockFraction, vr->m_ManualPumpChamberFraction).chamber;
+        }
         {
             l4d2vr_reload_tuning::Tuning tuning{};
             if (MagazineInteractionPavlovTuning(vr, tuning))
@@ -5965,6 +5988,13 @@ bool VR::UpdateMagazineInteraction(
     // interactions (Pavlov), else the same input as everything else.
     const bool foregripDown = foregripSplit ? foregripInputDown : leftGripDown;
     const bool foregripJustPressed = foregripSplit ? foregripInputJustPressed : leftGripJustPressed;
+    // Pavlov: the support hand that holds the pump shotgun's fore-end (the
+    // foregrip, with its grip) works the pump without also squeezing the
+    // trigger. Only with the grip/trigger split, where the grip is the foregrip.
+    auto pumpForegripHeld = [&]() -> bool
+    {
+        return m_ManualPumpForegripRacks && foregripSplit && foregripDown && m_VrHandsTwoHandedGripActive;
+    };
     m_NativeAmmoReloadFallbackActive.store(false, std::memory_order_release);
     m_PhysicalReloadOwnsStockInput.store(false, std::memory_order_release);
     C_WeaponCSBase* activeWeapon = nullptr;
@@ -6900,6 +6930,11 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionBoltGrabStartLeftControllerPosAbs = handLocal;
         m_MagazineInteractionBoltGrabStartPullDistance = m_MagazineInteractionBoltPullDistance;
         m_MagazineInteractionBoltGrabbedAt = now;
+        // A pump is taken where it was left, with its cock latch.
+        if (MagazineInteractionManualPumpWeapon(this))
+            m_ManualPumpStroke.Grab(m_MagazineInteractionBoltPullDistance, m_MagazineInteractionBoltReachedRear, handLocal.x);
+        else
+            m_ManualPumpStroke.Reset();
         m_MagazineInteractionBoltPullAxisSignLocked = false;
         m_MagazineInteractionBoltInputAxisWorld =
             MagazineInteractionBuildBoltInputAxisWorld(this, m_MagazineInteractionBoltPullAxisWorld);
@@ -8474,9 +8509,14 @@ bool VR::UpdateMagazineInteraction(
         {
             // Reacquisition can jump the controller pose. Require a new grip
             // origin instead of counting that jump as a mechanical stroke.
+            // A pump (no spring, it stays where it is) is simply taken again
+            // from the new pose while the hand still holds it: a dropout in the
+            // middle of a fast rack must not cost the player a re-squeeze.
+            const bool pump = MagazineInteractionManualPumpWeapon(this);
+            m_ManualPumpStroke.Release();
             m_MagazineInteractionState = MagazineInteractionManualState::WaitingForBoltGrab;
             m_MagazineInteractionLeftHandHolding = false;
-            m_MagazineInteractionBoltGrabRequiresGripRelease = true;
+            m_MagazineInteractionBoltGrabRequiresGripRelease = !pump;
             m_MagazineInteractionBoltContactActive = false;
             m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
         }
@@ -8536,9 +8576,11 @@ bool VR::UpdateMagazineInteraction(
                 else if (beginBoltStage(activeWeaponId, "spent-shell-needs-manual-pump"))
                 {
                     // The hand that just loaded a shell lets go before it takes
-                    // the pump; a support hand already on the gun keeps it.
+                    // the pump; a support hand already on the gun keeps it
+                    // (its trigger, or its grip on the foregrip with
+                    // ManualPumpForegripRacks).
                     m_MagazineInteractionBoltGrabRequiresGripRelease = fromLoading && leftGripDown;
-                    if (!fromLoading && m_VrHandsTwoHandedGripActive && leftGripDown)
+                    if (!fromLoading && m_VrHandsTwoHandedGripActive && (leftGripDown || pumpForegripHeld()))
                         beginBoltHoldFromCurrentLeftHand(0.0f,
                             MagazineInteractionResolveBoltGrabPaddingMeters(this) * m_VRScale);
                 }
@@ -9046,7 +9088,7 @@ bool VR::UpdateMagazineInteraction(
             return false;
         }
 
-        if (leftGripDown)
+        if (leftGripDown || (manualPump && pumpForegripHeld()))
         {
             if (touchingBolt)
             {
@@ -9092,13 +9134,15 @@ bool VR::UpdateMagazineInteraction(
             MagazineInteractionResolveBoltReturnDistanceMeters(this) * m_VRScale,
             0.0f,
             requiredPull);
+        const bool holdingManualPump = m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId);
 
-        if (!leftGripDown)
+        if (!leftGripDown && !(holdingManualPump && pumpForegripHeld()))
         {
-            if (m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId))
+            if (holdingManualPump)
             {
                 // A pump has no return spring. Keep its position and rear latch
                 // so the next grip can finish the forward stroke.
+                m_ManualPumpStroke.Release();
                 m_MagazineInteractionState = MagazineInteractionManualState::WaitingForBoltGrab;
                 m_MagazineInteractionLeftHandHolding = false;
                 m_MagazineInteractionBoltGrabRequiresGripRelease = false;
@@ -9146,6 +9190,44 @@ bool VR::UpdateMagazineInteraction(
         const Vector handLocal = leftControllerPosRelativeToWeapon();
         if (!l4d2vr_interaction::Finite(handLocal))
             return false;
+
+        if (holdingManualPump)
+        {
+            // The fore-end follows the hand's motion along the gun between its
+            // stops (sideways drift is ignored: only the motion along the gun
+            // counts, and the hand stays on the pump until it lets go). It
+            // cocks at ManualPumpCockFraction of the travel and chambers when
+            // it comes back within ManualPumpChamberFraction of closed.
+            if (!m_ManualPumpStroke.Held())
+                m_ManualPumpStroke.Grab(m_MagazineInteractionBoltPullDistance, m_MagazineInteractionBoltReachedRear, handLocal.x);
+            const l4d2vr_physical::PumpThresholds pumpThresholds = l4d2vr_physical::ResolvePumpThresholds(
+                requiredPull, m_ManualPumpCockFraction, m_ManualPumpChamberFraction);
+            const unsigned pumpEvents = m_ManualPumpStroke.Update(handLocal.x, pumpThresholds);
+            setBoltPullDistance(m_ManualPumpStroke.Pull());
+            m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
+            if ((pumpEvents & l4d2vr_physical::PumpStroke::Cocked) != 0u)
+            {
+                m_MagazineInteractionBoltReachedRear = true;
+                MagazineInteractionPlayBoltSound(this, false);
+                triggerMagazineInteractionHaptic(0.024f, 110.0f, 0.38f, 2);
+                LogMagazineInteractionEvent("pump cocked pull=%.3f m (cock %.3f m of %.3f m travel)",
+                    m_ManualPumpStroke.Peak() / std::max(0.001f, m_VRScale),
+                    pumpThresholds.cock / std::max(0.001f, m_VRScale),
+                    pumpThresholds.travel / std::max(0.001f, m_VRScale));
+            }
+            if ((pumpEvents & l4d2vr_physical::PumpStroke::Chambered) != 0u)
+            {
+                m_ManualPumpStroke.Release();
+                LogMagazineInteractionEvent("pump chambered pull=%.3f m (within %.3f m of closed)",
+                    m_ManualPumpStroke.Pull() / std::max(0.001f, m_VRScale),
+                    pumpThresholds.chamber / std::max(0.001f, m_VRScale));
+                completeBoltStage("returned-to-battery", leftGripDown);
+            }
+            return m_MagazineInteractionBoltStageBeforeBackendReloadComplete
+                ? reloadCommandPending()
+                : false;
+        }
+
         const float handPullDistance = m_MagazineInteractionBoltGrabStartLeftControllerPosAbs.x - handLocal.x;
         if (!m_MagazineInteractionBoltPullAxisSignLocked)
         {
@@ -9203,7 +9285,8 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
         if (l4d2vr_magazine::MayFinishShotgunLoading(m_MagazineInteractionShotgunShellMode,
                 m_MagazineInteractionChamberEmpty, activeClip, m_MagazineInteractionShotgunShellsLoadedThisSession,
-                leftGripDown))
+                leftGripDown || (m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId) &&
+                    pumpForegripHeld())))
         {
             MagazineInteractionBoxSnapshot boltBox{};
             if (getFreshBoltBoxForActiveViewmodel(boltBox))

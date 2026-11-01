@@ -83,6 +83,8 @@ CHANGES = [
     "2.0.0: dual pistols reload physically: magazine release, bring one pistol to the other hand to stack them, take the double magazine with the free hand, then rack each empty slide (DualPistolsPhysicalReloadEnabled).",
     "2.0.0: melee swings feel like Ancient Dungeon VR: the grip stays in your hand and the blade trails behind fast swings; only fast, committed swings count; hits are felt in the controller.",
     "2.0.0: survivor hand poses follow Pavlov's hand poses for holding guns, magazines, slides, grenades and items. The separate SteamVR glove models are retired.",
+    "2.0.2: easier shotgun pumping: the pump cocks at 7 of its 10 cm and chambers anywhere in the last 3.5 cm, a fast rack is never missed at any frame rate, the pump is caught from further away and stays caught through a tracking blip, and holding the foregrip racks it too (ManualPump... settings).",
+    "2.0.2: stance recoil: guns kick less crouched, much more while jumping, and more the faster you move, following each gun's own L4D2 accuracy values (RecoilStanceEnabled and per-part scales).",
 ]
 
 

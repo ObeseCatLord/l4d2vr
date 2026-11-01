@@ -35,6 +35,7 @@
 #include "vr_holster.h"
 #include "vr_melee_inertia.h"
 #include "vr_recoil.h"
+#include "vr_recoil_stance.h"
 #include "vr_shotgun_pattern.h"
 #include "vr_selftest.h"
 #include "vr_one_euro.h"
@@ -1182,6 +1183,11 @@ public:
 	{
 		bool valid = false;
 		float minDuckingSpread = 0.0f;
+		// The script's own MinDuckingSpread / MinInAirSpread before the
+		// "0 means standing" fallback (-1 = not in the script); stance recoil
+		// needs a ducking spread of 0 as the steadiest stance.
+		float scriptMinDuckingSpread = -1.0f;
+		float scriptMinInAirSpread = -1.0f;
 		float minStandingSpread = 0.0f;
 		float minInAirSpread = 0.0f;
 		float maxMovementSpread = 0.0f;
@@ -1441,6 +1447,16 @@ public:
     bool m_BodyGripInventoryEnabled = false;
     bool m_PhysicalReloadOnUnsupportedServers = true;
     bool m_ManualPumpEnabled = false;
+    // Manual pump stroke (l4d2vr_physical::PumpStroke): the fore-end's hand
+    // travel, the fraction of it that cocks the action, the distance from the
+    // closed position (fraction of the travel) within which the forward stroke
+    // chambers, how far from the pump the free hand can take it, and whether
+    // the support hand holding the foregrip (two-hand grip) racks it too.
+    float m_ManualPumpTravelMeters = 0.10f;
+    float m_ManualPumpCockFraction = 0.70f;
+    float m_ManualPumpChamberFraction = 0.35f;
+    float m_ManualPumpGrabPaddingMeters = 0.15f;
+    bool m_ManualPumpForegripRacks = true;
     std::atomic<bool> m_ManualPumpBlockingFire{ false };
     std::atomic<bool> m_BodyAmmoAvailable{ false };
     bool m_DualPistolsIndependentHandsEnabled = true;
@@ -1582,6 +1598,7 @@ public:
     bool GetMeleeCommand(int command, l4d2vr_physical::MeleeCommand& sample) const;
     void CancelMeleeMotion();
     l4d2vr_physical::PumpCycles m_ManualPumpCycles;
+    l4d2vr_physical::PumpStroke m_ManualPumpStroke;
     std::mutex m_ManualPumpMutex;
     MagazineInteractionBoxSnapshot m_ManualPumpClosedBoltBox{};
     uintptr_t m_ManualPumpClosedBoltWeapon = 0;
@@ -3564,6 +3581,16 @@ public:
 	bool m_SpreadDisabled = true;
 	bool m_ShotgunPavlovPattern = true;
 	bool m_RecoilDebugLog = false;
+	// Stance recoil (vr_recoil_stance.h): the recoil follows vanilla's spread
+	// rules per gun: less crouched, much more in the air, more the faster you
+	// move. Each scale stretches its part (0 = off, 1 = derived from the gun).
+	bool m_RecoilStanceEnabled = true;
+	float m_RecoilStanceCrouchScale = 1.0f;
+	float m_RecoilStanceAirScale = 1.0f;
+	float m_RecoilStanceMovementScale = 1.0f;
+	l4d2vr_recoil_stance::Smoother m_RecoilStanceSmoother{};
+	float m_RecoilStanceMul = 1.0f;       // the eased multiplier this frame
+	bool m_RecoilStanceForceStanding = false; // self-test: standing still
 	struct RecoilHand
 	{
 		l4d2vr_recoil::State state;
@@ -3584,6 +3611,7 @@ public:
 	// Selftest override: <0 follows the foregrip, 0 one hand, 1 two hands.
 	int m_RecoilForceTwoHanded = -1;
 	void UpdateWeaponRecoil(C_BasePlayer* localPlayer);
+	float UpdateRecoilStance(C_BasePlayer* localPlayer, C_WeaponCSBase* weapon, int weaponId, bool eligible, float dt);
 	void OnRecoilShot(int weaponId, bool leftPistol, int commandNumber, uintptr_t weaponTag);
 	bool ShotgunPatternActiveForLocalShot(int weaponId) const;
 	void SendShotgunPatternPreference();

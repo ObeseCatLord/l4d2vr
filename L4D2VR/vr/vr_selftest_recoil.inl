@@ -497,6 +497,9 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
     {
         m_RecoilTestSavedEnabled = m_RecoilEnabled;
         m_RecoilEnabled = true;
+        // The checks below compare with the model replayed standing still
+        // (stance multiplier 1): hold the stance recoil at standing.
+        m_RecoilStanceForceStanding = true;
         char text[96];
         if (give != "pistol")
         {
@@ -732,6 +735,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         std::snprintf(name, sizeof(name), "recoil_%s_%dh_after", give.c_str(), hands);
         SelfTestRequestShot(name, 1);
         m_RecoilEnabled = m_RecoilTestSavedEnabled;
+        m_RecoilStanceForceStanding = false;
         if (hands == 2 && m_VrHandsTwoHandedGripActive)
         {
             button(m_ActionOffHandGrip, true);

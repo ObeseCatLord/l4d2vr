@@ -3259,6 +3259,11 @@ void VR::ParseConfigFile()
     // Pavlov-style recoil and exact VR aim (vr/vr_recoil.inl).
     m_RecoilEnabled = getBool("RecoilEnabled", true);
     m_RecoilScale = std::clamp(getFloat("RecoilScale", 1.0f), 0.0f, 4.0f);
+    // Stance recoil: vanilla's crouch / jump / movement spread as recoil.
+    m_RecoilStanceEnabled = getBool("RecoilStanceEnabled", true);
+    m_RecoilStanceCrouchScale = std::clamp(getFloat("RecoilStanceCrouchScale", 1.0f), 0.0f, 3.0f);
+    m_RecoilStanceAirScale = std::clamp(getFloat("RecoilStanceAirScale", 1.0f), 0.0f, 3.0f);
+    m_RecoilStanceMovementScale = std::clamp(getFloat("RecoilStanceMovementScale", 1.0f), 0.0f, 3.0f);
     m_SpreadDisabled = getBool("SpreadDisabled", true);
     m_ShotgunPavlovPattern = getBool("ShotgunPavlovPattern", true);
     m_RecoilDebugLog = getBool("RecoilDebugLog", false);
@@ -3332,6 +3337,13 @@ void VR::ParseConfigFile()
     m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
     m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);
+    m_ManualPumpTravelMeters = std::clamp(getFloat("ManualPumpTravelMeters", 0.10f), 0.04f, 0.25f);
+    m_ManualPumpCockFraction = std::clamp(getFloat("ManualPumpCockFraction", 0.70f),
+        l4d2vr_physical::kPumpMinCockFraction, 1.0f);
+    m_ManualPumpChamberFraction = std::clamp(getFloat("ManualPumpChamberFraction", 0.35f),
+        0.0f, m_ManualPumpCockFraction - l4d2vr_physical::kPumpCockChamberGap);
+    m_ManualPumpGrabPaddingMeters = std::clamp(getFloat("ManualPumpGrabPaddingMeters", 0.15f), 0.0f, 0.25f);
+    m_ManualPumpForegripRacks = getBool("ManualPumpForegripRacks", true);
     m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", true);
     m_DualPistolsAkimboOnAnyServer = getBool("DualPistolsAkimboOnAnyServer", true);
     m_DualPistolsNativeReloadFallbackEnabled = getBool("DualPistolsNativeReloadFallbackEnabled", true);

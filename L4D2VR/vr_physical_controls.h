@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cmath>
@@ -379,5 +380,111 @@ namespace l4d2vr_physical
         std::uintptr_t m_Owner = 0u;
         std::size_t m_Next = 0u;
         bool m_Overturned = false;
+    };
+
+    // Manual pump (pump and chrome shotgun) stroke, in any length unit.
+    //   travel   how far the fore-end can move (hand travel, the end stops)
+    //   cock     pulled at least this far back cocks the action (the shell is out)
+    //   chamber  once cocked, the stroke completes when the fore-end comes back
+    //            within this distance of the closed position
+    struct PumpThresholds
+    {
+        float travel = 0.0f;
+        float cock = 0.0f;
+        float chamber = 0.0f;
+        bool Valid() const
+        {
+            return std::isfinite(travel) && std::isfinite(cock) && std::isfinite(chamber) &&
+                travel > 0.0f && cock > 0.0f && cock <= travel && chamber >= 0.0f && chamber < cock;
+        }
+    };
+
+    // Fractions of the travel: the cock point at least 30% (tracking noise) and
+    // the chamber point at least 10% of the travel ahead of it, so one stroke can
+    // never cock and chamber in the same position.
+    constexpr float kPumpMinCockFraction = 0.30f;
+    constexpr float kPumpCockChamberGap = 0.10f;
+    inline PumpThresholds ResolvePumpThresholds(float travel, float cockFraction, float chamberFraction)
+    {
+        PumpThresholds t{};
+        if (!std::isfinite(travel) || !(travel > 0.0f))
+            return t;
+        const float cockF = std::isfinite(cockFraction) ? std::clamp(cockFraction, kPumpMinCockFraction, 1.0f) : 1.0f;
+        const float chamberF = std::isfinite(chamberFraction)
+            ? std::clamp(chamberFraction, 0.0f, cockF - kPumpCockChamberGap) : 0.0f;
+        t.travel = travel;
+        t.cock = travel * cockF;
+        t.chamber = travel * chamberF;
+        return t;
+    }
+
+    // The fore-end follows the hand's motion along the gun, frame to frame,
+    // between its two end stops. A hand that keeps going past a stop slides
+    // along the fore-end, so the stroke back the other way starts at once
+    // (an overlong pull is not owed back before the pump moves forward). The
+    // action cocks at the furthest point the fore-end reached since it was
+    // last closed, however few frames the stroke took, and a cocked action
+    // chambers when the fore-end comes back within the chamber distance. A
+    // pump has no spring: letting go keeps its position and the cock latch.
+    class PumpStroke
+    {
+    public:
+        enum : unsigned { None = 0u, Cocked = 1u, Chambered = 2u };
+
+        // Take hold of the fore-end where it is (pull from closed) with the
+        // hand at handForward (its position along the gun, larger = toward
+        // the muzzle). cocked: the action was already pulled past the cock
+        // point before the hand let go.
+        void Grab(float pull, bool cocked, float handForward)
+        {
+            if (!std::isfinite(handForward))
+            {
+                m_Held = false;
+                return;
+            }
+            m_Pull = std::isfinite(pull) ? (std::max)(0.0f, pull) : 0.0f;
+            m_Peak = m_Pull;
+            m_Cocked = cocked;
+            m_LastHand = handForward;
+            m_Held = true;
+        }
+        void Release() { m_Held = false; }
+        void Reset() { *this = PumpStroke{}; }
+
+        unsigned Update(float handForward, const PumpThresholds& t)
+        {
+            if (!m_Held || !t.Valid())
+                return None;
+            if (!std::isfinite(handForward))
+                return None; // keep the last good sample; the next one continues from it
+            const float rearward = m_LastHand - handForward;
+            m_LastHand = handForward;
+            m_Pull = std::clamp(m_Pull + rearward, 0.0f, t.travel);
+            m_Peak = (std::max)(m_Peak, m_Pull);
+            unsigned events = None;
+            if (!m_Cocked && m_Peak >= t.cock)
+            {
+                m_Cocked = true;
+                events |= Cocked;
+            }
+            if (m_Cocked && m_Pull <= t.chamber)
+            {
+                m_Cocked = false;
+                m_Peak = m_Pull;
+                events |= Chambered;
+            }
+            return events;
+        }
+
+        float Pull() const { return m_Pull; }
+        float Peak() const { return m_Peak; }
+        bool IsCocked() const { return m_Cocked; }
+        bool Held() const { return m_Held; }
+    private:
+        float m_Pull = 0.0f;
+        float m_Peak = 0.0f;
+        float m_LastHand = 0.0f;
+        bool m_Cocked = false;
+        bool m_Held = false;
     };
 }

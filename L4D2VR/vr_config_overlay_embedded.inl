@@ -319,6 +319,11 @@ namespace
         { "GripReleaseDropEnabled", CfgOptionType::Bool, "Weapons / Throwables", "Grip weapon pickup and release", 0.0f, 0.0f, "false" },
         { "BodyGripInventoryEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Grip body inventory", 0.0f, 0.0f, "true" },
         { "ManualPumpEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Manual shotgun pump", 0.0f, 0.0f, "true" },
+        { "ManualPumpTravelMeters", CfgOptionType::Float, "Hands / Manual Reload", "Pump travel", 0.04f, 0.25f, "0.10" },
+        { "ManualPumpCockFraction", CfgOptionType::Float, "Hands / Manual Reload", "Pump pull to cock", 0.30f, 1.0f, "0.70" },
+        { "ManualPumpChamberFraction", CfgOptionType::Float, "Hands / Manual Reload", "Pump forward to chamber", 0.0f, 0.90f, "0.35" },
+        { "ManualPumpGrabPaddingMeters", CfgOptionType::Float, "Hands / Manual Reload", "Pump grab range", 0.0f, 0.25f, "0.15" },
+        { "ManualPumpForegripRacks", CfgOptionType::Bool, "Hands / Manual Reload", "Rack the pump from the foregrip", 0.0f, 0.0f, "true" },
         { "DualPistolsNativeReloadFallbackEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol button reload", 0.0f, 0.0f, "true" },
         { "DualPistolsPhysicalReloadEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol stacking reload", 0.0f, 0.0f, "true" },
         { "DualPistolsStackDistanceMeters", CfgOptionType::Float, "Hands / Manual Reload", "Dual pistol stack reach (m)", 0.04f, 0.4f, "0.12" },
@@ -378,6 +383,10 @@ namespace
         { "GunRigidInHand", CfgOptionType::Bool, "Weapons / Aim", "Gun rigid in the hand", 0.0f, 0.0f, "true" },
         { "RecoilEnabled", CfgOptionType::Bool, "Weapons / Aim", "Pavlov recoil", 0.0f, 0.0f, "true" },
         { "RecoilScale", CfgOptionType::Float, "Weapons / Aim", "Recoil strength", 0.0f, 4.0f, "1.0" },
+        { "RecoilStanceEnabled", CfgOptionType::Bool, "Weapons / Aim", "Stance recoil", 0.0f, 0.0f, "true" },
+        { "RecoilStanceCrouchScale", CfgOptionType::Float, "Weapons / Aim", "Crouch recoil reduction", 0.0f, 3.0f, "1.0" },
+        { "RecoilStanceAirScale", CfgOptionType::Float, "Weapons / Aim", "Jumping recoil increase", 0.0f, 3.0f, "1.0" },
+        { "RecoilStanceMovementScale", CfgOptionType::Float, "Weapons / Aim", "Moving recoil increase", 0.0f, 3.0f, "1.0" },
         { "SpreadDisabled", CfgOptionType::Bool, "Weapons / Aim", "No bullet spread", 0.0f, 0.0f, "true" },
         { "ShotgunPavlovPattern", CfgOptionType::Bool, "Weapons / Aim", "Fixed shotgun pellets", 0.0f, 0.0f, "true" },
         { "ScopePictureInPictureLens", CfgOptionType::Bool, "Weapons / Aim", "Picture-in-picture scope lens", 0.0f, 0.0f, "true" },
@@ -1111,6 +1120,11 @@ namespace
         { "DualPistolsIndependentHandsEnabled", "Weapons / Throwables", "Independent Dual Pistols", "Each pistol follows its own controller. Primary and secondary triggers fire from their corresponding hand on a VR-capable server.", "Left trigger replaces shove while dual pistols are equipped. Both held triggers alternate at the native weapon rate. Ammo, reload and firing animation remain the game's shared dual-pistol system." },
         { "BodyGripInventoryEnabled", "Hands / Manual Reload", "Body Grip Inventory", "Draw carried items by holding the weapon-hand grip near their body slot. Ammo pickup uses the same stable body reference.", "Back: primary. Weapon-side waist: secondary. Other waist: throwable/ammo. Chest: medical kit. Chest side: pills. Uses native inventory slots; items must already be carried." },
         { "ManualPumpEnabled", "Hands / Manual Reload", "Manual Shotgun Pump", "Pump and chrome shotguns require a full rear and forward fore-end stroke after a shot.", "Releasing the fore-end preserves its position. Automatic shotguns retain their normal cycling. Requires VR hands, manual reload and the shotgun server hook. Disable this option if an unsupported model has no usable pump pose." },
+        { "ManualPumpTravelMeters", "Hands / Manual Reload", "Pump Travel", "How far the fore-end moves with your hand, from closed to fully back.", "0.10 m by default." },
+        { "ManualPumpCockFraction", "Hands / Manual Reload", "Pump Pull To Cock", "How much of the travel you pull the pump back to eject the shell. Lower is more forgiving.", "0.70 (7 cm of 10) by default." },
+        { "ManualPumpChamberFraction", "Hands / Manual Reload", "Pump Forward To Chamber", "After the pull, the next shell chambers once the pump is back within this fraction of the travel from closed. Higher is more forgiving.", "0.35 (within 3.5 cm) by default." },
+        { "ManualPumpGrabPaddingMeters", "Hands / Manual Reload", "Pump Grab Range", "How far from the pump the free hand can catch it. Once caught it stays caught until you let go.", "0.15 m by default." },
+        { "ManualPumpForegripRacks", "Hands / Manual Reload", "Rack The Pump From The Foregrip", "Holding the shotgun's foregrip with the other hand's grip also works the pump, as in Pavlov; the free hand's trigger still works it too.", "Needs the grip/trigger split (trigger interactions)." },
         { "HolsterPavlovLayoutEnabled", "Hands / Holsters", "Pavlov Holster Layout", "Long gun behind the dominant shoulder, medkit/defib behind the other, pistol or melee on the hip, grenade and pills/adrenaline on the chest.", "Reach to a holster and hold the weapon-hand grip to draw the item; release a held item in its own holster to put it away. Requires Body Grip Inventory." },
         { "HolsterItemsVisible", "Hands / Holsters", "Show Holstered Items", "Draws the items you carry at their holsters; the hovered one glows.", "Requires the first-person body." },
         { "MeleeGripReachMeters", "Hands / Melee", "Melee Grip Reach", "Holds melee weapons at the end of the handle: the weapon sits this far forward of your hand, and hits reach that much further on servers with the L4D2VR plugin or a modded host.", "0 keeps the stock grip." },
@@ -1160,6 +1174,10 @@ namespace
         { "IronSightAimEnabled", "Weapons / Aim", "Fire Along The Iron Sights", "Bullets leave along the gun's sight line (rear sight through front sight, or the scope axis), so shots land on the sight picture at every distance.", "" },
         { "RecoilEnabled", "Weapons / Aim", "Pavlov Recoil", "Each shot kicks the gun in your hand like the same gun in Pavlov VR; bullets follow the kicked gun, so you counter it yourself. Hold the foregrip to tame two-handed guns.", "" },
         { "RecoilScale", "Weapons / Aim", "Recoil Strength", "Multiplies the recoil kick. 1 is Pavlov's, 0 turns the kick off.", "1.0 by default." },
+        { "RecoilStanceEnabled", "Weapons / Aim", "Stance Recoil", "Recoil follows L4D2's own accuracy rules for each gun: less while crouching, much more while jumping or falling, and more the faster you move.", "Replaces vanilla's spread changes, which VR players do not have." },
+        { "RecoilStanceCrouchScale", "Weapons / Aim", "Crouch Recoil Reduction", "Scales how much crouching reduces the recoil. 0 turns it off, 1 follows the gun's own values.", "1.0 by default." },
+        { "RecoilStanceAirScale", "Weapons / Aim", "Jumping Recoil Increase", "Scales how much more the gun kicks in the air. 0 turns it off, 1 follows the gun's own values.", "1.0 by default." },
+        { "RecoilStanceMovementScale", "Weapons / Aim", "Moving Recoil Increase", "Scales how much more the gun kicks while moving, growing with your speed. 0 turns it off, 1 follows the gun's own values.", "1.0 by default." },
         { "SpreadDisabled", "Weapons / Aim", "No Bullet Spread", "Bullets go exactly where the gun points; only recoil moves the aim.", "Plain servers keep L4D2's spread." },
         { "ShotgunPavlovPattern", "Weapons / Aim", "Fixed Shotgun Pellets", "Shotguns fire the same evenly spread pellet pattern every shot, at L4D2's own pattern size, instead of a random scatter.", "Needs a server running the mod." },
         { "SightAutoAlignEnabled", "Weapons / Aim", "Align Crosshair With Sights", "Turns each drawn gun so its sights line up with the crosshair and bullets.", "" },
@@ -2673,6 +2691,11 @@ ManualThrowEnabled=true
 GripReleaseDropEnabled=false
 BodyGripInventoryEnabled=true
 ManualPumpEnabled=true
+ManualPumpTravelMeters=0.10
+ManualPumpCockFraction=0.70
+ManualPumpChamberFraction=0.35
+ManualPumpGrabPaddingMeters=0.15
+ManualPumpForegripRacks=true
 DualPistolsIndependentHandsEnabled=true
 DualPistolsNativeReloadFallbackEnabled=true
 DualPistolsPhysicalReloadEnabled=true

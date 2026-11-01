@@ -3192,6 +3192,11 @@ namespace
         sampleKeys.insert("MagazineReleaseButtonRequired");
         sampleKeys.insert("BodyGripInventoryEnabled");
         sampleKeys.insert("ManualPumpEnabled");
+        sampleKeys.insert("ManualPumpTravelMeters");
+        sampleKeys.insert("ManualPumpCockFraction");
+        sampleKeys.insert("ManualPumpChamberFraction");
+        sampleKeys.insert("ManualPumpGrabPaddingMeters");
+        sampleKeys.insert("ManualPumpForegripRacks");
         sampleKeys.insert("DualPistolsIndependentHandsEnabled");
         sampleKeys.insert("DualPistolsNativeReloadFallbackEnabled");
         sampleKeys.insert("DualPistolsPhysicalReloadEnabled");
@@ -3231,6 +3236,10 @@ namespace
         sampleKeys.insert("SightAutoAlignEnabled");
         sampleKeys.insert("RecoilEnabled");
         sampleKeys.insert("RecoilScale");
+        sampleKeys.insert("RecoilStanceEnabled");
+        sampleKeys.insert("RecoilStanceCrouchScale");
+        sampleKeys.insert("RecoilStanceAirScale");
+        sampleKeys.insert("RecoilStanceMovementScale");
         sampleKeys.insert("SpreadDisabled");
         sampleKeys.insert("ShotgunPavlovPattern");
         sampleKeys.insert("RecoilDebugLog");

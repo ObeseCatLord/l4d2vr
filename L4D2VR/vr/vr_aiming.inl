@@ -551,6 +551,13 @@ namespace
         if (!hasSpread)
             return false;
 
+        {
+            float raw = 0.0f;
+            if (VR_ParseWeaponScriptFloat(text, "MinDuckingSpread", raw) && raw >= 0.0f)
+                data.scriptMinDuckingSpread = raw;
+            if (VR_ParseWeaponScriptFloat(text, "MinInAirSpread", raw) && raw >= 0.0f)
+                data.scriptMinInAirSpread = raw;
+        }
         if (data.minDuckingSpread <= 0.0f)
             data.minDuckingSpread = data.minStandingSpread;
         if (data.minInAirSpread <= 0.0f)

@@ -413,6 +413,14 @@ CrosshairAlpha=210
 // Values are each gun's Pavlov equivalent. RecoilScale multiplies the kick (0 = none, 1 = Pavlov).
 RecoilEnabled=true
 RecoilScale=1.0
+// Stance recoil: VR players have no bullet spread, so the recoil does what vanilla's spread changes do,
+// with each gun's own L4D2 values: crouched it kicks less (down to 0.6x), in the air much more (1.6x to
+// 2.9x), and on the ground more the faster you move (up to 1.4x-1.75x at full speed). Each scale
+// stretches its part (0 = off, 1 = the gun's own values, 2 = twice as strong).
+RecoilStanceEnabled=true
+RecoilStanceCrouchScale=1.0
+RecoilStanceAirScale=1.0
+RecoilStanceMovementScale=1.0
 // Bullets go exactly where the gun points (no artificial VR spread, no crosshair spread gap). On servers
 // running the mod, shotguns fire the same evenly spread pellet pattern every shot (L4D2's own pattern
 // size, no randomness). Plain servers keep L4D2's own spread for every gun.
@@ -508,6 +516,16 @@ HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4
 HolsterGrabHapticAmplitude=0.6
 ManualPumpEnabled=true
+// Pump and chrome shotgun pump: the fore-end follows your hand along the gun for ManualPumpTravelMeters;
+// pulling it back ManualPumpCockFraction of that ejects the shell, and once it is back within
+// ManualPumpChamberFraction of closed the next shell chambers. The free hand catches the pump within
+// ManualPumpGrabPaddingMeters and keeps it until it lets go. ManualPumpForegripRacks: the support
+// hand holding the foregrip (grip) works the pump too, without the trigger.
+ManualPumpTravelMeters=0.10
+ManualPumpCockFraction=0.70
+ManualPumpChamberFraction=0.35
+ManualPumpGrabPaddingMeters=0.15
+ManualPumpForegripRacks=true
 DualPistolsIndependentHandsEnabled=true
 // True akimbo everywhere: each trigger fires its own pistol, aimed by its own hand (on servers
 // without the physical protocol the shot's view angles carry that hand's aim).

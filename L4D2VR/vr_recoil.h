@@ -27,7 +27,9 @@
 //    shot, no limits or heat.
 // Holding the foregrip (two-handed) changes only multipliers and limits: a
 // gun that needs two hands kicks much harder held in one hand, and every gun
-// held in one hand gets the wide one-handed limits.
+// held in one hand gets the wide one-handed limits. The stance multiplier
+// (Inputs::stanceMul: crouched, moving, in the air) scales the kick, the
+// limits and the heat build-up on top of that.
 namespace l4d2vr_recoil
 {
     enum class Interp : std::uint8_t { Cubic, Linear, Constant };
@@ -160,6 +162,9 @@ namespace l4d2vr_recoil
         bool twoHanded = false;   // support hand on the foregrip
         bool triggerHeld = false; // the trigger is down this tick
         bool crouched = false;    // head below the crouch height
+        // Stance recoil (vr_recoil_stance.h): scales the kick, the limits and
+        // the heat build-up together. 1 = standing still.
+        float stanceMul = 1.0f;
     };
 
     // Small deterministic generator, so tests (and replays) are repeatable.
@@ -285,13 +290,17 @@ namespace l4d2vr_recoil
         const float* Limits() const { return m_Lim; }
 
         static bool Unsteady(const Profile& p, const Inputs& in) { return p.needsTwoHands && !in.twoHanded; }
+        static float StanceMul(const Inputs& in)
+        {
+            return std::isfinite(in.stanceMul) ? std::clamp(in.stanceMul, 0.0f, 8.0f) : 1.0f;
+        }
         static float AngleMul(const Profile& p, const Inputs& in)
         {
-            return p.angleMul * (Unsteady(p, in) ? p.unsteadyAngleMul : 1.0f);
+            return p.angleMul * (Unsteady(p, in) ? p.unsteadyAngleMul : 1.0f) * StanceMul(in);
         }
         static float TransMul(const Profile& p, const Inputs& in)
         {
-            return p.transMul * (Unsteady(p, in) ? p.unsteadyTransMul : 1.0f);
+            return p.transMul * (Unsteady(p, in) ? p.unsteadyTransMul : 1.0f) * StanceMul(in);
         }
         float SideMul(const Profile& p, const Inputs& in) const
         {
@@ -299,15 +308,17 @@ namespace l4d2vr_recoil
         }
         static void TargetLimits(const Profile& p, const Inputs& in, float out[3])
         {
+            const float stance = StanceMul(in);
             if (!in.twoHanded)
             {
-                out[0] = 2.0f * p.limits[0];
-                out[1] = 45.0f;
-                out[2] = 90.0f;
+                // The one-handed angles are a wide safety cap, never raised.
+                out[0] = 2.0f * p.limits[0] * stance;
+                out[1] = 45.0f * (std::min)(stance, 1.0f);
+                out[2] = 90.0f * (std::min)(stance, 1.0f);
                 return;
             }
             for (int k = 0; k < 3; ++k)
-                out[k] = p.limits[k] * p.grippedLimitMul[k];
+                out[k] = p.limits[k] * p.grippedLimitMul[k] * stance;
         }
 
     private:
@@ -370,7 +381,7 @@ namespace l4d2vr_recoil
                 const float sign = m_Rng.Coin() ? -0.025f : 0.025f;
                 const int steps = (std::min)(static_cast<int>(m_Rng.Next01() * 3.0f), 2);
                 m_Jitter = static_cast<float>(steps) * sign;
-                m_Ratio += h * p.perBullet;
+                m_Ratio += h * p.perBullet * StanceMul(in);
             }
             else
             {

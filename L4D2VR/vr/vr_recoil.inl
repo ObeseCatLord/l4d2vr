@@ -17,6 +17,47 @@ namespace
     }
 }
 
+float VR::UpdateRecoilStance(C_BasePlayer* localPlayer, C_WeaponCSBase* weapon, int weaponId, bool eligible, float dt)
+{
+    // Stance recoil: vanilla's spread rules for this gun, as a recoil
+    // multiplier (vr_recoil_stance.h). VR players only (eligible already
+    // excludes desktop and mouse mode).
+    if (!eligible || !m_RecoilStanceEnabled || m_RecoilStanceForceStanding || !localPlayer)
+    {
+        m_RecoilStanceSmoother.Reset(1.0f);
+        m_RecoilStanceMul = 1.0f;
+        return 1.0f;
+    }
+    l4d2vr_recoil_stance::WeaponSpread spread{};
+    bool haveSpread = false;
+    if (const EffectiveAttackRangeWeaponData* data = weapon ? GetEffectiveAttackRangeWeaponData(weapon) : nullptr)
+    {
+        spread.standing = data->minStandingSpread;
+        spread.ducking = data->scriptMinDuckingSpread >= 0.0f ? data->scriptMinDuckingSpread : data->minStandingSpread;
+        spread.inAir = data->scriptMinInAirSpread >= 0.0f ? data->scriptMinInAirSpread : data->minStandingSpread;
+        spread.movement = data->maxMovementSpread;
+        spread.maxSpeed = data->maxPlayerSpeed;
+        haveSpread = spread.Valid();
+    }
+    if (!haveSpread)
+        haveSpread = l4d2vr_recoil_stance::VanillaSpread(weaponId, spread);
+
+    l4d2vr_recoil_stance::PlayerState state{};
+    int flags = 0;
+    const bool hasFlags = VR_TryReadI32(reinterpret_cast<const unsigned char*>(localPlayer), kFlagsOffset, flags);
+    state.onGround = !hasFlags || (flags & kOnGroundFlag) != 0;
+    // Crouched: the game's duck (FL_DUCKING) or the head physically low.
+    state.crouched = (hasFlags && (flags & 0x2) != 0) || VR_RecoilCrouched(this, localPlayer);
+    state.horizontalSpeed = localPlayer->m_vecVelocity.Length2D();
+
+    l4d2vr_recoil_stance::Tuning tuning{};
+    tuning.crouchScale = m_RecoilStanceCrouchScale;
+    tuning.airScale = m_RecoilStanceAirScale;
+    tuning.moveScale = m_RecoilStanceMovementScale;
+    m_RecoilStanceMul = haveSpread ? m_RecoilStanceSmoother.Update(spread, state, tuning, dt) : 1.0f;
+    return m_RecoilStanceMul;
+}
+
 void VR::OnRecoilShot(int weaponId, bool leftPistol, int commandNumber, uintptr_t weaponTag)
 {
     m_LastLocalShotMs.store(GetTickCount64(), std::memory_order_release);
@@ -41,8 +82,8 @@ void VR::OnRecoilShot(int weaponId, bool leftPistol, int commandNumber, uintptr_
     ++hand.shots;
     m_RecoilShotSerial.fetch_add(1u, std::memory_order_acq_rel);
     if (m_RecoilDebugLog)
-        Game::logMsg("[VR][Recoil] shot weapon=%d (%s) hand=%s command=%d heat=%.2f",
-            weaponId, profile->pavlovGun, leftPistol ? "left" : "gun", commandNumber, hand.state.Heat());
+        Game::logMsg("[VR][Recoil] shot weapon=%d (%s) hand=%s command=%d heat=%.2f stance=%.2f",
+            weaponId, profile->pavlovGun, leftPistol ? "left" : "gun", commandNumber, hand.state.Heat(), m_RecoilStanceMul);
 }
 
 bool VR::ShotgunPatternActiveForLocalShot(int weaponId) const
@@ -102,6 +143,8 @@ void VR::UpdateWeaponRecoil(C_BasePlayer* localPlayer)
         m_RecoilClipWatchClip = -1;
     }
 
+    const float stanceMul = UpdateRecoilStance(localPlayer, weapon, weaponId, eligible, dt);
+
     m_RecoilPreKickForward = m_RightControllerForward;
     m_RecoilPreKickRight = m_RightControllerRight;
     m_RecoilPreKickUp = m_RightControllerUp;
@@ -134,6 +177,7 @@ void VR::UpdateWeaponRecoil(C_BasePlayer* localPlayer)
         in.twoHanded = k == 0 && (m_RecoilForceTwoHanded >= 0 ? m_RecoilForceTwoHanded == 1 : IsVrHandsTwoHandedGripPoseActive());
         in.triggerHeld = m_PrimaryAttackDown;
         in.crouched = VR_RecoilCrouched(this, localPlayer);
+        in.stanceMul = stanceMul;
         l4d2vr_recoil::Offset o = hand.state.Tick(dt, in);
         const float scale = std::clamp(m_RecoilScale, 0.0f, 4.0f);
         o.backCm *= scale;

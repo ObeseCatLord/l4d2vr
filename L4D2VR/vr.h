@@ -53,6 +53,7 @@
 #include "vr_hand_pose_library.h"
 #include "vr_item_hand.h"
 #include "vr_hand_mirror.h"
+#include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
@@ -2446,8 +2447,9 @@ public:
 	Vector m_NativeViewmodelHandsOnlyFreezePoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
 	Vector m_NativeViewmodelHandsOnlyLeftFreezePoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
 	Vector m_NativeViewmodelHandsOnlyRightFreezePoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
-	Vector m_NativeViewmodelLeftHandPoseOffsetMeters = { 0.0f, 0.0f, 0.0f };
-	Vector m_NativeViewmodelLeftHandPoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
+	// Calibrated free off-hand pose in the controller frame (vr_offhand_pose.h).
+	Vector m_NativeViewmodelLeftHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };
+	Vector m_NativeViewmodelLeftHandPoseRotationOffsetDeg = { -90.0f, 90.0f, 0.0f };
 	Vector m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, 0.0f, 0.0f };
 	Vector m_NativeViewmodelRightHandPoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
 	bool m_NativeViewmodelLeftHandOpenVRSkeleton = true;

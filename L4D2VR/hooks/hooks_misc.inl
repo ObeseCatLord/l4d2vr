@@ -15088,24 +15088,15 @@ namespace
         const Vector& localPositionOffsetMeters,
         const Vector& localRotationOffsetDeg)
     {
-        constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
-        const float rx = localRotationOffsetDeg.x * kDegToRad;
-        const float ry = localRotationOffsetDeg.y * kDegToRad;
-        const float rz = localRotationOffsetDeg.z * kDegToRad;
-        const float sx = std::sin(rx), cx = std::cos(rx);
-        const float sy = std::sin(ry), cy = std::cos(ry);
-        const float sz = std::sin(rz), cz = std::cos(rz);
+        // Rz * Ry * Rx (vr_offhand_pose.h, unit tested there).
+        const float deg[3] = { localRotationOffsetDeg.x, localRotationOffsetDeg.y, localRotationOffsetDeg.z };
+        float rotation[3][3];
+        l4d2vr_offhand_pose::LocalRotation(deg, rotation);
 
         VrHandMatrix4 local = VrHandMath::Identity();
-        VrHandMath::Set(local, 0, 0, cz * cy);
-        VrHandMath::Set(local, 0, 1, cz * sy * sx - sz * cx);
-        VrHandMath::Set(local, 0, 2, cz * sy * cx + sz * sx);
-        VrHandMath::Set(local, 1, 0, sz * cy);
-        VrHandMath::Set(local, 1, 1, sz * sy * sx + cz * cx);
-        VrHandMath::Set(local, 1, 2, sz * sy * cx - cz * sx);
-        VrHandMath::Set(local, 2, 0, -sy);
-        VrHandMath::Set(local, 2, 1, cy * sx);
-        VrHandMath::Set(local, 2, 2, cy * cx);
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                VrHandMath::Set(local, row, column, rotation[row][column]);
         VrHandMath::Set(local, 0, 3, localPositionOffsetMeters.x * sourceUnitsPerMeter);
         VrHandMath::Set(local, 1, 3, localPositionOffsetMeters.y * sourceUnitsPerMeter);
         VrHandMath::Set(local, 2, 3, localPositionOffsetMeters.z * sourceUnitsPerMeter);

@@ -30,6 +30,7 @@
 #include "hooks.h"
 #include "sdk.h"
 #include "vr_weapon_calibration.h"
+#include "vr_offhand_pose.h"
 
 extern "C" void __cdecl L4D2VR_ShutdownSystemMouseInputSuppression();
 extern "C" void __cdecl L4D2VR_ShutdownReShadeVRBridge();
@@ -3037,7 +3038,27 @@ namespace
         const char* id = nullptr;
         const char* key = nullptr;
         const char* value = nullptr;
+        // Only replace the old shipped 0,0,0 (or a missing key), never a tuned value.
+        bool onlyIfLegacyZeroVector = false;
     };
+
+    bool TryGetConfigParameterValue(const std::string& text, const std::string& targetKey, std::string& outValue)
+    {
+        std::istringstream input(text);
+        std::string line;
+        bool found = false;
+        while (std::getline(input, line))
+        {
+            std::string key;
+            std::string value;
+            if (TryExtractConfigParameterAssignment(line, key, value, false) && key == targetKey)
+            {
+                outValue = value;  // the last assignment wins, as when the config is read
+                found = true;
+            }
+        }
+        return found;
+    }
 
     constexpr OneShotConfigMigration kOneShotConfigMigrations[] =
     {
@@ -3071,6 +3092,13 @@ namespace
         { "2026-10-29_pavlov_recoil_aim_line_off", "AimLineEnabled", "false" },
         // Headset session 5: hand throws get a modest boost over the arm (was 3x).
         { "2026-10-31_hand_throw_boost", "ManualThrowHandVelocityScale", "1.5" },
+        // The free off hand was bent 90 degrees in toward the body: the shipped
+        // 0,0,0 left the hand bone's finger axis on the controller's right axis
+        // (vr_offhand_pose.h). Tuned values are kept.
+        { "2026-11-02_offhand_pose_rotation", "NativeViewmodelLeftHandPoseRotationOffsetDeg",
+            l4d2vr_offhand_pose::kDefaultRotationText, true },
+        { "2026-11-02_offhand_pose_offset", "NativeViewmodelLeftHandPoseOffsetMeters",
+            l4d2vr_offhand_pose::kDefaultOffsetText, true },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3142,6 +3170,16 @@ namespace
                 continue;
 
             anyPendingMigration = true;
+            if (migration.onlyIfLegacyZeroVector)
+            {
+                std::string current;
+                const bool present = TryGetConfigParameterValue(configText, migration.key, current);
+                if (!l4d2vr_offhand_pose::ShouldMigrateLegacyZero(present, current))
+                {
+                    appliedIds.insert(migration.id);
+                    continue;
+                }
+            }
             if (SetConfigParameterValue(configText, migration.key, migration.value))
                 configChanged = true;
             appliedIds.insert(migration.id);

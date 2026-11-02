@@ -402,6 +402,128 @@ int main()
         Check(Near(v.x, -0.1f) && Near(v.y, 0.0f) && Near(v.z, 0.0f), "raw velocity includes w x r");
     }
 
+    // ---- Left/right mirror through grip -> raw -> Source angles --------------------
+    // A player report ("Quest Touch: the off hand is rotated wrong") asked whether
+    // the left-hand grip corrections are proper mirrors of the right-hand ones.
+    // Mirror = reflection across the tracking YZ plane: position x negated,
+    // rotation R_L = D R_R D (D = diag(-1, 1, 1)), i.e. quaternion (x, -y, -z, w).
+    // Feed a known right grip pose and its mirror through every profile's
+    // offsets, then through VR::GetPoseData's matrix -> Source pitch/yaw/roll and
+    // the off-hand (-45 deg about its right axis) / weapon-hand
+    // (WeaponAimPitchOffsetDeg = -45) bases: the left hand must come out as the
+    // exact mirror image (same pitch, negated yaw and roll).
+    {
+        auto mirrorPose = [](xrm::Pose p) {
+            p.position.x = -p.position.x;
+            p.orientation.y = -p.orientation.y;
+            p.orientation.z = -p.orientation.z;
+            return p;
+        };
+        auto quatAngleDeg = [](const xrm::Quat& a, const xrm::Quat& b) {
+            const float dot = std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+            return 2.0f * std::acos((std::min)(1.0f, dot)) * 180.0f / 3.14159265f;
+        };
+        // VR::GetPoseData (vr/vr_lifecycle_update.inl): OpenVR matrix -> Source angles.
+        struct Angles { float pitch, yaw, roll; };
+        auto sourceAngles = [](const float m[3][4]) {
+            constexpr float k = 180.0f / 3.14159265f;
+            return Angles{ std::asin(m[1][2]) * k, std::atan2(m[0][2], m[2][2]) * k, std::atan2(-m[1][0], m[1][1]) * k };
+        };
+        // Source AngleVectors -> forward/right/up, then the tracking.inl calibration:
+        // rotate forward and up about right by `pitchDeg` (Rodrigues, as VectorRotate).
+        struct Basis { float f[3], r[3], u[3]; };
+        auto basis = [](const Angles& a, float pitchDeg) {
+            constexpr float k = 3.14159265f / 180.0f;
+            const float sp = std::sin(a.pitch * k), cp = std::cos(a.pitch * k);
+            const float sy = std::sin(a.yaw * k), cy = std::cos(a.yaw * k);
+            const float sr = std::sin(a.roll * k), cr = std::cos(a.roll * k);
+            Basis b{ { cp * cy, cp * sy, -sp },
+                { -sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp },
+                { cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp } };
+            auto rot = [&](float v[3]) {
+                const float* kx = b.r;
+                const float c = std::cos(pitchDeg * k), s = std::sin(pitchDeg * k);
+                const float cross[3] = { kx[1] * v[2] - kx[2] * v[1], kx[2] * v[0] - kx[0] * v[2], kx[0] * v[1] - kx[1] * v[0] };
+                const float dot = kx[0] * v[0] + kx[1] * v[1] + kx[2] * v[2];
+                for (int i = 0; i < 3; ++i)
+                    v[i] = v[i] * c + cross[i] * s + kx[i] * dot * (1.0f - c);
+            };
+            rot(b.f);
+            rot(b.u);
+            return b;
+        };
+
+        // A right hand held forward, tilted and rolled inward (no symmetric special case).
+        xrm::Pose gripRight;
+        gripRight.orientation = xrm::Normalized(xi::Mul(xi::AxisAngle(0.0f, 1.0f, 0.0f, 0.4f),
+            xi::Mul(xi::AxisAngle(1.0f, 0.0f, 0.0f, -0.3f), xi::AxisAngle(0.0f, 0.0f, 1.0f, 0.5f))));
+        gripRight.position = { 0.25f, 1.1f, -0.35f };
+        const xrm::Pose gripLeft = mirrorPose(gripRight);
+
+        for (const xi::Profile& p : xi::Profiles())
+        {
+            for (int f = 0; f < 2; ++f)
+            {
+                const std::string where = std::string(p.key) + (f == 0 ? " (SteamVR)" : " (other runtimes)");
+                // The tables themselves: left = mirror of right.
+                const xi::GripInRaw& gl = p.grip[f][0];
+                const xi::GripInRaw& gr = p.grip[f][1];
+                const xrm::Pose ol = xi::GripInRawPose(gl), orr = xi::GripInRawPose(gr);
+                CheckS(Near(gl.position[0], -gr.position[0], 1e-6f) && Near(gl.position[1], gr.position[1], 1e-6f) &&
+                    Near(gl.position[2], gr.position[2], 1e-6f), "grip offset position mirrors x: " + where);
+                CheckS(quatAngleDeg(ol.orientation, mirrorPose(orr).orientation) < 0.01f, "grip offset rotation mirrors (x, -y, -z): " + where);
+
+                // The chain: mirrored grips give mirrored raw poses ...
+                const xrm::Pose rawRight = xi::RawFromGrip(gripRight, gr);
+                const xrm::Pose rawLeft = xi::RawFromGrip(gripLeft, gl);
+                const xrm::Pose rawRightMirrored = mirrorPose(rawRight);
+                CheckS(quatAngleDeg(rawLeft.orientation, rawRightMirrored.orientation) < 0.01f &&
+                    Near(rawLeft.position.x, rawRightMirrored.position.x, 1e-5f) &&
+                    Near(rawLeft.position.y, rawRightMirrored.position.y, 1e-5f) &&
+                    Near(rawLeft.position.z, rawRightMirrored.position.z, 1e-5f), "raw left = mirror of raw right: " + where);
+
+                // ... mirrored Source angles (Source y = -tracking x: pitch same, yaw and roll negated) ...
+                float ml[3][4], mr[3][4];
+                PoseMatrix(rawLeft, ml);
+                PoseMatrix(rawRight, mr);
+                const Angles al = sourceAngles(ml), ar = sourceAngles(mr);
+                CheckS(Near(al.pitch, ar.pitch, 0.01f) && Near(al.yaw, -ar.yaw, 0.01f) && Near(al.roll, -ar.roll, 0.01f),
+                    "Source angles mirror (pitch, -yaw, -roll): " + where);
+
+                // ... and mirrored off-hand / weapon-hand bases after the -45 deg calibration
+                // (Source mirror: y negated on forward and up; right = -left flips x and z).
+                const Basis bl = basis(al, -45.0f), br = basis(ar, -45.0f);
+                CheckS(Near(bl.f[0], br.f[0], 1e-4f) && Near(bl.f[1], -br.f[1], 1e-4f) && Near(bl.f[2], br.f[2], 1e-4f) &&
+                    Near(bl.u[0], br.u[0], 1e-4f) && Near(bl.u[1], -br.u[1], 1e-4f) && Near(bl.u[2], br.u[2], 1e-4f) &&
+                    Near(bl.r[0], -br.r[0], 1e-4f) && Near(bl.r[1], br.r[1], 1e-4f) && Near(bl.r[2], -br.r[2], 1e-4f),
+                    "off-hand basis mirrors the weapon-hand basis: " + where);
+            }
+        }
+
+        // Touch numbers (SteamVR openxr_grip of every Touch-family render model:
+        // origin (+-0.007, -0.00182941, 0.1019482), rotate_xyz (20.6, 0, 0)).
+        // A Touch raw pose sits 5.6 deg from the Index raw pose the mod was tuned
+        // on, the same amount on both hands (no left-only error).
+        const xi::Profile& touch = P(xi::ProfileId::Touch);
+        const xi::Profile& idx = P(xi::ProfileId::Index);
+        for (int f = 0; f < 2; ++f)
+        {
+            Check(Near(touch.grip[f][0].position[0], 0.007f, 1e-6f) && Near(touch.grip[f][1].position[0], -0.007f, 1e-6f) &&
+                Near(touch.grip[f][0].eulerDeg[0], 20.6f) && Near(touch.grip[f][1].eulerDeg[0], 20.6f) &&
+                touch.grip[f][0].eulerDeg[1] == 0.0f && touch.grip[f][0].eulerDeg[2] == 0.0f &&
+                touch.grip[f][1].eulerDeg[1] == 0.0f && touch.grip[f][1].eulerDeg[2] == 0.0f,
+                "touch openxr_grip values (left +x, right -x, pitch only)");
+            float deg[2];
+            for (int h = 0; h < 2; ++h)
+            {
+                const xrm::Pose identity;
+                deg[h] = quatAngleDeg(xi::RawFromGrip(identity, idx.grip[f][h]).orientation,
+                    xi::RawFromGrip(identity, touch.grip[f][h]).orientation);
+            }
+            Check(deg[0] > 5.0f && deg[0] < 6.2f && Near(deg[0], deg[1], 0.01f), "touch vs index raw: same small angle on both hands");
+        }
+    }
+
     // Finger curls from controller sensors: tests/vr_openxr_hand_tests.cpp.
     {
         // Curl sources per profile (M5): Index grip force, Quest Pro / 3 index proximity.

@@ -845,6 +845,7 @@ namespace OpusVoiceClient
         if (!DecodeFrameText(text, f)) { ++g_Stats.framesRejected; return; }
         Speaker& sp = g_Speakers[static_cast<std::size_t>(player)];
         const double now = NowMs();
+        if (now - sp.lastArrivalMs < 1000.0) g_Stats.maxArrivalGapMs = std::max(g_Stats.maxArrivalGapMs, now - sp.lastArrivalMs);
         sp.jitter.Insert(f, now);
         sp.lastArrivalMs = now;
         sp.used = true;
@@ -997,10 +998,12 @@ namespace OpusVoiceClient
             g_LastStatsLogMs = now;
             const Stats st = GetStats();
             if (st.framesSent || st.framesReceived)
-                Game::logMsg("[VR][Voice] stats: active=%d tx=%d capture=%d output=%d sent=%u (%u B, %u spurts) received=%u decoded=%u fec=%u plc=%u mixed=%u stockDropped=%u peers=%llx jitter=%dms",
+                Game::logMsg("[VR][Voice] stats: active=%d tx=%d capture=%d output=%d sent=%u (%u B, %u spurts) received=%u decoded=%u fec=%u plc=%u mixed=%u stockDropped=%u peers=%llx jitter=%dms maxGap=%.0fms",
                     st.active ? 1 : 0, st.transmitAllowed ? 1 : 0, st.captureOpen ? 1 : 0, st.outputOpen ? 1 : 0,
                     st.framesSent, st.bytesSent, st.talkspurtsSent, st.framesReceived, st.decoded, st.fec, st.concealed,
-                    st.mixedBlocks, st.stockVoiceDropped, static_cast<unsigned long long>(st.peers), st.lastJitterTargetMs);
+                    st.mixedBlocks, st.stockVoiceDropped, static_cast<unsigned long long>(st.peers), st.lastJitterTargetMs, st.maxArrivalGapMs);
+            std::lock_guard<std::mutex> lock(g_Mutex);
+            g_Stats.maxArrivalGapMs = 0.0;
         }
     }
 

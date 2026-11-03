@@ -29,6 +29,7 @@ namespace OpusVoiceClient
         std::uint64_t peers = 0u;
         float inputLevel = 0.0f;      // VAD level (RMS, 16-bit units)
         int lastJitterTargetMs = 0;
+        double maxArrivalGapMs = 0.0;   // longest wait between two received frames of one talkspurt (since the last stats line)
         double loopbackToneDb = -100.0;   // tone vs off-tone of this client's own voice played back (loopback)
         std::uint32_t loopbackSamples = 0;
     };

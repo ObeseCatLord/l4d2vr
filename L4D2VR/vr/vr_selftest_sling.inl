@@ -226,9 +226,17 @@ bool VR::RunEmptyHandsSelfTestStep(float t, C_BasePlayer* player)
         m_SelfTestLeftAngWorldValid = false;
         m_SelfTestLeftLocal = body::LeftReady();
         m_SelfTestLeftAngLocal = QAngle(0.0f, 0.0f, 0.0f);
+        // The right hand holds the pistol (an earlier step may have left the
+        // item in the left hand: the free hand cannot put the other hand's
+        // item away).
+        RequestItemHand(false, l4d2vr_item_hand::Reason::HandOff);
+    }
+    if (at(1, 1.0f))
+    {
+        cmd("use weapon_pistol");
+        // After the hands moved to their start poses (that jump is no bash).
         s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);
     }
-    if (at(1, 1.0f)) cmd("use weapon_pistol");
     // 1) The pistol goes back into the hip holster: the hand is empty.
     if (at(2, 2.0f)) SelfTestReachRight(body::RightBelt(), down60, 1.0f);
     if (at(3, 3.4f)) button(m_ActionWeaponGrip, true);

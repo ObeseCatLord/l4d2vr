@@ -66,12 +66,16 @@ tone; `OpusVoiceTestDump=<prefix>` writes the decoded voice of each talker
   codes as full band (20 kHz audio bandwidth); a voice without high frequencies drops to wide
   band by itself. Stock L4D2 voice: 11 kHz sampling, ~5 kHz bandwidth.
 * In-band FEC (tuned for 5% loss): a frame lost on the way up is rebuilt from the next frame.
-* Jitter buffer per talker: starts 60 ms behind and grows up to 240 ms when the network is rough
-  (shrinking again between talkspurts); a missing frame is rebuilt with FEC if the next one is
-  there, else concealed with Opus PLC; bursts after a stall are skipped down to the target.
+* Jitter buffer per talker: starts 60 ms behind and grows up to 300 ms when frames arrive unevenly
+  (shrinking again between talkspurts). A frame that is late (nothing after it has arrived yet) is
+  waited for, with Opus packet-loss concealment filling the gap, so it still plays; a frame that is
+  missing while later ones are there is rebuilt with FEC from the next frame, else concealed; a
+  backlog after a stall is skipped down to the target.
 * Automatic gain control per talker, a soft limiter on the mix, playback ~50 ms buffered.
-* Mouth to ear: about 20 ms capture + upload + server tick + relay + 60-100 ms jitter buffer +
-  50 ms playback, so typically 150-250 ms on a normal connection.
+* Mouth to ear: about 20 ms capture + upload + server tick + relay + 60-300 ms jitter buffer +
+  50 ms playback. On a listen host the buffer stays at 60 ms; through a remote dedicated server the
+  reliable server-to-client channel delivers frames in bursts (the game sends packets at
+  `cl_updaterate`, 20-30 per second), so the buffer grows toward its 300 ms maximum.
 
 ## Positional playback
 

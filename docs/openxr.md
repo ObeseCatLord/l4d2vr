@@ -37,7 +37,7 @@ No launch options are needed. Running the game as administrator makes the loader
    * Set it under Steam > Left 4 Dead 2 > Properties > Compatibility. Or close Steam and run
      `l4d2vr-installer proton apply` (GUI: Linux setup > *Use the right Proton*). `proton restore`
      undoes it.
-2. **Launch options**: `WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9`. The
+2. **Launch options**: `WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9 -insecure`. The
    installer writes them with Steam closed (`launch-options apply`). Options from older releases
    (`d3d9,openvr_api=n,b`) are rewritten to the new form.
 3. **An OpenVR runtime must stay registered**, even though the mod no longer uses OpenVR.

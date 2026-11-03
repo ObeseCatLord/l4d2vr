@@ -53,8 +53,10 @@ def connect_args(server: Optional[str], password: Optional[str]) -> List[str]:
 
 
 def steam_url(args: Optional[List[str]] = None) -> str:
-    if not args:
-        return f"steam://rungameid/{APP_ID}"
+    # Always -insecure: the mod is a d3d9.dll proxy, so never start it with VAC.
+    args = list(args or [])
+    if "-insecure" not in args:
+        args.insert(0, "-insecure")
     joined = " ".join(args)
     return f"steam://run/{APP_ID}//{urllib.parse.quote(joined, safe='+:.-_')}/"
 

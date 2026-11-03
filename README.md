@@ -36,7 +36,7 @@ Manual steps are below.
 ## Requirements (OpenXR)
 The mod uses **OpenXR only** (no SteamVR/OpenVR files). Left 4 Dead 2 is a 32-bit game, so it needs an OpenXR runtime that supports 32-bit games with Vulkan. Details, error messages and what changed: [docs/openxr.md](docs/openxr.md).
 * **Windows**: SteamVR 2.17 or newer set as the OpenXR runtime (SteamVR > Settings > OpenXR > *Set SteamVR as OpenXR Runtime*), Virtual Desktop (VDXR) or Meta Quest Link. Windows Mixed Reality's own runtime is 64-bit only: use SteamVR with the WMR for SteamVR driver.
-* **Linux**: Proton Hotfix (2026-10-07 or newer) or Proton Experimental (11.0-20261014 or newer), the launch options `WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9`, an OpenVR runtime still registered (SteamVR, or XRizer / OpenComposite for Monado and WiVRn: Proton needs it before its OpenXR bridge starts) and an active OpenXR runtime (Monado, WiVRn or SteamVR). The [installer](installer/README.md) checks and sets the Proton version and launch options.
+* **Linux**: Proton Hotfix (2026-10-07 or newer) or Proton Experimental (11.0-20261014 or newer), the launch options `WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9 -insecure`, an OpenVR runtime still registered (SteamVR, or XRizer / OpenComposite for Monado and WiVRn: Proton needs it before its OpenXR bridge starts) and an active OpenXR runtime (Monado, WiVRn or SteamVR). The [installer](installer/README.md) checks and sets the Proton version and launch options.
 * Without a usable runtime the game starts in desktop mode and `vrmod_log.txt` and the game console say why.
 
 What changed for players with OpenXR:

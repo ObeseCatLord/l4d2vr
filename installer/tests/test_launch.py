@@ -29,9 +29,9 @@ def executable(path: Path, text: str = "#!/bin/sh\nexit 0\n") -> Path:
 
 class SteamUrlTests(unittest.TestCase):
     def test_plain_and_connect_urls(self):
-        self.assertEqual(vrlaunch.steam_url(), "steam://rungameid/550")
+        self.assertEqual(vrlaunch.steam_url(), "steam://run/550//-insecure/")
         url = vrlaunch.steam_url(vrlaunch.connect_args("1.2.3.4:27015", "p w"))
-        self.assertEqual(url, "steam://run/550//+password%20p%20w%20+connect%201.2.3.4:27015/")
+        self.assertEqual(url, "steam://run/550//-insecure%20+password%20p%20w%20+connect%201.2.3.4:27015/")
         self.assertEqual(vrlaunch.connect_args(None, "x"), [])
 
     def test_redact(self):

@@ -397,10 +397,11 @@ AimLineMinHitDistance=0
 ManualThrowEnabled=true
 GripReleaseDropEnabled=false
 BodyGripInventoryEnabled=true
-// Pavlov-style holsters: long gun behind the dominant shoulder, medkit/defib/upgrade behind the other
-// shoulder, pistol or melee on the dominant hip, grenade and pills/adrenaline on the chest.
-// Reach to a holster and hold the weapon-hand grip to draw it instantly; release a held item inside its
-// own holster to put it away. Offsets are metres from the head: forward, toward the dominant side, up.
+// Forefront-style holsters: long gun on a sling across the chest, pistol or melee on the dominant hip,
+// grenade on the dominant upper chest, pills/adrenaline on the other hip, magazines on the off-hand upper
+// chest, medkit/defib/upgrade on the back over the off shoulder.
+// Reach to a holster and squeeze the grip to draw it instantly; let go of a held item inside its own
+// holster to put it away (your hand is then empty). Offsets are metres from the head: forward, toward the dominant side, up.
 // Dynamic spread crosshair at the aim point (X or plus); the gap grows with the weapon's current
 // inaccuracy like the desktop crosshair. Works with or without the aim line. Off by default: with
 // Pavlov-style recoil you aim with the sights (CrosshairStyle=off also turns it off).

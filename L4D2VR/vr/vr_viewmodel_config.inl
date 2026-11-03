@@ -3357,6 +3357,7 @@ void VR::ParseConfigFile()
     m_ItemHandMirror = true;
     m_ItemHandLeftArmModel = getBool("ItemHandLeftArmModel", true);
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
+    m_VrOptionsMenuHoldSeconds = std::clamp(getFloat("VrOptionsMenuHoldSeconds", 0.8f), 0.0f, 5.0f);
     // Forefront's equipment takes the head yaw every frame (0); Pavlov's
     // inventory interpolates toward it at speed 20.
     m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 0.0f), 0.0f, 60.0f);
@@ -3398,6 +3399,8 @@ void VR::ParseConfigFile()
     }
     m_ManualThrowHandVelocityScale = std::clamp(getFloat("ManualThrowHandVelocityScale", m_ManualThrowHandVelocityScale), 0.0f, 10.0f);
     m_ManualThrowVelocityWindowMs = std::clamp(getInt("ManualThrowVelocityWindowMs", m_ManualThrowVelocityWindowMs), 20, 250);
+    m_GrenadeThrowAssist = getBool("GrenadeThrowAssist", true);
+    m_GrenadeThrowAssistStrength = std::clamp(getFloat("GrenadeThrowAssistStrength", 0.5f), 0.0f, 1.0f);
     {
         const Vector hold = getVector3("ThrowableHoldAngleOffsetDeg",
             Vector(m_ThrowableHoldAngleOffset.x, m_ThrowableHoldAngleOffset.y, m_ThrowableHoldAngleOffset.z));

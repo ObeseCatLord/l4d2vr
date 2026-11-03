@@ -635,8 +635,15 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					// The hand's smoothed release velocity (tracking space, relative
 					// to the body) times the same boost a hand throw gets.
 					Vector releaseVelocity{};
-					if (!m_VR->EstimateHandThrowVelocity(m_VR->ThrowableHandIsLeft(), releaseVelocity))
+					const bool releaseMeasured = m_VR->EstimateHandThrowVelocity(m_VR->ThrowableHandIsLeft(), releaseVelocity);
+					if (!releaseMeasured)
 						releaseVelocity = m_VR->m_DroppedMagazineHandVelocity[1];
+					// Physics throw assistance: the native throw below is aimed to land where
+					// the assisted hand throw lands (no body velocity in this model).
+					if (releaseMeasured)
+						m_VR->ApplyGrenadeThrowAssist(localPlayerForAutoActions, m_VR->GetRightControllerAbsPos(),
+							m_VR->GetRightControllerAbsAngle(), Vector(0.0f, 0.0f, 0.0f),
+							std::max(0.1f, m_VR->m_ManualThrowHandVelocityScale), releaseVelocity);
 					const Vector handVelocity = releaseVelocity *
 						std::max(0.1f, m_VR->m_ManualThrowHandVelocityScale);
 					const l4d2vr_ballistics::NativeThrowAim solved = l4d2vr_ballistics::MapHandThrowToNative(
@@ -2150,6 +2157,17 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					entry.command = cmd->command_number;
 					entry.position = leftHand ? m_VR->m_LeftControllerPosAbs : m_VR->GetRightControllerViewmodelAbsPos();
 					entry.angles = leftHand ? m_VR->m_LeftControllerTrackedAngAbs : m_VR->GetRightControllerAbsAngle();
+					// Physics throw assistance (GrenadeThrowAssist): bend the release toward
+					// where the hand points when it already heads there.
+					if (measured)
+					{
+						const int assistIdx = m_Game->m_EngineClient->GetLocalPlayer();
+						C_BasePlayer* const assistPlayer = assistIdx > 0
+							? reinterpret_cast<C_BasePlayer*>(m_Game->GetClientEntity(assistIdx)) : nullptr;
+						if (assistPlayer)
+							m_VR->ApplyGrenadeThrowAssist(assistPlayer, entry.position, entry.angles, assistPlayer->m_vecVelocity,
+								m_VR->m_ManualThrowHandVelocityScale, handVelocity);
+					}
 					entry.velocity = handVelocity;
 					entry.kind = static_cast<int>(handThrowKind);
 					entry.leftHand = leftHand;

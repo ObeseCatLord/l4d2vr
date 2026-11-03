@@ -3434,6 +3434,9 @@ namespace
         sampleKeys.insert("ManualThrowHandVelocityScale");
         sampleKeys.insert("ThrowableHoldAngleOffsetDeg");
         sampleKeys.insert("ManualThrowVelocityWindowMs");
+        sampleKeys.insert("GrenadeThrowAssist");
+        sampleKeys.insert("GrenadeThrowAssistStrength");
+        sampleKeys.insert("VrOptionsMenuHoldSeconds");
         for (const auto key : l4d2vr_calibration::kConfigKeys)
             sampleKeys.insert(std::string(key));
         configChanged |= RemoveConfigParametersNotInSample(configText, sampleKeys);

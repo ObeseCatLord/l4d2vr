@@ -141,3 +141,67 @@ void VR::SendGrenadeThrowFeatureRequest()
     m_GrenadeFeatureRequestSent = wanted;
     Game::logMsg("[VR][Grenade] sent %s (GrenadeThrowMode=%s)", command, wanted ? "arc" : "physics");
 }
+
+// Physics throw assistance (GrenadeThrowAssist): bend the release toward the
+// arc that lands where the hand points (the hand's aim ray hit, or, when it
+// hits nothing in reach, the throw's own range turned onto the aim heading).
+// vr_hand_throw.h AssistThrow decides how much (only throws already heading
+// there). `handVelocity` is the wire velocity: relative to the body, before
+// the boost; the server launches hand * boost + body from the hand.
+float VR::ApplyGrenadeThrowAssist(C_BasePlayer* localPlayer, const Vector& releasePos, const QAngle& handAngles,
+    const Vector& bodyVelocity, float boost, Vector& handVelocity)
+{
+    namespace ht = l4d2vr_hand_throw;
+    if (!m_GrenadeThrowAssist || !(m_GrenadeThrowAssistStrength > 0.0f) || GrenadeArcMode() || !localPlayer || !m_Game)
+        return 0.0f;
+    const float scale = std::max(0.1f, boost);
+    const float gravity = m_Game->GetConVarFloat("sv_gravity", l4d2vr_grenade_arc::kDefaultSvGravity) *
+        l4d2vr_grenade_arc::NativeThrow{}.gravityScale;
+    const ht::V3 origin(releasePos.x, releasePos.y, releasePos.z);
+    const ht::V3 body(bodyVelocity.x, bodyVelocity.y, bodyVelocity.z);
+    const ht::V3 launch = ht::V3(handVelocity.x, handVelocity.y, handVelocity.z) * scale + body;
+
+    Vector aim{};
+    QAngle::AngleVectors(handAngles, &aim, nullptr, nullptr);
+    ht::AssistInput in{};
+    in.origin = origin;
+    in.velocity = launch;
+    in.gravity = gravity;
+    in.strength = m_GrenadeThrowAssistStrength;
+    in.maxSpeed = m_ManualThrowMaxVelocity;
+    const char* targetFrom = "none";
+    // Reach: about the farthest this throw could go, at least 2 m.
+    const float reach = std::clamp(launch.Length() * launch.Length() / std::max(1.0f, gravity) * 1.3f, 80.0f, 4000.0f);
+    if (aim.Length() > 0.5f && m_Game->m_EngineTrace)
+    {
+        float fraction = 1.0f;
+        Vector end{};
+        if (VR_GrenadeArcTraceSegment(m_Game, localPlayer, releasePos, releasePos + aim * reach, fraction, end) && fraction < 1.0f)
+        {
+            in.target = ht::V3(end.x, end.y, end.z);
+            in.targetValid = true;
+            targetFrom = "aim";
+        }
+    }
+    if (!in.targetValid)
+    {
+        ht::V3 heading{};
+        const float groundZ = localPlayer->GetAbsOrigin().z;
+        if (ht::HeadingTarget(origin, launch, gravity, groundZ, ht::V3(aim.x, aim.y, aim.z), heading))
+        {
+            in.target = heading;
+            in.targetValid = true;
+            targetFrom = "heading";
+        }
+    }
+    const ht::AssistResult r = ht::AssistThrow(in);
+    Game::logMsg("[VR][ThrowAssist] %s target=%s (%.0f %.0f %.0f) launch=(%.0f %.0f %.0f) -> (%.0f %.0f %.0f) weight=%.2f strength=%.2f",
+        r.reason, targetFrom, in.target.x, in.target.y, in.target.z, launch.x, launch.y, launch.z,
+        r.velocity.x, r.velocity.y, r.velocity.z, r.weight, in.strength);
+    if (!r.applied)
+        return 0.0f;
+    const ht::V3 wire = ht::HandVelocityForLaunch(r.velocity, body, scale);
+    handVelocity = Vector(wire.x, wire.y, wire.z);
+    m_GrenadeThrowAssistCount.fetch_add(1u, std::memory_order_acq_rel);
+    return r.weight;
+}

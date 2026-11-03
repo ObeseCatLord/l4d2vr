@@ -22,6 +22,9 @@
 #include <cstdio>
 #include <cctype>
 #include <cfloat>
+#include <ctime>
+#include <set>
+#include "vr_options_menu.h"
 
 extern "C" bool __cdecl L4D2VR_QueryDataCacheUsage(
     uint32_t* currentBytes,
@@ -29,6 +32,7 @@ extern "C" bool __cdecl L4D2VR_QueryDataCacheUsage(
 
 namespace
 {
+    namespace om = l4d2vr_options_menu;
     constexpr int kCfgOverlayW = 1280;
     constexpr int kCfgOverlayH = 900;
     constexpr int kCfgOverlayRowH = 46;
@@ -44,6 +48,8 @@ namespace
     constexpr int kCfgPageButtonW = 96;
     constexpr int kCfgPageButtonH = 42;
     constexpr int kCfgCloseX = 1180;
+    constexpr int kCfgBackToOptionsX = 400;   // "< VR Options" (Config mode)
+    constexpr int kCfgBackToOptionsW = 196;
     constexpr int kCfgTopButtonY = 24;
     constexpr int kCfgTopButtonH = 42;
     constexpr int kCfgLangW = 76;
@@ -348,6 +354,7 @@ namespace
         { "MeleeGripReachMeters", CfgOptionType::Float, "Hands / Melee", "Melee grip reach (m)", 0.0f, 0.4f, "0.12" },
         { "MotionOnlyMeleeAndShove", CfgOptionType::Bool, "Hands / Melee", "Motion-only melee and shove", 0.0f, 0.0f, "true" },
         { "MenuLaserPointerEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Menu laser pointer", 0.0f, 0.0f, "true" },
+        { "VrOptionsMenuHoldSeconds", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Hold pause to open VR Options (s)", 0.0f, 5.0f, "0.8" },
         { "HolsterReleaseDrop", CfgOptionType::Bool, "Hands / Holsters", "Drop held items on grip release", 0.0f, 0.0f, "true" },
         { "GripToggle", CfgOptionType::Bool, "Hands / Holsters", "Toggle grips", 0.0f, 0.0f, "true" },
         { "GrenadeThrowMode", CfgOptionType::String, "Weapons / Throwables", "Grenade throw mode (arc | physics)", 0.0f, 0.0f, "arc" },
@@ -355,6 +362,8 @@ namespace
         { "ManualThrowHandVelocityScale", CfgOptionType::Float, "Weapons / Throwables", "Hand throw boost", 0.0f, 10.0f, "2.5" },
         { "ThrowableHoldAngleOffsetDeg", CfgOptionType::Vec3, "Weapons / Throwables", "Grenade hold turn (deg)", -90.0f, 90.0f, "0,0,20" },
         { "ManualThrowVelocityWindowMs", CfgOptionType::Int, "Weapons / Throwables", "Hand throw velocity window (ms)", 20.0f, 250.0f, "80" },
+        { "GrenadeThrowAssist", CfgOptionType::Bool, "Weapons / Throwables", "Physics throw assistance", 0.0f, 0.0f, "true" },
+        { "GrenadeThrowAssistStrength", CfgOptionType::Float, "Weapons / Throwables", "Throw assistance strength", 0.0f, 1.0f, "0.5" },
         { "ReloadPavlovTuning", CfgOptionType::Bool, "Hands / Manual Reload", "Pavlov reload tuning", 0.0f, 0.0f, "true" },
         { "MagazineSlapEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Magazine slap", 0.0f, 0.0f, "true" },
         { "MagazineInteractionTriggerInteractions", CfgOptionType::Bool, "Hands / Manual Reload", "Reload with the off-hand trigger", 0.0f, 0.0f, "true" },
@@ -865,7 +874,8 @@ namespace
     enum class CfgPanelMode
     {
         Config,
-        MagazineCalibration
+        MagazineCalibration,
+        Options            // the VR Options page (vr_options_menu.h); the default on open
     };
 
     struct CfgOverlayState
@@ -991,6 +1001,22 @@ namespace
         vr::VROverlayHandle_t keyboardEventHandle = vr::k_ulOverlayHandleInvalid;
         uint64_t keyboardUserValue = 0;
         uint32_t keyboardOpenMs = 0;
+        // VR Options page (vr_options_menu.h).
+        int optSection = 0;
+        int optScroll = 0;
+        int optHover = -1;
+        int optHoverTab = -1;
+        std::string optText;                   // vr/config.txt as read/written by the page
+        om::Values optValues;
+        std::set<std::string> optConfig2Keys;  // keys vr/config2.txt overrides
+        om::Dialog optDialog = om::Dialog::None;
+        int optConfirmAction = 0;              // 1 reset this page, 2 reset all VR options
+        std::string optDialogTitle;
+        std::string optDialogBody;
+        om::HoldToOpen optHold;                // hold the pause button to open
+        // Desktop mode (no VR overlay): the panel in a normal window.
+        HWND desktopWnd = nullptr;
+        bool desktopWndShown = false;
         std::mutex mutex;
     };
 
@@ -1158,9 +1184,12 @@ namespace
         { "ManualThrowHandVelocityScale", "Weapons / Throwables", "Hand Throw Velocity Scale", "The grenade leaves with your hand's release speed times this boost (when you host the game, and for aiming the throw on plain servers; dedicated servers use their own ThrowHandVelocityScale). Your own walking or running speed is added unscaled.", "2.5 (default) sends a natural throw about as far as the game's own; 1.0 is literal, higher throws further." },
         { "ThrowableHoldAngleOffsetDeg", "Weapons / Throwables", "Grenade Hold Turn", "Turns a held grenade, molotov or bile jar in your hand (pitch, yaw, roll in degrees). The game's own hold leans it in toward your body; the default roll stands it up.", "Mirrored automatically when the grenade is in your left hand." },
         { "ManualThrowVelocityWindowMs", "Weapons / Throwables", "Hand Throw Velocity Window", "How many milliseconds of hand motion before the release a hand throw looks at: the grenade leaves at the hand's peak speed in that window, along the direction it was moving.", "Shorter follows the last flick; longer is steadier." },
+        { "GrenadeThrowAssist", "Weapons / Throwables", "Physics Throw Assistance", "GrenadeThrowMode=physics only: gently steers a hand throw onto the spot your hand points at, but only when the throw is already heading there (about 25 degrees sideways, a similar arc, at most 35% faster or slower). Throws elsewhere, drops and tosses at your feet stay your own.", "Also on the VR Options Grenades page." },
+        { "GrenadeThrowAssistStrength", "Weapons / Throwables", "Throw Assistance Strength", "How much an eligible physics throw is steered: 0 keeps it as thrown, 1 lands it on the spot your hand points at.", "0.5 by default." },
         { "GripToggle", "Hands / Holsters", "Toggle Grips", "One firm squeeze takes an item and your hand keeps it; the next squeeze lets it go: inside its own holster it is put away, anywhere else it is dropped. Turn off to hold the grip instead.", "The off-hand trigger holds magazines, slides and bolts while pulled; the front of a two-handed gun is its own grip toggle." },
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). SteamVR and the OpenXR backend bring their own laser, which then works on every panel." },
+        { "VrOptionsMenuHoldSeconds", "HUD (Main)", "Hold Pause To Open VR Options", "Holding the pause button (left B on Index, Y on Quest/Touch, menu on Vive/WMR) this many seconds opens or closes the VR Options menu. 0 turns it off.", "A short press still opens the pause menu." },
         { "HolsterInstantDraw", "Hands / Holsters", "Instant Weapon Switches", "Every weapon switch (holster draws, pickups, slot keys, after a throw or a medkit) puts the item straight into your hand: the draw animation never plays.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
         { "ChestSlingEnabled", "Hands / Holsters", "Chest Sling", "Your rifle, SMG, shotgun, sniper rifle, M60 or grenade launcher hangs on a sling across your chest (Forefront), and letting go of it near your body hangs it there instead of dropping it: both hands are free (doors, pickups) and it cannot fire. Squeeze the grip anywhere on the slung gun with either hand to take it; that hand becomes the trigger hand.", "Letting go with your arm stretched out (see Sling Drop Distance) still drops it." },
         { "HolsterEmptyHands", "Hands / Holsters", "Empty Hands", "Putting an item away in its holster, or letting go of a pistol, magnum or melee weapon near your body, leaves your hand empty (Forefront and Pavlov): the item stays on your body, can't fire, and a squeeze at its holster with either hand takes it back into that hand. With both hands empty you hold nothing.", "Off: putting an item away switches to your next weapon (the 2.0.4 behaviour). A fast swing that lets go of a melee weapon still throws it." },
@@ -2744,6 +2773,8 @@ GrenadeThrowMode=arc
 ManualThrowPinRequired=true
 ManualThrowHandVelocityScale=2.5
 ManualThrowVelocityWindowMs=80
+GrenadeThrowAssist=true
+GrenadeThrowAssistStrength=0.5
 
 # Object pull uses the existing weapon-hand Grip binding; there is no separate SteamVR Object Pull action.
 # Merely point anywhere on a supported item's collision bounds to select it and show its native outline.
@@ -6674,8 +6705,567 @@ FlashlightEnhancementEnabled=false
             g.normalFont, CfgEntUsageColor(s), DT_RIGHT);
     }
 
+    // ===================================================================
+    // VR Options page (2.0.5, vr_options_menu.h): sections with big rows for
+    // the most-used settings, laser + trigger, scroll, per-section reset and
+    // "reset all VR options". Every change is written to vr/config.txt at once
+    // (the game's config watcher applies it live). The Advanced tab opens the
+    // full config panel above (every existing row).
+    // ===================================================================
+    static std::vector<om::TableOption> CfgOptTable(const CfgOverlayState& s)
+    {
+        std::vector<om::TableOption> table;
+        table.reserve(kCfgOptionSpecCount);
+        for (int i = 0; i < kCfgOptionSpecCount; ++i)
+        {
+            const CfgOptionSpec& spec = kCfgOptionSpecs[i];
+            om::TableOption t{};
+            t.key = spec.key;
+            t.label = CfgTitleText(s, spec);
+            t.help = CfgDescText(s, spec);
+            t.defaultValue = spec.defaultValue ? spec.defaultValue : "";
+            t.isBool = spec.type == CfgOptionType::Bool;
+            table.push_back(t);
+        }
+        return table;
+    }
+
+    static std::vector<om::PageRow> CfgOptRows(const CfgOverlayState& s)
+    {
+        return om::PageRows(s.optSection, CfgOptTable(s));
+    }
+
+    static void CfgOptLoad(CfgOverlayState& s)
+    {
+        if (s.configPath.empty())
+            s.configPath = CfgDefaultConfigPath();
+        std::string text;
+        if (!om::ReadFile(s.configPath, text))
+            text.clear();
+        s.optText = text;
+        s.optValues = om::ParseConfigText(text);
+        s.optConfig2Keys.clear();
+        std::string text2;
+        if (om::ReadFile(std::filesystem::path(s.configPath).parent_path() / "config2.txt", text2))
+            for (const auto& kv : om::ParseConfigText(text2))
+                s.optConfig2Keys.insert(kv.first);
+        s.optSection = (std::clamp)(s.optSection, 0, om::kSectionCount - 2);
+        s.dirty = true;
+    }
+
+    static std::string CfgOptLabel(const CfgOverlayState& s, const om::PageRow& pr)
+    {
+        if (s.useChinese && !pr.key.empty())
+        {
+            const int idx = CfgFindSpecIndex(pr.key);
+            if (idx >= 0)
+                return CfgTitleText(s, kCfgOptionSpecs[idx]);
+        }
+        return pr.label;
+    }
+
+    static std::string CfgOptHelp(const CfgOverlayState& s, const om::PageRow& pr)
+    {
+        if (s.useChinese && !pr.key.empty())
+        {
+            const int idx = CfgFindSpecIndex(pr.key);
+            if (idx >= 0)
+            {
+                const char* d = CfgDescText(s, kCfgOptionSpecs[idx]);
+                if (d && *d)
+                    return d;
+            }
+        }
+        return pr.help;
+    }
+
+    static const char* CfgOptSectionTitle(const CfgOverlayState& s, int section)
+    {
+        if (section < 0 || section >= om::kSectionCount)
+            return "";
+        return s.useChinese ? om::kSections[section].titleZh : om::kSections[section].title;
+    }
+
+    // Writes one option to vr/config.txt (everything else kept) and says what happens.
+    static void CfgOptApply(CfgOverlayState& s, const std::string& key, const std::string& value)
+    {
+        if (key.empty())
+            return;
+        const std::string text = om::SetConfigValue(s.optText, key, value);
+        if (text != s.optText)
+        {
+            if (!om::WriteFileAtomic(s.configPath, text))
+            {
+                s.status = std::string(s.useChinese ? "\xE6\x97\xA0\xE6\xB3\x95\xE5\x86\x99\xE5\x85\xA5 " : "Could not write ") + s.configPath;
+                s.dirty = true;
+                return;
+            }
+            s.optText = text;
+            s.optValues = om::ParseConfigText(text);
+            CfgRefreshConfigWriteTime(s);
+            if (CfgIsKnownValueKey(key.c_str()))
+            {
+                s.values[key] = value;
+                CfgSetRawConfigValue(s, key.c_str(), value);
+            }
+        }
+        s.status = key + " = " + value;
+        if (om::IsRestartKey(key))
+            s.status += s.useChinese ? "\xEF\xBC\x88\xE9\x87\x8D\xE5\x90\xAF\xE6\xB8\xB8\xE6\x88\x8F\xE5\x90\x8E\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x89" : "  (saved; takes effect after a game restart)";
+        else
+            s.status += s.useChinese ? "\xEF\xBC\x88\xE5\xB7\xB2\xE4\xBF\x9D\xE5\xAD\x98\xE5\xB9\xB6\xE5\xBA\x94\xE7\x94\xA8\xEF\xBC\x89" : "  (saved and applied)";
+        if (s.optConfig2Keys.count(key))
+            s.status += s.useChinese ? " vr/config2.txt \xE8\xA6\x86\xE7\x9B\x96\xE4\xBA\x86\xE6\xAD\xA4\xE9\xA1\xB9" : "  Note: vr/config2.txt overrides this key.";
+        Game::logMsg("[VR][Options] %s = %s", key.c_str(), value.c_str());
+        s.dirty = true;
+    }
+
+    static void CfgOptScroll(CfgOverlayState& s, int delta)
+    {
+        const int total = static_cast<int>(CfgOptRows(s).size());
+        const int next = (std::clamp)(s.optScroll + delta, 0, om::MaxScroll(total));
+        if (next != s.optScroll)
+        {
+            s.optScroll = next;
+            s.dirty = true;
+        }
+    }
+
+    static void CfgOptOpenAdvanced(CfgOverlayState& s)
+    {
+        s.panelMode = CfgPanelMode::Config;
+        s.advancedMode = true;
+        s.selected = 0;
+        s.scroll = 0;
+        s.hoveredItem = -1;
+        CfgLoad(s);
+        s.status = s.useChinese ? "\xE6\x89\x80\xE6\x9C\x89\xE8\xAE\xBE\xE7\xBD\xAE\xEF\xBC\x88\xE4\xBF\x9D\xE5\xAD\x98\xE5\x90\x8E\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x89"
+                                : "Every setting. Press Save to apply; VR Options goes back.";
+        s.dirty = true;
+    }
+
+    static void CfgOptBackFromAdvanced(CfgOverlayState& s)
+    {
+        if (s.hasUnsavedEdits)
+            CfgSave(s);
+        s.panelMode = CfgPanelMode::Options;
+        CfgOptLoad(s);
+        s.dirty = true;
+    }
+
+    static void CfgOptShowMessage(CfgOverlayState& s, const std::string& title, const std::string& body)
+    {
+        s.optDialog = om::Dialog::Message;
+        s.optDialogTitle = title;
+        s.optDialogBody = body;
+        s.dirty = true;
+    }
+
+    static std::string CfgOptJoin(const std::vector<std::string>& keys, size_t maxShown = 6)
+    {
+        std::string out;
+        for (size_t i = 0; i < keys.size() && i < maxShown; ++i)
+            out += (i ? ", " : "") + keys[i];
+        if (keys.size() > maxShown)
+            out += ", +" + std::to_string(keys.size() - maxShown);
+        return out;
+    }
+
+    static void CfgOptDoResetSection(CfgOverlayState& s)
+    {
+        const std::vector<om::TableOption> table = CfgOptTable(s);
+        const std::string text = om::ResetSectionText(s.optText, s.optSection, table);
+        const std::vector<std::string> changed = om::ChangedKeys(s.optValues, om::ParseConfigText(text));
+        if (text != s.optText && !om::WriteFileAtomic(s.configPath, text))
+        {
+            CfgOptShowMessage(s, s.useChinese ? "\xE9\x87\x8D\xE7\xBD\xAE\xE5\xA4\xB1\xE8\xB4\xA5" : "Reset failed",
+                std::string("Could not write ") + s.configPath);
+            return;
+        }
+        CfgOptLoad(s);
+        CfgRefreshConfigWriteTime(s);
+        const std::vector<std::string> restart = om::RestartNeeded(changed);
+        s.status = std::string(CfgOptSectionTitle(s, s.optSection)) + (s.useChinese ? "\xE5\xB7\xB2\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4" : ": back to defaults") +
+            " (" + std::to_string(changed.size()) + (s.useChinese ? "\xE9\xA1\xB9" : " changed") + ")";
+        if (!restart.empty())
+            s.status += std::string(s.useChinese ? "\xEF\xBC\x9B\xE9\x87\x8D\xE5\x90\xAF\xE5\x90\x8E\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x9A" : "; restart the game for: ") + CfgOptJoin(restart);
+        Game::logMsg("[VR][Options] section %s reset to defaults: %zu changed", om::kSections[s.optSection].id, changed.size());
+    }
+
+    static void CfgOptDoResetAll(CfgOverlayState& s)
+    {
+        const om::ResetAllResult r = om::ResetAllVrOptions(std::filesystem::path(s.configPath).parent_path(), std::time(nullptr));
+        if (!r.ok)
+        {
+            CfgOptShowMessage(s, s.useChinese ? "\xE9\x87\x8D\xE7\xBD\xAE\xE5\xA4\xB1\xE8\xB4\xA5" : "Reset failed",
+                r.error + (s.useChinese ? "\xE3\x80\x82\xE6\x9C\xAA\xE6\x94\xB9\xE5\x8A\xA8\xE4\xBB\xBB\xE4\xBD\x95\xE6\x96\x87\xE4\xBB\xB6\xE3\x80\x82" : ". Nothing was changed."));
+            Game::logMsg("[VR][Options] reset all failed: %s", r.error.c_str());
+            return;
+        }
+        CfgLoad(s);
+        CfgOptLoad(s);
+        CfgRefreshConfigWriteTime(s);
+        std::string body = std::to_string(r.changed.size()) +
+            (s.useChinese ? " \xE9\xA1\xB9 VR \xE8\xAE\xBE\xE7\xBD\xAE\xE5\xB7\xB2\xE6\x81\xA2\xE5\xA4\x8D\xE4\xB8\xBA\xE9\xBB\x98\xE8\xAE\xA4\xE3\x80\x82"
+                          : " VR settings are back at the shipped defaults (applied now). ");
+        if (!r.backup.empty())
+            body += std::string(s.useChinese ? "\xE5\xA4\x87\xE4\xBB\xBD\xEF\xBC\x9A" : "Backup: vr/") + r.backup.filename().string() + ". ";
+        body += s.useChinese ? "\xE6\xB8\xB8\xE6\x88\x8F\xE8\x87\xAA\xE8\xBA\xAB\xE7\x9A\x84\xE8\xA7\x86\xE9\xA2\x91/\xE9\x9F\xB3\xE9\xA2\x91/\xE6\x8C\x89\xE9\x94\xAE\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x9C\xAA\xE6\x94\xB9\xE5\x8A\xA8\xE3\x80\x82"
+                             : "The game's own video, audio and key settings were not touched.";
+        if (!r.restart.empty())
+            body += std::string(s.useChinese ? " \xE9\x87\x8D\xE5\x90\xAF\xE6\xB8\xB8\xE6\x88\x8F\xE5\x90\x8E\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x9A" : " Restart the game for: ") + CfgOptJoin(r.restart, 9) + ".";
+        else
+            body += s.useChinese ? " \xE6\x97\xA0\xE9\x9C\x80\xE9\x87\x8D\xE5\x90\xAF\xE3\x80\x82" : " No restart needed.";
+        CfgOptShowMessage(s, s.useChinese ? "\xE5\xB7\xB2\xE9\x87\x8D\xE7\xBD\xAE\xE6\x89\x80\xE6\x9C\x89 VR \xE8\xAE\xBE\xE7\xBD\xAE" : "All VR options reset", body);
+        s.status = s.useChinese ? "\xE5\xB7\xB2\xE9\x87\x8D\xE7\xBD\xAE\xE6\x89\x80\xE6\x9C\x89 VR \xE8\xAE\xBE\xE7\xBD\xAE\xE3\x80\x82" : "All VR options reset to the shipped defaults.";
+        Game::logMsg("[VR][Options] reset all VR options: %zu changed, backup %s, restart needed: %s", r.changed.size(),
+            r.backup.string().c_str(), CfgOptJoin(r.restart, 20).c_str());
+    }
+
+    static void CfgOptRecenter(CfgOverlayState& s)
+    {
+        if (g_Game && g_Game->m_VR && g_Game->m_VR->m_IsVREnabled)
+        {
+            g_Game->m_VR->m_ResetPositionDeferredPending.store(1u, std::memory_order_release);
+            s.status = s.useChinese ? "\xE5\xB7\xB2\xE9\x87\x8D\xE6\x96\xB0\xE5\xB1\x85\xE4\xB8\xAD\xEF\xBC\x9A\xE5\xBD\x93\xE5\x89\x8D\xE5\xA4\xB4\xE9\x83\xA8\xE9\xAB\x98\xE5\xBA\xA6\xE5\x8D\xB3\xE4\xB8\xBA\xE8\xA7\x92\xE8\x89\xB2\xE7\x9C\xBC\xE9\xAB\x98\xE3\x80\x82"
+                                    : "Recentered: your current head height is now the survivor's eye height.";
+            Game::logMsg("[VR][Options] recenter requested");
+        }
+        else
+        {
+            s.status = s.useChinese ? "\xE4\xBB\x85\xE5\x9C\xA8 VR \xE4\xB8\xAD\xE5\x8F\xAF\xE7\x94\xA8\xE3\x80\x82" : "Recentering needs a headset (VR mode).";
+        }
+        s.dirty = true;
+    }
+
+    static void CfgHandleOptionsClick(CfgOverlayState& s, int mx, int my)
+    {
+        const std::vector<om::PageRow> rows = CfgOptRows(s);
+        const om::Hit hit = om::HitTest(mx, my, rows, s.optScroll, s.optDialog);
+        const om::PageRow* pr = (hit.index >= 0 && hit.index < static_cast<int>(rows.size()) &&
+            hit.kind != om::HitKind::Tab) ? &rows[static_cast<size_t>(hit.index)] : nullptr;
+        switch (hit.kind)
+        {
+        case om::HitKind::Tab:
+            if (om::kSections[hit.index].advanced)
+            {
+                CfgOptOpenAdvanced(s);
+                return;
+            }
+            s.optSection = hit.index;
+            s.optScroll = 0;
+            s.optHover = -1;
+            s.status = CfgOptSectionTitle(s, s.optSection);
+            break;
+        case om::HitKind::ResetAll:
+            s.optDialog = om::Dialog::Confirm;
+            s.optConfirmAction = 2;
+            s.optDialogTitle = s.useChinese ? "\xE9\x87\x8D\xE7\xBD\xAE\xE6\x89\x80\xE6\x9C\x89 VR \xE8\xAE\xBE\xE7\xBD\xAE\xEF\xBC\x9F" : "Reset ALL VR options to defaults?";
+            s.optDialogBody = s.useChinese
+                ? "vr/config.txt \xE5\xB0\x86\xE6\x81\xA2\xE5\xA4\x8D\xE4\xB8\xBA\xE9\x9A\x8F\xE6\xA8\xA1\xE7\xBB\x84\xE5\x8F\x91\xE5\xB8\x83\xE7\x9A\x84\xE9\xBB\x98\xE8\xAE\xA4\xE5\x80\xBC\xEF\xBC\x8C\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\x87\xE4\xBB\xB6\xE4\xBC\x9A\xE5\x85\x88\xE5\xA4\x87\xE4\xBB\xBD\xE3\x80\x82\xE6\xB8\xB8\xE6\x88\x8F\xE8\x87\xAA\xE8\xBA\xAB\xE7\x9A\x84\xE8\xA7\x86\xE9\xA2\x91/\xE9\x9F\xB3\xE9\xA2\x91/\xE6\x8C\x89\xE9\x94\xAE\xE8\xAE\xBE\xE7\xBD\xAE\xE4\xB8\x8D\xE5\x8F\x97\xE5\xBD\xB1\xE5\x93\x8D\xE3\x80\x82"
+                : "Every L4D2VR setting in vr/config.txt goes back to the shipped defaults. Your current vr/config.txt is backed up first (vr/config.txt.bak-<time>). The game's own video, audio and key settings are not touched.";
+            break;
+        case om::HitKind::ResetSection:
+            if (om::kSections[s.optSection].advanced)
+                break;
+            s.optDialog = om::Dialog::Confirm;
+            s.optConfirmAction = 1;
+            s.optDialogTitle = std::string(s.useChinese ? "\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4\xEF\xBC\x9A" : "Reset ") + CfgOptSectionTitle(s, s.optSection) +
+                (s.useChinese ? "\xEF\xBC\x9F" : " to defaults?");
+            s.optDialogBody = s.useChinese ? "\xE4\xBB\x85\xE6\x9C\xAC\xE9\xA1\xB5\xE7\x9A\x84\xE8\xAE\xBE\xE7\xBD\xAE\xE6\x81\xA2\xE5\xA4\x8D\xE9\xBB\x98\xE8\xAE\xA4\xE5\x80\xBC\xEF\xBC\x8C\xE5\x85\xB6\xE4\xBB\x96\xE9\xA1\xB5\xE4\xB8\x8D\xE5\x8F\x98\xE3\x80\x82"
+                                           : "Only the settings on this page go back to their defaults; other pages keep yours.";
+            break;
+        case om::HitKind::Close:
+            s.visible = false;
+            s.optDialog = om::Dialog::None;
+            s.status = s.useChinese ? "\xE5\xB7\xB2\xE5\x85\xB3\xE9\x97\xAD\xE3\x80\x82" : "Closed.";
+            Game::logMsg("[VR][Options] closed");
+            break;
+        case om::HitKind::Language:
+            s.useChinese = !s.useChinese;
+            CfgRebuildVisibleIndexes(s);
+            break;
+        case om::HitKind::ScrollUp:
+            CfgOptScroll(s, -3);
+            break;
+        case om::HitKind::ScrollDown:
+            CfgOptScroll(s, 3);
+            break;
+        case om::HitKind::Row:
+        case om::HitKind::Toggle:
+            // A toggle flips from anywhere on its row (a big target for the laser).
+            if (pr && pr->row.kind == om::RowKind::Toggle)
+                CfgOptApply(s, pr->key, om::PageStep(*pr, s.optValues, 1));
+            else if (pr && pr->row.kind == om::RowKind::Action && hit.kind == om::HitKind::Row)
+                s.status = pr->help;
+            break;
+        case om::HitKind::Minus:
+        case om::HitKind::Plus:
+            if (pr)
+                CfgOptApply(s, pr->key, om::PageStep(*pr, s.optValues, hit.kind == om::HitKind::Plus ? 1 : -1));
+            break;
+        case om::HitKind::Bar:
+            if (pr)
+                CfgOptApply(s, pr->key, om::SliderValueAt(pr->row, hit.barT));
+            break;
+        case om::HitKind::Choice:
+            if (pr)
+            {
+                const std::vector<om::ChoiceOption> options = om::Choices(pr->row);
+                if (hit.choice >= 0 && hit.choice < static_cast<int>(options.size()))
+                    CfgOptApply(s, pr->key, options[static_cast<size_t>(hit.choice)].value);
+            }
+            break;
+        case om::HitKind::Action:
+            if (pr && pr->row.action == om::RowAction::Recenter)
+                CfgOptRecenter(s);
+            else if (pr && pr->row.action == om::RowAction::OpenAdvanced)
+            {
+                CfgOptOpenAdvanced(s);
+                return;
+            }
+            break;
+        case om::HitKind::DialogYes:
+        {
+            const int action = s.optConfirmAction;
+            s.optDialog = om::Dialog::None;
+            s.optConfirmAction = 0;
+            if (action == 1)
+                CfgOptDoResetSection(s);
+            else if (action == 2)
+                CfgOptDoResetAll(s);
+            break;
+        }
+        case om::HitKind::DialogNo:
+            s.optDialog = om::Dialog::None;
+            s.optConfirmAction = 0;
+            s.status = s.useChinese ? "\xE5\xB7\xB2\xE5\x8F\x96\xE6\xB6\x88\xE3\x80\x82" : "Cancelled; nothing changed.";
+            break;
+        case om::HitKind::DialogOk:
+            s.optDialog = om::Dialog::None;
+            break;
+        default:
+            break;
+        }
+        s.dirty = true;
+    }
+
+    static void CfgOptHover(CfgOverlayState& s, int mx, int my)
+    {
+        const std::vector<om::PageRow> rows = CfgOptRows(s);
+        const om::Hit hit = om::HitTest(mx, my, rows, s.optScroll, s.optDialog);
+        const int hover = (hit.kind == om::HitKind::Tab || hit.kind == om::HitKind::None || hit.index < 0) ? -1 : hit.index;
+        const int hoverTab = hit.kind == om::HitKind::Tab ? hit.index : -1;
+        if (hover != s.optHover || hoverTab != s.optHoverTab)
+        {
+            s.optHover = hover;
+            s.optHoverTab = hoverTab;
+            s.dirty = true;
+        }
+    }
+
+    static void CfgOptFillRect(CfgGdiSurface& g, const om::Rect& r, CfgRgb c) { CfgGdiFill(g, r.x, r.y, r.w, r.h, c); }
+    static void CfgOptFrameRect(CfgGdiSurface& g, const om::Rect& r, CfgRgb c, int t) { CfgGdiFrame(g, r.x, r.y, r.w, r.h, c, t); }
+
+    static void CfgOptButton(CfgGdiSurface& g, const om::Rect& r, const std::string& label, HFONT font, bool active, bool danger = false)
+    {
+        CfgOptFillRect(g, r, active ? CfgRgb{ 42, 86, 150 } : (danger ? CfgRgb{ 70, 34, 38 } : CfgRgb{ 44, 52, 70 }));
+        CfgOptFrameRect(g, r, active ? CfgRgb{ 160, 200, 255 } : (danger ? CfgRgb{ 220, 120, 120 } : CfgRgb{ 120, 142, 180 }), 2);
+        CfgGdiText(g, r.x + 6, r.y, r.w - 12, r.h, label, font, { 240, 244, 250 }, DT_CENTER);
+    }
+
+    static void CfgOptTriangle(CfgGdiSurface& g, const om::Rect& r, bool up, CfgRgb c)
+    {
+        HBRUSH brush = CreateSolidBrush(CfgColorRef(c));
+        HPEN pen = CreatePen(PS_SOLID, 1, CfgColorRef(c));
+        HGDIOBJ ob = SelectObject(g.dc, brush), op = SelectObject(g.dc, pen);
+        const int cx = r.x + r.w / 2, cy = r.y + r.h / 2, s = r.w / 2 - 6;
+        POINT pts[3] = { { cx - s, up ? cy + s / 2 : cy - s / 2 }, { cx + s, up ? cy + s / 2 : cy - s / 2 }, { cx, up ? cy - s / 2 : cy + s / 2 } };
+        Polygon(g.dc, pts, 3);
+        SelectObject(g.dc, ob);
+        SelectObject(g.dc, op);
+        DeleteObject(brush);
+        DeleteObject(pen);
+    }
+
+    static void CfgRenderOptions(CfgOverlayState& s)
+    {
+        CfgGdiSurface g;
+        if (!CfgCreateGdiSurface(g))
+            return;
+        struct Fonts
+        {
+            HFONT title = CfgMakeFont(42, FW_BOLD), tab = CfgMakeFont(28, FW_BOLD), label = CfgMakeFont(28, FW_BOLD),
+                help = CfgMakeFont(19, FW_NORMAL), control = CfgMakeFont(25, FW_BOLD), smallF = CfgMakeFont(18, FW_NORMAL),
+                dialogTitle = CfgMakeFont(34, FW_BOLD), dialogBody = CfgMakeFont(23, FW_NORMAL);
+            ~Fonts() { for (HFONT f : { title, tab, label, help, control, smallF, dialogTitle, dialogBody }) if (f) DeleteObject(f); }
+        } f;
+
+        using namespace om::layout;
+        CfgGdiFill(g, 0, 0, kW, kH, { 14, 16, 22 });
+        CfgGdiFill(g, 0, 0, kW, kHeaderH, { 30, 35, 48 });
+        CfgGdiText(g, 26, 10, 520, 52, s.useChinese ? "VR \xE9\x80\x89\xE9\xA1\xB9" : "VR Options", f.title, { 242, 246, 255 });
+        CfgGdiText(g, 28, 60, 700, 28, s.useChinese ? "\xE6\x9B\xB4\xE6\x94\xB9\xE7\xAB\x8B\xE5\x8D\xB3\xE7\x94\x9F\xE6\x95\x88\xE5\xB9\xB6\xE4\xBF\x9D\xE5\xAD\x98\xE5\x88\xB0 vr/config.txt" : "Changes apply at once and are saved to vr/config.txt",
+            f.smallF, { 160, 176, 200 });
+        CfgOptButton(g, om::LanguageRect(), s.useChinese ? "\xE4\xB8\xAD\xE6\x96\x87" : "EN", f.control, false);
+        const bool advancedSection = om::kSections[s.optSection].advanced;
+        if (!advancedSection)
+            CfgOptButton(g, om::ResetSectionRect(), s.useChinese ? "\xE6\x81\xA2\xE5\xA4\x8D\xE6\x9C\xAC\xE9\xA1\xB5\xE9\xBB\x98\xE8\xAE\xA4" : "Reset this page", f.control, false);
+        CfgOptButton(g, om::CloseRect(), s.useChinese ? "\xE5\x85\xB3\xE9\x97\xAD" : "Close", f.control, false);
+
+        for (int i = 0; i < om::kSectionCount; ++i)
+        {
+            const om::Rect r = om::TabRect(i);
+            const bool active = i == s.optSection;
+            const bool hover = i == s.optHoverTab;
+            CfgOptFillRect(g, r, active ? CfgRgb{ 42, 86, 150 } : (hover ? CfgRgb{ 38, 48, 66 } : CfgRgb{ 26, 30, 40 }));
+            if (active || hover)
+                CfgOptFrameRect(g, r, active ? CfgRgb{ 160, 200, 255 } : CfgRgb{ 96, 120, 160 }, 2);
+            std::string title = CfgOptSectionTitle(s, i);
+            if (om::kSections[i].advanced)
+                title += "  >";
+            CfgGdiText(g, r.x + 20, r.y, r.w - 28, r.h, title, f.tab, active ? CfgRgb{ 255, 255, 255 } : CfgRgb{ 206, 214, 228 });
+        }
+        CfgOptButton(g, om::ResetAllRect(), s.useChinese ? "\xE9\x87\x8D\xE7\xBD\xAE\xE6\x89\x80\xE6\x9C\x89 VR \xE8\xAE\xBE\xE7\xBD\xAE" : "Reset all VR options", f.control, false, true);
+
+        const std::vector<om::PageRow> rows = CfgOptRows(s);
+        const int total = static_cast<int>(rows.size());
+        s.optScroll = (std::clamp)(s.optScroll, 0, om::MaxScroll(total));
+        for (int v = 0; v < kRowsVisible; ++v)
+        {
+            const int index = s.optScroll + v;
+            if (index >= total)
+                break;
+            const om::PageRow& pr = rows[static_cast<size_t>(index)];
+            const om::Rect rr = om::RowRect(v);
+            const bool hover = index == s.optHover && s.optDialog == om::Dialog::None;
+            const bool enabled = pr.key.empty() || om::DependencyMet(pr.row, s.optValues);
+            CfgOptFillRect(g, rr, hover ? CfgRgb{ 31, 52, 84 } : CfgRgb{ 20, 24, 32 });
+            if (hover)
+                CfgOptFrameRect(g, rr, { 76, 130, 220 }, 2);
+            const CfgRgb labelColor = enabled ? CfgRgb{ 236, 240, 248 } : CfgRgb{ 120, 126, 138 };
+            const CfgRgb helpColor = enabled ? CfgRgb{ 170, 182, 204 } : CfgRgb{ 110, 116, 128 };
+            const bool info = pr.row.kind == om::RowKind::Info;
+            const int textW = info ? rr.w - 36 : kControlX - rr.x - 30;
+            CfgGdiText(g, rr.x + 18, rr.y + 6, textW, 36, CfgOptLabel(s, pr), f.label, labelColor);
+            std::string help = CfgOptHelp(s, pr);
+            if (!enabled && pr.row.dependsOn)
+            {
+                std::string dep = pr.row.dependsOn;
+                const bool neg = dep[0] == '!';
+                if (neg)
+                    dep.erase(0, 1);
+                const om::Row* parent = om::FindRow(dep.substr(0, dep.find('=')));
+                std::string parentName = parent ? parent->label : dep;
+                if (dep.find('=') != std::string::npos)
+                    parentName += " " + dep.substr(dep.find('=') + 1);
+                help = std::string(s.useChinese ? "\xEF\xBC\x88\xE9\x9C\x80\xE8\xA6\x81 " : "(Only with ") + (neg ? "no " : "") + parentName + ") " + help;
+            }
+            if (!pr.key.empty() && om::IsRestartKey(pr.key))
+                help += s.useChinese ? "\xEF\xBC\x88\xE9\x87\x8D\xE5\x90\xAF\xE5\x90\x8E\xE7\x94\x9F\xE6\x95\x88\xEF\xBC\x89" : " Takes effect after a restart.";
+            if (!pr.key.empty() && s.optConfig2Keys.count(pr.key))
+                help = "[vr/config2.txt overrides this] " + help;
+            CfgGdiTextWrap(g, rr.x + 18, rr.y + 42, textW, info ? 44 : 42, help.c_str(), f.help, helpColor);
+
+            const std::string value = om::PageValue(pr, s.optValues);
+            switch (pr.row.kind)
+            {
+            case om::RowKind::Toggle:
+            {
+                const om::Rect t = om::ToggleRect(rr);
+                const bool on = value == "true";
+                CfgOptFillRect(g, t, on ? CfgRgb{ 40, 132, 84 } : CfgRgb{ 56, 60, 70 });
+                CfgOptFrameRect(g, t, on ? CfgRgb{ 120, 220, 160 } : CfgRgb{ 120, 126, 140 }, 2);
+                const om::Rect knob{ on ? t.x + t.w - 50 : t.x + 6, t.y + 6, 44, t.h - 12 };
+                CfgOptFillRect(g, knob, on ? CfgRgb{ 220, 255, 232 } : CfgRgb{ 170, 174, 184 });
+                CfgGdiText(g, on ? t.x + 10 : t.x + 54, t.y, t.w - 64, t.h,
+                    on ? (s.useChinese ? "\xE5\xBC\x80" : "On") : (s.useChinese ? "\xE5\x85\xB3" : "Off"), f.control, { 245, 248, 252 }, DT_CENTER);
+                break;
+            }
+            case om::RowKind::Slider:
+            {
+                const om::Rect m = om::MinusRect(rr), p = om::PlusRect(rr), bar = om::BarRect(rr), vt = om::ValueTextRect(rr);
+                CfgOptButton(g, m, "-", f.title, false);
+                CfgOptButton(g, p, "+", f.title, false);
+                CfgGdiText(g, vt.x, vt.y, vt.w, vt.h, value + pr.row.unit, f.control, enabled ? CfgRgb{ 226, 236, 250 } : CfgRgb{ 130, 136, 148 }, DT_CENTER);
+                const float t = om::SliderFraction(pr.row, value);
+                CfgOptFillRect(g, bar, { 30, 38, 54 });
+                CfgOptFrameRect(g, bar, { 80, 98, 130 }, 1);
+                const int fillW = static_cast<int>(std::lround(bar.w * t));
+                if (fillW > 0)
+                    CfgGdiFill(g, bar.x, bar.y, fillW, bar.h, { 52, 104, 180 });
+                const int knobX = bar.x + static_cast<int>(std::lround((bar.w - 14) * t));
+                CfgGdiFill(g, knobX, bar.y - 6, 14, bar.h + 12, { 110, 170, 250 });
+                break;
+            }
+            case om::RowKind::Choice:
+            {
+                const std::vector<om::ChoiceOption> options = om::Choices(pr.row);
+                for (int c = 0; c < static_cast<int>(options.size()); ++c)
+                {
+                    const om::Rect cr = om::ChoiceRect(rr, c, static_cast<int>(options.size()));
+                    CfgOptButton(g, cr, options[static_cast<size_t>(c)].label, f.smallF, options[static_cast<size_t>(c)].value == value);
+                }
+                break;
+            }
+            case om::RowKind::Action:
+                CfgOptButton(g, om::ActionRect(rr),
+                    pr.row.action == om::RowAction::Recenter ? (s.useChinese ? "\xE7\x8E\xB0\xE5\x9C\xA8\xE9\x87\x8D\xE6\x96\xB0\xE5\xB1\x85\xE4\xB8\xAD" : "Recenter now")
+                                                              : (s.useChinese ? "\xE6\x89\x93\xE5\xBC\x80" : "Open"),
+                    f.control, false);
+                break;
+            default:
+                break;
+            }
+        }
+        if (total > kRowsVisible)
+        {
+            const om::Rect up = om::ScrollUpRect(), down = om::ScrollDownRect();
+            CfgOptFillRect(g, up, s.optScroll > 0 ? CfgRgb{ 44, 52, 70 } : CfgRgb{ 30, 33, 40 });
+            CfgOptFillRect(g, down, s.optScroll < om::MaxScroll(total) ? CfgRgb{ 44, 52, 70 } : CfgRgb{ 30, 33, 40 });
+            CfgOptTriangle(g, up, true, { 200, 212, 232 });
+            CfgOptTriangle(g, down, false, { 200, 212, 232 });
+            const int trackY = up.y + up.h + 6, trackH = down.y - 6 - trackY;
+            CfgGdiFill(g, kScrollX + 14, trackY, 12, trackH, { 30, 34, 44 });
+            const int thumbH = (std::max)(30, trackH * kRowsVisible / total);
+            const int thumbY = trackY + (trackH - thumbH) * s.optScroll / (std::max)(1, om::MaxScroll(total));
+            CfgGdiFill(g, kScrollX + 14, thumbY, 12, thumbH, { 110, 150, 220 });
+        }
+
+        CfgGdiFill(g, 0, kFooterY, kW, kH - kFooterY, { 30, 35, 48 });
+        CfgGdiText(g, 26, kFooterY + 6, kW - 52, kH - kFooterY - 12, s.status, f.smallF, { 226, 232, 242 });
+
+        if (s.optDialog != om::Dialog::None)
+        {
+            const om::Rect d = om::DialogRect();
+            CfgGdiFill(g, d.x - 8, d.y - 8, d.w + 16, d.h + 16, { 8, 9, 12 });
+            CfgOptFillRect(g, d, { 24, 27, 36 });
+            CfgOptFrameRect(g, d, s.optDialog == om::Dialog::Confirm ? CfgRgb{ 220, 120, 120 } : CfgRgb{ 120, 180, 255 }, 3);
+            CfgGdiText(g, d.x + 30, d.y + 26, d.w - 60, 50, s.optDialogTitle, f.dialogTitle, { 248, 240, 240 }, DT_CENTER);
+            CfgGdiTextWrap(g, d.x + 44, d.y + 96, d.w - 88, 220, s.optDialogBody.c_str(), f.dialogBody, { 214, 220, 232 });
+            if (s.optDialog == om::Dialog::Confirm)
+            {
+                CfgOptButton(g, om::DialogYesRect(), s.useChinese ? "\xE7\xA1\xAE\xE8\xAE\xA4\xE9\x87\x8D\xE7\xBD\xAE" : "Yes, reset", f.control, false, true);
+                CfgOptButton(g, om::DialogNoRect(), s.useChinese ? "\xE5\x8F\x96\xE6\xB6\x88" : "Cancel", f.control, false);
+            }
+            else
+            {
+                CfgOptButton(g, om::DialogOkRect(), "OK", f.control, false);
+            }
+        }
+
+        CfgConvertGdiToRgba(s, g);
+        s.dirty = false;
+        s.needsUpload = true;
+    }
+
     static void CfgRender(CfgOverlayState& s)
     {
+        if (s.panelMode == CfgPanelMode::Options)
+        {
+            CfgRenderOptions(s);
+            return;
+        }
         CfgGdiSurface g;
         if (!CfgCreateGdiSurface(g))
         {
@@ -6686,6 +7276,8 @@ FlashlightEnhancementEnabled=false
         CfgGdiFill(g, 0, 0, kCfgOverlayW, kCfgOverlayH, { 14, 16, 22 });
         CfgGdiFill(g, 0, 0, kCfgOverlayW, 82, { 30, 35, 48 });
         CfgGdiText(g, 26, 14, 520, 54, s.useChinese ? "L4D2VR \351\205\215\347\275\256" : "L4D2VR Config", g.titleFont, { 242, 246, 255 });
+        if (s.panelMode == CfgPanelMode::Config)
+            CfgGdiButton(g, kCfgBackToOptionsX, kCfgTopButtonY, kCfgBackToOptionsW, kCfgTopButtonH, s.useChinese ? "< VR \xE9\x80\x89\xE9\xA1\xB9" : "< VR Options");
         CfgGdiButton(g, kCfgPagePrevX, kCfgTopButtonY, kCfgPageButtonW, kCfgPageButtonH, s.useChinese ? "\344\270\212\344\270\200\351\241\265" : "Prev");
         CfgGdiButton(g, kCfgPageNextX, kCfgTopButtonY, kCfgPageButtonW, kCfgPageButtonH, s.useChinese ? "\344\270\213\344\270\200\351\241\265" : "Next");
         CfgGdiButton(g, kCfgCalibX, kCfgTopButtonY, kCfgCalibW, kCfgTopButtonH, s.panelMode == CfgPanelMode::MagazineCalibration ? (s.useChinese ? "\xE9\x85\x8D\xE7\xBD\xAE" : "Config") : (s.useChinese ? "\xE6\xA0\xA1\xE5\x87\x86" : "Calib"));
@@ -7277,9 +7869,65 @@ FlashlightEnhancementEnabled=false
         return true;
     }
 
+    // The game's main menu (not in a map) is on screen in VR.
+    static bool CfgIsMainMenuActive(l4d2vr_backend::IVrOverlay* ov)
+    {
+        if (!ov || !g_Game || !g_Game->m_EngineClient || !g_Game->m_VR || !g_Game->m_VR->m_IsVREnabled)
+            return false;
+#ifdef _MSC_VER
+        __try
+        {
+            if (g_Game->m_EngineClient->IsInGame())
+                return false;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+#else
+        if (g_Game->m_EngineClient->IsInGame())
+            return false;
+#endif
+        const vr::VROverlayHandle_t menu = g_Game->m_VR->m_MainMenuHandle;
+        return CfgIsValidOverlayHandle(menu) && ov->IsOverlayVisible(menu);
+    }
+
+    // The VR Options button sits above the upper-right corner of the game's
+    // main menu panel, a little toward the player.
+    static bool CfgSetMenuButtonTransformOnMainMenu(l4d2vr_backend::IVrOverlay* ov, vr::VROverlayHandle_t h)
+    {
+        const vr::VROverlayHandle_t menu = g_Game->m_VR->m_MainMenuHandle;
+        vr::ETrackingUniverseOrigin origin = vr::TrackingUniverseStanding;
+        vr::HmdMatrix34_t menuMat{};
+        float menuWidth = 0.0f;
+        if (ov->GetOverlayTransformAbsolute(menu, &origin, &menuMat) != vr::VROverlayError_None ||
+            ov->GetOverlayWidthInMeters(menu, &menuWidth) != vr::VROverlayError_None || !(menuWidth > 0.05f))
+            return false;
+        int windowWidth = 0, windowHeight = 0;
+        CRefPtr<IMatRenderContext> renderContext;
+        if (g_Game->m_MaterialSystem)
+            renderContext = g_Game->m_MaterialSystem->GetRenderContext();
+        if (renderContext)
+            renderContext->GetWindowSize(windowWidth, windowHeight);
+        const float aspect = (windowWidth > 0 && windowHeight > 0) ? (float)windowHeight / (float)windowWidth : 9.0f / 16.0f;
+        const float menuHeight = menuWidth * (std::clamp)(aspect, 0.25f, 1.5f);
+        vr::HmdMatrix34_t rel{};
+        rel.m[0][0] = 1.0f;
+        rel.m[1][1] = 1.0f;
+        rel.m[2][2] = 1.0f;
+        rel.m[0][3] = menuWidth * 0.5f - 0.22f;
+        rel.m[1][3] = menuHeight * 0.5f + 0.09f;
+        rel.m[2][3] = 0.04f;
+        vr::HmdMatrix34_t mat = CfgMul34(menuMat, rel);
+        ov->SetOverlayTransformAbsolute(h, origin, &mat);
+        return true;
+    }
+
     static void CfgSetMenuButtonTransform(l4d2vr_backend::IVrOverlay* ov, vr::VROverlayHandle_t h)
     {
         if (!ov || !CfgIsValidOverlayHandle(h))
+            return;
+        if (CfgIsMainMenuActive(ov) && CfgSetMenuButtonTransformOnMainMenu(ov, h))
             return;
 
         vr::ETrackingUniverseOrigin origin = vr::TrackingUniverseStanding;
@@ -7333,10 +7981,10 @@ FlashlightEnhancementEnabled=false
         CfgGdiFill(g, 0, 0, kCfgMenuButtonW, kCfgMenuButtonH, { 30, 35, 48 });
         CfgGdiFrame(g, 0, 0, kCfgMenuButtonW, kCfgMenuButtonH, { 136, 162, 205 }, 3);
         CfgGdiText(g, 14, 6, kCfgMenuButtonW - 28, 40,
-            menuChinese ? "VR \351\205\215\347\275\256" : "VR Config",
-            g.headerFont, { 238, 243, 248 }, DT_CENTER);
-        CfgGdiText(g, 14, 45, kCfgMenuButtonW - 28, 30,
-            menuChinese ? "\346\211\223\345\274\200 L4D2VR \351\235\242\346\235\277" : "Open L4D2VR panel",
+            menuChinese ? "VR \xE9\x80\x89\xE9\xA1\xB9" : "VR Options",
+            g.titleFont, { 238, 243, 248 }, DT_CENTER);
+        CfgGdiText(g, 14, 50, kCfgMenuButtonW - 28, 30,
+            menuChinese ? "L4D2VR \xE8\xAE\xBE\xE7\xBD\xAE" : "L4D2VR settings",
             g.smallFont, { 180, 198, 226 }, DT_CENTER);
 
         CfgConvertGdiRectToRgba(s.menuButtonRgba, g, 0, 0, kCfgMenuButtonW, kCfgMenuButtonH);
@@ -7473,13 +8121,20 @@ FlashlightEnhancementEnabled=false
         s.resetConfirmVisible = false;
         s.selected = 0;
         s.scroll = 0;
+        s.panelMode = CfgPanelMode::Options;
+        s.optDialog = om::Dialog::None;
+        s.optScroll = 0;
+        s.optHover = -1;
         CfgLoad(s);
+        CfgOptLoad(s);
         CfgInvalidateFixedPlacement(s);
         CfgApplyOverlayPlacement(s, ov);
         const bool closedSourceGameUi = CfgCloseSourceGameUiIfCalibrationActive(s);
         s.status = s.useChinese
             ? "\345\267\262\346\211\223\345\274\200\343\200\202\347\224\250 VR \346\216\247\345\210\266\345\231\250\345\260\204\347\272\277\347\202\271\345\207\273\346\214\211\351\222\256\343\200\202"
-            : "Opened. Point and click with the VR controller laser.";
+            : (ov ? "Point with a controller and pull the trigger. Changes apply at once."
+                  : "Click to change a setting. Changes apply at once.");
+        Game::logMsg("[VR][Options] opened (%s)", ov ? "VR" : "desktop window");
         if (closedSourceGameUi)
             s.status += s.useChinese ? "\xE5\xB7\xB2\xE5\x85\xB3\xE9\x97\xAD\xE6\xB8\xB8\xE6\x88\x8F\xE6\x9A\x82\xE5\x81\x9C\xE8\x8F\x9C\xE5\x8D\x95\xE3\x80\x82" : " Game pause menu closed.";
         s.dirty = true;
@@ -7520,7 +8175,7 @@ FlashlightEnhancementEnabled=false
             return;
 
         const bool shouldShowButton =
-            !s.visible && !s.materialVisible && CfgIsPauseMenuActive();
+            !s.visible && !s.materialVisible && (CfgIsPauseMenuActive() || CfgIsMainMenuActive(ov));
         if (!shouldShowButton)
         {
             CfgHideMenuButton(s);
@@ -9294,6 +9949,11 @@ FlashlightEnhancementEnabled=false
 
     static void CfgHandleClick(CfgOverlayState& s, int mx, int my)
     {
+        if (s.panelMode == CfgPanelMode::Options)
+        {
+            CfgHandleOptionsClick(s, mx, my);
+            return;
+        }
         (void)CfgCloseSourceGameUiIfCalibrationActive(s);
 
         if (s.resetConfirmVisible)
@@ -9326,6 +9986,11 @@ FlashlightEnhancementEnabled=false
 
         if (my >= kCfgTopButtonY && my <= kCfgTopButtonY + kCfgTopButtonH)
         {
+            if (s.panelMode == CfgPanelMode::Config && mx >= kCfgBackToOptionsX && mx <= kCfgBackToOptionsX + kCfgBackToOptionsW)
+            {
+                CfgOptBackFromAdvanced(s);
+                return;
+            }
             if (mx >= kCfgPagePrevX && mx <= kCfgPagePrevX + kCfgPageButtonW)
             {
                 if (s.panelMode == CfgPanelMode::MagazineCalibration)
@@ -9637,6 +10302,8 @@ FlashlightEnhancementEnabled=false
         if (writeTime != s.configWriteTime)
         {
             CfgLoad(s);
+            if (s.panelMode == CfgPanelMode::Options)
+                CfgOptLoad(s);
             CfgApplyOverlayPlacement(s);
         }
     }
@@ -9714,7 +10381,8 @@ FlashlightEnhancementEnabled=false
                 int my = kCfgOverlayH - (int)std::lround(ev.data.mouse.y);
                 mx = (std::clamp)(mx, 0, kCfgOverlayW - 1);
                 my = (std::clamp)(my, 0, kCfgOverlayH - 1);
-                (void)mx;
+                if (s.panelMode == CfgPanelMode::Options)
+                    CfgOptHover(s, mx, my);
                 if (s.panelMode == CfgPanelMode::Config)
                     CfgSelectHoveredRow(s, my);
                 break;
@@ -9748,6 +10416,11 @@ FlashlightEnhancementEnabled=false
                         }
                         s.calibrationScroll = std::clamp(s.calibrationScroll + dir, 0, maxScroll);
                         s.dirty = true;
+                    }
+                    else if (s.panelMode == CfgPanelMode::Options)
+                    {
+                        if (s.optDialog == om::Dialog::None)
+                            CfgOptScroll(s, (ydelta > 0.0f) ? -1 : 1);
                     }
                     else
                     {
@@ -9783,6 +10456,308 @@ FlashlightEnhancementEnabled=false
         }
     }
 
+    // ---- Desktop mode: the same panel in a normal window -------------------
+    // Without a VR overlay (desktop players, -l4d2vrdesktop, VR unavailable)
+    // F8 / vroptions / vrconfig open the panel in a window owned by the game's
+    // window: the same GDI page, clicked with the mouse, wheel to scroll.
+    // Runs on the overlay thread with s.mutex held (messages are pumped there).
+    static CfgOverlayState* g_CfgDesktopState = nullptr;
+
+    static HWND CfgFindGameWindow()
+    {
+        struct Ctx { DWORD pid; HWND hwnd; } ctx{ GetCurrentProcessId(), nullptr };
+        EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
+            Ctx* c = reinterpret_cast<Ctx*>(lp);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hwnd, &pid);
+            if (pid != c->pid || GetWindow(hwnd, GW_OWNER) || !(GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VISIBLE))
+                return TRUE;
+            wchar_t cls[64] = {};
+            GetClassNameW(hwnd, cls, 63);
+            if (wcscmp(cls, L"L4D2VROptionsWindow") == 0)
+                return TRUE;
+            c->hwnd = hwnd;
+            return FALSE;
+        }, reinterpret_cast<LPARAM>(&ctx));
+        return ctx.hwnd;
+    }
+
+    static void CfgDesktopToPanel(HWND hwnd, LPARAM lp, int& mx, int& my)
+    {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int w = (std::max)(1L, rc.right - rc.left), h = (std::max)(1L, rc.bottom - rc.top);
+        mx = (std::clamp)(static_cast<int>(static_cast<short>(LOWORD(lp))) * kCfgOverlayW / w, 0, kCfgOverlayW - 1);
+        my = (std::clamp)(static_cast<int>(static_cast<short>(HIWORD(lp))) * kCfgOverlayH / h, 0, kCfgOverlayH - 1);
+    }
+
+    static LRESULT CALLBACK CfgDesktopWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        CfgOverlayState* s = g_CfgDesktopState;
+        if (!s)
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        switch (msg)
+        {
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            if (s->rgba.size() == static_cast<size_t>(kCfgOverlayW) * kCfgOverlayH * 4)
+            {
+                std::vector<uint8_t> bgra(s->rgba.size());
+                for (size_t i = 0; i < bgra.size(); i += 4)
+                {
+                    bgra[i] = s->rgba[i + 2];
+                    bgra[i + 1] = s->rgba[i + 1];
+                    bgra[i + 2] = s->rgba[i];
+                    bgra[i + 3] = 255;
+                }
+                BITMAPINFO bmi{};
+                bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bmi.bmiHeader.biWidth = kCfgOverlayW;
+                bmi.bmiHeader.biHeight = -kCfgOverlayH;
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32;
+                bmi.bmiHeader.biCompression = BI_RGB;
+                RECT rc{};
+                GetClientRect(hwnd, &rc);
+                SetStretchBltMode(dc, HALFTONE);
+                StretchDIBits(dc, 0, 0, rc.right, rc.bottom, 0, 0, kCfgOverlayW, kCfgOverlayH, bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_LBUTTONDOWN:
+        {
+            int mx = 0, my = 0;
+            CfgDesktopToPanel(hwnd, lp, mx, my);
+            if (s->panelMode == CfgPanelMode::Config)
+                CfgSelectHoveredRow(*s, my);
+            CfgHandleClick(*s, mx, my);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        case WM_MOUSEMOVE:
+        {
+            int mx = 0, my = 0;
+            CfgDesktopToPanel(hwnd, lp, mx, my);
+            if (s->panelMode == CfgPanelMode::Options)
+                CfgOptHover(*s, mx, my);
+            return 0;
+        }
+        case WM_MOUSEWHEEL:
+        {
+            const int dir = GET_WHEEL_DELTA_WPARAM(wp) > 0 ? -1 : 1;
+            if (s->panelMode == CfgPanelMode::Options)
+                CfgOptScroll(*s, dir);
+            else if (s->panelMode == CfgPanelMode::Config)
+                CfgScrollBy(*s, dir);
+            return 0;
+        }
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE)
+            {
+                if (s->optDialog != om::Dialog::None)
+                    s->optDialog = om::Dialog::None;
+                else
+                    s->visible = false;
+                s->dirty = true;
+            }
+            return 0;
+        case WM_CLOSE:
+            s->visible = false;
+            s->dirty = true;
+            return 0;
+        default:
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        }
+    }
+
+    // Test hook (desktop mode has no self-test): L4D2VR_DESKTOP_TEST="dump=<name>;click=<u>,<v>;wheel=<n>;..."
+    // runs one action every 1.5 s once the window shows: dump saves the window's client area as
+    // l4d2vr_selftest_desktop_<name>.bmp in the game folder, click is a left click at (u, v) of the
+    // panel, wheel scrolls n notches (negative = up).
+    static void CfgDesktopSaveClientBmp(HWND hwnd, const std::string& name)
+    {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int w = rc.right - rc.left, h = rc.bottom - rc.top;
+        if (w <= 0 || h <= 0)
+            return;
+        HDC wdc = GetDC(hwnd);
+        HDC mdc = CreateCompatibleDC(wdc);
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -h;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HBITMAP bmp = CreateDIBSection(mdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HGDIOBJ old = SelectObject(mdc, bmp);
+        BitBlt(mdc, 0, 0, w, h, wdc, 0, 0, SRCCOPY);
+        SelectObject(mdc, old);
+        if (bits)
+        {
+            const std::string path = "l4d2vr_selftest_desktop_" + name + ".bmp";
+            std::ofstream out(path, std::ios::binary);
+            BITMAPFILEHEADER fh{};
+            fh.bfType = 0x4D42;
+            fh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+            fh.bfSize = fh.bfOffBits + static_cast<DWORD>(w * h * 4);
+            out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
+            out.write(reinterpret_cast<const char*>(&bmi.bmiHeader), sizeof(BITMAPINFOHEADER));
+            out.write(static_cast<const char*>(bits), static_cast<std::streamsize>(w) * h * 4);
+            Game::logMsg("[VR][Options] desktop test: saved %s (%dx%d)", path.c_str(), w, h);
+        }
+        DeleteObject(bmp);
+        DeleteDC(mdc);
+        ReleaseDC(hwnd, wdc);
+    }
+
+    static void CfgDesktopTestStep(CfgOverlayState& s)
+    {
+        static std::vector<std::string> steps;
+        static bool parsed = false;
+        static size_t next = 0;
+        static uint64_t lastMs = 0;
+        if (!parsed)
+        {
+            parsed = true;
+            char buf[2048] = {};
+            if (GetEnvironmentVariableA("L4D2VR_DESKTOP_TEST", buf, sizeof(buf)) > 0)
+            {
+                std::string all = buf;
+                size_t start = 0;
+                while (start < all.size())
+                {
+                    const size_t semi = all.find(';', start);
+                    steps.push_back(all.substr(start, semi == std::string::npos ? std::string::npos : semi - start));
+                    if (semi == std::string::npos)
+                        break;
+                    start = semi + 1;
+                }
+                Game::logMsg("[VR][Options] desktop test: %zu actions", steps.size());
+            }
+        }
+        if (next >= steps.size() || !s.desktopWnd || !s.desktopWndShown)
+            return;
+        const uint64_t now = GetTickCount64();
+        if (lastMs != 0 && now - lastMs < 1500u)
+            return;
+        lastMs = now;
+        const std::string a = steps[next++];
+        RECT rc{};
+        GetClientRect(s.desktopWnd, &rc);
+        if (a.rfind("dump=", 0) == 0)
+            CfgDesktopSaveClientBmp(s.desktopWnd, a.substr(5));
+        else if (a.rfind("click=", 0) == 0)
+        {
+            float u = 0.0f, v = 0.0f;
+            if (std::sscanf(a.c_str() + 6, "%f,%f", &u, &v) == 2)
+            {
+                const LPARAM lp = MAKELPARAM(static_cast<int>(u * rc.right), static_cast<int>(v * rc.bottom));
+                SendMessageW(s.desktopWnd, WM_MOUSEMOVE, 0, lp);
+                SendMessageW(s.desktopWnd, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+                SendMessageW(s.desktopWnd, WM_LBUTTONUP, 0, lp);
+                Game::logMsg("[VR][Options] desktop test: click %.3f,%.3f -> %s", u, v, s.status.c_str());
+            }
+        }
+        else if (a.rfind("wheel=", 0) == 0)
+        {
+            const int n = std::atoi(a.c_str() + 6);
+            for (int i = 0; i < std::abs(n); ++i)
+                SendMessageW(s.desktopWnd, WM_MOUSEWHEEL, MAKEWPARAM(0, n < 0 ? WHEEL_DELTA : -WHEEL_DELTA), 0);
+            Game::logMsg("[VR][Options] desktop test: wheel %d -> scroll %d", n, s.optScroll);
+        }
+    }
+
+    static void CfgDesktopHostUpdate(CfgOverlayState& s)
+    {
+        g_CfgDesktopState = &s;
+        if (!s.visible || s.materialVisible)
+        {
+            if (s.desktopWnd && s.desktopWndShown)
+            {
+                ShowWindow(s.desktopWnd, SW_HIDE);
+                s.desktopWndShown = false;
+                if (HWND game = CfgFindGameWindow())
+                    SetForegroundWindow(game);
+            }
+        }
+        else
+        {
+            if (!s.desktopWnd)
+            {
+                static bool registered = false;
+                HINSTANCE instance = GetModuleHandleW(nullptr);
+                if (!registered)
+                {
+                    WNDCLASSEXW wc{};
+                    wc.cbSize = sizeof(wc);
+                    wc.lpfnWndProc = CfgDesktopWndProc;
+                    wc.hInstance = instance;
+                    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+                    wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+                    wc.lpszClassName = L"L4D2VROptionsWindow";
+                    registered = RegisterClassExW(&wc) != 0;
+                }
+                // 80% of the screen height, panel aspect.
+                const int screenH = GetSystemMetrics(SM_CYSCREEN), screenW = GetSystemMetrics(SM_CXSCREEN);
+                int h = (std::max)(450, screenH * 8 / 10);
+                int w = h * kCfgOverlayW / kCfgOverlayH;
+                if (w > screenW * 9 / 10)
+                {
+                    w = screenW * 9 / 10;
+                    h = w * kCfgOverlayH / kCfgOverlayW;
+                }
+                RECT rect{ 0, 0, w, h };
+                const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+                AdjustWindowRectEx(&rect, style, FALSE, 0);
+                const int ww = rect.right - rect.left, wh = rect.bottom - rect.top;
+                s.desktopWnd = CreateWindowExW(WS_EX_TOPMOST, L"L4D2VROptionsWindow", L"L4D2VR - VR Options", style,
+                    (std::max)(0, (screenW - ww) / 2), (std::max)(0, (screenH - wh) / 2), ww, wh,
+                    CfgFindGameWindow(), nullptr, instance, nullptr);
+                Game::logMsg("[VR][Options] desktop window %s (%dx%d)", s.desktopWnd ? "created" : "FAILED", w, h);
+            }
+            if (s.desktopWnd && !s.desktopWndShown)
+            {
+                ShowWindow(s.desktopWnd, SW_SHOW);
+                SetForegroundWindow(s.desktopWnd);
+                s.desktopWndShown = true;
+                s.dirty = true;
+            }
+        }
+        if (s.desktopWnd)
+        {
+            MSG msg{};
+            while (PeekMessageW(&msg, s.desktopWnd, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            if (s.visible && s.dirty)
+            {
+                CfgRender(s);
+                InvalidateRect(s.desktopWnd, nullptr, FALSE);
+                UpdateWindow(s.desktopWnd);
+            }
+            CfgDesktopTestStep(s);
+        }
+    }
+
+    // Hold the pause button (VrOptionsMenuHoldSeconds) to open or close the
+    // VR Options page from anywhere: in game, in the pause menu, in the main menu.
+    static bool CfgPollPauseHold(CfgOverlayState& s)
+    {
+        if (!g_Game || !g_Game->m_VR || !g_Game->m_VR->m_IsVREnabled)
+            return false;
+        VR* vr = g_Game->m_VR;
+        const bool held = CfgReadDigitalActionHeld(vr->m_Pause);
+        return s.optHold.Update(held, static_cast<double>(GetTickCount64()) / 1000.0, vr->m_VrOptionsMenuHoldSeconds);
+    }
+
     static void CfgOverlayThreadMain()
     {
         while (true)
@@ -9809,9 +10784,13 @@ FlashlightEnhancementEnabled=false
                 {
                     s.selected = 0;
                     s.scroll = 0;
+                    s.panelMode = CfgPanelMode::Options;
+                    s.optDialog = om::Dialog::None;
                     CfgLoad(s);
+                    CfgOptLoad(s);
                     CfgInvalidateFixedPlacement(s);
                     CfgApplyOverlayPlacement(s);
+                    Game::logMsg("[VR][Options] opened by F8");
                 }
                 else
                 {
@@ -9830,6 +10809,26 @@ FlashlightEnhancementEnabled=false
             s.prevF8 = f8;
 
             std::lock_guard<std::mutex> lock(s.mutex);
+            if (CfgPollPauseHold(s))
+            {
+                if (s.visible && !s.materialVisible)
+                {
+                    s.visible = false;
+                    Game::logMsg("[VR][Options] closed by holding the pause button");
+                }
+                else if (!s.materialVisible)
+                {
+                    CfgOpenPanelFromMenuButton(s);
+                    Game::logMsg("[VR][Options] opened by holding the pause button");
+                }
+            }
+            if (!l4d2vr_backend::Overlay())
+            {
+                // Desktop mode: no VR overlay, the panel lives in a window.
+                if (g_L4D2VRDesktopMode)
+                    CfgDesktopHostUpdate(s);
+                continue;
+            }
             if (!CfgEnsureOverlay(s))
                 continue;
 
@@ -9922,12 +10921,23 @@ void L4D2VRConfigOverlay_Open()
         CfgCloseMaterialPanel(s, false, ov);
 
     s.resetConfirmVisible = false;
+    // vrconfig opens the full config panel (the VR Options page's Advanced tab).
     if (!s.visible)
     {
         CfgOpenPanelFromMenuButton(s, ov);
+        s.panelMode = CfgPanelMode::Config;
+        s.status = s.useChinese
+            ? "\xE5\xB7\xB2\xE9\x80\x9A\xE8\xBF\x87 vrconfig \xE6\x89\x93\xE5\xBC\x80\xE9\x85\x8D\xE7\xBD\xAE\xE9\x9D\xA2\xE6\x9D\xBF\xE3\x80\x82"
+            : "Config overlay opened by vrconfig.";
+        s.dirty = true;
         return;
     }
 
+    if (s.panelMode == CfgPanelMode::Options)
+    {
+        s.panelMode = CfgPanelMode::Config;
+        CfgLoad(s);
+    }
     s.selected = 0;
     s.scroll = 0;
     s.hoveredItem = -1;
@@ -9940,6 +10950,89 @@ void L4D2VRConfigOverlay_Open()
     s.dirty = true;
 }
 
+// vroptions, F8, the VR Options button and holding the pause button: the VR Options page.
+void L4D2VRConfigOverlay_OpenOptions()
+{
+    L4D2VRConfigOverlay_StartWorker();
+    CfgOverlayState& s = g_CfgOverlay;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay();
+    if (s.materialVisible)
+        CfgCloseMaterialPanel(s, false, ov);
+    s.resetConfirmVisible = false;
+    if (!s.visible || s.panelMode != CfgPanelMode::Options)
+        CfgOpenPanelFromMenuButton(s, ov);
+    Game::logMsg("[VR][Options] opened by vroptions");
+}
+
+// Self-test: aims at a part of the VR Options page. `target` is a row key (any
+// case; the page switches to its section and scrolls it into view) or
+// tab:<section id>, resetall, resetpage, close, yes, no, ok, scrollup,
+// scrolldown. `part` for rows: row, toggle, minus, plus, bar<fraction>,
+// choice<n>, action. Returns the point as u, v (0..1 of the panel texture).
+bool L4D2VRConfigOverlay_TestFocusOption(const char* target, const char* part, float& u, float& v)
+{
+    CfgOverlayState& s = g_CfgOverlay;
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (!target || !s.visible || s.panelMode != CfgPanelMode::Options)
+        return false;
+    const std::string t = om::Lower(target);
+    const std::string p = part ? om::Lower(part) : std::string("row");
+    om::Rect r{};
+    auto centre = [&](const om::Rect& rr) {
+        u = (rr.x + rr.w * 0.5f) / static_cast<float>(kCfgOverlayW);
+        v = (rr.y + rr.h * 0.5f) / static_cast<float>(kCfgOverlayH);
+        return true;
+    };
+    if (t.rfind("tab:", 0) == 0)
+    {
+        const int sec = om::FindSection(t.substr(4));
+        return sec >= 0 && centre(om::TabRect(sec));
+    }
+    if (t == "resetall") return centre(om::ResetAllRect());
+    if (t == "resetpage") return centre(om::ResetSectionRect());
+    if (t == "close") return centre(om::CloseRect());
+    if (t == "yes") return centre(om::DialogYesRect());
+    if (t == "no") return centre(om::DialogNoRect());
+    if (t == "ok") return centre(om::DialogOkRect());
+    if (t == "scrollup") return centre(om::ScrollUpRect());
+    if (t == "scrolldown") return centre(om::ScrollDownRect());
+    const std::vector<om::TableOption> table = CfgOptTable(s);
+    for (int sec = 0; sec < om::kSectionCount; ++sec)
+    {
+        const std::vector<om::PageRow> rows = om::PageRows(sec, table);
+        for (int i = 0; i < static_cast<int>(rows.size()); ++i)
+        {
+            const om::PageRow& pr = rows[static_cast<size_t>(i)];
+            if (pr.key.empty() ? om::Lower(pr.label) != t : om::Lower(pr.key) != t)
+                continue;
+            s.optSection = sec;
+            s.optDialog = om::Dialog::None;
+            if (i < s.optScroll || i >= s.optScroll + om::layout::kRowsVisible)
+                s.optScroll = (std::min)(i, om::MaxScroll(static_cast<int>(rows.size())));
+            s.dirty = true;
+            const om::Rect rr = om::RowRect(i - s.optScroll);
+            if (p == "toggle") r = om::ToggleRect(rr);
+            else if (p == "minus") r = om::MinusRect(rr);
+            else if (p == "plus") r = om::PlusRect(rr);
+            else if (p == "action") r = om::ActionRect(rr);
+            else if (p.rfind("choice", 0) == 0)
+                r = om::ChoiceRect(rr, std::atoi(p.c_str() + 6), static_cast<int>(om::Choices(pr.row).size()));
+            else if (p.rfind("bar", 0) == 0)
+            {
+                const om::Rect bar = om::BarRect(rr);
+                const float f = p.size() > 3 ? static_cast<float>(std::atof(p.c_str() + 3)) : 0.5f;
+                u = (bar.x + (bar.w - 1) * (std::clamp)(f, 0.0f, 1.0f) + 0.5f) / static_cast<float>(kCfgOverlayW);
+                v = (bar.y + bar.h * 0.5f) / static_cast<float>(kCfgOverlayH);
+                return true;
+            }
+            else r = om::Rect{ rr.x + 40, rr.y, 300, rr.h };
+            return centre(r);
+        }
+    }
+    return false;
+}
+
 // Self-test (vr_selftest_overlays.inl, OpenXR port M4): scrolls the open panel
 // so option `key` (any case) is the first row and returns that row's centre as
 // v (0 = top of the panel texture) for aiming the laser.
@@ -9949,6 +11042,8 @@ bool L4D2VRConfigOverlay_TestFocusRow(const char* key, float& rowV)
     std::lock_guard<std::mutex> lock(s.mutex);
     if (!key || !s.visible || s.materialVisible)
         return false;
+    if (s.panelMode == CfgPanelMode::Options)
+        CfgOptOpenAdvanced(s);   // as the Advanced tab
     for (int item = 0; item < (int)s.visibleSpecIndexes.size(); ++item)
     {
         const CfgOptionSpec& spec = kCfgOptionSpecs[s.visibleSpecIndexes[item]];
@@ -9972,7 +11067,18 @@ std::string L4D2VRConfigOverlay_TestState(const char* key)
     CfgOverlayState& s = g_CfgOverlay;
     std::lock_guard<std::mutex> lock(s.mutex);
     std::string value;
-    if (key && *key)
+    if (key && *key && s.panelMode == CfgPanelMode::Options)
+    {
+        // The page's own view of vr/config.txt (rows normalized as shown).
+        for (const auto& kv : s.optValues)
+            if (_stricmp(kv.first.c_str(), key) == 0)
+                value = kv.second;
+        for (int sec = 0; sec < om::kSectionCount; ++sec)
+            for (const om::PageRow& pr : om::PageRows(sec, CfgOptTable(s)))
+                if (!pr.key.empty() && _stricmp(pr.key.c_str(), key) == 0)
+                    value = om::PageValue(pr, s.optValues);
+    }
+    else if (key && *key)
     {
         for (const CfgOptionSpec& spec : kCfgOptionSpecs)
             if (_stricmp(spec.key, key) == 0)
@@ -9984,7 +11090,10 @@ std::string L4D2VRConfigOverlay_TestState(const char* key)
     return std::string("visible=") + (s.visible ? "1" : "0") + " material=" + (s.materialVisible ? "1" : "0") +
         " keyboard=" + (s.keyboardActive ? "1" : "0") + " edits=" + (s.hasUnsavedEdits ? "1" : "0") +
         " scroll=" + std::to_string(s.scroll) + " advanced=" + (s.advancedMode ? "1" : "0") +
-        " mode=" + (s.panelMode == CfgPanelMode::MagazineCalibration ? "calib" : "config") +
+        " mode=" + (s.panelMode == CfgPanelMode::MagazineCalibration ? "calib" : s.panelMode == CfgPanelMode::Options ? "options" : "config") +
+        " section=" + om::kSections[(std::clamp)(s.optSection, 0, om::kSectionCount - 1)].id + " optscroll=" + std::to_string(s.optScroll) +
+        " dialog=" + (s.optDialog == om::Dialog::Confirm ? "confirm" : s.optDialog == om::Dialog::Message ? "message" : "none") +
+        " desktop=" + (s.desktopWndShown ? "1" : "0") +
         " preview=" + std::to_string(s.calibrationPreviewPitchDeg) + "," + std::to_string(s.calibrationPreviewYawDeg) + "," +
         std::to_string(s.calibrationPreviewRollDeg) +
         " status='" + s.status + "' value='" + value + "'";

@@ -504,4 +504,214 @@ namespace l4d2vr_hand_throw
     // overhand (peak 5-6 m/s at the hand) now leaves at 12-15 m/s; a slow
     // deliberate release (under 1 m/s) still only drops the grenade.
     constexpr float kDefaultThrowBoost = 2.5f;
+
+    // ---- Client: physics throw assistance (GrenadeThrowAssist, 2.0.5) -------
+    // In GrenadeThrowMode=physics the grenade leaves with the hand's own
+    // velocity, and release timing makes that direction noisy. The assistance
+    // gently bends a throw toward the arc that lands where the hand points,
+    // but only when the throw is already heading there: inside a heading cone,
+    // a launch-elevation window and a limited speed change. Anything else (a
+    // throw at something else, a drop, a toss at the feet) stays the hand's own.
+    // Velocities are the final projectile velocity (world, units/s: the boosted
+    // hand velocity plus the body's own); gravity is the projectile's (L4D2
+    // throwables: 0.4 x sv_gravity = 320 units/s^2).
+    struct AssistInput
+    {
+        V3 origin{};               // release point (the projectile spawns here)
+        V3 velocity{};             // the unassisted launch velocity
+        V3 target{};               // where the hand points (ThrowAssistTarget)
+        bool targetValid = false;
+        float gravity = 320.0f;
+        float strength = 0.5f;     // GrenadeThrowAssistStrength, 0 (off) .. 1 (lands on the target)
+        float coneDeg = 25.0f;     // heading difference allowed (full assist inside half of it)
+        float elevationDeg = 20.0f;// launch elevation difference allowed (full inside half)
+        float maxSpeedChange = 0.35f; // the solution may be at most this much faster or slower
+        float minSpeed = 150.0f;   // slower releases (drops) are never assisted
+        float maxSpeed = 1400.0f;  // server clamp (ManualThrowMaxVelocity / ThrowMaxSpeed)
+    };
+
+    struct AssistResult
+    {
+        V3 velocity{};             // the assisted launch velocity (== input when not applied)
+        V3 solution{};             // the arc that lands on the target (when one was found)
+        float weight = 0.0f;       // strength x gates actually applied (0..1)
+        bool applied = false;
+        const char* reason = "off";// why not (or "assisted")
+    };
+
+    inline float AssistFalloff(float x, float full, float zero)
+    {
+        if (!(x > full))
+            return 1.0f;
+        if (!(x < zero))
+            return 0.0f;
+        const float u = (x - full) / (zero - full);
+        return 1.0f - u * u * (3.0f - 2.0f * u);
+    }
+
+    // The launch at `speed` that passes through `target` (a projectile under
+    // `gravity`), on the branch whose elevation is nearest `preferElevationRad`.
+    // False when `speed` cannot reach the target.
+    inline bool BallisticVelocityTo(const V3& origin, const V3& target, float gravity, float speed,
+        float preferElevationRad, V3& out)
+    {
+        out = {};
+        const V3 d = target - origin;
+        const float dh = std::sqrt(d.x * d.x + d.y * d.y);
+        if (!d.Finite() || !(dh > 1.0f) || !(gravity > 0.0f) || !(speed > 0.0f) || !std::isfinite(speed))
+            return false;
+        const float s2 = speed * speed;
+        const float disc = s2 * s2 - gravity * (gravity * dh * dh + 2.0f * d.z * s2);
+        if (!(disc >= 0.0f))
+            return false;
+        const float root = std::sqrt(disc);
+        const float low = std::atan((s2 - root) / (gravity * dh));
+        const float high = std::atan((s2 + root) / (gravity * dh));
+        const float elevation = std::fabs(low - preferElevationRad) <= std::fabs(high - preferElevationRad) ? low : high;
+        const float hx = d.x / dh, hy = d.y / dh;
+        out = V3(hx * std::cos(elevation) * speed, hy * std::cos(elevation) * speed, std::sin(elevation) * speed);
+        return out.Finite();
+    }
+
+    // The slowest launch that reaches `target` (its elevation bisects the
+    // vertical and the line to the target).
+    inline float MinimumSpeedTo(const V3& origin, const V3& target, float gravity)
+    {
+        const V3 d = target - origin;
+        const float dist = d.Length();
+        if (!d.Finite() || !(gravity > 0.0f))
+            return 0.0f;
+        return std::sqrt(std::max(0.0f, gravity * (d.z + dist)));
+    }
+
+    // Where a launch comes down through z = groundZ (descending); false if never.
+    inline bool BallisticLanding(const V3& origin, const V3& velocity, float gravity, float groundZ, V3& out)
+    {
+        out = {};
+        if (!origin.Finite() || !velocity.Finite() || !(gravity > 0.0f) || !std::isfinite(groundZ))
+            return false;
+        const float disc = velocity.z * velocity.z + 2.0f * gravity * (origin.z - groundZ);
+        if (!(disc >= 0.0f))
+            return false;
+        const float t = (velocity.z + std::sqrt(disc)) / gravity;
+        if (!(t >= 0.0f) || !std::isfinite(t))
+            return false;
+        out = V3(origin.x + velocity.x * t, origin.y + velocity.y * t, groundZ);
+        return out.Finite();
+    }
+
+    // "Where the throw is heading" when the hand's aim ray finds nothing: the
+    // throw's own landing on groundZ, turned about the release point onto the
+    // hand's aim heading (only the sideways error is corrected).
+    inline bool HeadingTarget(const V3& origin, const V3& velocity, float gravity, float groundZ, const V3& aim, V3& out)
+    {
+        out = {};
+        V3 landing{};
+        const float ah = std::sqrt(aim.x * aim.x + aim.y * aim.y);
+        if (!aim.Finite() || !(ah > 1e-4f) || !BallisticLanding(origin, velocity, gravity, groundZ, landing))
+            return false;
+        const float dx = landing.x - origin.x, dy = landing.y - origin.y;
+        const float range = std::sqrt(dx * dx + dy * dy);
+        if (!(range > 1.0f))
+            return false;
+        out = V3(origin.x + aim.x / ah * range, origin.y + aim.y / ah * range, groundZ);
+        return out.Finite();
+    }
+
+    inline AssistResult AssistThrow(const AssistInput& in)
+    {
+        AssistResult r{};
+        r.velocity = in.velocity;
+        const float strength = std::isfinite(in.strength) ? std::clamp(in.strength, 0.0f, 1.0f) : 0.0f;
+        if (!(strength > 0.0f))
+            return r;
+        if (!in.targetValid || !in.target.Finite() || !in.origin.Finite() || !in.velocity.Finite())
+        {
+            r.reason = "no target";
+            return r;
+        }
+        const float speed = in.velocity.Length();
+        if (!(speed >= in.minSpeed))
+        {
+            r.reason = "slow release";
+            return r;
+        }
+        const V3 d = in.target - in.origin;
+        const float dh = std::sqrt(d.x * d.x + d.y * d.y);
+        const float vh = std::sqrt(in.velocity.x * in.velocity.x + in.velocity.y * in.velocity.y);
+        if (!(dh > 16.0f) || !(vh > speed * 0.05f))
+        {
+            r.reason = "target under the hand or throw straight up";
+            return r;
+        }
+        constexpr float kRad = 3.14159265358979f / 180.0f;
+        const float cosHeading = std::clamp((in.velocity.x * d.x + in.velocity.y * d.y) / (vh * dh), -1.0f, 1.0f);
+        const float headingDeg = std::acos(cosHeading) / kRad;
+        const float cone = std::clamp(in.coneDeg, 1.0f, 90.0f);
+        const float wHeading = AssistFalloff(headingDeg, cone * 0.5f, cone);
+        if (!(wHeading > 0.0f))
+        {
+            r.reason = "thrown elsewhere";
+            return r;
+        }
+        const float throwElevation = std::atan2(in.velocity.z, vh);
+        float solveSpeed = speed;
+        const float minSpeed = MinimumSpeedTo(in.origin, in.target, in.gravity);
+        if (solveSpeed < minSpeed * 1.001f)
+            solveSpeed = minSpeed * 1.001f;
+        V3 solution{};
+        if (!BallisticVelocityTo(in.origin, in.target, in.gravity, solveSpeed, throwElevation, solution))
+        {
+            r.reason = "unreachable";
+            return r;
+        }
+        r.solution = solution;
+        const float maxChange = std::clamp(in.maxSpeedChange, 0.0f, 4.0f);
+        const float speedRatio = solveSpeed / speed;
+        if (speedRatio > 1.0f + maxChange)
+        {
+            r.reason = "needs a much harder throw";
+            return r;
+        }
+        const float sh = std::sqrt(solution.x * solution.x + solution.y * solution.y);
+        const float elevationDiffDeg = std::fabs(std::atan2(solution.z, sh) - throwElevation) / kRad;
+        const float elevationWindow = std::clamp(in.elevationDeg, 1.0f, 90.0f);
+        const float wElevation = AssistFalloff(elevationDiffDeg, elevationWindow * 0.5f, elevationWindow);
+        if (!(wElevation > 0.0f))
+        {
+            r.reason = "thrown much higher or lower";
+            return r;
+        }
+        const float w = strength * wHeading * wElevation;
+        const V3 from = in.velocity * (1.0f / speed);
+        const V3 to = solution * (1.0f / solveSpeed);
+        V3 dir = from * (1.0f - w) + to * w;
+        const float dirLength = dir.Length();
+        if (!(dirLength > 1e-4f))
+        {
+            r.reason = "degenerate";
+            return r;
+        }
+        dir = dir * (1.0f / dirLength);
+        float magnitude = speed * (1.0f - w) + solveSpeed * w;
+        if (in.maxSpeed > 0.0f)
+            magnitude = std::min(magnitude, in.maxSpeed);
+        r.velocity = dir * magnitude;
+        r.weight = w;
+        r.applied = r.velocity.Finite();
+        if (!r.applied)
+            r.velocity = in.velocity;
+        r.reason = r.applied ? "assisted" : "degenerate";
+        return r;
+    }
+
+    // The hand velocity (relative, unscaled: what goes on the wire) that the
+    // server turns into `launch` (launch = hand * scale + body).
+    inline V3 HandVelocityForLaunch(const V3& launch, const V3& body, float scale)
+    {
+        if (!(scale > 1e-3f) || !launch.Finite())
+            return {};
+        const V3 b = body.Finite() ? body : V3();
+        return (launch - b) * (1.0f / scale);
+    }
 }

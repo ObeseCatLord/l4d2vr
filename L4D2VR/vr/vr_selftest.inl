@@ -405,7 +405,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return true;
     };
     auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
-    char detail[192];
+    char detail[320];
 
     // Overlay, laser, keyboard and menu steps (OpenXR port M4).
     {
@@ -445,6 +445,53 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
+
+    if (step == "slinge2e")
+        return RunChestSlingSelfTestStep(step, t, player);
+
+    // gunhand: logs where the drawn gun hand (the animated hand bone the arm IK
+    // targets) sits in the item controller's frame, for per-gun hand placement.
+    if (step == "gunhand")
+    {
+        if (m_SelfTestStage == 0)
+        {
+            m_SelfTestStage = 1;
+            m_SelfTestValueA = static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire));
+        }
+        if (static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire)) == m_SelfTestValueA && t < 3.0f)
+            return false;
+        GunHandProbe probe{};
+        {
+            std::lock_guard<std::mutex> lock(m_GunHandProbeMutex);
+            probe = m_GunHandProbe;
+        }
+        char detail[320];
+        std::snprintf(detail, sizeof(detail),
+            "weapon=%d pos(cm) fwd=%.1f right=%.1f up=%.1f units=(%.2f %.2f %.2f) x=(%.2f %.2f %.2f) y=(%.2f %.2f %.2f) z=(%.2f %.2f %.2f)",
+            probe.weaponId, probe.pos[0] * 100.0f, probe.pos[1] * 100.0f, probe.pos[2] * 100.0f,
+            probe.pos[0] * m_VRScale, probe.pos[1] * m_VRScale, probe.pos[2] * m_VRScale,
+            probe.axes[0][0], probe.axes[0][1], probe.axes[0][2], probe.axes[1][0], probe.axes[1][1], probe.axes[1][2],
+            probe.axes[2][0], probe.axes[2][1], probe.axes[2][2]);
+        SelfTestReport("gunhand", static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire)) != m_SelfTestValueA, detail);
+        return true;
+    }
+
+    // itemhand=left|right: moves the held item to that physical hand as a
+    // hand-off would (AmbidextrousItemHands), for screenshots of a left-held item.
+    if (step.rfind("itemhand=", 0) == 0)
+    {
+        if (m_SelfTestStage == 0)
+        {
+            m_SelfTestStage = 1;
+            RequestItemHand(step.substr(9) == "left", l4d2vr_item_hand::Reason::HandOff);
+        }
+        if (t < 0.6f)
+            return false;
+        char detail[96];
+        std::snprintf(detail, sizeof(detail), "item hand %s", ItemHandIsPhysicalLeft() ? "left" : "right");
+        SelfTestReport(step.c_str(), ItemHandIsPhysicalLeft() == (step.substr(9) == "left"), detail);
+        return true;
+    }
 
     if (step == "features")
     {
@@ -1677,6 +1724,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step.rfind("wriststyle=", 0) == 0)
     {
         m_WristHudNativeStyle = step.substr(11) != "custom";
+        m_NativeWristHudFallback = false;
+        m_NativeWristHudWantedSinceMs = 0;
         Game::logMsg("[VR][SelfTest] wrist HUD style: %s", m_WristHudNativeStyle ? "native" : "custom");
         return true;
     }
@@ -1695,8 +1744,9 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             return false;
         const uint32_t usedL = m_NativeWristHudUsedSize[0].load(std::memory_order_acquire);
         const uint32_t usedR = m_NativeWristHudUsedSize[1].load(std::memory_order_acquire);
-        std::snprintf(detail, sizeof(detail), "style=%s left=%ux%u ready=%d shown=%d right=%ux%u ready=%d shown=%d",
-            m_WristHudNativeStyle ? "native" : "custom", usedL >> 16, usedL & 0xFFFFu,
+        std::snprintf(detail, sizeof(detail), "style=%s fallback=%d gate='%s' left=%ux%u ready=%d shown=%d right=%ux%u ready=%d shown=%d",
+            m_WristHudNativeStyle ? "native" : "custom", m_NativeWristHudFallback ? 1 : 0,
+            m_NativeWristHudLastGate.load(std::memory_order_acquire), usedL >> 16, usedL & 0xFFFFu,
             m_NativeWristHudTexReady[0].load() ? 1 : 0, m_NativeWristHudShown[0].load() ? 1 : 0,
             usedR >> 16, usedR & 0xFFFFu, m_NativeWristHudTexReady[1].load() ? 1 : 0, m_NativeWristHudShown[1].load() ? 1 : 0);
         SelfTestReport("native wrist HUD dump", dumped && m_NativeWristHudTexReady[0].load() && m_NativeWristHudTexReady[1].load(), detail);
@@ -1864,9 +1914,10 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 
     if (step == "quit")
     {
-        if (at(0, 0.0f)) cmd("disconnect");
-        if (at(1, 2.0f)) { cmd("quit"); return true; }
-        return false;
+        // Both at once: once disconnected the self-test no longer ticks, so a
+        // quit queued for later never ran and the runner had to kill the game.
+        if (at(0, 0.0f)) { cmd("disconnect"); cmd("quit"); }
+        return t >= 2.0f;
     }
 
     if (step == "reach" || step == "reachlh" || step == "emptysqueeze" || step == "pickup" || step == "bashanim" || step == "swinganim" ||

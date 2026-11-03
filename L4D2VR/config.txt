@@ -271,7 +271,7 @@ VrHandsLeftHandedViewmodelPoseOffsetMeters=0,0,0
 VrHandsLeftHandedViewmodelPoseRotationOffsetDeg=0,0,0
 ViewmodelPoseOffset=0,0,0
 ViewmodelPoseRotationOffsetDeg=0,0,0
-MagazineBoxDebugEnabled=true
+MagazineBoxDebugEnabled=false
 ViewmodelBoneLabelsEnabled=false
 MagazineInteractionEnabled=true
 MagazineInteractionQuickReloadMode=false
@@ -506,7 +506,12 @@ HolsterInstantDraw=true
 // The hand that takes an item holds and uses it (left draw = left aim and trigger); squeeze the item with the free hand to hand it over.
 AmbidextrousItemHands=true
 ItemHandOffRadiusMeters=0.14
-ItemHandMirror=true
+// Chest sling: letting go of a long gun near your body hangs it on your chest (both hands free); grab its handle or foregrip with either hand to take it.
+ChestSlingEnabled=true
+// Letting go of a long gun with the hand farther than this from the sling (arm stretched out) drops it instead.
+ChestSlingDropDistanceMeters=0.6
+// How close a squeezing hand must be to the slung gun's handle or foregrip to take it.
+ChestSlingGrabRadiusMeters=0.15
 // Point a controller at a menu panel to move the cursor; the trigger clicks (for runtimes such as XRizer without the SteamVR laser mouse).
 MenuLaserPointerEnabled=true
 # Holsters are placed like Pavlov VR's inventory (root 75 cm below the head,
@@ -603,7 +608,7 @@ InventoryBackOffset=0.12,0.0,0.1
 InventoryLeftWaistOffset=0.45,-0.28,0.25
 InventoryRightWaistOffset=0.45,0.28,0.25
  
-ShowInventoryAnchors=true
+ShowInventoryAnchors=false
 InventoryAnchorColor=0,255,255,255
 InventoryHudMarkerDistance=0.45
 InventoryHudMarkerUpOffset=-0.10

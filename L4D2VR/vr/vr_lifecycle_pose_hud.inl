@@ -1571,7 +1571,8 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     const bool worldQuad = m_HandHudWorldQuadEnabled;
     const bool worldQuadAttachControllers = worldQuad && m_HandHudWorldQuadAttachToControllers && !m_MouseModeEnabled;
     // Native wrist HUD (crops of the game's HUD) needs the GPU texture path.
-    const bool nativeWristHud = m_WristHudNativeStyle && worldQuad && g_D3DVR9;
+    // Falls back to the custom panels when the native crops never arrive (2.0.4).
+    const bool nativeWristHud = m_WristHudNativeStyle && worldQuad && g_D3DVR9 && !m_NativeWristHudFallback;
     m_NativeWristHudWanted.store(false, std::memory_order_release);
     m_NativeWristHudShown[0].store(false, std::memory_order_release);
     m_NativeWristHudShown[1].store(false, std::memory_order_release);
@@ -1881,6 +1882,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if (dbgTick)
             Game::logMsg("[VR][HandHUD] tick: not in game -> hide overlays (lastLUpload=%.2fs lastRUpload=%.2fs)", secsSince(m_HandHudDebugLastLeftUpload), secsSince(m_HandHudDebugLastRightUpload));
         resetHandHudCache();
+        m_NativeWristHudWantedSinceMs = 0;
         m_HandHudLeftConsecutiveRawFails = 0;
         m_HandHudRightConsecutiveRawFails = 0;
         l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
@@ -2320,7 +2322,21 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             const vr::TrackedDeviceIndex_t device = left ? offHandIndex : gunHandIndex;
             m_NativeWristHudWanted.store(true, std::memory_order_release);
             if (!m_NativeWristHudTexReady[side].load(std::memory_order_acquire))
+            {
+                // Wanted in game but the capture never produced a texture: after 4 s
+                // use the custom wrist panels instead of showing nothing.
+                const uint64_t nowMs = GetTickCount64();
+                if (m_NativeWristHudWantedSinceMs == 0)
+                    m_NativeWristHudWantedSinceMs = nowMs;
+                else if (nowMs - m_NativeWristHudWantedSinceMs > 4000u && !m_NativeWristHudFallback)
+                {
+                    m_NativeWristHudFallback = true;
+                    Game::logMsg("[VR][WristHUD] no native wrist texture after 4 s in game (last gate: %s): using the custom wrist panels",
+                        m_NativeWristHudLastGate.load(std::memory_order_acquire));
+                }
                 return false;
+            }
+            m_NativeWristHudWantedSinceMs = 0;
             const uint64_t contentMs = m_NativeWristHudContentMs[side].load(std::memory_order_acquire);
             if (contentMs == 0 || GetTickCount64() - contentMs > 1000u)
                 return false;

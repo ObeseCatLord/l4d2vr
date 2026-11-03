@@ -1146,7 +1146,7 @@ void VR::ParseConfigFile()
         m_InventoryQuickSwitchActive = false;
         m_InventoryQuickSwitchArmed = false;
     }
-    m_DrawInventoryAnchors = getBool("ShowInventoryAnchors", m_DrawInventoryAnchors);
+    m_DrawInventoryAnchors = getBool("ShowInventoryAnchors", false);
     const auto inventoryColor = getColor("InventoryAnchorColor", m_InventoryAnchorColorR, m_InventoryAnchorColorG, m_InventoryAnchorColorB, m_InventoryAnchorColorA);
     m_InventoryAnchorColorR = inventoryColor[0];
     m_InventoryAnchorColorG = inventoryColor[1];
@@ -1969,7 +1969,7 @@ void VR::ParseConfigFile()
     m_VrHandsTwoHandedAimOffhandOffsetMeters = getVector3("VrHandsTwoHandedAimOffhandOffsetMeters", m_VrHandsTwoHandedAimOffhandOffsetMeters);
     m_VrHandsVirtualStockOffsetMeters = getVector3("VrHandsVirtualStockOffsetMeters", m_VrHandsVirtualStockOffsetMeters);
     m_VrHandsVirtualStockStrength = std::clamp(getFloat("VrHandsVirtualStockStrength", m_VrHandsVirtualStockStrength), 0.0f, 1.0f);
-    m_MagazineBoxDebugEnabled = getBool("MagazineBoxDebugEnabled", m_MagazineBoxDebugEnabled);
+    m_MagazineBoxDebugEnabled = getBool("MagazineBoxDebugEnabled", false);
     m_ViewmodelBoneLabelsEnabled = getBool("ViewmodelBoneLabelsEnabled", m_ViewmodelBoneLabelsEnabled);
     m_MagazineBoxDebugFallbackHalfExtentsMeters = getVector3("MagazineBoxDebugFallbackHalfExtentsMeters", m_MagazineBoxDebugFallbackHalfExtentsMeters);
     m_MagazineBoxDebugPaddingMeters = getVector3("MagazineBoxDebugPaddingMeters", m_MagazineBoxDebugPaddingMeters);
@@ -3328,8 +3328,13 @@ void VR::ParseConfigFile()
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
     m_AmbidextrousItemHands = getBool("AmbidextrousItemHands", true);
+    m_ChestSlingEnabled = getBool("ChestSlingEnabled", true);
+    m_ChestSlingDropDistanceMeters = std::clamp(getFloat("ChestSlingDropDistanceMeters", 0.6f), 0.3f, 2.0f);
+    m_ChestSlingGrabRadiusMeters = std::clamp(getFloat("ChestSlingGrabRadiusMeters", 0.15f), 0.05f, 0.35f);
     m_ItemHandOffRadiusMeters = std::clamp(getFloat("ItemHandOffRadiusMeters", 0.14f), 0.05f, 0.3f);
-    m_ItemHandMirror = getBool("ItemHandMirror", true);
+    // ItemHandMirror is retired (headset session 6): an item in the left hand is
+    // always held by a mirrored left hand; the right hand never moves over.
+    m_ItemHandMirror = true;
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
     // Pavlov's inventory follows the head yaw at interpolation speed 20.
     m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 20.0f), 1.0f, 60.0f);

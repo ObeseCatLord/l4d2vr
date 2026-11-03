@@ -53,6 +53,7 @@
 #include "vr_hand_pose_library.h"
 #include "vr_item_hand.h"
 #include "vr_hand_mirror.h"
+#include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
 #include "vr_overlay_pointer.h"
@@ -1653,6 +1654,7 @@ public:
         int weaponId = 0;
         l4d2vr_holster::ItemShape shape = l4d2vr_holster::ItemShape::Equipment;
         bool highlighted = false;
+        bool sling = false;           // the active long gun hanging on the chest sling
     };
     struct HolsterRenderSnapshot
     {
@@ -1677,6 +1679,23 @@ public:
     void UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot);
     bool GetHolsterRenderSnapshot(HolsterRenderSnapshot& out) const;
     bool BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::ItemPose& pose) const;
+    // Chest sling (vr_chest_sling.h, vr/vr_chest_sling.inl).
+    bool m_ChestSlingEnabled = true;
+    float m_ChestSlingDropDistanceMeters = 0.6f;
+    float m_ChestSlingGrabRadiusMeters = 0.15f;
+    std::atomic<uintptr_t> m_ChestSlungWeapon{ 0u };     // the active weapon while it hangs on the sling
+    std::atomic<uint32_t> m_ChestSlingTakeSerial{ 0u };  // a hand took the slung gun (the grip owns it)
+    std::atomic<uint32_t> m_ChestSlingHangCount{ 0u };
+    std::atomic<uint32_t> m_ChestSlingTakeCount{ 0u };
+    bool ChestSlingActive() const { return m_ChestSlungWeapon.load(std::memory_order_acquire) != 0u; }
+    bool BuildChestSlingPose(const l4d2vr_holster::BodyFrame& frame, l4d2vr_holster::ItemPose& pose,
+        Vector* handle = nullptr, Vector* foregrip = nullptr) const;
+    bool GetChestSlingPoint(Vector& handle, Vector& foregrip) const;
+    void UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_holster::BodyFrame* frame,
+        std::uint32_t occupiedMask, bool itemHandGripDown, bool itemHandClaimed);
+    // CreateMove: the grip let go of the held item where it would drop. True
+    // when the sling caught it (nothing is sent to the server).
+    bool ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId);
 	struct ManualThrowUsercmdPoseSnapshot
 	{
 		bool valid = false;
@@ -2538,6 +2557,17 @@ public:
 	l4d2vr_handpose::HandActivity m_HandPoseLoggedActivity[2] = { l4d2vr_handpose::HandActivity::Free, l4d2vr_handpose::HandActivity::Free };
 	std::atomic<int> m_SelfTestHandPoseForced[2] = { -1, -1 };  // self-test handact=: activity | weapon << 8
 	// Render-thread counters of the finger pose writes (HandPoseDebugLog prints them once a second).
+	// Self-test probe (gunhand step): the drawn gun hand's bone in the item
+	// controller's frame, written by the arm IK on the render thread.
+	struct GunHandProbe
+	{
+		int weaponId = 0;
+		float pos[3]{};      // metres along the controller's forward, right, up
+		float axes[3][3]{};  // the hand bone's x, y, z axes in the same frame
+	};
+	std::mutex m_GunHandProbeMutex;
+	GunHandProbe m_GunHandProbe{};
+	std::atomic<uint32_t> m_GunHandProbeSerial{ 0u };
 	std::atomic<uint32_t> m_HandPoseApplyCalls[2] = { 0u, 0u };
 	std::atomic<uint32_t> m_HandPoseApplyPosed[2] = { 0u, 0u };
 	std::atomic<uint32_t> m_HandPoseApplyRestFail[2] = { 0u, 0u };
@@ -3012,6 +3042,14 @@ public:
 	// Whether each wrist overlay was shown last frame (gates clearing the floating HUD).
 	std::array<std::atomic<bool>, 2> m_NativeWristHudShown{};
 	std::atomic<bool> m_NativeWristHudWanted{ false };
+	// 2.0.4: the native wrist HUD never produced a texture in a real 2.0.3 session
+	// (gone from the wrists). If it is wanted in game for 4 s without one, the
+	// wrists fall back to the custom panels for the session (logged once with
+	// the last reason the capture stopped).
+	bool m_NativeWristHudFallback = false;
+	uint64_t m_NativeWristHudWantedSinceMs = 0;
+	std::atomic<const char*> m_NativeWristHudLastGate{ "never painted" };
+	void NoteNativeWristHudGate(const char* reason);
 	// Self-test: dump the HUD and both wrist textures on the next copy.
 	std::atomic<bool> m_NativeWristHudDumpRequested{ false };
 	std::atomic<int> m_NativeWristHudDumpCount{ 0 };
@@ -3326,6 +3364,7 @@ public:
 	void SelfTestReachLeft(const l4d2vr_selftest::Vec3& target, const l4d2vr_selftest::Vec3& angles, float averageSpeed);
 	bool RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer* player);
 	bool RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
+	bool RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
 	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
 	// Slap step: the pouch's world position and the held fresh magazine's centre.
 	bool GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid);
@@ -3889,7 +3928,7 @@ public:
 	int m_AutoFlashlightReadbackWidth = 0;
 	int m_AutoFlashlightReadbackHeight = 0;
 
-	bool m_DrawInventoryAnchors = true;
+	bool m_DrawInventoryAnchors = false;
 	int m_InventoryAnchorColorR = 0;
 	int m_InventoryAnchorColorG = 255;
 	int m_InventoryAnchorColorB = 255;

@@ -178,6 +178,25 @@ namespace
     }
 }
 
+// The capture path returns silently at many gates; remember the last one and
+// log each distinct one once, so a headset log shows why no texture appeared.
+void VR::NoteNativeWristHudGate(const char* reason)
+{
+    if (!reason)
+        return;
+    const char* previous = m_NativeWristHudLastGate.exchange(reason, std::memory_order_acq_rel);
+    static std::mutex s_Mutex;
+    static std::vector<const char*> s_Logged;
+    std::lock_guard<std::mutex> lock(s_Mutex);
+    if (previous == reason)
+        return;
+    for (const char* logged : s_Logged)
+        if (logged == reason)
+            return;
+    s_Logged.push_back(reason);
+    Game::logMsg("[VR][WristHUD] capture stopped: %s", reason);
+}
+
 bool VR::WantsNativeWristHudCapture() const
 {
     if (!m_WristHudNativeStyle || !m_HandHudWorldQuadEnabled || !g_D3DVR9)
@@ -199,24 +218,36 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
     if (!m_NativeHudEngineVgui)
         m_NativeHudEngineVgui = NativeHudCreateInterface("engine.dll", "VEngineVGui001");
     if (!m_NativeHudPanelApi || !m_NativeHudEngineVgui)
+    {
+        NoteNativeWristHudGate("VGUI interfaces not found");
         return;
+    }
 
     int hudW = 0;
     int hudH = 0;
     {
         std::lock_guard<TextureStateMutex> lock(m_TextureMutex);
         if (!m_HUDTexture || m_CreatingTextureID != Texture_None)
+        {
+            NoteNativeWristHudGate("HUD texture missing or being recreated");
             return;
+        }
         hudW = m_HUDTexture->GetMappingWidth();
         hudH = m_HUDTexture->GetMappingHeight();
     }
     if (hudW <= 0 || hudH <= 0)
+    {
+        NoteNativeWristHudGate("HUD texture has no size");
         return;
+    }
 
     NativeHudPanelTree tree{ m_NativeHudPanelApi };
     const NativeHudVPanel root = NativeHudVCall<NativeHudVPanel, int>(m_NativeHudEngineVgui, kEngineVguiGetPanel, kVguiPanelRoot);
     if (!root)
+    {
+        NoteNativeWristHudGate("no client VGUI root panel");
         return;
+    }
     const nwh::Rect rootRect = tree.ScreenRect(root);
     const int screenW = rootRect.w > 0 ? rootRect.w : hudW;
     const int screenH = rootRect.h > 0 ? rootRect.h : hudH;
@@ -367,6 +398,8 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
             job.hide.size());
     }
 
+    if (job.left.Empty() && job.right.Empty())
+        NoteNativeWristHudGate("no health or weapon panels found in the HUD");
     const bool queued = m_Game->GetMatQueueMode() != 0;
     if (!queued)
     {
@@ -378,7 +411,10 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
     ICallQueue* queue = GetSourceRenderContextCallQueue(renderContext, &contextVtable, &getCallQueue);
     void* queueVtable = nullptr;
     if (!IsSourceCallQueueUsable(queue, &queueVtable))
+    {
+        NoteNativeWristHudGate("queued rendering: no usable render call queue");
         return;
+    }
     queue->QueueFunctor(new NativeWristHudCopyFunctor(this, std::move(job)));
 }
 
@@ -389,7 +425,10 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
 void VR::RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job)
 {
     if (m_SourceRenderQueueMarkerEpoch.load(std::memory_order_acquire) != job.epoch || !g_D3DVR9)
+    {
+        NoteNativeWristHudGate(g_D3DVR9 ? "render epoch changed before the copy ran" : "no D3D9 VR interface");
         return;
+    }
 
     struct Refs
     {
@@ -418,11 +457,20 @@ void VR::RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job)
         // material worker (texture recreation); skipping one copy is harmless.
         std::unique_lock<TextureStateMutex> textureLock(m_TextureMutex, std::try_to_lock);
         if (!textureLock.owns_lock())
+        {
+            NoteNativeWristHudGate("texture lock busy");
             return;
+        }
         if (m_CreatingTextureID != Texture_None || !m_D9HUDSurface)
+        {
+            NoteNativeWristHudGate("no D3D9 HUD surface");
             return;
+        }
         if (FAILED(m_D9HUDSurface->GetDesc(&hudDesc)) || FAILED(m_D9HUDSurface->GetDevice(&refs.device)) || !refs.device)
+        {
+            NoteNativeWristHudGate("HUD surface description or device failed");
             return;
+        }
         refs.hud = m_D9HUDSurface;
         refs.hud->AddRef();
         IDirect3DDevice9* device = refs.device;
@@ -438,12 +486,14 @@ void VR::RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job)
                 if (FAILED(device->CreateTexture((UINT)texW[side], (UINT)texH[side], 1, D3DUSAGE_RENDERTARGET,
                     hudDesc.Format, D3DPOOL_DEFAULT, &tex, nullptr)) || !tex)
                 {
+                    NoteNativeWristHudGate("wrist texture creation failed");
                     tex = nullptr;
                     continue;
                 }
                 D3D9_TEXTURE_VR_DESC desc{};
                 if (FAILED(tex->GetSurfaceLevel(0, &surf)) || !surf || FAILED(g_D3DVR9->GetVRDesc(surf, &desc)))
                 {
+                    NoteNativeWristHudGate("wrist texture has no shareable VR description");
                     if (surf) { surf->Release(); surf = nullptr; }
                     tex->Release();
                     tex = nullptr;

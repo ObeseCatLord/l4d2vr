@@ -371,6 +371,18 @@ namespace
     HMODULE g_module = nullptr;
     IEngineTrace* g_engineTraceServer = nullptr;
     IVEngineServer* g_engineServer = nullptr;
+
+    // engine.dll "VoiceServer002" (CVoiceServer): MSVC puts one deleting
+    // destructor first, so GetClientListening is slot 1 (checked in engine.dll).
+    class IVoiceServer
+    {
+    public:
+        virtual ~IVoiceServer() {}
+        virtual bool GetClientListening(int receiver, int sender) = 0;   // 1-based entity indices
+        virtual bool SetClientListening(int receiver, int sender, bool listen) = 0;
+        virtual bool SetClientProximity(int receiver, int sender, bool proximity) = 0;
+    };
+    IVoiceServer* g_voiceServer = nullptr;
     ServerConfig g_config{};
 
     thread_local int g_currentUsercmdPlayerIndex = -1;
@@ -655,6 +667,8 @@ namespace
         }
         bool ViewYaw(int playerIndex, float& yaw) const override;
         void Log(const char* line) override;
+        // Opus voice follows the game's own voice rules (team, alltalk, mutes).
+        bool VoiceCanHear(int receiver, int sender) const override;
     };
 
     SessionHost g_sessionHost;
@@ -1208,6 +1222,17 @@ namespace
         return originalResult;
     }
 
+    bool SessionHost::VoiceCanHear(int receiver, int sender) const
+    {
+        if (!g_voiceServer) return true;
+#ifdef _MSC_VER
+        __try { return g_voiceServer->GetClientListening(receiver, sender); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return true; }
+#else
+        return g_voiceServer->GetClientListening(receiver, sender);
+#endif
+    }
+
     bool SessionHost::ViewYaw(int playerIndex, float& yaw) const
     {
         if (!IsValidPlayerIndex(playerIndex) || !g_players[playerIndex].haveViewYaw)
@@ -1646,9 +1671,9 @@ namespace
         l4d2vr_server::SessionCapabilities caps{};
         caps.usercmdDecoder = g_hooksInstalled.load() && g_readUsercmd.original != nullptr;
         caps.interaction = false;
-        caps.features = l4d2vr_server::kFeaturePoseV3;
+        caps.features = l4d2vr_server::kFeaturePoseV3 | l4d2vr_server::kFeatureOpusVoice;
         g_session.SetCapabilities(caps);
-        Log("capabilities: usercmd_decoder=%d interaction=0 features=0x%03X [PoseV3]",
+        Log("capabilities: usercmd_decoder=%d interaction=0 features=0x%03X [PoseV3 OpusVoice]",
             caps.usercmdDecoder ? 1 : 0, static_cast<unsigned>(caps.features));
     }
 
@@ -1663,6 +1688,7 @@ namespace
             g_unloading.store(false);
             g_engineTraceServer = nullptr;
             g_engineServer = nullptr;
+            g_voiceServer = nullptr;
             g_edictList = nullptr;
             g_edictCount = 0;
             g_clientMax = l4d2vr_server::kMaxPlayerSlots;
@@ -1674,6 +1700,7 @@ namespace
                 int returnCode = IFACE_FAILED;
                 g_engineServer = static_cast<IVEngineServer*>(interfaceFactory("VEngineServer022", &returnCode));
                 g_engineTraceServer = static_cast<IEngineTrace*>(interfaceFactory("EngineTraceServer003", &returnCode));
+                g_voiceServer = static_cast<IVoiceServer*>(interfaceFactory("VoiceServer002", &returnCode));
             }
 
             if (!g_engineServer)

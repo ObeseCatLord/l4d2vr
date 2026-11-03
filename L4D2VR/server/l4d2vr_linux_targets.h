@@ -402,7 +402,8 @@ namespace l4d2vr_linux
         using namespace l4d2vr_server;
         FeatureResolution out{};
         const auto has = [&](std::uint32_t g) { return (in.groups & g) == g; };
-        out.features |= kFeaturePoseV3;
+        // Neither the pose relay nor the Opus voice relay needs server_srv.so code.
+        out.features |= kFeaturePoseV3 | kFeatureOpusVoice;
         if (!has(kGroupBase))
             return out;
         out.usercmdDecoder = true;

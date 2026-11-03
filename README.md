@@ -26,6 +26,7 @@ It's best to subscribe to this mod directly on the Workshop to avoid missing upd
 ## How to play multiplayer
 * You can join any server to play, but if the server wasn't created by VR, you will only have *some* VR-exclusive features. 
 * Versus works, but it's barely been tested.
+* Voice chat with other mod players is high-quality 48 kHz Opus, positional, on servers with the L4D2VR plugin or a modded host ([docs/voice-chat.md](docs/voice-chat.md)); everyone else keeps the game's voice.
 
 ## Installing
 The easiest way to install or update this fork is the [L4D2VR Installer](installer/README.md) (Windows and Linux).

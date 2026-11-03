@@ -61,6 +61,7 @@
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
+#include "vr_opus_voice.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -1700,6 +1701,16 @@ public:
     void UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot);
     bool GetHolsterRenderSnapshot(HolsterRenderSnapshot& out) const;
     bool BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::ItemPose& pose) const;
+    // Opus voice chat (vr_opus_voice.h, vr_opus_voice_client.cpp): every
+    // OpusVoice* key (OpusVoiceEnabled, OpusVoiceBitrate, OpusVoiceFec,
+    // OpusVoiceExpectedLossPercent, OpusVoiceMode, OpusVoiceVadSensitivity,
+    // OpusVoiceMicGain, OpusVoiceVolume, OpusVoicePositional,
+    // OpusVoiceRadioVolume, OpusVoiceSpatialDistanceMeters, OpusVoiceAgc,
+    // OpusVoiceAgcMaxGain, OpusVoiceLoopback, OpusVoicePushToTalkKey and the
+    // test keys), handed to the voice runtime on every config parse.
+    l4d2vr_voice::Settings m_OpusVoiceSettings{};
+    // VoicePushToTalk action (OpenXR binding) held.
+    bool m_VoicePushToTalkDown = false;
     // Chest sling and empty hands (vr_chest_sling.h, vr/vr_chest_sling.inl).
     // "Stowed": the active weapon is on the body (the sling, or its own
     // holster with HolsterEmptyHands) and both hands are empty. L4D2 keeps it
@@ -2206,6 +2217,7 @@ public:
 	vr::VRActionHandle_t m_ActionLedgeGuardToggle = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionEffectiveAttackRangeAutoFireToggle = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionSpeechToText = vr::k_ulInvalidActionHandle;
+	vr::VRActionHandle_t m_ActionVoicePushToTalk = vr::k_ulInvalidActionHandle;   // Opus voice push-to-talk button
 	vr::VRActionHandle_t m_ActionActivateVR = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_MenuSelect = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_MenuBack = vr::k_ulInvalidActionHandle;
@@ -3794,6 +3806,7 @@ public:
 	Vector m_RecoilTestRefLocal{ 1.0f, 0.0f, 0.0f };
 	Vector m_RecoilTestRefComp{ 1.0f, 0.0f, 0.0f };
 	bool RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
+	bool RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);   // vr_selftest_voice.inl
 	bool RunMeleeSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	bool RunDualReloadSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled);
 	// Self-test scratch for the recoil and sight steps.

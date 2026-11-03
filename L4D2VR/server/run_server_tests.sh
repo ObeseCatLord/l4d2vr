@@ -18,7 +18,8 @@ mkdir -p "$out_dir"
 flags=(-m32 -msse2 -mfpmath=sse -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror)
 
 for suite in vr_server_usercmd_codec_tests vr_server_policy_tests vr_server_session_tests vr_server_hook_tests \
-             vr_pose_protocol_v3_tests vr_remote_shell_tests vr_remote_magazine_tests vr_physical_controls_tests
+             vr_pose_protocol_v3_tests vr_remote_shell_tests vr_remote_magazine_tests vr_physical_controls_tests \
+             vr_opus_voice_tests
 do
     "$cxx" "${flags[@]}" "$repo_root/tests/$suite.cpp" -o "$out_dir/$suite"
     "$out_dir/$suite"

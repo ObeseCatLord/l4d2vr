@@ -30,6 +30,12 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="vr_opus_voice.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vr_opus_voice_client.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="game.h">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -949,6 +955,9 @@
     </ClCompile>
     <ClCompile Include="vr_hands\vr_hand_vr_bridge.cpp">
       <Filter>Source Files\vr_hands</Filter>
+    </ClCompile>
+    <ClCompile Include="vr_opus_voice_client.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="game.cpp">
       <Filter>Source Files</Filter>

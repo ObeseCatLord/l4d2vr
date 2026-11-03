@@ -109,12 +109,29 @@ namespace
 
     FakeEngine* g_FakeEngine = nullptr;
 
+    // engine_srv.so's CVoiceServer layout (GCC: two destructor slots first).
+    class FakeVoiceServer final : public IVoiceServer
+    {
+    public:
+        bool deaf[65][65]{};   // [receiver][sender]
+        int queries = 0;
+        bool GetClientListening(int receiver, int sender) override { ++queries; return !deaf[receiver][sender]; }
+        bool SetClientListening(int, int, bool) override { return true; }
+        bool SetClientProximity(int, int, bool) override { return true; }
+    };
+    FakeVoiceServer g_FakeVoice;
+
     void* InterfaceFactory(const char* name, int* result)
     {
         if (name && std::strcmp(name, "VEngineServer022") == 0)
         {
             if (result) *result = IFACE_OK;
             return g_FakeEngine;
+        }
+        if (name && std::strcmp(name, "VoiceServer002") == 0)
+        {
+            if (result) *result = IFACE_OK;
+            return static_cast<IVoiceServer*>(&g_FakeVoice);
         }
         if (result) *result = IFACE_FAILED;
         return nullptr;
@@ -149,7 +166,7 @@ int main()
     assert(plugin->Load(&InterfaceFactory, nullptr));
     // No server_srv.so in this process: relay only, never the usercmd ack.
     assert(!g_Session.Capabilities().usercmdDecoder);
-    assert(g_Session.Capabilities().features == kFeaturePoseV3);
+    assert(g_Session.Capabilities().features == (kFeaturePoseV3 | kFeatureOpusVoice));
 
     std::array<edict_t, 5> edicts{};
     plugin->ServerActivate(edicts.data(), static_cast<int>(edicts.size()), 3);
@@ -169,8 +186,8 @@ int main()
     engine.sent.clear();
     assert(Dispatch(*plugin, &edicts[1], { "l4d2vr_pose_hello", "2" }) == PLUGIN_STOP);
     assert(Dispatch(*plugin, &edicts[2], { "l4d2vr_pose_hello", "3" }) == PLUGIN_STOP);
-    assert(engine.To(&edicts[1]) == std::vector<std::string>{ "l4d2vr_feature_ack 100 1\n" });
-    assert(engine.To(&edicts[2]) == std::vector<std::string>{ "l4d2vr_feature_ack 100 1\n" });
+    assert(engine.To(&edicts[1]) == std::vector<std::string>{ "l4d2vr_feature_ack 2100 1\n" });
+    assert(engine.To(&edicts[2]) == std::vector<std::string>{ "l4d2vr_feature_ack 2100 1\n" });
     assert(engine.To(&edicts[3]).empty());
 
     // Ordinary commands pass through; private ones are consumed silently.
@@ -189,6 +206,31 @@ int main()
     engine.sent.clear();
     Dispatch(*plugin, &edicts[2], { "l4d2vr_pose_upload", "3", payload.c_str() });
     assert(engine.sent.size() == 1u && engine.sent[0].entity == &edicts[1]);
+
+    // Opus voice through the plugin: 1 talks, 2 and 3 listen, 3 may not hear 1
+    // (IVoiceServer), so only 2 receives the frame.
+    {
+        engine.sent.clear();
+        assert(Dispatch(*plugin, &edicts[1], { "l4d2vr_voice_hello", "1", "3" }) == PLUGIN_STOP);
+        assert(Dispatch(*plugin, &edicts[2], { "l4d2vr_voice_hello", "1", "1" }) == PLUGIN_STOP);
+        assert(Dispatch(*plugin, &edicts[3], { "l4d2vr_voice_hello", "1", "1" }) == PLUGIN_STOP);
+        assert(engine.To(&edicts[1]).front() == "l4d2vr_voice_ack 1\n");
+        assert(engine.To(&edicts[2]) == (std::vector<std::string>{ "l4d2vr_voice_ack 1\n", "l4d2vr_voice_peers 1 0\n" }));
+        g_FakeVoice.deaf[3][1] = true;
+        l4d2vr_voice::Frame frame;
+        frame.sequence = 1; frame.talkspurt = 1; frame.flags = l4d2vr_voice::kFlagStart;
+        frame.size = l4d2vr_voice::kMaxOpusBytes;
+        for (int i = 0; i < frame.size; ++i) frame.data[i] = static_cast<std::uint8_t>(i * 31);
+        char text[l4d2vr_voice::kMaxFrameTextChars + 1] = {};
+        assert(l4d2vr_voice::EncodeFrameText(frame, text, sizeof(text)));
+        engine.sent.clear();
+        assert(Dispatch(*plugin, &edicts[1], { "l4d2vr_voice_up", text }) == PLUGIN_STOP);
+        // The largest frame still fits the engine's ClientCommand formatting.
+        assert(engine.sent.size() == 1u && engine.sent[0].entity == &edicts[2] &&
+            engine.sent[0].text == std::string("l4d2vr_voice_rx 1 ") + text + "\n");
+        assert(g_FakeVoice.queries >= 2);
+        g_FakeVoice.deaf[3][1] = false;
+    }
 
     // Disconnect frees the slot; a level change resets everything.
     plugin->ClientDisconnect(&edicts[2]);

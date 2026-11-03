@@ -338,6 +338,24 @@ static void TestJitterBurstAndGap()
     Check(g.sequences[4] == 40);
 }
 
+static void TestJitterStall()
+{
+    // Frames 5..7 are held up 60 ms by the network (a burst on the reliable
+    // channel): the buffer waits for them (PLC meanwhile) instead of dropping them.
+    JitterBuffer jb;
+    for (int i = 0; i < 5; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 1, i == 0 ? kFlagStart : 0, 20), i * 20.0);
+    Playout p;
+    for (int tick = 0; tick < 5; ++tick) Pull(jb, 80.0 + tick * 20.0, p);
+    for (int tick = 0; tick < 3; ++tick) Pull(jb, 180.0 + tick * 20.0, p);   // nothing there yet
+    for (int i = 5; i < 10; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 1, 0, 20), 240.0);
+    for (int tick = 0; tick < 5; ++tick) Pull(jb, 240.0 + tick * 20.0, p);
+    Check(CountAction(p, JitterBuffer::Action::Decode) == 10);
+    Check(CountAction(p, JitterBuffer::Action::Conceal) == 3 && jb.GetStats().stalls == 3);
+    Check(jb.GetStats().late == 0);
+    for (std::size_t i = 0, seq = 0; i < p.actions.size(); ++i)
+        if (p.actions[i] == JitterBuffer::Action::Decode) Check(p.sequences[i] == seq++);
+}
+
 static void TestJitterTalkspurts()
 {
     // Spurt 1 ends while spurt 2's first frames are already buffered: both play fully.
@@ -400,7 +418,8 @@ static void TestNegotiation()
     in.enabled = true;
     int hellos = 0;
     for (int i = 0; i < 40; ++i) { in.nowMs = 20000.0 + i * 500.0; hellos += r.Update(in) >= 0; }
-    Check(hellos == ClientNegotiation::kHelloAttempts && !r.Active());
+    // Four quick hellos, then one every 6 s (a lost ack never ends voice for good).
+    Check(hellos == ClientNegotiation::kHelloAttempts + 2 && !r.Active());
     // A new server feature ack restarts the handshake.
     r.Restart();
     Check(r.Update(in) == int(kHelloReceive));
@@ -633,6 +652,7 @@ int main()
     TestJitterLoss();
     TestJitterOrderAndDuplicates();
     TestJitterBurstAndGap();
+    TestJitterStall();
     TestJitterTalkspurts();
     TestNegotiation();
     TestSpatial();

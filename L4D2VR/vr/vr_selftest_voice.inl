@@ -60,7 +60,10 @@ bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             const std::uint32_t passed = s.stockVoicePassed - s_Base.stockVoicePassed;
             std::snprintf(detail, sizeof(detail), "game voice packets from player %d: dropped %u, passed %u; peers=%llx opus sent %u",
                 local, dropped, passed, static_cast<unsigned long long>(s.peers), s.framesSent - s_Base.framesSent);
-            SelfTestReport("game voice of an Opus talker is dropped", dropped > 0 && passed == 0, detail);
+            if (dropped + passed == 0u)
+                Game::logMsg("[VR][SelfTest] INFO game voice of an Opus talker: no game voice packets arrived (the engine's voice does not run in this session): %s", detail);
+            else
+                SelfTestReport("game voice of an Opus talker is dropped", dropped > 0 && passed == 0, detail);
             cmd("voice_loopback 0; voice_inputfromfile 0");
             restore();
             return true;

@@ -2231,7 +2231,10 @@ void Game::UpdateOpusVoice()
     OpusVoiceClient::FrameInputs in;
     in.inGame = m_EngineClient->IsInGame();
     in.localPlayer = in.inGame ? m_EngineClient->GetLocalPlayer() : 0;
-    in.serverFeatures = (m_VR && Hooks::s_ServerUnderstandsVR) ? m_VR->m_ServerFeatureMask.load(std::memory_order_acquire) : 0u;
+    // The feature mask is cleared with the server session (ResetVRPoseServerSession);
+    // s_ServerUnderstandsVR is also reset when the map finishes loading, after
+    // the ack may already have arrived, so it is not a gate here.
+    in.serverFeatures = m_VR ? m_VR->m_ServerFeatureMask.load(std::memory_order_acquire) : 0u;
     if (in.inGame)
     {
         if (m_VR && m_VR->m_IsVREnabled)

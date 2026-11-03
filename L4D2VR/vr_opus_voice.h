@@ -505,8 +505,8 @@ namespace l4d2vr_voice
     public:
         static constexpr int kCapacity = 24;          // 480 ms
         static constexpr int kMinTargetMs = 60;
-        static constexpr int kMaxTargetMs = 240;
-        static constexpr int kMaxEmptyConceal = 5;    // 100 ms of PLC with nothing buffered, then stop
+        static constexpr int kMaxTargetMs = 300;
+        static constexpr int kMaxEmptyConceal = 8;    // 160 ms waiting with nothing buffered, then stop
         static constexpr double kSilenceResetMs = 600.0;
 
         enum class Action { None, Decode, DecodeFec, Conceal, End };
@@ -518,7 +518,7 @@ namespace l4d2vr_voice
         struct Stats
         {
             std::uint32_t inserted = 0, duplicates = 0, late = 0, overflow = 0;
-            std::uint32_t decoded = 0, fec = 0, concealed = 0, skipped = 0, talkspurts = 0, underruns = 0;
+            std::uint32_t decoded = 0, fec = 0, concealed = 0, skipped = 0, talkspurts = 0, underruns = 0, stalls = 0;
         };
 
         void Reset()
@@ -643,10 +643,13 @@ namespace l4d2vr_voice
                 FinishSpurt();
                 return out;
             }
+            // The expected frame is late, not lost (nothing after it arrived):
+            // hold the playout position, so it still plays when it comes (the
+            // delay grows by this much instead of the frame being dropped).
             out.action = Action::Conceal;
             ++m_Stats.concealed;
+            ++m_Stats.stalls;
             m_Impairment = std::min(m_Impairment + 1, 4);
-            ++m_Expected;
             return out;
         }
 
@@ -711,8 +714,9 @@ namespace l4d2vr_voice
     class ClientNegotiation
     {
     public:
-        static constexpr int kHelloAttempts = 4;
+        static constexpr int kHelloAttempts = 4;           // quick attempts, then
         static constexpr double kHelloRetryMs = 1500.0;
+        static constexpr double kHelloSlowRetryMs = 6000.0;  // keep asking slowly (a lost ack never ends voice)
 
         struct Inputs
         {
@@ -747,7 +751,7 @@ namespace l4d2vr_voice
                 m_LastHelloMs = in.nowMs;
                 return static_cast<int>(flags);
             }
-            if (!m_Acked && m_Attempts < kHelloAttempts && in.nowMs - m_LastHelloMs >= kHelloRetryMs)
+            if (!m_Acked && in.nowMs - m_LastHelloMs >= (m_Attempts < kHelloAttempts ? kHelloRetryMs : kHelloSlowRetryMs))
             {
                 ++m_Attempts;
                 m_LastHelloMs = in.nowMs;

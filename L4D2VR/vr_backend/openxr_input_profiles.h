@@ -90,6 +90,7 @@ namespace l4d2vr_openxr_input
     X(CustomAction3, "/actions/main/in/CustomAction3", "customaction3", "Custom Action 3", Button) \
     X(CustomAction4, "/actions/main/in/CustomAction4", "customaction4", "Custom Action 4", Button) \
     X(CustomAction5, "/actions/main/in/CustomAction5", "customaction5", "Custom Action 5", Button) \
+    X(VoicePushToTalk, "/actions/main/in/VoicePushToTalk", "voicepushtotalk", "Voice Push To Talk", Button) \
     X(SkeletonLeft, "/actions/base/in/skeleton_lefthand", "", "", Skeleton) \
     X(SkeletonRight, "/actions/base/in/skeleton_righthand", "", "", Skeleton) \
     X(PoseLeft, "/actions/base/in/pose_lefthand", "", "", Unused) \
@@ -340,6 +341,8 @@ namespace l4d2vr_openxr_input
             MenuDpad(p, Hand::Left, "/input/thumbstick");
             Bind(p, Action::Flashlight, Hand::Left, leftPrimary);
             Bind(p, Action::Pause, Hand::Left, leftSecondary);
+            // Opus voice push-to-talk: the left menu button is otherwise unused.
+            Bind(p, Action::VoicePushToTalk, Hand::Left, "/input/menu/click");
         }
 
         // SteamVR openxr_grip of every Touch-family render model (Rift, Rift S,
@@ -407,6 +410,8 @@ namespace l4d2vr_openxr_input
                 Bind(p, Action::Pause, Hand::Left, "/input/b/click");
                 // OpenXR has no trackpad click on Index: SteamVR's click is a force threshold.
                 Bind(p, Action::Scoreboard, Hand::Left, "/input/trackpad/force");
+                // Opus voice push-to-talk: pressing the (otherwise unused) right trackpad.
+                Bind(p, Action::VoicePushToTalk, Hand::Right, "/input/trackpad/force");
                 Both(p.legal, { "/input/system/click", "/input/system/touch", "/input/a/click", "/input/a/touch",
                     "/input/b/click", "/input/b/touch", "/input/squeeze/value", "/input/squeeze/force",
                     "/input/trigger/click", "/input/trigger/value", "/input/trigger/touch", "/input/thumbstick",

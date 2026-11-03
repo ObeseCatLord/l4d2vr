@@ -812,6 +812,8 @@ namespace OpusVoiceClient
 
     void OnAck(std::uint32_t version)
     {
+        static int s_AckLogs = 0;
+        if (s_AckLogs < 12) { ++s_AckLogs; Game::logMsg("[VR][Voice] l4d2vr_voice_ack %u (hello flags %d)", version, g_Negotiation.SentFlags()); }
         const bool was = g_Negotiation.Active();
         g_Negotiation.OnAck(version);
         if (!was && g_Negotiation.Active())
@@ -821,6 +823,8 @@ namespace OpusVoiceClient
 
     void OnPeers(std::uint32_t lo, std::uint32_t hi)
     {
+        static int s_PeerLogs = 0;
+        if (s_PeerLogs < 12) { ++s_PeerLogs; Game::logMsg("[VR][Voice] l4d2vr_voice_peers %x %x", lo, hi); }
         g_Negotiation.OnPeers(lo, hi);
         g_Peers.store(g_Negotiation.Peers());
     }
@@ -928,6 +932,8 @@ namespace OpusVoiceClient
             char line[64];
             std::snprintf(line, sizeof(line), "%s %u %d", kHelloCommand, kProtocolVersion, hello);
             in.serverCommand(line, true);
+            static int s_HelloLogs = 0;
+            if (s_HelloLogs < 12) { ++s_HelloLogs; Game::logMsg("[VR][Voice] sent %s (server features 0x%X)", line, in.serverFeatures); }
             if (hello == 0) Game::logMsg("[VR][Voice] Opus voice off (OpusVoiceEnabled=false): the game's own voice is used");
         }
         const bool active = g_Negotiation.Active();

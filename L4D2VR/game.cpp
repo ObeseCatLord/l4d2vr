@@ -2181,6 +2181,7 @@ namespace
         }
         bool CanHear(int receiver, int sender) const override { return ListenVoiceCanHear(receiver, sender); }
         std::uint64_t NowMs() const override { return VRPoseTickMs(); }
+        void Log(const char* line) override { Game::logMsg("[VR][Voice] listen host: %s", line); }
     };
 
     ListenVoiceHost g_ListenVoiceHost;

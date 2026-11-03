@@ -6,8 +6,11 @@
 # Feature bits the server may offer (hex). A bit is only advertised when its
 # hooks resolved as well. 0x1 MeleeSweepV2, 0x2 ShoveAim, 0x4 AkimboRays,
 # 0x8 MagTxn, 0x10 ShellTxn, 0x20 HolsterDrop, 0x40 ThrowVelocity,
-# 0x80 PillGive, 0x100 PoseV3, 0x200 InstantDeploy, 0x400 HandThrow.
-FeatureMask=0x7ff
+# 0x80 PillGive, 0x100 PoseV3, 0x200 InstantDeploy, 0x400 HandThrow,
+# 0x800 ShotgunPattern, 0x1000 DualMagTxn, 0x2000 OpusVoice (relays Opus voice
+# chat between mod clients under the game's voice rules; clear it to keep
+# everyone on the game's own voice).
+FeatureMask=0x3fff
 
 # Physical melee (same meaning as the previous dedicated plugin).
 MeleeSwingBlockWhileControlled=true

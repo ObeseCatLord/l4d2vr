@@ -117,6 +117,7 @@ void VR::SendShotgunPatternPreference()
 void VR::UpdateWeaponRecoil(C_BasePlayer* localPlayer)
 {
     SendShotgunPatternPreference();
+    SendGrenadeThrowFeatureRequest();
 
     const float dt = std::clamp(m_LastFrameDuration, 0.0f, 0.1f);
     C_WeaponCSBase* weapon = localPlayer ? static_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon()) : nullptr;

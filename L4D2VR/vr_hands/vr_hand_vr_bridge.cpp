@@ -4744,6 +4744,7 @@ void VR::RecordManualPumpShot()
         MagazineInteractionTryReadValue(player, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), reserve);
     std::lock_guard<std::mutex> lock(m_ManualPumpMutex);
     m_ManualPumpCycles.ObserveOwner(true, reinterpret_cast<uintptr_t>(player));
+    m_ManualPumpCycles.SetEveryShot(m_ManualPumpEveryShot);
     m_ManualPumpCycles.NotifyShot(reinterpret_cast<uintptr_t>(weapon), static_cast<int>(id), clip, handle,
         reserve, GetTickCount64());
     Game::logMsg("[VR][ManualPump] shot observed weaponId=%d clip=%d", static_cast<int>(id), clip);
@@ -6878,6 +6879,17 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionBoltStageStarted = now;
         m_MagazineInteractionBoltGrabbedAt = {};
         setBoltPullDistance(0.0f);
+        // Pavlov bLockBolt: a gun that ran dry waits with its slide or bolt
+        // locked open. Taking it and letting go chambers the round (a full
+        // rack still works); the handle is drawn back while it waits.
+        if (!m_MagazineInteractionShotgunShellMode && m_ReloadPavlovTuning &&
+            l4d2vr_reload_tuning::LocksOpenWhenEmpty(static_cast<int>(weaponId)))
+        {
+            setBoltPullDistance(requiredPull);
+            m_MagazineInteractionBoltReachedRear = true;
+            LogMagazineInteractionEvent("slide/bolt locked open on the empty gun weaponId=%d: take it and let go",
+                static_cast<int>(weaponId));
+        }
         m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
         LogMagazineInteractionEvent("bolt stage armed weaponId=%d pull=%.3f m return=%.3f m backendPending=%d reason=%s",
             static_cast<int>(weaponId), requiredPull / std::max(0.001f, m_VRScale),
@@ -7290,6 +7302,7 @@ bool VR::UpdateMagazineInteraction(
                 pumpReserve = -1;
         }
         std::lock_guard<std::mutex> lock(m_ManualPumpMutex);
+        m_ManualPumpCycles.SetEveryShot(m_ManualPumpEveryShot);
         if (!m_ManualPumpEnabled)
             m_ManualPumpCycles.Reset();
         else if (hasActiveWeapon && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId))
@@ -9023,8 +9036,11 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionLeftHandHolding = false;
         m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
         const bool manualPump = m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId);
+        // A slide or bolt locked open (bLockBolt) stays back until it is taken.
+        const bool lockedOpen = !manualPump && !m_MagazineInteractionShotgunShellMode && m_ReloadPavlovTuning &&
+            m_MagazineInteractionBoltReachedRear && l4d2vr_reload_tuning::LocksOpenWhenEmpty(static_cast<int>(activeWeaponId));
         if (!manualPump)
-            setBoltPullDistance(0.0f);
+            setBoltPullDistance(lockedOpen ? m_MagazineInteractionBoltMaxPullDistance : 0.0f);
 
         if (m_MagazineInteractionBoltGrabRequiresGripRelease)
         {
@@ -10701,6 +10717,8 @@ void VR::FinishVrHandsEyeRender()
     DrawVrHandsForEye(*view, eyeIndex, drawPass);
     PhysicalScopeLensSnapshot lens{};
     if (ReadPhysicalScopeLens(eyeIndex, lens)) DrawPhysicalScopeLensForEye(*view, eyeIndex, lens);
+    NativeThrowArcSnapshot arc{};
+    if (ReadNativeThrowArc(arc)) DrawNativeThrowArcForEye(*view, eyeIndex, arc);
 }
 
 void VR::ReleaseVrHandsD3DResources()
@@ -11117,7 +11135,9 @@ bool VR::CaptureMagazineInteractionSound(int entityIndex, const char* sample, fl
         nativeReloadSuppressed;
     const bool shotgunPhysicalSoundState =
         m_MagazineInteractionShotgunShellMode && (waitingForInsertTail || waitingForBoltAction);
-    const bool manualPumpSound = m_ManualPumpEnabled &&
+    // Semi-auto pumping (ManualPumpEveryShot off): the game's own pump after a
+    // normal shot is heard; only a pump the player still owes is silenced.
+    const bool manualPumpSound = m_ManualPumpEnabled && (m_ManualPumpEveryShot || waitingForBoltAction) &&
         IsMagazineInteractionShotgunServerHookActive(m_MagazineInteractionCurrentWeaponId.load(std::memory_order_relaxed)) &&
         MagazineInteractionSoundLooksShotgunPump(sample);
     if (!sample || !*sample || !m_Game ||

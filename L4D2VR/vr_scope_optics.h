@@ -114,21 +114,37 @@ namespace l4d2vr_optics
             (180.0f / 3.14159265358979323846f);
         return ValidRenderFov(fov) ? fov : 0.0f;
     }
-    struct EyeSample { float alpha = 0.0f, relief = 0.0f; };
+    // How much of the scope picture an eye sees, from where it is behind the
+    // rear lens. 2.0.4: an eyebox in degrees off the scope's axis (full inside
+    // `eyeboxDeg`, fading out by twice that), the eye 2-50 cm behind the lens.
+    // The lens image itself closes in from the rim toward `eyeboxDeg`
+    // (vr_scope_lens.h), so this gate only decides whether the scope renders.
+    // Before, the eye had to sit inside the optical exit pupil (lens radius /
+    // magnification: 2-6 mm on the stock scopes), which a tracked headset
+    // never holds still, so the lens stayed black and the scope camera never
+    // rendered. The picture-in-picture lens (vr_scope_lens.h) closes the image
+    // in from the edge as the eye leaves the eyebox; the other eye (6 cm
+    // beside a scope at the face, 30 degrees off its axis) sees the black lens.
+    constexpr float kDefaultEyeboxDeg = 15.0f;  // ScopeEyeboxDeg
+    constexpr float kMinEyeReliefMeters = 0.02f;
+    constexpr float kMaxEyeReliefMeters = 0.50f;
+    struct EyeSample { float alpha = 0.0f, relief = 0.0f, offAxisDeg = 0.0f; };
     inline EyeSample EvaluateEye(const Vector& eye, const Vector& lens, Vector axis,
-        float radius, float unitsPerMeter, float magnification)
+        float radius, float unitsPerMeter, float magnification, float eyeboxDeg = kDefaultEyeboxDeg)
     {
         if (!Finite(eye) || !Finite(lens) || !Normalize(axis) || !std::isfinite(radius) ||
-            !std::isfinite(unitsPerMeter) || !std::isfinite(magnification) ||
+            !std::isfinite(unitsPerMeter) || !std::isfinite(magnification) || !std::isfinite(eyeboxDeg) ||
             radius <= 0.0f || unitsPerMeter <= 0.0f || magnification < 1.0f)
             return {};
+        eyeboxDeg = std::clamp(eyeboxDeg, 1.0f, 45.0f);
         const Vector delta = lens - eye;
         const float relief = DotProduct(delta, axis);
-        if (relief < 0.035f * unitsPerMeter || relief > 0.25f * unitsPerMeter) return {};
+        if (relief < kMinEyeReliefMeters * unitsPerMeter || relief > kMaxEyeReliefMeters * unitsPerMeter) return {};
         const Vector lateral = delta - axis * relief;
-        const float pupilRadius = (std::max)(radius / magnification, 0.001f * unitsPerMeter);
-        const float radial = std::sqrt((std::max)(0.0f, DotProduct(lateral, lateral))) / pupilRadius;
-        return {std::clamp((1.0f - radial) / 0.25f, 0.0f, 1.0f), relief};
+        const float offAxisDeg = std::atan2(std::sqrt((std::max)(0.0f, DotProduct(lateral, lateral))), relief) *
+            (180.0f / 3.14159265358979323846f);
+        const float alpha = std::clamp((2.0f * eyeboxDeg - offAxisDeg) / eyeboxDeg, 0.0f, 1.0f);
+        return {alpha, relief, offAxisDeg};
     }
     struct ModelLens
     {

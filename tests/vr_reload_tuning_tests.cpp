@@ -16,7 +16,7 @@ static void TestPavlovNumbersCarryOver()
     CHECK(ForWeapon(5, t));                 // M16: 7 cm x 1.0 cocks, back to 0.7 chambers
     CHECK(Near(t.pullMeters, 0.07f));
     CHECK(Near(t.returnMeters, 0.049f));
-    CHECK(Near(t.insertDepthMeters, 0.02f));
+    CHECK(Near(t.insertDepthMeters, 0.019f)); // seats at 95 % of the 2 cm goal (Pavlov)
     CHECK(ForWeapon(1, t));                 // pistol <- M9: 20 cm x 0.38
     CHECK(Near(t.pullMeters, 0.076f));
     CHECK(Near(t.returnMeters, 0.04f));
@@ -26,8 +26,9 @@ static void TestPavlovNumbersCarryOver()
 static void TestClampsKeepRatios()
 {
     Tuning t{};
-    CHECK(ForWeapon(10, t));                // AutoSniper 30 cm x 0.38 = 11.4 -> clamped to 10
+    CHECK(ForWeapon(10, t));                // AutoSniper 30 cm x 0.38 = 11.4 cm, Pavlov's longest pull
     CHECK(Near(t.pullMeters, kMaxPullMeters));
+    CHECK(Near(t.pullMeters, 0.114f));
     CHECK(Near(t.returnMeters, kMaxPullMeters * (0.11f / 0.38f)));
     CHECK(ForWeapon(7, t));                 // Vector 5 cm x 1.0 -> 5 cm
     CHECK(Near(t.pullMeters, 0.05f));
@@ -95,8 +96,28 @@ static void TestMagazineHoldTilt()
         CHECK(MagazineHoldTiltDeg(id) >= 0.0f && MagazineHoldTiltDeg(id) <= 15.0f);
 }
 
+static void TestLockOpenAndEasySlide()
+{
+    // bLockBolt: M9, Desert Eagle, M16, SCAR (<- M16 / SCAR20), SKS.
+    const int locks[] = { 1, 32, 5, 9, 6 };
+    for (int id : locks)
+        CHECK(LocksOpenWhenEmpty(id));
+    const int noLock[] = { 2, 7, 33, 26, 34, 10, 35, 36, 3, 8, 4, 11, 21, 37, 0 };
+    for (int id : noLock)
+        CHECK(!LocksOpenWhenEmpty(id));
+    // bEasyMagSlide: once in the well it goes home, so the shallowest seat.
+    const int easy[] = { 1, 32, 6, 36, 3, 8, 4, 11 };
+    for (int id : easy)
+    {
+        Tuning t{};
+        CHECK(ForWeapon(id, t));
+        CHECK(Near(t.insertDepthMeters, kMinInsertMeters));
+    }
+}
+
 int main()
 {
+    TestLockOpenAndEasySlide();
     TestMagazineHoldTilt();
     TestPavlovNumbersCarryOver();
     TestClampsKeepRatios();

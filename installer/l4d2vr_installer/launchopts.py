@@ -31,9 +31,9 @@ from .fsutil import InstallerError, atomic_write_text, read_json, atomic_write_j
 DLL_OVERRIDES = ("d3d9", "openvr_api")  # managed (openvr_api: pre-1.3 releases)
 OVERRIDE = "d3d9=n,b"
 REQUIRED_ENV = (("WINEDLLOVERRIDES", OVERRIDE), ("PROTON_USE_WOW64", "1"))
-REQUIRED_ARGS = ("-dx9",)
+REQUIRED_ARGS = ("-dx9", "-insecure")  # -insecure: never VAC with the d3d9.dll proxy
 HARMFUL_ARGS = ("-vulkan",)
-RECOMMENDED = 'WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9'
+RECOMMENDED = 'WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9 -insecure'
 
 _ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 _SAFE_VALUE = re.compile(r"^[A-Za-z0-9_./:@%+-]*$")

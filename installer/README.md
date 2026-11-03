@@ -75,7 +75,7 @@ The mod is a Windows DLL, so the game must run the **Windows build under Proton*
 3. **Launch options** (Linux setup tab). Steam must start the game with:
 
    ```
-   WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9
+   WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9 -insecure
    ```
 
    (Older releases used `d3d9,openvr_api=n,b`; **Write to Steam** rewrites that.)

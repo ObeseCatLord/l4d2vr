@@ -369,7 +369,7 @@ def cmd_launch(args, saved) -> int:
         if route == "monado":
             print("The Monado route is Linux-only; using SteamVR.")
         url = vrlaunch.steam_url(vrlaunch.connect_args(args.connect, password) + extra)
-        print("Opening " + (url.split("//+password")[0] + "..." if password else url))
+        print("Opening " + (url.split("//", 2)[0] + "//" + url.split("//", 2)[1] + "//... (connection arguments withheld)" if password else url))
         vrlaunch.open_steam_url(url, dry_run=args.dry_run)
         if not IS_WINDOWS:
             users = []

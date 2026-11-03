@@ -220,6 +220,13 @@ namespace
 
     void TestRotationBetween()
     {
+        {
+            // Half of a 90 degree swing is 45 degrees about the same axis.
+            float m[3][3];
+            RotationBetween({ 1, 0, 0 }, { 0, 1, 0 }, m, 0.5f);
+            const Vec3 r = Apply(m, { 1, 0, 0 });
+            Require(Dist(r, Normalized(Vec3{ 1, 1, 0 })) < 1e-4f, "fractional rotation turns half way");
+        }
         const Vec3 pairs[][2] = {
             { { 1, 0, 0 }, { 0, 1, 0 } },
             { { 0, 0, 1 }, { 0.3f, -0.4f, 0.866f } },

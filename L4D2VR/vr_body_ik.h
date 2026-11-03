@@ -314,8 +314,9 @@ namespace l4d2vr_body_ik
     }
 
     // Rotation (as a 3x3 row-major matrix, column vectors) taking unit
-    // direction a onto unit direction b along the shortest arc.
-    inline void RotationBetween(Vec3 a, Vec3 b, float m[3][3])
+    // direction a onto unit direction b along the shortest arc; with
+    // fraction < 1 only that share of the angle (same axis).
+    inline void RotationBetween(Vec3 a, Vec3 b, float m[3][3], float fraction = 1.0f)
     {
         a = Normalized(a);
         b = Normalized(b);
@@ -336,7 +337,8 @@ namespace l4d2vr_body_ik
             s = Length(axis);
         }
         axis = axis * (1.0f / s);
-        const float cs = std::cos(angle), sn = std::sin(angle), t = 1.0f - cs;
+        const float scaled = angle * (std::isfinite(fraction) ? fraction : 1.0f);
+        const float cs = std::cos(scaled), sn = std::sin(scaled), t = 1.0f - cs;
         const float x = axis.x, y = axis.y, z = axis.z;
         m[0][0] = t * x * x + cs;     m[0][1] = t * x * y - sn * z; m[0][2] = t * x * z + sn * y;
         m[1][0] = t * x * y + sn * z; m[1][1] = t * y * y + cs;     m[1][2] = t * y * z - sn * x;

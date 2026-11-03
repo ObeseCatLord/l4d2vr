@@ -31,6 +31,7 @@
 #include "sdk.h"
 #include "vr_weapon_calibration.h"
 #include "vr_offhand_pose.h"
+#include "vr_config_migration.h"
 
 extern "C" void __cdecl L4D2VR_ShutdownSystemMouseInputSuppression();
 extern "C" void __cdecl L4D2VR_ShutdownReShadeVRBridge();
@@ -3135,6 +3136,46 @@ namespace
         // The full first-person body is off by default (user, 2026-11-03);
         // players can turn it back on (its arms now reach the VR hands).
         { "2026-11-03_first_person_body_off", "FirstPersonBodyEnabled", "false" },
+        // 2.0.5: hand settings players carried over from older builds. Each entry
+        // replaces only an old shipped value (the sample of an upstream build,
+        // or the code / config-panel default that was written into configs that
+        // lacked the key); tuned values stay.
+        //   Arm IK hands, uncropped (the code and the panel defaulted to the
+        //   classic viewmodel with cropped arms while the sample said otherwise).
+        { "2026-11-03_hands_only_arm_ik", "NativeViewmodelHandsOnly", "true", false, "false" },
+        { "2026-11-03_arm_cropping_off", "NativeViewmodelArmCroppingEnabled", "false", false, "true" },
+        { "2026-11-03_hands_only_wrist_keep", "NativeViewmodelHandsOnlyWristKeepFraction", "1.0", false, "0" },
+        { "2026-11-03_hands_only_arm_bend", "NativeViewmodelHandsOnlyArmBendScale", "0.0", false, "1" },
+        { "2026-11-03_hands_only_trim", "NativeViewmodelHandsOnlyTrimUnits", "0.0", false, "-1.25" },
+        { "2026-11-03_right_anim_keep", "NativeViewmodelRightHandAnimationKeepUnits", "4.0", false, "1" },
+        { "2026-11-03_left_freeze_after_map", "NativeViewmodelLeftHandFreezeAfterMapSeconds", "0.0", false, "3" },
+        //   Free-hand freeze pose (upstream OpenXR build sample).
+        { "2026-11-03_freeze_pose_offset", "NativeViewmodelHandsOnlyFreezePoseOffsetMeters", "0.55,0.18,-0.18", false, "0.4,0.2,-0.27" },
+        { "2026-11-03_freeze_pose_left_rotation", "NativeViewmodelHandsOnlyLeftFreezePoseRotationOffsetDeg", "0,0,0", false, "22,24,11" },
+        { "2026-11-03_freeze_pose_right_rotation", "NativeViewmodelHandsOnlyRightFreezePoseRotationOffsetDeg", "0,0,0", false, "30,90,-30" },
+        //   Finger curls: the hand pose library drives the fingers; the old
+        //   skeletal-curl tuning (inverted direction, pre-curled fingers) fought it.
+        { "2026-11-03_left_curl_direction", "NativeViewmodelLeftHandOpenVRCurlDirection", "1.0", false, "-1" },
+        { "2026-11-03_left_curl_strength", "NativeViewmodelLeftHandOpenVRCurlStrength", "1.0", false, "0.9" },
+        { "2026-11-03_left_thumb_initial_curl", "NativeViewmodelLeftHandOpenVRThumbInitialCurl", "0.0", false, "0.2" },
+        { "2026-11-03_left_index_initial_curl", "NativeViewmodelLeftHandOpenVRIndexInitialCurl", "0.0", false, "0.4" },
+        { "2026-11-03_left_middle_initial_curl", "NativeViewmodelLeftHandOpenVRMiddleInitialCurl", "0.0", false, "0.4" },
+        { "2026-11-03_left_ring_initial_curl", "NativeViewmodelLeftHandOpenVRRingInitialCurl", "0.0", false, "0.4" },
+        { "2026-11-03_left_pinky_initial_curl", "NativeViewmodelLeftHandOpenVRPinkyInitialCurl", "0.0", false, "0.4" },
+        { "2026-11-03_left_thumb_root_rotation", "NativeViewmodelLeftHandOpenVRThumbRootRotationOffsetDeg", "0,0,0", false, "0,-15,0" },
+        { "2026-11-03_glove_thumb_curl", "VrHandsGloveThumbMaxCurl", "1.0", false, "0.05" },
+        { "2026-11-03_glove_index_curl", "VrHandsGloveIndexMaxCurl", "1.0", false, "0.8" },
+        { "2026-11-03_glove_middle_curl", "VrHandsGloveMiddleMaxCurl", "1.0", false, "0.8" },
+        { "2026-11-03_glove_ring_curl", "VrHandsGloveRingMaxCurl", "1.0", false, "0.8" },
+        { "2026-11-03_glove_pinky_curl", "VrHandsGlovePinkyMaxCurl", "1.0", false, "0.8" },
+        //   The left hand is the model's own (ItemHandLeftArmModel): no extra
+        //   left-handed viewmodel offset.
+        { "2026-11-03_left_handed_viewmodel_offset", "VrHandsLeftHandedViewmodelPoseOffsetMeters", "0,0,0", false, "0.040,0.002,0.01" },
+        //   VR hands and physical reloads on (the code and panel defaulted off).
+        { "2026-11-03_vr_hands_on", "VrHandsEnabled", "true", false, "false" },
+        { "2026-11-03_magazine_interaction_on", "MagazineInteractionEnabled", "true", false, "false" },
+        //   The viewmodel adjust combo moved the gun off the hand mid-game.
+        { "2026-11-03_viewmodel_adjust_off", "ViewmodelAdjustEnabled", "false", false, "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3220,7 +3261,7 @@ namespace
             {
                 std::string current;
                 const bool present = TryGetConfigParameterValue(configText, migration.key, current);
-                if (present && TrimAsciiWhitespace(current) != migration.onlyIfValue)
+                if (!l4d2vr_config_migration::ShouldReplace(present, current, migration.onlyIfValue))
                 {
                     appliedIds.insert(migration.id);
                     continue;
@@ -3258,7 +3299,17 @@ namespace
 
         if (!FileExistsNoThrow(configPath))
         {
-            WriteAsciiFile(configPath, BuildConfigTextFromSampleForNewInstall(sampleText));
+            if (WriteAsciiFile(configPath, BuildConfigTextFromSampleForNewInstall(sampleText)))
+            {
+                // A new config already has the current defaults: no migration may
+                // run on it later (they would overwrite what the player changes in
+                // the first session).
+                std::unordered_set<std::string> ids = ReadAppliedConfigMigrationIds(vrPath / kConfigMigrationsStateFile);
+                for (const OneShotConfigMigration& migration : kOneShotConfigMigrations)
+                    if (migration.id && *migration.id)
+                        ids.insert(migration.id);
+                WriteAppliedConfigMigrationIds(vrPath / kConfigMigrationsStateFile, ids);
+            }
             return;
         }
 
@@ -3297,6 +3348,7 @@ namespace
         sampleKeys.insert("RightAmmoHudNativeWidthMeters");
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("AmbidextrousItemHands");
+        sampleKeys.insert("ItemHandLeftArmModel");
         sampleKeys.insert("ChestSlingEnabled");
         sampleKeys.insert("ChestSlingDropDistanceMeters");
         sampleKeys.insert("ChestSlingGrabRadiusMeters");
@@ -3332,6 +3384,8 @@ namespace
         sampleKeys.insert("RecoilDebugLog");
         sampleKeys.insert("IronSightAimEnabled");
         sampleKeys.insert("GunRigidInHand");
+        sampleKeys.insert("GunHandOnController");
+        sampleKeys.insert("VanillaLaserPlacement");
         sampleKeys.insert("MeleeInertiaEnabled");
         sampleKeys.insert("MeleeSwingMinTipSpeed");
         sampleKeys.insert("MeleeSwingMinHandSpeedLong");

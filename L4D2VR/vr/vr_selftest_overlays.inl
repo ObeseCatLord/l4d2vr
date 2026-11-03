@@ -12,16 +12,25 @@
 //   xrtype=<text>                type on the VR keyboard with the right laser and trigger, then Done
 //   xrcfgrow=<option>[:<u>]      scroll the config panel to that option and aim the right laser at its row
 //   xrmaxlayers=<n>              OpenXR: layer budget override (0 = the runtime's)
+//   xropt=<target>[:<part>]      VR Options page: aim the right laser at a row (its key; the page switches to
+//                                its section and scrolls it into view) or tab:<id>, resetall, resetpage, close,
+//                                yes, no, ok, scrollup, scrolldown; part: row toggle minus plus bar<f> choice<n> action
 //   xrstate                      log the backend's laser/keyboard/layer state
 //   uicheck=<what>               paused=0|1 cursor=0|1 ingame=0|1 menu=visible|hidden hud=visible|hidden
 //                                config=open|closed cfgvalue=<option>=<value> keyboard=open|closed
 //                                laser=<target|off> layers>=<n>
+//                                cfgmode=options|config|calib cfgsection=<id> cfgdialog=none|confirm|message
+//                                cfgfile=<option>=<value> (vr/config.txt on disk) live=<option>=<value> (the mod's value)
+//                                cfgbackup>=<n> (vr/config.txt.bak-* files) cfgoptscroll>=<n>
 //   uiwait=<seconds>             wait (also in menus)
 //   cfg=<option>=<value>         in-memory config override (never written to config.txt), reparsed now
 //   killind=<n>                  spawn n kill indicators in front of the head (needs KillIndicatorEnabled)
 // Steps from overlays to uiwait (and cmd=, xrinput=) also run in the main menu and while a map loads.
 
+#include "../vr_options_menu.h"
+
 bool L4D2VRConfigOverlay_TestFocusRow(const char* key, float& rowV);
+bool L4D2VRConfigOverlay_TestFocusOption(const char* target, const char* part, float& u, float& v);
 std::string L4D2VRConfigOverlay_TestState(const char* key);
 std::string L4D2VRConfigOverlay_CanonicalKey(const char* key);
 
@@ -81,7 +90,7 @@ namespace l4d2vr_selftest_overlay
 bool VR::SelfTestRunsWithoutPlayer(const std::string& step)
 {
     static const char* const prefixes[] = { "overlays", "xrdump=", "xrdumpevery=", "xraim=", "xrclick=", "xrtype=",
-        "xrcfgrow=", "xrmaxlayers=", "xrstate", "uicheck=", "uiwait=", "uimode=", "cfg=", "cmd=", "xrinput=" };
+        "xrcfgrow=", "xropt=", "xrmaxlayers=", "xrstate", "uicheck=", "uiwait=", "uimode=", "cfg=", "cmd=", "xrinput=" };
     for (const char* p : prefixes)
         if (step.rfind(p, 0) == 0)
             return true;
@@ -165,6 +174,64 @@ bool VR::SelfTestCheckUi(const std::string& predicate, char* detail, size_t deta
         const bool shown = ov && ov->IsOverlayVisible(what == "menu" ? m_MainMenuHandle : m_HUDTopHandle);
         std::snprintf(detail, detailSize, "%s overlay %s (want %s)", what.c_str(), shown ? "visible" : "hidden", want.c_str());
         return (want == "visible") == shown;
+    }
+    if (what == "cfgfile" || what == "cfgbackup")
+    {
+        const std::filesystem::path vrDir = std::filesystem::path("VR");
+        if (what == "cfgbackup")
+        {
+            int n = 0;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(vrDir, ec))
+                n += e.path().filename().string().rfind("config.txt.bak-", 0) == 0 ? 1 : 0;
+            std::snprintf(detail, detailSize, "%d config.txt.bak-* in %s (want >= %s)", n, vrDir.string().c_str(), want.c_str());
+            return n >= std::atoi(want.c_str());
+        }
+        const size_t e2 = want.find('=');
+        const std::string key = want.substr(0, e2), value = e2 == std::string::npos ? std::string() : want.substr(e2 + 1);
+        std::string text, found = "<missing>";
+        l4d2vr_options_menu::ReadFile(vrDir / "config.txt", text);
+        for (const auto& kv : l4d2vr_options_menu::ParseConfigText(text))
+            if (_stricmp(kv.first.c_str(), key.c_str()) == 0)
+                found = kv.second;
+        std::snprintf(detail, detailSize, "vr/config.txt %s=%s (want %s)", key.c_str(), found.c_str(), value.c_str());
+        return so::Lower(found) == so::Lower(value);
+    }
+    if (what == "live")
+    {
+        // The mod's own (parsed) value: proves a menu change reached the game.
+        const size_t e2 = want.find('=');
+        const std::string key = so::Lower(want.substr(0, e2)), value = e2 == std::string::npos ? std::string() : want.substr(e2 + 1);
+        char got[64] = "?";
+        auto b = [&](bool v) { std::snprintf(got, sizeof(got), "%s", v ? "true" : "false"); };
+        auto f = [&](float v) { std::snprintf(got, sizeof(got), "%.2f", v); };
+        if (key == "snapturning") b(m_SnapTurning);
+        else if (key == "snapturnangle") f(m_SnapTurnAngle);
+        else if (key == "turnspeed") f(m_TurnSpeed);
+        else if (key == "lefthanded") b(m_LeftHanded);
+        else if (key == "grenadethrowmode") std::snprintf(got, sizeof(got), "%s", m_GrenadeThrowArc ? "arc" : "physics");
+        else if (key == "grenadethrowassist") b(m_GrenadeThrowAssist);
+        else if (key == "grenadethrowassiststrength") f(m_GrenadeThrowAssistStrength);
+        else if (key == "recoilenabled") b(m_RecoilEnabled);
+        else if (key == "recoilscale") f(m_RecoilScale);
+        else if (key == "crosshairenabled") b(m_CrosshairEnabled);
+        else if (key == "firstpersonbodyenabled") b(m_FirstPersonBodyEnabled);
+        else if (key == "chestslingenabled") b(m_ChestSlingEnabled);
+        else if (key == "manualpumpeveryshot") b(m_ManualPumpEveryShot);
+        else if (key == "hudalwaysvisible") b(m_HudAlwaysVisible);
+        else if (key == "vroptionsmenuholdseconds") f(m_VrOptionsMenuHoldSeconds);
+        std::snprintf(detail, detailSize, "live %s=%s (want %s)", key.c_str(), got, value.c_str());
+        const float wantF = static_cast<float>(std::atof(value.c_str()));
+        return so::Lower(got) == so::Lower(value) || (got[0] != '?' && std::isdigit(static_cast<unsigned char>(got[0])) &&
+            std::fabs(static_cast<float>(std::atof(got)) - wantF) < 0.006f);
+    }
+    if (what == "cfgsection" || what == "cfgdialog" || what == "cfgoptscroll")
+    {
+        const std::string state = L4D2VRConfigOverlay_TestState("");
+        std::snprintf(detail, detailSize, "%s", state.c_str());
+        if (what == "cfgoptscroll")
+            return std::atoi(so::Field(state, "optscroll").c_str()) >= std::atoi(want.c_str());
+        return so::Field(state, what == "cfgsection" ? "section" : "dialog") == want;
     }
     if (what == "config" || what == "cfgvalue" || what == "cfgvalue!" || what == "cfgscroll" || what == "cfgscrolled" ||
         what == "cfgmode" || what == "cfgpreviewangle" || what == "cfgpreviewmark" || what == "cfgpreviewmoved")
@@ -363,6 +430,32 @@ bool VR::RunOverlaySelfTestStep(const std::string& step, float t, bool& handled)
             std::snprintf(spec, sizeof(spec), "aim=right:config:%s:%.4f", u.c_str(), v);
             command(spec);
             Game::logMsg("[VR][SelfTest] config row %s at v=%.3f; %s", p[0].c_str(), v, result.c_str());
+        }
+        return t >= 0.8f;
+    }
+    if (step.rfind("xropt=", 0) == 0)
+    {
+        const std::vector<std::string> p = so::Split(step.substr(6), ':');
+        if (m_SelfTestStage == 0)
+        {
+            m_SelfTestStage = 1;
+            // "tab:<id>" carries its own colon.
+            std::string target = p[0], part = p.size() > 1 ? p[1] : "row";
+            if (target == "tab" && p.size() > 1)
+            {
+                target = "tab:" + p[1];
+                part = "row";
+            }
+            float u = 0.0f, v = 0.0f;
+            if (!L4D2VRConfigOverlay_TestFocusOption(target.c_str(), part.c_str(), u, v))
+            {
+                SelfTestReport("options target", false, ("not on the VR Options page: " + step.substr(6)).c_str());
+                return true;
+            }
+            char spec[128];
+            std::snprintf(spec, sizeof(spec), "aim=right:config:%.4f:%.4f", u, v);
+            command(spec);
+            Game::logMsg("[VR][SelfTest] options %s:%s at u=%.3f v=%.3f; %s", target.c_str(), part.c_str(), u, v, result.c_str());
         }
         return t >= 0.8f;
     }

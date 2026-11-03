@@ -375,6 +375,139 @@ static void Fsm()
     Require(!s.Thrown() && !s.Armed(), "an unanswered throw resets");
 }
 
+
+// Where a launch passes the target's horizontal distance (simulated, 1 ms steps).
+static float MissAtTarget(const V3& origin, const V3& v, const V3& target, float g)
+{
+    V3 p = origin, vel = v;
+    const float dx = target.x - origin.x, dy = target.y - origin.y;
+    const float dh = std::sqrt(dx * dx + dy * dy);
+    for (int i = 0; i < 20000; ++i)
+    {
+        const float hx = p.x - origin.x, hy = p.y - origin.y;
+        if (hx * dx + hy * dy >= dh * dh || p.z < target.z - 2000.0f)
+            break;
+        vel.z -= g * 0.001f;
+        p = p + vel * 0.001f;
+    }
+    return (p - target).Length();
+}
+
+static void Assist()
+{
+    const float g = 320.0f;
+    const V3 origin(0.0f, 0.0f, 60.0f);
+    const V3 target(600.0f, 0.0f, 0.0f);
+    // A throw heading roughly there: 10 degrees to the left and a little short.
+    const float speed = 520.0f, yaw = 10.0f * 3.14159265f / 180.0f, pitch = 20.0f * 3.14159265f / 180.0f;
+    const V3 throwV(std::cos(pitch) * std::cos(yaw) * speed, std::cos(pitch) * std::sin(yaw) * speed, std::sin(pitch) * speed);
+    AssistInput in{};
+    in.origin = origin; in.velocity = throwV; in.target = target; in.targetValid = true; in.gravity = g;
+
+    in.strength = 0.0f;
+    AssistResult r = AssistThrow(in);
+    Require(!r.applied && r.velocity.x == throwV.x && r.velocity.y == throwV.y && r.velocity.z == throwV.z,
+        "strength 0 leaves the throw untouched");
+
+    in.strength = 1.0f;
+    r = AssistThrow(in);
+    Require(r.applied && Near(r.weight, 1.0f, 1e-4f), "full strength inside the gates is a full blend");
+    Require(MissAtTarget(origin, r.velocity, target, g) < 2.0f, "full strength lands on the target");
+    const float missBefore = MissAtTarget(origin, throwV, target, g);
+    Require(missBefore > 60.0f, "the unassisted throw misses (test setup)");
+
+    in.strength = 0.5f;
+    r = AssistThrow(in);
+    const float missHalf = MissAtTarget(origin, r.velocity, target, g);
+    Require(r.applied && missHalf < missBefore * 0.75f && missHalf > 2.0f, "half strength lands between");
+    Require(Near(r.velocity.Length(), 0.5f * speed + 0.5f * r.solution.Length(), 1.0f), "speed blends linearly");
+
+    // Monotonic in strength.
+    float prev = missBefore + 1.0f;
+    for (float s = 0.0f; s <= 1.0001f; s += 0.125f)
+    {
+        in.strength = s;
+        const float miss = MissAtTarget(origin, AssistThrow(in).velocity, target, g);
+        Require(miss <= prev + 0.5f, "more strength never lands further away");
+        prev = miss;
+    }
+
+    // Gates: thrown elsewhere, slow drops, unreachable targets, much higher arcs.
+    in.strength = 1.0f;
+    {
+        AssistInput side = in;
+        const float y2 = 60.0f * 3.14159265f / 180.0f;
+        side.velocity = V3(std::cos(pitch) * std::cos(y2) * speed, std::cos(pitch) * std::sin(y2) * speed, std::sin(pitch) * speed);
+        Require(!AssistThrow(side).applied, "a throw 60 degrees off the target is not bent");
+        side.velocity = throwV * -1.0f;
+        side.velocity.z = -side.velocity.z;
+        Require(!AssistThrow(side).applied, "a throw behind you is not bent");
+    }
+    {
+        AssistInput slow = in;
+        slow.velocity = throwV * (100.0f / speed);
+        Require(!AssistThrow(slow).applied, "a slow release (drop) is not assisted");
+    }
+    {
+        AssistInput far = in;
+        far.target = V3(6000.0f, 0.0f, 0.0f);
+        Require(!AssistThrow(far).applied, "a target the throw cannot nearly reach is not assisted");
+    }
+    {
+        AssistInput lob = in;
+        const float p2 = 70.0f * 3.14159265f / 180.0f;
+        lob.velocity = V3(std::cos(p2) * speed, 0.0f, std::sin(p2) * speed);
+        lob.target = V3(300.0f, 0.0f, 0.0f);
+        const AssistResult lr = AssistThrow(lob);
+        // At 70 degrees the lob branch is chosen, never a flat line drive.
+        Require(!lr.applied || lr.solution.z > 0.6f * lr.solution.Length(), "a lob stays a lob");
+    }
+    {
+        AssistInput nan = in;
+        nan.velocity.x = std::nanf("");
+        Require(!AssistThrow(nan).applied, "NaN velocity is ignored");
+        nan = in;
+        nan.targetValid = false;
+        Require(!AssistThrow(nan).applied, "no target, no assistance");
+        nan = in;
+        nan.strength = std::nanf("");
+        Require(!AssistThrow(nan).applied, "NaN strength is off");
+    }
+    {
+        AssistInput capped = in;
+        capped.maxSpeed = 400.0f;
+        Require(AssistThrow(capped).velocity.Length() <= 400.5f, "the server speed cap holds");
+    }
+    // A faster-than-needed flat throw keeps its speed: same-speed solution.
+    {
+        AssistInput flat = in;
+        const float p3 = 8.0f * 3.14159265f / 180.0f;
+        flat.velocity = V3(std::cos(p3) * 700.0f, 40.0f, std::sin(p3) * 700.0f);
+        const AssistResult fr = AssistThrow(flat);
+        Require(fr.applied && Near(fr.solution.Length(), flat.velocity.Length(), 1.0f), "a reachable target keeps the throw's speed");
+        Require(MissAtTarget(origin, fr.velocity, target, g) < 2.0f, "and lands on it at full strength");
+    }
+
+    // Ballistic helpers.
+    V3 sol{};
+    Require(BallisticVelocityTo(origin, target, g, 600.0f, 0.0f, sol) && Near(sol.Length(), 600.0f, 0.5f), "same-speed solution");
+    Require(MissAtTarget(origin, sol, target, g) < 2.0f, "the low branch hits");
+    Require(BallisticVelocityTo(origin, target, g, 600.0f, 1.4f, sol) && sol.z > 400.0f && MissAtTarget(origin, sol, target, g) < 3.0f,
+        "the high branch hits");
+    const float vmin = MinimumSpeedTo(origin, target, g);
+    Require(!BallisticVelocityTo(origin, target, g, vmin * 0.98f, 0.5f, sol), "below the minimum speed there is no solution");
+    Require(BallisticVelocityTo(origin, target, g, vmin * 1.001f, 0.5f, sol), "just above it there is one");
+    V3 landing{};
+    Require(BallisticLanding(origin, V3(400.0f, 0.0f, 0.0f), g, 0.0f, landing) &&
+        Near(landing.x, 400.0f * std::sqrt(2.0f * 60.0f / g), 0.5f), "landing of a flat launch");
+    V3 heading{};
+    Require(HeadingTarget(origin, V3(400.0f, 0.0f, 0.0f), g, 0.0f, V3(0.0f, 1.0f, -0.2f), heading) &&
+        Near(heading.x, 0.0f, 0.01f) && Near(heading.y, landing.x, 0.5f), "heading target keeps range, takes the aim heading");
+    const V3 hand = HandVelocityForLaunch(V3(500.0f, 0.0f, 200.0f), V3(100.0f, 0.0f, 0.0f), 2.5f);
+    Require(Near(hand.x, 160.0f, 1e-3f) && Near(hand.z, 80.0f, 1e-3f), "launch back to the wire hand velocity");
+    Require(ComposeVelocity(hand, V3(100.0f, 0.0f, 0.0f), 2.5f, 1400.0f).x == 500.0f, "and the server composes it back");
+}
+
 int main()
 {
     WireRoundTrip();
@@ -382,6 +515,7 @@ int main()
     Tracker();
     RecordedThrows();
     Fsm();
+    Assist();
     std::printf("vr_hand_throw_tests: %d checks passed\n", checks);
     return 0;
 }

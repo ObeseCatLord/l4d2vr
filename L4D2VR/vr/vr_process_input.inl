@@ -1852,6 +1852,8 @@ void VR::ProcessInput()
             m_HolsterHandInOwnZone.store(frameValid && activeSlot >= 0 &&
                 grabInput.ownZoneUnderHand == static_cast<l4d2vr_holster::Zone>(activeSlot), std::memory_order_release);
             const l4d2vr_holster::GrabOutput grab = m_HolsterGrab.Update(grabInput);
+            UpdateChestSling(localPlayer, ready, frameValid ? &frame : nullptr, occupiedMask, m_WeaponGripPhysicalDown,
+                grab.selectSlot >= 0 || grab.holsterTo >= 0 || grabInput.handZone != l4d2vr_holster::Zone::None);
             m_HolsterHighlightSlot.store(grabInput.handZone != l4d2vr_holster::Zone::None
                 ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1, std::memory_order_release);
             {

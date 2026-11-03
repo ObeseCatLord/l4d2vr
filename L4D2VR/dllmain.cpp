@@ -3040,6 +3040,8 @@ namespace
         const char* value = nullptr;
         // Only replace the old shipped 0,0,0 (or a missing key), never a tuned value.
         bool onlyIfLegacyZeroVector = false;
+        // Only replace this old shipped value (or a missing key), never a tuned one.
+        const char* onlyIfValue = nullptr;
     };
 
     bool TryGetConfigParameterValue(const std::string& text, const std::string& targetKey, std::string& outValue)
@@ -3115,6 +3117,21 @@ namespace
         // never rendered at all for upgraded installs.
         { "2026-11-02_scopes_on", "ScopeEnabled", "true" },
         { "2026-11-02_scopes_physical_lens_on", "ScopePhysicalLensEnabled", "true" },
+        // Headset session 6: the magazine/bolt debug boxes were on in the shipped
+        // config and showed up while two-handing.
+        { "2026-11-03_magazine_debug_boxes_off", "MagazineBoxDebugEnabled", "false" },
+        { "2026-11-03_inventory_anchor_boxes_off", "ShowInventoryAnchors", "false" },
+        // Pavlov-sized foregrip catch (an 11.5 cm hand sphere on the handguard): the
+        // 5 cm target box made two-handing awkward. Only the old default changes.
+        // Headset session 6: the wrist HUDs were gone in 2.0.x. Everything that can
+        // hide them is switched back on once (the draw bug itself is fixed in code).
+        { "2026-11-03_wrist_hud_left_on", "LeftWristHudEnabled", "true" },
+        { "2026-11-03_wrist_hud_right_on", "RightAmmoHudEnabled", "true" },
+        { "2026-11-03_wrist_hud_world_quads_on", "HandHudWorldQuadEnabled", "true" },
+        { "2026-11-03_wrist_hud_attach_on", "HandHudWorldQuadAttachToControllers", "true" },
+        // The simple ammo panel shipped 0.8 m wide (the code default is 0.13).
+        { "2026-11-03_custom_ammo_hud_width", "RightAmmoHudWidthMeters", "0.13", false, "0.8" },
+        { "2026-11-03_pavlov_foregrip_box", "VrHandsTwoHandedGripTargetBoxScale", "1.5", false, "1.0" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3196,6 +3213,16 @@ namespace
                     continue;
                 }
             }
+            if (migration.onlyIfValue)
+            {
+                std::string current;
+                const bool present = TryGetConfigParameterValue(configText, migration.key, current);
+                if (present && TrimAsciiWhitespace(current) != migration.onlyIfValue)
+                {
+                    appliedIds.insert(migration.id);
+                    continue;
+                }
+            }
             if (SetConfigParameterValue(configText, migration.key, migration.value))
                 configChanged = true;
             appliedIds.insert(migration.id);
@@ -3267,8 +3294,10 @@ namespace
         sampleKeys.insert("RightAmmoHudNativeWidthMeters");
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("AmbidextrousItemHands");
+        sampleKeys.insert("ChestSlingEnabled");
+        sampleKeys.insert("ChestSlingDropDistanceMeters");
+        sampleKeys.insert("ChestSlingGrabRadiusMeters");
         sampleKeys.insert("ItemHandOffRadiusMeters");
-        sampleKeys.insert("ItemHandMirror");
         sampleKeys.insert("VrHandsTwoHandedAimShortGunsRearHandOnly");
         sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawFollowSpeed");

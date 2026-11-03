@@ -47,7 +47,8 @@ l4d2vr_handpose::HandInput VR::ResolveHandPoseInput(int gameplaySide) const
     const int weaponId = m_ActiveGunWeaponId.load(std::memory_order_acquire);
     in.weaponId = weaponId;
 
-    const bool emptyHands = m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
+    // A gun hanging on the chest sling leaves both hands free.
+    const bool emptyHands = m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) || ChestSlingActive();
     const bool dual = m_DualPistolsActive.load(std::memory_order_acquire) &&
         weaponId == static_cast<int>(C_WeaponCSBase::PISTOL);
     // The hand doing the reload (the free hand; with dual pistols the other pistol's hand).

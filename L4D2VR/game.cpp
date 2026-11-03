@@ -38,6 +38,7 @@ using tCreateInterface = void* (__cdecl*)(const char* name, int* returnCode);
 
 void L4D2VRConfigOverlay_StartWorker();
 void L4D2VRConfigOverlay_Open();
+void L4D2VRConfigOverlay_OpenOptions();
 
 namespace
 {
@@ -748,6 +749,7 @@ namespace
     constexpr char kL4D2VRPoseAckCommandName[] = "l4d2vr_pose_ack";
     constexpr char kL4D2VRPoseReceiveCommandName[] = "l4d2vr_pose_receive";
     constexpr char kVRConfigCommandName[] = "vrconfig";
+    constexpr char kVROptionsCommandName[] = "vroptions";
     constexpr char kCachePrintSummaryCommandName[] = "cache_print_summary";
     SourceRegisteredConCommand* g_OriginalCachePrintSummaryCommand = nullptr;
 
@@ -959,6 +961,11 @@ namespace
         L4D2VRConfigOverlay_Open();
     }
 
+    void __cdecl OnVROptionsCommand(const SourceCCommand&)
+    {
+        L4D2VRConfigOverlay_OpenOptions();
+    }
+
     void __cdecl OnCachePrintSummaryCommand(const SourceCCommand& command)
     {
         if (!g_OriginalCachePrintSummaryCommand)
@@ -1020,6 +1027,11 @@ namespace
         &OnVRConfigCommand,
         "Opens the L4D2VR configuration overlay.",
         0);
+    SourceRegisteredConCommand g_VROptionsCommand(
+        kVROptionsCommandName,
+        &OnVROptionsCommand,
+        "Opens the L4D2VR VR Options menu (in VR, or a window in desktop mode).",
+        0);
     SourceRegisteredConCommand g_CachePrintSummaryCommand(
         kCachePrintSummaryCommandName,
         &OnCachePrintSummaryCommand,
@@ -1064,6 +1076,8 @@ namespace
                 cvar->RegisterConCommand(&g_L4D2VRPoseReceiveCommand);
             if (!cvar->FindCommandBase(kVRConfigCommandName))
                 cvar->RegisterConCommand(&g_VRConfigCommand);
+            if (!cvar->FindCommandBase(kVROptionsCommandName))
+                cvar->RegisterConCommand(&g_VROptionsCommand);
 
             SourceConCommandBase* cachePrintSummary =
                 cvar->FindCommandBase(kCachePrintSummaryCommandName);

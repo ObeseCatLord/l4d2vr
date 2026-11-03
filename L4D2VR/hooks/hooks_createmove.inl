@@ -2126,7 +2126,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				throwInput.throwable = handThrowMode;
 				throwInput.weapon = activeWeaponTag;
 				throwInput.blocked = !gripSession.gameplay || !throwActionsUsable || physicalUseDown ||
-					emptyHandsPlaceholderActive || m_VR->m_SuppressPlayerInput || cmd->command_number <= 0 ||
+					emptyHandsPlaceholderActive || m_VR->ChestSlingActive() || m_VR->m_SuppressPlayerInput || cmd->command_number <= 0 ||
 					m_VR->m_RenderPlayerIncap.load(std::memory_order_relaxed) ||
 					m_VR->m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) || IsLocalClientUsingMountedWeapon();
 				throwInput.gripOwned = gripOwnedBeforeRelease;

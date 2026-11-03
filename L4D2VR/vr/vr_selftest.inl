@@ -1738,6 +1738,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     {
         m_WristHudNativeStyle = step.substr(11) != "custom";
         m_NativeWristHudFallback = false;
+        m_NativeWristHudRightBlank.store(false, std::memory_order_release);
+        m_NativeWristTrimEmptyReads = 0;
         m_NativeWristHudWantedSinceMs = 0;
         Game::logMsg("[VR][SelfTest] wrist HUD style: %s", m_WristHudNativeStyle ? "native" : "custom");
         return true;

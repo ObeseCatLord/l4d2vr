@@ -3048,6 +3048,8 @@ public:
 	// wrists fall back to the custom panels for the session (logged once with
 	// the last reason the capture stopped).
 	bool m_NativeWristHudFallback = false;
+	std::atomic<bool> m_NativeWristHudRightBlank{ false }; // the weapon panel crop read back empty 4 times in a row
+	int m_NativeWristTrimEmptyReads = 0;
 	uint64_t m_NativeWristHudWantedSinceMs = 0;
 	std::atomic<const char*> m_NativeWristHudLastGate{ "never painted" };
 	void NoteNativeWristHudGate(const char* reason);

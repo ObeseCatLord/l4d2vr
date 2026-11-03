@@ -2954,7 +2954,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     }
 
     const bool canShowRight = m_RightAmmoHudEnabled && m_RightAmmoHudHandle != vr::k_ulOverlayHandleInvalid && (worldQuad || m_MouseModeEnabled || gunHandIndex != vr::k_unTrackedDeviceIndexInvalid);
-    if (canShowRight && nativeWristHud)
+    // The right (ammo) crop can come out empty (seen with mat_queue_mode 2 in the
+    // simulator): then the custom ammo panel is drawn instead (2.0.4).
+    if (canShowRight && nativeWristHud && !m_NativeWristHudRightBlank.load(std::memory_order_acquire))
     {
         rightVisible = showNativeWristHud(1);
         if (!rightVisible)

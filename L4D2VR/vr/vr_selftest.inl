@@ -2166,8 +2166,10 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
             {
                 const bool dominant = reach.dominant;
                 const Vec3 angles = reach.angles;
-                add(at, [this, dominant](C_BasePlayer*, float) {
-                    m_SelfTestValueB = static_cast<int>(dominant ? m_HolsterHoverPulseCount : m_HolsterLeftHoverPulseCount);
+                // Hover pulses of both hands: with ambidextrous items the hand
+                // roles (and their counters) trade places after an off-hand draw.
+                add(at, [this](C_BasePlayer*, float) {
+                    m_SelfTestValueB = static_cast<int>(m_HolsterHoverPulseCount + m_HolsterLeftHoverPulseCount);
                     return false; });
                 for (const Vec3& point : reach.path)
                 {
@@ -2185,10 +2187,10 @@ bool VR::RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer
                 const std::string name = reach.name;
                 add(at, [this, dominant, slot, name, P](C_BasePlayer* player, float) {
                     char detail[256];
-                    const uint32_t pulses = dominant ? m_HolsterHoverPulseCount : m_HolsterLeftHoverPulseCount;
-                    std::snprintf(detail, sizeof(detail), "active slot %d (expected %d), %s hover pulses %d -> %u, left-handed %d",
-                        SelfTestActiveSlot(player) + 1, slot + 1, dominant ? "dominant" : "off-hand", m_SelfTestValueB, pulses,
-                        m_LeftHanded ? 1 : 0);
+                    const uint32_t pulses = m_HolsterHoverPulseCount + m_HolsterLeftHoverPulseCount;
+                    std::snprintf(detail, sizeof(detail), "active slot %d (expected %d), %s hand, hover pulses %d -> %u, item hand %s, left-handed %d",
+                        SelfTestActiveSlot(player) + 1, slot + 1, dominant ? "dominant" : "off", m_SelfTestValueB, pulses,
+                        ItemHandIsPhysicalLeft() ? "left" : "right", m_LeftHanded ? 1 : 0);
                     SelfTestReport(name.c_str(), SelfTestActiveSlot(player) == slot && static_cast<int>(pulses) > m_SelfTestValueB, detail);
                     if (dominant) SelfTestReachRight(P(body::RightReady()), body::V(0.0f, 0.0f, 0.0f), 1.0f);
                     else SelfTestReachLeft(P(body::LeftReady()), body::V(0.0f, 0.0f, 0.0f), 1.0f);

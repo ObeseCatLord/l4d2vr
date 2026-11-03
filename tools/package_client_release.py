@@ -87,7 +87,6 @@ CHANGES = [
     "2.0.2: stance recoil: guns kick less crouched, much more while jumping, and more the faster you move, following each gun's own L4D2 accuracy values (RecoilStanceEnabled and per-part scales).",
     "2.0.4: an item in your left hand is always held by a mirrored left hand, on every hand setting (also with NativeViewmodelHandsOnly off or arm cropping on); the right hand is never moved onto the left controller (ItemHandMirror retired).",
     "2.0.4: chest sling: letting go of a rifle, SMG, shotgun or sniper near your body hangs it on your chest with both hands free; grab its handle or foregrip with either hand to take it (that hand becomes the trigger hand); let go at arm's length to drop it (ChestSlingEnabled).",
-    "2.0.4: Zoey's (and every survivor's) hands no longer stretch away from the wrist: the forearm helper bones follow the solved hand.",
     "2.0.4: grabbing closer to Pavlov: the support hand catches the foregrip from further away (VrHandsTwoHandedGripTargetBoxScale 1.5), and a slung gun is taken anywhere along its body.",
     "2.0.4: the weapon idle poses learned by older versions are relearned once: cached ones put the hand on the auto shotgun and SPAS 21 cm away from the controller.",
     "2.0.4: wrist HUDs come back: they were hidden whenever the runtime reported a controller as valid but not tracked; they now also keep the last picture while a menu is open and fall back to the simple wrist panels if the game HUD cannot be captured.",

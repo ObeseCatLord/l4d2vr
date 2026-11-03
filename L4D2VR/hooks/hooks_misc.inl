@@ -18622,99 +18622,6 @@ namespace
             resolved[static_cast<size_t>(chain.hand)] != 0u;
     }
 
-    // Forearm helper bones (Driven_ulna, Forearm_driven, hlp_wrist/ulna): the
-    // survivor animations key them to follow the hand, and some arms skin the
-    // palm to them (Zoey: 225 palm vertices on Bip01_L_Driven_ulna, Bill 75).
-    // The arm IK resets the arm branch to its rest pose and bends the wrist, so
-    // these helpers stayed with the forearm and dragged the palm away from the
-    // hand: an offset hand with stretched fingers (headset session 6). Give
-    // them back the pose the animation gave them relative to the hand.
-    inline bool HooksNativeViewmodelArmIkBoneIsForearmHelper(const std::string& lowerName)
-    {
-        return lowerName.find("driven") != std::string::npos ||
-            lowerName.find("ulna") != std::string::npos ||
-            lowerName.find("hlp_wrist") != std::string::npos ||
-            lowerName.find("wrist") != std::string::npos;
-    }
-
-    inline int HooksNativeViewmodelArmIkFollowForearmHelpers(
-        const std::vector<std::string>& boneNames,
-        const std::vector<int>& boneParents,
-        int numBones,
-        int side,
-        int forearm,
-        int hand,
-        const vr_vm_stabilize::Mat3x4* sourceBones,
-        vr_vm_stabilize::Mat3x4* currentBones)
-    {
-        if (!sourceBones || !currentBones || forearm < 0 || forearm >= numBones ||
-            hand < 0 || hand >= numBones || numBones <= 0 || numBones > 512 ||
-            static_cast<int>(boneNames.size()) < numBones ||
-            static_cast<int>(boneParents.size()) < numBones)
-        {
-            return 0;
-        }
-        vr_vm_stabilize::Mat3x4 sourceHand{};
-        vr_vm_stabilize::Mat3x4 inverseSourceHand{};
-        if (!vr_vm_stabilize::SafeRead(sourceBones + hand, sourceHand) ||
-            !HooksNativeViewmodelHandsOnlyMatrixFinite(sourceHand) ||
-            !vr_vm_stabilize::InvertAffine(sourceHand, inverseSourceHand) ||
-            !HooksNativeViewmodelHandsOnlyMatrixFinite(currentBones[hand]))
-        {
-            return 0;
-        }
-        // Helpers and anything hanging off them, below the forearm but not
-        // below the hand.
-        std::vector<uint8_t> helperMask(static_cast<size_t>(numBones), 0u);
-        int moved = 0;
-        for (int bone = 0; bone < numBones; ++bone)
-        {
-            if (bone == forearm || bone == hand ||
-                !HooksNativeViewmodelHandsOnlyIsAncestor(boneParents, bone, forearm, numBones) ||
-                HooksNativeViewmodelHandsOnlyIsAncestor(boneParents, bone, hand, numBones) ||
-                HooksNativeViewmodelHandsOnlyIsAncestor(boneParents, hand, bone, numBones))
-            {
-                continue;
-            }
-            const std::string lowerName = vr_vm_stabilize::ToLowerAscii(boneNames[static_cast<size_t>(bone)]);
-            const int namedSide = HooksNativeViewmodelHandsOnlyBoneSide(lowerName);
-            if (namedSide != 0 && namedSide != side)
-                continue;
-            const int parent = boneParents[static_cast<size_t>(bone)];
-            const bool underHelper = parent >= 0 && parent < numBones && helperMask[static_cast<size_t>(parent)] != 0u;
-            if (!underHelper && !HooksNativeViewmodelArmIkBoneIsForearmHelper(lowerName))
-                continue;
-            vr_vm_stabilize::Mat3x4 sourceBone{};
-            if (!vr_vm_stabilize::SafeRead(sourceBones + bone, sourceBone) ||
-                !HooksNativeViewmodelHandsOnlyMatrixFinite(sourceBone))
-            {
-                continue;
-            }
-            vr_vm_stabilize::Mat3x4 relativeToHand{};
-            vr_vm_stabilize::Mat3x4 followed{};
-            vr_vm_stabilize::Mul(inverseSourceHand, sourceBone, relativeToHand);
-            vr_vm_stabilize::Mul(currentBones[hand], relativeToHand, followed);
-            if (!HooksNativeViewmodelHandsOnlyMatrixFinite(followed))
-                continue;
-            // Only a sane helper: a rigid basis near the wrist (a cropped or
-            // collapsed source pose must not be copied).
-            bool rigid = true;
-            for (int c = 0; c < 3 && rigid; ++c)
-            {
-                const float len = std::sqrt(followed.m[0][c] * followed.m[0][c] + followed.m[1][c] * followed.m[1][c] +
-                    followed.m[2][c] * followed.m[2][c]);
-                rigid = std::fabs(len - 1.0f) < 0.05f;
-            }
-            const Vector helperOrigin = vr_vm_stabilize::GetOrigin(followed);
-            if (!rigid || (helperOrigin - vr_vm_stabilize::GetOrigin(currentBones[hand])).Length() > 16.0f)
-                continue;
-            currentBones[bone] = followed;
-            helperMask[static_cast<size_t>(bone)] = 1u;
-            ++moved;
-        }
-        return moved;
-    }
-
     inline bool HooksNativeViewmodelArmIkRestoreAnimatedFingerPose(
         const std::vector<std::string>& boneNames,
         const std::vector<int>& boneParents,
@@ -20420,15 +20327,6 @@ namespace
                     logSideSolveFailure(chain, "cropped-empty-fingers");
                     return false;
                 }
-                HooksNativeViewmodelArmIkFollowForearmHelpers(
-                    boneNames,
-                    boneParents,
-                    numBones,
-                    chain.side,
-                    chain.forearm,
-                    chain.hand,
-                    sourceBones,
-                    candidate);
 
                 // A compatible rest branch may be stretched, but never by more
                 // than the guarded 3x arm scale above. Reject a replacement rig

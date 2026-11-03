@@ -71,6 +71,8 @@ namespace
     // Game thread only.
     ClientNegotiation g_Negotiation;
     std::uint32_t g_ServerFeatures = 0u;
+    bool g_FeaturesValid = false;        // a feature ack arrived in this server session
+    double g_LastFrameMs = 0.0, g_LastFeatureAckMs = 0.0;
     double g_LastStatsLogMs = 0.0;
     double g_DesktopSettingsCheckMs = -1e30;
     std::string g_DesktopSettingsStamp;
@@ -785,6 +787,8 @@ namespace OpusVoiceClient
     {
         // Servers repeat the capability bundle a few times: the same mask on a
         // running session only re-sends the hello (no device restart).
+        g_LastFeatureAckMs = NowMs();
+        g_FeaturesValid = true;
         if (mask == g_ServerFeatures && g_Negotiation.Active())
         {
             g_Negotiation.Refresh();
@@ -800,6 +804,7 @@ namespace OpusVoiceClient
     void OnSessionReset()
     {
         g_ServerFeatures = 0u;
+        g_FeaturesValid = false;
         g_Negotiation.Reset();
         g_Active.store(false);
         g_TransmitAllowed.store(false);
@@ -907,6 +912,12 @@ namespace OpusVoiceClient
     void Frame(const FrameInputs& in)
     {
         const Settings s = SettingsSnapshot();
+        // CreateMove (and so Frame) stops while not in a game: a long gap with
+        // no feature ack since means a new server or map; wait for its ack.
+        const double frameNow = NowMs();
+        if (g_LastFrameMs > 0.0 && frameNow - g_LastFrameMs > 3000.0 && g_LastFeatureAckMs < g_LastFrameMs)
+            OnSessionReset();
+        g_LastFrameMs = frameNow;
         if (!in.inGame)
         {
             if (g_Negotiation.Active() || g_ServerFeatures) OnSessionReset();
@@ -922,7 +933,7 @@ namespace OpusVoiceClient
 
         ClientNegotiation::Inputs n;
         n.enabled = s.enabled;
-        n.serverFeature = (in.serverFeatures & 0x2000u) != 0u;   // l4d2vr_features::OpusVoice
+        n.serverFeature = g_FeaturesValid && (in.serverFeatures & 0x2000u) != 0u;   // l4d2vr_features::OpusVoice
         n.transmit = ToneHz(s) > 0.0 || !g_CaptureFailed.load();
         n.loopback = LoopbackWanted(s);
         n.nowMs = NowMs();

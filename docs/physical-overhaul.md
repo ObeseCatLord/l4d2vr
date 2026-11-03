@@ -253,13 +253,17 @@ The raw ratios run from 1.4 to 15 (air) and 1.9 to 30 (movement) because a snipe
 - Your torso turns after your head (yours, and the same rule for other VR players' bodies): inside `FirstPersonBodyYawDeadbandDeg` (30) only the head turns; past it the torso follows smoothly (`FirstPersonBodyYawFollowSeconds`, 0.3 s) until the head is centred again; it never lags more than `WorldModelVRPoseBodyYawDeadzoneDeg` (60); a hand held far out to the side (more than ~70 degrees off the chest's facing and more than 30 cm out) turns it at once, so the shoulders stay under the head. Holster reaches and reaching behind the back never turn it. Stick or mouse turning turns the body immediately.
 - Audio keeps playing when the window isn't focused (`BackgroundAudio`).
 
+## Voice chat
+
+2.0.5: players who have the mod talk to each other with 48 kHz Opus voice (instead of the game's grainy 11 kHz voice) on servers with the 2.0.5 plugin or a modded listen host, heard from where each talker stands; everyone else keeps the game's voice. Push to talk with the game's voice key, `VoiceRecordCombo` or the new VoicePushToTalk button (Touch-style controllers: left menu button; Index: right trackpad press); voice activation is optional (`OpusVoiceMode=vad`). Settings, quality and protocol: [voice-chat.md](voice-chat.md).
+
 ## Dedicated server plugin
 
 Build `l4d2vr_server.so` (Linux, 32-bit) with `L4D2VR/server/build_release_linux.sh`, or `l4d2vr_server.dll` on Windows. It replaces `l4d2vr_pose_server`; never load both, or poses are relayed twice.
 
 1. Stop the server. Move any old `l4d2vr_pose_server` files out of `left4dead2/addons`.
 2. Copy `l4d2vr_server.so` (or `.dll`) and `l4d2vr_server.vdf` into `left4dead2/addons/`. Optionally copy `l4d2vr_server_config.example.txt` there as `l4d2vr_server_config.txt`.
-3. Start the server. After the map loads, the log shows `L4D2VR server: map: ... features=0x1FFF` (0x800 is the Pavlov shotgun pattern, which needs the `SharedRandomFloat` hook; 0x1000 is the physical dual-pistol reload). Plugins built before the dual reload show `0xFFF`; with them the dual reload uses the stock reload. A `target X rejected` line names a feature that a game update broke; only that feature turns off.
+3. Start the server. After the map loads, the log shows `L4D2VR server: map: ... features=0x3FFF` (0x2000 is the Opus voice relay, [voice-chat.md](voice-chat.md); plugins before 2.0.5 show `0x1FFF`) (0x800 is the Pavlov shotgun pattern, which needs the `SharedRandomFloat` hook; 0x1000 is the physical dual-pistol reload). Plugins built before the dual reload show `0xFFF`; with them the dual reload uses the stock reload. A `target X rejected` line names a feature that a game update broke; only that feature turns off.
 
 Before trusting a new game build, run `l4d2vr_server_symcheck <path to server_srv.so>` (built by `run_server_tests.sh`).
 

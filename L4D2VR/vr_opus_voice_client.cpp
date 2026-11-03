@@ -65,7 +65,7 @@ namespace
     Settings g_Settings;                               // g_Mutex
     std::array<Speaker, kMaxPlayers + 1> g_Speakers;   // g_Mutex for the shared fields
     std::deque<std::string> g_Outgoing;                // g_Mutex
-    Stats g_Stats;                                     // g_Mutex
+    OpusVoiceClient::Stats g_Stats;                    // g_Mutex
     std::vector<std::int16_t> g_LoopbackPcm;           // g_Mutex
 
     // Game thread only.
@@ -822,7 +822,7 @@ namespace OpusVoiceClient
         const Settings s = SettingsSnapshot();
         if (!s.enabled) return;
         if (player == g_LocalPlayer.load() && !LoopbackWanted(s)) return;
-        Frame f;
+        l4d2vr_voice::Frame f;
         std::lock_guard<std::mutex> lock(g_Mutex);
         if (!DecodeFrameText(text, f)) { ++g_Stats.framesRejected; return; }
         Speaker& sp = g_Speakers[static_cast<std::size_t>(player)];

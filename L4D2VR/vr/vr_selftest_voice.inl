@@ -9,8 +9,8 @@
 //       button ends the talkspurt and stops sending, and that voice activation
 //       opens and closes on a pulsed tone. cfg=OpusVoiceTestDump=<prefix> also
 //       writes the decoded audio (<prefix>-speaker-<n>.s16, <prefix>-mix.s16).
-//   opusvoicefallback  On a server without OpusVoice: holding push-to-talk
-//       sends no Opus frames and the game's own voice path is left alone.
+//   opusvoicefallback  On a server without OpusVoice, or with
+//       cfg=OpusVoiceEnabled=false: holding push-to-talk sends no Opus frames.
 //   opusvoicestock     After opusvoice (this client is an Opus talker): the
 //       game's own voice, looped back by the server (voice_loopback 1, input
 //       from voice_input.wav), must be dropped by the stock voice filter.
@@ -87,8 +87,10 @@ bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             std::snprintf(detail, sizeof(detail), "server features 0x%X (OpusVoice %d) active=%d sent=%u received=%u",
                 features, (features & l4d2vr_features::OpusVoice) ? 1 : 0, s.active ? 1 : 0,
                 s.framesSent - s_Base.framesSent, s.framesReceived - s_Base.framesReceived);
-            SelfTestReport("opus voice stays off without the server feature",
-                !(features & l4d2vr_features::OpusVoice) && !s.active && s.framesSent == s_Base.framesSent, detail);
+            // Off on plain servers, and with OpusVoiceEnabled=false on any server.
+            const bool enabled = OpusVoiceClient::CurrentSettings().enabled;
+            SelfTestReport(enabled ? "opus voice stays off without the server feature" : "opus voice stays off when disabled",
+                (!(features & l4d2vr_features::OpusVoice) || !enabled) && !s.active && s.framesSent == s_Base.framesSent, detail);
             restore();
             return true;
         }

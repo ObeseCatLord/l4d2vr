@@ -1862,8 +1862,21 @@ void VR::ProcessInput()
             UpdateChestSling(localPlayer, ready, frameValid ? &frame : nullptr, drawableMask, m_WeaponGripPhysicalDown,
                 grab.selectSlot >= 0 || grab.holsterTo >= 0 || grab.putAwaySlot >= 0 ||
                     grabInput.handZone != l4d2vr_holster::Zone::None);
-            m_HolsterHighlightSlot.store(grabInput.handZone != l4d2vr_holster::Zone::None
-                ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1, std::memory_order_release);
+            {
+                // Glow: the item the hand would draw, or the stowed item it would
+                // take back (either hand).
+                int highlight = grabInput.handZone != l4d2vr_holster::Zone::None
+                    ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1;
+                if (highlight < 0 && activeStowed && frameValid)
+                {
+                    const std::uint32_t mask = drawableMask | (1u << activeSlot);
+                    const auto stowedZone = static_cast<l4d2vr_holster::Zone>(activeSlot);
+                    if (l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, mask) == stowedZone ||
+                        l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, mask) == stowedZone)
+                        highlight = activeSlot;
+                }
+                m_HolsterHighlightSlot.store(highlight, std::memory_order_release);
+            }
             {
                 // Hover pulse whenever the hand enters any holster: full strength
                 // where there is something to take (or the held item's own holster),

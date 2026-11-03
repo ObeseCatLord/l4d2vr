@@ -1647,7 +1647,7 @@ public:
     bool m_HolsterPavlovLayoutEnabled = true;
     bool m_HolsterItemsVisible = true;
     bool m_HolsterInstantDraw = true;
-    float m_HolsterYawFollowSpeed = 20.0f;
+    float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the head yaw every frame (Forefront)
     float m_HolsterHeightScale = 1.0f;
     float m_HolsterHighlightBrightness = 1.6f;
     float m_HolsterHoverHapticAmplitude = 0.4f;
@@ -1690,15 +1690,27 @@ public:
     void UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot);
     bool GetHolsterRenderSnapshot(HolsterRenderSnapshot& out) const;
     bool BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::ItemPose& pose) const;
-    // Chest sling (vr_chest_sling.h, vr/vr_chest_sling.inl).
+    // Chest sling and empty hands (vr_chest_sling.h, vr/vr_chest_sling.inl).
+    // "Stowed": the active weapon is on the body (the sling, or its own
+    // holster with HolsterEmptyHands) and both hands are empty. L4D2 keeps it
+    // the active weapon (hidden, cannot fire); a hand that takes it back from
+    // its holster or sling holds it again.
     bool m_ChestSlingEnabled = true;
+    bool m_HolsterEmptyHands = true;
     float m_ChestSlingDropDistanceMeters = 0.6f;
     float m_ChestSlingGrabRadiusMeters = 0.15f;
-    std::atomic<uintptr_t> m_ChestSlungWeapon{ 0u };     // the active weapon while it hangs on the sling
+    std::atomic<uintptr_t> m_ChestSlungWeapon{ 0u };     // the active weapon while it is stowed (sling or holster)
+    std::atomic<int> m_StowedSlot{ 0 };                  // its slot (0 = slot1, the sling)
+    std::atomic<uint32_t> m_HolsterStowCount{ 0u };      // items put away into an empty hand (self-tests)
+    std::atomic<uint32_t> m_HolsterUnstowCount{ 0u };    // stowed items taken back by a hand
     std::atomic<uint32_t> m_ChestSlingTakeSerial{ 0u };  // a hand took the slung gun (the grip owns it)
     std::atomic<uint32_t> m_ChestSlingHangCount{ 0u };
     std::atomic<uint32_t> m_ChestSlingTakeCount{ 0u };
+    // True while the active weapon is stowed (both hands empty).
     bool ChestSlingActive() const { return m_ChestSlungWeapon.load(std::memory_order_acquire) != 0u; }
+    int StowedSlot() const { return ChestSlingActive() ? m_StowedSlot.load(std::memory_order_acquire) : -1; }
+    // Puts the active weapon (slot 0..4) away into its holster: hands empty.
+    void StowActiveWeapon(uintptr_t weaponTag, int slot, const char* why);
     bool BuildChestSlingPose(const l4d2vr_holster::BodyFrame& frame, l4d2vr_holster::ItemPose& pose,
         Vector* handle = nullptr, Vector* foregrip = nullptr) const;
     bool GetChestSlingPoint(Vector& handle, Vector& foregrip) const;
@@ -1707,6 +1719,9 @@ public:
     // CreateMove: the grip let go of the held item where it would drop. True
     // when the sling caught it (nothing is sent to the server).
     bool ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId);
+    // Forefront: a sidearm or melee weapon let go near the body goes back to
+    // its hip holster (HolsterEmptyHands). True when it was stowed.
+    bool HolsterCatchRelease(uintptr_t weaponTag, int weaponId);
 	struct ManualThrowUsercmdPoseSnapshot
 	{
 		bool valid = false;

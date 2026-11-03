@@ -511,17 +511,21 @@ HolsterInstantDraw=true
 // The hand that takes an item holds and uses it (left draw = left aim and trigger); squeeze the item with the free hand to hand it over.
 AmbidextrousItemHands=true
 ItemHandOffRadiusMeters=0.14
-// Chest sling: letting go of a long gun near your body hangs it on your chest (both hands free); grab its handle or foregrip with either hand to take it.
+// Chest sling (Forefront): your long gun hangs across your chest, grip on the dominant side; letting go of it near your body hangs it there (both hands free); grab it with either hand to take it.
 ChestSlingEnabled=true
-// Letting go of a long gun with the hand farther than this from the sling (arm stretched out) drops it instead.
+// Empty hands (Forefront / Pavlov): putting an item away in its holster, or letting go of a pistol or melee weapon near your body, leaves your hand empty; it stays on your body until a hand takes it back.
+HolsterEmptyHands=true
+// Letting go of a long gun or sidearm with the hand farther than this from its sling or holster (arm stretched out) drops it instead.
 ChestSlingDropDistanceMeters=0.6
 // How close a squeezing hand must be to the slung gun's handle or foregrip to take it.
 ChestSlingGrabRadiusMeters=0.15
 // Point a controller at a menu panel to move the cursor; the trigger clicks (for runtimes such as XRizer without the SteamVR laser mouse).
 MenuLaserPointerEnabled=true
-# Holsters are placed like Pavlov VR's inventory (root 75 cm below the head,
-# hip capsules, back sphere, chest pockets); their facing follows your head at this speed.
-HolsterYawFollowSpeed=20
+# Holsters are placed like Forefront's equipment (60 cm straight below the head: rifle sling across
+# the chest, pistol/melee on the dominant hip, grenade on the upper chest, pills on the other hip,
+# magazines on the off-hand upper chest; medkit/defib stays on the back). Their facing follows your
+# head yaw: 0 = every frame (Forefront), higher = smoothed at this speed (Pavlov: 20).
+HolsterYawFollowSpeed=0
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4
 HolsterGrabHapticAmplitude=0.6

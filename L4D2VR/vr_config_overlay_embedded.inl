@@ -10563,6 +10563,106 @@ FlashlightEnhancementEnabled=false
         }
     }
 
+    // Test hook (desktop mode has no self-test): L4D2VR_DESKTOP_TEST="dump=<name>;click=<u>,<v>;wheel=<n>;..."
+    // runs one action every 1.5 s once the window shows: dump saves the window's client area as
+    // l4d2vr_selftest_desktop_<name>.bmp in the game folder, click is a left click at (u, v) of the
+    // panel, wheel scrolls n notches (negative = up).
+    static void CfgDesktopSaveClientBmp(HWND hwnd, const std::string& name)
+    {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int w = rc.right - rc.left, h = rc.bottom - rc.top;
+        if (w <= 0 || h <= 0)
+            return;
+        HDC wdc = GetDC(hwnd);
+        HDC mdc = CreateCompatibleDC(wdc);
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -h;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HBITMAP bmp = CreateDIBSection(mdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HGDIOBJ old = SelectObject(mdc, bmp);
+        BitBlt(mdc, 0, 0, w, h, wdc, 0, 0, SRCCOPY);
+        SelectObject(mdc, old);
+        if (bits)
+        {
+            const std::string path = "l4d2vr_selftest_desktop_" + name + ".bmp";
+            std::ofstream out(path, std::ios::binary);
+            BITMAPFILEHEADER fh{};
+            fh.bfType = 0x4D42;
+            fh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+            fh.bfSize = fh.bfOffBits + static_cast<DWORD>(w * h * 4);
+            out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
+            out.write(reinterpret_cast<const char*>(&bmi.bmiHeader), sizeof(BITMAPINFOHEADER));
+            out.write(static_cast<const char*>(bits), static_cast<std::streamsize>(w) * h * 4);
+            Game::logMsg("[VR][Options] desktop test: saved %s (%dx%d)", path.c_str(), w, h);
+        }
+        DeleteObject(bmp);
+        DeleteDC(mdc);
+        ReleaseDC(hwnd, wdc);
+    }
+
+    static void CfgDesktopTestStep(CfgOverlayState& s)
+    {
+        static std::vector<std::string> steps;
+        static bool parsed = false;
+        static size_t next = 0;
+        static uint64_t lastMs = 0;
+        if (!parsed)
+        {
+            parsed = true;
+            char buf[2048] = {};
+            if (GetEnvironmentVariableA("L4D2VR_DESKTOP_TEST", buf, sizeof(buf)) > 0)
+            {
+                std::string all = buf;
+                size_t start = 0;
+                while (start < all.size())
+                {
+                    const size_t semi = all.find(';', start);
+                    steps.push_back(all.substr(start, semi == std::string::npos ? std::string::npos : semi - start));
+                    if (semi == std::string::npos)
+                        break;
+                    start = semi + 1;
+                }
+                Game::logMsg("[VR][Options] desktop test: %zu actions", steps.size());
+            }
+        }
+        if (next >= steps.size() || !s.desktopWnd || !s.desktopWndShown)
+            return;
+        const uint64_t now = GetTickCount64();
+        if (lastMs != 0 && now - lastMs < 1500u)
+            return;
+        lastMs = now;
+        const std::string a = steps[next++];
+        RECT rc{};
+        GetClientRect(s.desktopWnd, &rc);
+        if (a.rfind("dump=", 0) == 0)
+            CfgDesktopSaveClientBmp(s.desktopWnd, a.substr(5));
+        else if (a.rfind("click=", 0) == 0)
+        {
+            float u = 0.0f, v = 0.0f;
+            if (std::sscanf(a.c_str() + 6, "%f,%f", &u, &v) == 2)
+            {
+                const LPARAM lp = MAKELPARAM(static_cast<int>(u * rc.right), static_cast<int>(v * rc.bottom));
+                SendMessageW(s.desktopWnd, WM_MOUSEMOVE, 0, lp);
+                SendMessageW(s.desktopWnd, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+                SendMessageW(s.desktopWnd, WM_LBUTTONUP, 0, lp);
+                Game::logMsg("[VR][Options] desktop test: click %.3f,%.3f -> %s", u, v, s.status.c_str());
+            }
+        }
+        else if (a.rfind("wheel=", 0) == 0)
+        {
+            const int n = std::atoi(a.c_str() + 6);
+            for (int i = 0; i < std::abs(n); ++i)
+                SendMessageW(s.desktopWnd, WM_MOUSEWHEEL, MAKEWPARAM(0, n < 0 ? WHEEL_DELTA : -WHEEL_DELTA), 0);
+            Game::logMsg("[VR][Options] desktop test: wheel %d -> scroll %d", n, s.optScroll);
+        }
+    }
+
     static void CfgDesktopHostUpdate(CfgOverlayState& s)
     {
         g_CfgDesktopState = &s;
@@ -10631,7 +10731,9 @@ FlashlightEnhancementEnabled=false
             {
                 CfgRender(s);
                 InvalidateRect(s.desktopWnd, nullptr, FALSE);
+                UpdateWindow(s.desktopWnd);
             }
+            CfgDesktopTestStep(s);
         }
     }
 

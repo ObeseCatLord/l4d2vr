@@ -3341,6 +3341,14 @@ void VR::ParseConfigFile()
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
     m_AmbidextrousItemHands = getBool("AmbidextrousItemHands", true);
+    // Opus voice chat: one parser for the VR config and desktop mode (vr_opus_voice.h).
+    m_OpusVoiceSettings = l4d2vr_voice::ParseSettings([&](const char* key, std::string& value) {
+        auto it = findConfig(key);
+        if (it == userConfig.end()) return false;
+        value = it->second;
+        return true;
+    });
+    OpusVoiceClient::ApplySettings(m_OpusVoiceSettings);
     m_ChestSlingEnabled = getBool("ChestSlingEnabled", true);
     m_ChestSlingDropDistanceMeters = std::clamp(getFloat("ChestSlingDropDistanceMeters", 0.6f), 0.3f, 2.0f);
     m_ChestSlingGrabRadiusMeters = std::clamp(getFloat("ChestSlingGrabRadiusMeters", 0.15f), 0.05f, 0.35f);

@@ -2094,6 +2094,7 @@ void __fastcall Hooks::dServerGameClientsClientCommand(
     if (m_Game && m_Game->HandlePistolAmmoCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandlePistolMagazineCommand(player, sourceCommand)) return;
     if (m_Game && m_Game->HandleShotgunPatternCommand(player, sourceCommand)) return;
+    if (m_Game && m_Game->HandleBuiltinVoiceCommand(player, sourceCommand)) return;
 	if (m_Game &&
 		m_Game->HandleBuiltinVRPoseRelayCommand(
 			player,

@@ -152,6 +152,32 @@ static void TestRejectsAsymmetricOrUnpairedRigs()
     CHECK(BuildRemap(few.names, few.rest, remap, 1));
 }
 
+static void TestUnpairedHelperFollowsParent()
+{
+    Rig rig = MakeRig();
+    // A left-only helper under the left forearm (index 8).
+    rig.names.push_back("ValveBiped.hlp_ulna02_L");
+    const Mat34 helperLocal = Frame(5, 0, 0, 4, 0, 0);
+    rig.rest.push_back(Mul(rig.rest[8], helperLocal));
+    std::vector<int> parents(rig.names.size(), 0);
+    parents[8] = 7;
+    parents.back() = 8;
+    Remap remap;
+    CHECK(BuildRemap(rig.names, rig.rest, remap, 3, 0.75f, &parents));
+    const size_t n = rig.names.size();
+    CHECK(remap.counterpart[n - 1] == static_cast<int>(n - 1));
+    CHECK(remap.followParent[n - 1] == 8);
+    Mat34 m{};
+    const float p[3] = { 0, 0, 0 }, nrm[3] = { 0, 1, 0 };
+    CHECK(Reflection(p, nrm, m));
+    std::vector<Mat34> mirrored(n), out(n);
+    for (size_t b = 0; b < n; ++b)
+        mirrored[b] = Mul(m, Frame(10.0f * b, 3, 0, 1.0f * b, 2, 3));
+    Apply(remap, mirrored.data(), out.data(), static_cast<int>(n));
+    CHECK(NearMat(out[n - 1], Mul(out[8], helperLocal)));
+    CHECK(Near(Determinant(out[n - 1]), 1.0f));
+}
+
 static void TestComposeModelSpace()
 {
     const std::vector<Mat34> local = { Frame(90, 0, 0, 1, 0, 0), Frame(0, 0, 0, 2, 0, 0) };
@@ -165,6 +191,7 @@ int main()
     TestBindPoseLandsOnCounterpart();
     TestPosedRightArmBecomesLeftArm();
     TestRejectsAsymmetricOrUnpairedRigs();
+    TestUnpairedHelperFollowsParent();
     TestComposeModelSpace();
     if (g_failures == 0)
         std::printf("vr_left_hand_remap: all tests passed\n");

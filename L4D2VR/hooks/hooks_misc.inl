@@ -19531,11 +19531,18 @@ namespace
                     std::memcpy(&local[static_cast<size_t>(b)], &rest, sizeof(rest));
                 }
                 if (restOk)
-                    l4d2vr_left_hand::BuildRemap(names, l4d2vr_left_hand::ComposeModelSpace(local, parents), entry.remap);
+                    l4d2vr_left_hand::BuildRemap(names, l4d2vr_left_hand::ComposeModelSpace(local, parents), entry.remap,
+                        3, 0.75f, &parents);
             }
-            Game::logMsg("[VR][LeftHand] %s left arm model for %s (%d bones, %d left/right pairs)",
+            std::string unpaired;
+            for (int b = 0; b < numBones && b < static_cast<int>(names.size()) &&
+                b < static_cast<int>(entry.remap.counterpart.size()); ++b)
+                if (l4d2vr_left_hand::SideOfName(names[static_cast<size_t>(b)]) != 0 &&
+                    entry.remap.counterpart[static_cast<size_t>(b)] == b)
+                    unpaired += " " + names[static_cast<size_t>(b)];
+            Game::logMsg("[VR][LeftHand] %s left arm model for %s (%d bones, %d left/right pairs; unpaired:%s)",
                 entry.remap.valid ? "using the real" : "no symmetric skeleton; mirrored right arm kept",
-                lowerModel.c_str(), numBones, entry.remap.pairs);
+                lowerModel.c_str(), numBones, entry.remap.pairs, unpaired.empty() ? " none" : unpaired.c_str());
         }
         if (!entry.remap.valid)
             return false;

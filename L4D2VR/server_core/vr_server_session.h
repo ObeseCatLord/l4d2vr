@@ -15,6 +15,7 @@
 #include "../vr_pose_protocol_v3.h"
 #include "vr_server_protocol.h"
 #include "vr_server_transactions.h"
+#include "vr_server_voice.h"
 
 namespace l4d2vr_server
 {
@@ -31,6 +32,10 @@ namespace l4d2vr_server
         // Sender view yaw (degrees) for v3 -> v2 downconversion.
         virtual bool ViewYaw(int playerIndex, float& yaw) const = 0;
         virtual void Log(const char* line) = 0;
+        // Opus voice: may `receiver` hear `sender` (1-based)? The game's own
+        // voice rules (IVoiceServer::GetClientListening); hosts without one
+        // let everyone hear everyone.
+        virtual bool VoiceCanHear(int receiver, int sender) const { (void)receiver; (void)sender; return true; }
     protected:
         ~SessionHost() = default;
     };
@@ -78,12 +83,17 @@ namespace l4d2vr_server
 
         explicit Session(SessionHost& host) : m_Host(host) {}
 
-        void SetCapabilities(const SessionCapabilities& caps) { m_Caps = caps; }
+        void SetCapabilities(const SessionCapabilities& caps)
+        {
+            m_Caps = caps;
+            m_Voice.SetEnabled((caps.features & kFeatureOpusVoice) != 0u);
+        }
         const SessionCapabilities& Capabilities() const { return m_Caps; }
         void SeedTokens(std::uint32_t seed) { m_NextToken = seed | 1u; }
         void SetClientMax(int clientMax)
         {
             m_ClientMax = (clientMax >= 1 && clientMax <= kMaxPlayerSlots) ? clientMax : kMaxPlayerSlots;
+            m_Voice.SetClientMax(m_ClientMax);
         }
         int ClientMax() const { return m_ClientMax; }
         bool IsValidPlayerIndex(int index) const
@@ -94,6 +104,7 @@ namespace l4d2vr_server
         void ResetAll()
         {
             for (SessionClient& c : m_Clients) c = SessionClient{};
+            m_Voice.ResetAll();
         }
 
         void ResetClient(int index, const void* entity)
@@ -101,7 +112,10 @@ namespace l4d2vr_server
             if (!IsValidPlayerIndex(index)) return;
             m_Clients[static_cast<std::size_t>(index)] = SessionClient{};
             m_Clients[static_cast<std::size_t>(index)].entity = entity;
+            m_Voice.Reset(m_VoiceHost, index);
         }
+
+        const l4d2vr_voice_server::Relay& Voice() const { return m_Voice; }
 
         const SessionClient* Client(int index) const
         {
@@ -185,12 +199,14 @@ namespace l4d2vr_server
             const bool isMag = std::strcmp(name, kMagActionCommand) == 0;
             const bool isPattern = std::strcmp(name, kShotgunPatternCommand) == 0;
             const bool isDual = std::strcmp(name, l4d2vr_dual_reload::kRequestCommand) == 0;
-            if (!isHello && !isUpload && !isFeatureHello && !isShell && !isMag && !isPattern && !isDual)
+            const bool isVoice = l4d2vr_voice_server::Relay::IsVoiceCommand(name);
+            if (!isHello && !isUpload && !isFeatureHello && !isShell && !isMag && !isPattern && !isDual && !isVoice)
                 return CommandResult::Continue;
             if (!IsValidPlayerIndex(index)) return CommandResult::Stop;
 
             SessionClient& c = m_Clients[static_cast<std::size_t>(index)];
             if (c.entity != entity) ResetClient(index, entity);
+            if (isVoice) { m_Voice.ClientCommand(m_VoiceHost, index, argc, argv); return CommandResult::Stop; }
 
             if (isHello) { HandleHello(index, argc, argv); return CommandResult::Stop; }
             if (isUpload) { HandleUpload(index, argc, argv); return CommandResult::Stop; }
@@ -215,6 +231,27 @@ namespace l4d2vr_server
         }
 
     private:
+        // The voice relay addresses clients by slot through this session.
+        class VoiceHost final : public l4d2vr_voice_server::RelayHost
+        {
+        public:
+            explicit VoiceHost(Session& session) : m_Session(session) {}
+            bool Connected(int index) const override
+            {
+                const SessionClient* c = m_Session.Client(index);
+                return c && c->entity;
+            }
+            void Send(int index, const char* text) override
+            {
+                const SessionClient* c = m_Session.Client(index);
+                if (c) m_Session.Send(*c, text);
+            }
+            bool CanHear(int receiver, int sender) const override { return m_Session.m_Host.VoiceCanHear(receiver, sender); }
+            std::uint64_t NowMs() const override { return m_Session.m_Host.NowMs(); }
+        private:
+            Session& m_Session;
+        };
+
         void Send(const SessionClient& c, const char* text)
         {
             if (c.entity && text && *text) m_Host.SendToClient(c.entity, text);
@@ -440,6 +477,8 @@ namespace l4d2vr_server
         }
 
         SessionHost& m_Host;
+        VoiceHost m_VoiceHost{ *this };
+        l4d2vr_voice_server::Relay m_Voice{};
         SessionCapabilities m_Caps{};
         std::array<SessionClient, kMaxPlayerSlots + 1> m_Clients{};
         int m_ClientMax = kMaxPlayerSlots;

@@ -33,6 +33,8 @@ namespace
         std::uint64_t NowUs() const override { return us; }
         bool ViewYaw(int, float& out) const override { out = yaw; return haveYaw; }
         void Log(const char*) override {}
+        bool deaf[kMaxPlayerSlots + 1][kMaxPlayerSlots + 1]{};   // [receiver][sender]
+        bool VoiceCanHear(int receiver, int sender) const override { return !deaf[receiver][sender]; }
         void Advance(std::uint64_t milliseconds) { ms += milliseconds; us += milliseconds * 1000u; }
         std::vector<std::string> To(const void* entity) const
         {
@@ -247,7 +249,7 @@ namespace
         Check(bundle[1] == "l4d2vr_interaction_ack 1\n");
         Check(bundle[2] == "l4d2vr_shell_capability 1 41\n");
         Check(bundle[3] == "l4d2vr_mag_capability 3 42\n");
-        Check(bundle[4] == "l4d2vr_feature_ack 1fff 1\n");
+        Check(bundle[4] == "l4d2vr_feature_ack 3fff 1\n");
         Check(s.EffectiveFeatures(2) == kFeatureAllMask);
         // The client answers server_ack with another hello: no duplicate bundle.
         host.sent.clear();
@@ -440,12 +442,62 @@ namespace
     }
 }
 
+// Opus voice through the session: gated by OpusVoice, slot-addressed, game
+// voice rules from the host, slots reset on reconnect.
+void TestVoice()
+{
+    namespace voice = l4d2vr_voice;
+    FakeHost host;
+    Session s(host);
+    SessionCapabilities caps{};
+    caps.usercmdDecoder = true;
+    caps.features = kFeatureAllMask & ~kFeatureOpusVoice;
+    s.SetCapabilities(caps);
+    s.SetClientMax(4);
+    int a = 0, b = 0, c = 0;
+    s.ClientPutInServer(1, &a);
+    s.ClientPutInServer(2, &b);
+    s.ClientPutInServer(3, &c);
+    host.sent.clear();
+    // Feature off: consumed (never reaches the game DLL), nothing answered.
+    Check(Dispatch(s, 1, &a, { "l4d2vr_voice_hello", "1", "3" }) == CommandResult::Stop);
+    Check(host.sent.empty());
+    caps.features = kFeatureAllMask;
+    s.SetCapabilities(caps);
+    Check(Dispatch(s, 1, &a, { "l4d2vr_voice_hello", "1", "3" }) == CommandResult::Stop);
+    Check(host.To(&a) == (std::vector<std::string>{ "l4d2vr_voice_ack 1\n", "l4d2vr_voice_peers 1 0\n" }));
+    Dispatch(s, 2, &b, { "l4d2vr_voice_hello", "1", "1" });
+    Dispatch(s, 3, &c, { "l4d2vr_voice_hello", "1", "1" });
+    host.deaf[3][1] = true;   // e.g. the other team in versus
+    voice::Frame f;
+    f.sequence = 7; f.talkspurt = 1; f.flags = voice::kFlagStart; f.size = 3;
+    f.data[0] = 1; f.data[1] = 2; f.data[2] = 3;
+    char text[voice::kMaxFrameTextChars + 1] = {};
+    Check(voice::EncodeFrameText(f, text, sizeof(text)));
+    host.sent.clear();
+    Check(Dispatch(s, 1, &a, { "l4d2vr_voice_up", text }) == CommandResult::Stop);
+    Check(host.To(&b) == std::vector<std::string>{ std::string("l4d2vr_voice_rx 1 ") + text + "\n" });
+    Check(host.To(&a).empty() && host.To(&c).empty());
+    Check(s.Voice().RelayedTotal() == 1u && s.Voice().DeliveredTotal() == 1u);
+    // The talker reconnects into the slot: the others learn it no longer sends Opus.
+    host.sent.clear();
+    int a2 = 0;
+    s.ClientPutInServer(1, &a2);
+    Check(host.To(&b) == std::vector<std::string>{ "l4d2vr_voice_peers 0 0\n" });
+    Check(Dispatch(s, 1, &a2, { "l4d2vr_voice_up", text }) == CommandResult::Stop);
+    Check(host.To(&b).size() == 1u);   // not opted in again yet
+    // A level change forgets everyone.
+    s.ResetAll();
+    Check(!s.Voice().Client(2)->hello);
+}
+
 int main()
 {
     TestRelayParity();
     TestBundle();
     TestPoseV3();
     TestTransactions();
+    TestVoice();
     std::printf("vr_server_session_tests: %d checks passed\n", g_Checks);
     return 0;
 }

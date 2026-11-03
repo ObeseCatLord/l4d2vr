@@ -25,7 +25,12 @@ namespace l4d2vr_features
     // Physical dual-pistol reload: one l4d2vr_mag_dual_v1 transaction commits
     // L4D2's dual reload when both magazines seat (vr_dual_reload.h).
     constexpr std::uint32_t DualMagTxn = 0x1000u;
-    constexpr std::uint32_t kKnownMask = 0x1FFFu;
+    // Opus voice chat relayed between mod clients (vr_opus_voice.h); players
+    // and servers without it keep the game's own voice.
+    constexpr std::uint32_t OpusVoice = 0x2000u;
+    constexpr std::uint32_t kKnownMask = 0x3FFFu;
+    // Everything a dedicated plugin built before OpusVoice advertises.
+    constexpr std::uint32_t kPreOpusVoiceMask = 0x1FFFu;
     // Everything a dedicated plugin built before DualMagTxn advertises.
     constexpr std::uint32_t kPreDualMagTxnMask = 0xFFFu;
     // Everything a dedicated plugin built before HandThrow advertises.
@@ -35,7 +40,8 @@ namespace l4d2vr_features
     // ShotgunPattern are added at run time when their server.dll hooks
     // resolved: Hooks::ListenHostFeatureMask).
     constexpr std::uint32_t kListenHostMask =
-        MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | PoseV3 | DualMagTxn;
+        MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | PoseV3 | DualMagTxn |
+        OpusVoice;
 
     inline bool ParseMask(const char* text, std::uint32_t& mask)
     {

@@ -163,6 +163,18 @@ public:
     virtual void OnEdictFreed(const edict_t* edict) = 0;
 };
 
+// engine_srv.so "VoiceServer002" (CVoiceServer). It does have a virtual
+// destructor: GCC puts two destructor slots first, so GetClientListening is
+// slot 2 (checked against engine_srv.so's vtable for CVoiceServer).
+class IVoiceServer
+{
+public:
+    virtual ~IVoiceServer() {}
+    virtual bool GetClientListening(int receiver, int sender) = 0;   // 1-based entity indices
+    virtual bool SetClientListening(int receiver, int sender, bool listen) = 0;
+    virtual bool SetClientProximity(int receiver, int sender, bool proximity) = 0;
+};
+
 // CUserCmd as laid out by server_srv.so's ReadUsercmd (vptr + fields, 0x58).
 struct CUserCmdLinux
 {
@@ -530,6 +542,7 @@ namespace
         g_HookGunReload, g_HookShotgunReload;
 
     IVEngineServer* g_Engine = nullptr;
+    IVoiceServer* g_VoiceServer = nullptr;   // optional (Opus voice listening rules)
     ServerConfig g_Config{};
     l4d2vr_linux::FeatureResolution g_Resolved{};
     std::uint32_t g_Features = 0u;     // resolved & operator-enabled
@@ -735,6 +748,11 @@ namespace
             return std::isfinite(yaw);
         }
         void Log(const char* line) override { std::fputs(line, stderr); }
+        // Opus voice follows the game's own voice rules (team, alltalk, mutes).
+        bool VoiceCanHear(int receiver, int sender) const override
+        {
+            return !g_VoiceServer || g_VoiceServer->GetClientListening(receiver, sender);
+        }
     };
 
     Host g_Host;
@@ -1529,9 +1547,10 @@ namespace
 
     void InstallAll()
     {
-        // The pose relay (v2 + v3) needs no game hooks and is always available.
+        // The pose relay (v2 + v3) and the Opus voice relay need no game hooks
+        // and are always available.
         g_Resolved = {};
-        g_Resolved.features = kFeaturePoseV3;
+        g_Resolved.features = kFeaturePoseV3 | kFeatureOpusVoice;
         g_Features = g_Resolved.features & g_Config.featureMask;
         g_Module = ServerModule{};
         dl_iterate_phdr(FindModuleCallback, &g_Module);
@@ -1725,7 +1744,7 @@ namespace
     {
         const auto& caps = g_Session.Capabilities();
         std::string names;
-        for (std::uint32_t bit = 1u; bit <= kFeatureHandThrow; bit <<= 1u)
+        for (std::uint32_t bit = 1u; bit <= kFeatureAllMask; bit <<= 1u)
             if (caps.features & bit) { if (!names.empty()) names += ' '; names += FeatureName(bit); }
         Log("%s: usercmd_decoder=%d interaction=%d features=0x%03X [%s]", when, caps.usercmdDecoder ? 1 : 0,
             caps.interaction ? 1 : 0, caps.features, names.c_str());
@@ -1769,10 +1788,15 @@ namespace
             g_EdictList = nullptr;
             g_EdictCount = 0;
             g_Engine = nullptr;
+            g_VoiceServer = nullptr;
             if (interfaceFactory)
             {
                 int code = IFACE_FAILED;
                 g_Engine = static_cast<IVEngineServer*>(interfaceFactory("VEngineServer022", &code));
+                code = IFACE_FAILED;
+                g_VoiceServer = static_cast<IVoiceServer*>(interfaceFactory("VoiceServer002", &code));
+                if (!g_VoiceServer)
+                    Log("VoiceServer002 unavailable; Opus voice reaches every opted-in player");
             }
             if (!g_Engine)
             {

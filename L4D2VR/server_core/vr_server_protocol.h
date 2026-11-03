@@ -29,6 +29,8 @@
 //                                reload, vr_dual_reload.h).
 //   l4d2vr_feature_ack <hexmask> 1      resolved feature bits, lowercase hex
 //                                without a 0x prefix.
+// With OpusVoice (0x2000) clients may then opt into the Opus voice relay
+// (l4d2vr_voice_hello/_ack/_up/_rx/_peers, vr_opus_voice.h).
 //
 // Usercmd intents carried in CUserCmd::impulse by VR clients:
 //   234 grip pickup (with IN_USE), 235 grip release, 236 block native reload
@@ -64,8 +66,9 @@ namespace l4d2vr_server
         kFeatureHandThrow = 0x400u,
         kFeatureShotgunPattern = 0x800u,
         kFeatureDualMagTxn = 0x1000u,
+        kFeatureOpusVoice = 0x2000u,   // Opus voice relay (vr_server_voice.h)
     };
-    constexpr std::uint32_t kFeatureAllMask = 0x1FFFu;
+    constexpr std::uint32_t kFeatureAllMask = 0x3FFFu;
     constexpr unsigned kFeatureAckVersion = 1u;
 
     inline const char* FeatureName(std::uint32_t bit)
@@ -85,6 +88,7 @@ namespace l4d2vr_server
         case kFeatureHandThrow: return "HandThrow";
         case kFeatureShotgunPattern: return "ShotgunPattern";
         case kFeatureDualMagTxn: return "DualMagTxn";
+        case kFeatureOpusVoice: return "OpusVoice";
         default: return "?";
         }
     }

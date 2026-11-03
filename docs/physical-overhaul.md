@@ -240,7 +240,7 @@ The raw ratios run from 1.4 to 15 (air) and 1.9 to 30 (movement) because a snipe
 
 - Loading screens and chapter transitions keep updating in the headset (`LoadingFramePumpEnabled`, `LoadingFramePumpStallMs`).
 - End-of-chapter stats and the scoreboard show the HUD overlay automatically (`IntermissionHudEnabled`).
-- Health is on the left wrist and ammo on the right (`LeftWristHudEnabled`, `RightAmmoHudEnabled`).
+- Health is on the left wrist and ammo on the right (`LeftWristHudEnabled`, `RightAmmoHudEnabled`). 2.0.4 brings them back on OpenXR: they were hidden whenever the runtime reported a controller pose as valid but not "tracked"; they keep the last picture while a menu is open, fall back to the simple panels (`WristHudStyle=custom` look) when the game HUD cannot be captured for 4 s, and the right wrist uses the simple ammo panel when its crop of the game HUD comes out empty (seen with multicore rendering). Both wrists (and `HandHudWorldQuadEnabled`/`AttachToControllers`) are switched on once for existing configs; the simple ammo panel is 0.13 m wide (it shipped at 0.8).
 - Other VR players' bodies follow their head and hands, including physical crouching (`WorldModelVRPoseEnabled`).
 - Debug geometry (magazine and bolt grab boxes, inventory anchor boxes) is off unless you turn on `MagazineBoxDebugEnabled` or `ShowInventoryAnchors`; 2.0.4 turns both off once for existing configs (they shipped on and showed wireframe boxes while two-handing).
 - Audio keeps playing when the window isn't focused (`BackgroundAudio`).

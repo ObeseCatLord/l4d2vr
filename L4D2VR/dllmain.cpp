@@ -3113,6 +3113,8 @@ namespace
         { "2026-11-03_wrist_hud_right_on", "RightAmmoHudEnabled", "true" },
         { "2026-11-03_wrist_hud_world_quads_on", "HandHudWorldQuadEnabled", "true" },
         { "2026-11-03_wrist_hud_attach_on", "HandHudWorldQuadAttachToControllers", "true" },
+        // The simple ammo panel shipped 0.8 m wide (the code default is 0.13).
+        { "2026-11-03_custom_ammo_hud_width", "RightAmmoHudWidthMeters", "0.13", false, "0.8" },
         { "2026-11-03_pavlov_foregrip_box", "VrHandsTwoHandedGripTargetBoxScale", "1.5", false, "1.0" },
     };
 

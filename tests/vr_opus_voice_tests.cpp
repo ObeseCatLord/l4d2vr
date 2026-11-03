@@ -407,6 +407,14 @@ static void TestNegotiation()
     // Old protocol acks are ignored.
     r.OnAck(0);
     Check(!r.Active());
+    // A repeated bundle: one more hello, the session stays active.
+    r.OnAck(1);
+    Check(r.Active());
+    in.nowMs += 100.0;
+    Check(r.Update(in) == -1);
+    r.Refresh();
+    Check(r.Active() && r.Update(in) == int(kHelloReceive));
+    Check(r.Update(in) == -1 && r.Active());
 }
 
 static void TestSpatial()

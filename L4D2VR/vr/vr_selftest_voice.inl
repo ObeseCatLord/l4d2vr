@@ -11,11 +11,14 @@
 //       writes the decoded audio (<prefix>-speaker-<n>.s16, <prefix>-mix.s16).
 //   opusvoicefallback  On a server without OpusVoice: holding push-to-talk
 //       sends no Opus frames and the game's own voice path is left alone.
+//   opusvoicestock     After opusvoice (this client is an Opus talker): the
+//       game's own voice, looped back by the server (voice_loopback 1, input
+//       from voice_input.wav), must be dropped by the stock voice filter.
 
 bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled)
 {
     (void)player;
-    handled = step == "opusvoice" || step == "opusvoicefallback";
+    handled = step == "opusvoice" || step == "opusvoicefallback" || step == "opusvoicestock";
     if (!handled)
         return false;
     bool stageFiredThisFrame = false;
@@ -38,6 +41,32 @@ bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
         OpusVoiceClient::SetSelfTestMode(-1);
         OpusVoiceClient::SetSelfTestTone(0.0, 0.0, 0.0);
     };
+
+    if (step == "opusvoicestock")
+    {
+        auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+        if (at(0, 0.0f))
+        {
+            OpusVoiceClient::SetSelfTestPushToTalk(0);   // Opus silent: only the game's voice runs
+            s_Base = OpusVoiceClient::GetStats();
+            cmd("voice_enable 1; voice_loopback 1; voice_inputfromfile 1; +voicerecord");
+        }
+        if (at(1, 4.0f))
+            cmd("-voicerecord");
+        if (at(2, 5.5f))
+        {
+            const OpusVoiceClient::Stats s = OpusVoiceClient::GetStats();
+            const std::uint32_t dropped = s.stockVoiceDropped - s_Base.stockVoiceDropped;
+            const std::uint32_t passed = s.stockVoicePassed - s_Base.stockVoicePassed;
+            std::snprintf(detail, sizeof(detail), "game voice packets from player %d: dropped %u, passed %u; peers=%llx opus sent %u",
+                local, dropped, passed, static_cast<unsigned long long>(s.peers), s.framesSent - s_Base.framesSent);
+            SelfTestReport("game voice of an Opus talker is dropped", dropped > 0 && passed == 0, detail);
+            cmd("voice_loopback 0; voice_inputfromfile 0");
+            restore();
+            return true;
+        }
+        return false;
+    }
 
     if (step == "opusvoicefallback")
     {

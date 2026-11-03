@@ -86,6 +86,7 @@ namespace
     std::atomic<std::uint64_t> g_Peers{ 0u };
     std::atomic<int> g_LocalPlayer{ 0 };
     std::atomic<std::uint32_t> g_StockDropped{ 0u };
+    std::atomic<std::uint32_t> g_StockPassed{ 0u };
 
     std::thread g_Thread;
     std::atomic<bool> g_ThreadRun{ false };
@@ -686,6 +687,7 @@ namespace
             OpusVoiceClient::NoteStockVoiceDropped();
             return true;   // handled: this talker is heard through Opus
         }
+        g_StockPassed.fetch_add(1u);
         return g_OriginalProcessVoiceData(clientState, message);
     }
 
@@ -781,6 +783,13 @@ namespace OpusVoiceClient
 
     void OnServerFeatures(std::uint32_t mask)
     {
+        // Servers repeat the capability bundle a few times: the same mask on a
+        // running session only re-sends the hello (no device restart).
+        if (mask == g_ServerFeatures && g_Negotiation.Active())
+        {
+            g_Negotiation.Refresh();
+            return;
+        }
         g_ServerFeatures = mask;
         g_Negotiation.Restart();
         g_Active.store(false);
@@ -882,6 +891,7 @@ namespace OpusVoiceClient
         out.transmitAllowed = g_Negotiation.TransmitAllowed();
         out.peers = g_Peers.load();
         out.stockVoiceDropped = g_StockDropped.load();
+        out.stockVoicePassed = g_StockPassed.load();
         out.loopbackSamples = static_cast<std::uint32_t>(loop.size());
         // Skip the first 200 ms (codec and buffer warm-up).
         const std::size_t skip = std::min<std::size_t>(loop.size(), kSampleRate / 5);

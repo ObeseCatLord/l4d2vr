@@ -25,7 +25,7 @@ namespace OpusVoiceClient
         std::uint32_t framesSent = 0, bytesSent = 0, talkspurtsSent = 0;
         std::uint32_t framesReceived = 0, framesRejected = 0;
         std::uint32_t decoded = 0, fec = 0, concealed = 0;
-        std::uint32_t mixedBlocks = 0, stockVoiceDropped = 0;
+        std::uint32_t mixedBlocks = 0, stockVoiceDropped = 0, stockVoicePassed = 0;
         std::uint64_t peers = 0u;
         float inputLevel = 0.0f;      // VAD level (RMS, 16-bit units)
         int lastJitterTargetMs = 0;

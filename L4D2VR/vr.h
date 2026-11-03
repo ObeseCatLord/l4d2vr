@@ -54,6 +54,7 @@
 #include "vr_hand_pose_library.h"
 #include "vr_item_hand.h"
 #include "vr_hand_mirror.h"
+#include "vr_left_hand_remap.h"
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
@@ -465,7 +466,7 @@ public:
 	float m_Fov;
 	// Near clipping distance used while the HMD is close to another character.
 	// Keep this positive: a zero near plane makes the perspective projection invalid.
-	float m_VRNearClip = 0.8f;
+	float m_VRNearClip = 0.3f;
 	// Adaptive mode keeps the normal, depth-stable near plane at ordinary distances
 	// and only publishes m_VRNearClip when the HMD enters a character's bounds.
 	bool m_VRNearClipAdaptive = false;
@@ -804,7 +805,7 @@ public:
 	int m_QueuedRenderPoseWaitMs = 0;
 	// Percentage of repeated-pose render frames allowed to bypass the strict fresh-pose wait and submit.
 	// 0 = fully strict; 100 = submit every repeated pose.
-	int m_QueuedRenderPoseRelaxPercent = 20;
+	int m_QueuedRenderPoseRelaxPercent = 0;
 	// Experimental: in queued full-sync mode, render from a non-blocking tracking prediction instead
 	// of waiting for a fresh WaitGetPoses snapshot.
 	bool m_QueuedRenderPoseFromTracking = false;
@@ -901,7 +902,7 @@ public:
 	bool m_QueuedRenderMaxFpsSmart = true;
 	// Queued rendering: limit how many extra render frames may reuse the same WaitGetPoses() snapshot.
 	// -1 = disabled, 0 = never reuse (most stable), 1 = allow 1 reuse (2 frames per pose), etc.
-	int m_QueuedRenderMaxFramesAhead = -1;
+	int m_QueuedRenderMaxFramesAhead = 1;
 
 	// Queued rendering: render-thread smoothing time constant (ms) for cameraAnchor/rotationOffset.
 	// 0 = off (follow snapshot exactly), 20~80 = typical. Higher = smoother but more latency.
@@ -1012,10 +1013,10 @@ public:
 	// Lets you apply extra correction for render-thread decoupling without affecting single-thread.
 	Vector m_QueuedBulletVisualHitOffset = { 0.0f, 0.0f, 0.02f };
 	// Prefer the visible viewmodel's muzzlesmoke bone/empty for local client bullet/tracer FX.
-	bool m_BulletVisualsUseMuzzleSmoke = false;
+	bool m_BulletVisualsUseMuzzleSmoke = true;
 	// Client-side bullet/tracer FX can be emitted from the viewmodel pose when
 	// the visible gun is projected in Source's viewmodel layer. Visual-only.
-	bool m_BulletVisualsUseViewmodelPose = false;
+	bool m_BulletVisualsUseViewmodelPose = true;
 
 	Vector m_ViewmodelPosAdjust = { 0,0,0 };
 	QAngle m_ViewmodelAngAdjust = { 0,0,0 };
@@ -1047,6 +1048,9 @@ public:
 	// Keep guns rigid in the hand (no native idle sway or fire-animation kick
 	// on the weapon_bone): bullets and the sights follow the hand and recoil.
 	bool m_GunRigidInHand = true;
+	// GunHandOnController: the drawn gun hand sits on the controller like the
+	// empty hand (each gun's idle pose put it elsewhere, up to 17 cm off).
+	bool m_GunHandOnController = true;
 	std::atomic<int> m_ActiveGunWeaponId{ 0 }; // the local player's active weapon id (main thread writes)
 	std::atomic<uint64_t> m_LastLocalShotMs{ 0u };
 	Vector m_SightRearInHand{ 0.0f, 0.0f, 0.0f };
@@ -1332,16 +1336,16 @@ public:
 	};
 	static constexpr size_t kObjectPullUsercmdSnapshotCount = 150;
 	std::array<ObjectPullUsercmdSnapshot, kObjectPullUsercmdSnapshotCount> m_ObjectPullUsercmdSnapshots{};
-	bool m_ObjectPullEnabled = false;
+	bool m_ObjectPullEnabled = true;
 	bool m_ObjectPullVisualsEnabled = true;
 	float m_ObjectPullMaxDistanceMeters = 12.0f;
 	float m_ObjectPullMinimumDistanceMeters = 0.25f;
 	float m_ObjectPullTargetAssistRadiusMeters = 0.15f;
-	float m_ObjectPullGestureDistanceMeters = 0.08f;
+	float m_ObjectPullGestureDistanceMeters = 0.16f;
 	float m_ObjectPullCatchDistanceMeters = 0.70f;
-	float m_ObjectPullSpeedMetersPerSecond = 12.0f;
+	float m_ObjectPullSpeedMetersPerSecond = 3.0f;
 	Vector m_ObjectPullCatchOffsetMeters = { 0.32f, 0.0f, -0.08f };
-	bool m_ObjectPullDebugLog = true;
+	bool m_ObjectPullDebugLog = false;
 	ObjectPullClientPhase m_ObjectPullPhase = ObjectPullClientPhase::Idle;
 	bool m_ObjectPullActionDownPrev = false;
 	bool m_ObjectPullRequireActionRelease = false;
@@ -1373,7 +1377,7 @@ public:
 	float m_ObjectPullGesturePeakSpeedMetersPerSecond = 0.0f;
 	std::chrono::steady_clock::time_point m_ObjectPullCancelRepeatUntil{};
 
-	bool m_ManualThrowEnabled = false;
+	bool m_ManualThrowEnabled = true;
 	bool m_GripReleaseDropEnabled = false;
     std::atomic<unsigned> m_ServerPhysicalInteractionVersion{ 0u };
     std::atomic<uint32_t> m_ServerFeatureMask{ 0u };
@@ -2030,7 +2034,7 @@ public:
 	bool m_AutoAirStrafe = false;
 	bool m_AutoAirStrafeLandingSpeedPreserve = true;
 	float m_AutoAirStrafeMaxGainPerHop = 0.0f;
-	float m_AutoAirStrafeTargetSpeed = 0.0f;
+	float m_AutoAirStrafeTargetSpeed = 450.0f;
 	float m_AutoAirStrafeSpeedProjection = 0.0f;
 	float m_AutoAirStrafeMaxTurnBrakeProjection = 2.0f;
 	float m_AutoAirStrafeTurnResponsiveness = 0.25f;
@@ -2051,7 +2055,7 @@ public:
 	float m_AutoAirStrafeDebugPrevVy = 0.0f;
 	float m_AutoAirStrafeDebugPrevYaw = 0.0f;
 	bool m_AutoAirStrafeDebugPrevGround = false;
-	bool m_LedgeGuardEnabled = false;
+	bool m_LedgeGuardEnabled = true;
 	float m_LedgeGuardProbeDistance = 36.0f;
 	float m_LedgeGuardProbeHeight = 18.0f;
 	float m_LedgeGuardDropDistance = 96.0f;
@@ -2237,6 +2241,11 @@ public:
 	// drawn held by a mirrored (left) survivor hand and the free right
 	// controller shows a right hand, instead of the model's hands crossing over.
 	bool m_ItemHandMirror = true;
+	// ItemHandLeftArmModel (vr_left_hand_remap.h): the mirrored hold is drawn on
+	// the survivor model's own LEFT arm (the right arm is the free hand)
+	// instead of the right arm reflected onto the left controller.
+	bool m_ItemHandLeftArmModel = true;
+	std::atomic<uint32_t> m_LeftHandRemapDraws{ 0u };   // self-test counter
 	std::atomic<bool> m_ItemHandSwapped{ false };
 	std::atomic<uint64_t> m_ItemHandSwapAtMs{ 0u };
 	std::atomic<uint32_t> m_ItemHandSwapSerial{ 0u };
@@ -2395,7 +2404,7 @@ public:
 	// On by default so VR players (and desktop clients running the mod) see
 	// each other's tracked bodies.
 	bool m_WorldModelVRPoseEnabled = true;
-	bool m_WorldModelVRPoseLocalThirdPerson = false;
+	bool m_WorldModelVRPoseLocalThirdPerson = true;
 	bool m_WorldModelVRPoseDebugLog = false;
 	// Per-map gameplay latch shared by world-model pose IK and native full-arm
 	// viewmodel IK. It is published only after a real user command is observed
@@ -2465,9 +2474,9 @@ public:
 	Vector m_FirstPersonBodyFallbackCameraOffsetMeters = { 0.0f, 0.0f, 0.0f };
 	bool m_FirstPersonBodyHideWorldWeapon = true;
 	bool m_HideArms = false;
-	bool m_NativeViewmodelHandsOnly = false;
+	bool m_NativeViewmodelHandsOnly = true;
 	// true keeps the existing wrist clip; false draws the complete native viewmodel arms with analytic IK.
-	bool m_NativeViewmodelArmCroppingEnabled = true;
+	bool m_NativeViewmodelArmCroppingEnabled = false;
 	// Full-arm IK shoulder-root tuning in the body yaw frame. Position uses
 	// X=forward, Y=right, Z=up. Rotation uses pitch,yaw,roll and adjusts the IK
 	// frame without moving the controller/weapon palm target.
@@ -2481,9 +2490,9 @@ public:
 	// First-person elbow pole weights in torso-local coordinates. X is forward,
 	// Y is outward for each arm, and Z is up. Only the component ratios matter.
 	Vector m_NativeViewmodelArmElbowPoleBias = { -0.05f, 0.20f, -1.0f };
-	float m_NativeViewmodelHandsOnlyWristKeepFraction = 0.0f;
+	float m_NativeViewmodelHandsOnlyWristKeepFraction = 1.0f;
 	float m_NativeViewmodelHandsOnlyTrimUnits = 0.0f;
-	float m_NativeViewmodelHandsOnlyArmBendScale = 1.0f;
+	float m_NativeViewmodelHandsOnlyArmBendScale = 0.0f;
 	Vector m_NativeViewmodelHandsOnlyCutRotationDeg = { 0.0f, 0.0f, 0.0f };
 	Vector m_NativeViewmodelHandsOnlyLeftCutRotationDeg = { 0.0f, -25.0f, 0.0f };
 	Vector m_NativeViewmodelHandsOnlyRightCutRotationDeg = { 8.0f, -25.0f, 0.0f };
@@ -2609,6 +2618,20 @@ public:
 	std::mutex m_GunHandProbeMutex;
 	GunHandProbe m_GunHandProbe{};
 	std::atomic<uint32_t> m_GunHandProbeSerial{ 0u };
+	std::atomic<uint64_t> m_GunHandStageTraceUntilMs{ 0u }; // gunhand: per-stage hand bone trace
+	// The gun hand as finally drawn (arms model after the arm IK or the classic
+	// draw), same frame; anchorGap = distance to the empty hand's anchor (cm).
+	struct GunHandDrawnProbe
+	{
+		int weaponId = 0;
+		float pos[3]{};
+		float axes[3][3]{};
+		float anchorGapCm = -1.0f;
+		bool leftBone = false;   // the model's own left hand holds the gun
+		bool armIk = false;      // drawn by the arm IK (else the classic draw)
+	};
+	GunHandDrawnProbe m_GunHandDrawn{};
+	std::atomic<uint32_t> m_GunHandDrawnSerial{ 0u };
 	std::atomic<uint32_t> m_HandPoseApplyCalls[2] = { 0u, 0u };
 	std::atomic<uint32_t> m_HandPoseApplyPosed[2] = { 0u, 0u };
 	std::atomic<uint32_t> m_HandPoseApplyRestFail[2] = { 0u, 0u };
@@ -2637,12 +2660,12 @@ public:
 	Vector m_MagazineBoxDebugPaddingMeters = { 0.002f, 0.002f, 0.002f };
 	// Independent magazine interaction prototype. It consumes the current weapon magazine OBB and
 	// lets configured off-hand grip input claim physical reload interactions before normal input.
-	bool m_MagazineInteractionEnabled = false;
+	bool m_MagazineInteractionEnabled = true;
 	bool m_MagazineInteractionQuickReloadMode = false;
 	bool m_MagazineInteractionUseButtonGripInput = true;
 	bool m_MagazineInteractionUseButtonDisbleReloadCommand = false;
 	bool m_MagazineInteractionSeparateButtonInput = false;
-	bool m_MagazineInteractionSuppressEmptyClipAutoReload = false;
+	bool m_MagazineInteractionSuppressEmptyClipAutoReload = true;
 	int m_MagazineInteractionShotgunShellsPerInsert = 1;
 	float m_MagazineInteractionThumbIndexCurlStart = 0.62f;
 	float m_MagazineInteractionThumbIndexCurlRelease = 0.42f;
@@ -3959,8 +3982,8 @@ public:
 	std::unordered_map<std::string, std::chrono::steady_clock::time_point> m_LocalVScriptConvarBlockedWriteLastLog{};
 	mutable std::mutex m_LocalVScriptConvarLockMutex;
 	bool m_AutoFlashlightEnabled = false;
-	float m_AutoFlashlightDarkThreshold = 45.0f;
-	float m_AutoFlashlightBrightThreshold = 80.0f;
+	float m_AutoFlashlightDarkThreshold = 8.0f;
+	float m_AutoFlashlightBrightThreshold = 8.0f;
 	bool m_AutoFlashlightDebugLog = false;
 	float m_AutoFlashlightDebugLogHz = 2.0f;
 	bool m_AutoFlashlightHasScreenLuma = false;
@@ -4238,7 +4261,7 @@ public:
 	bool m_AimLineHitsFriendly = false;           // updated from a ray trace (aim ray)
 	// Extra radius (meters) for the friendly-fire aim guard trace.
 	// 0 = legacy thin ray; >0 uses a swept hull (fat ray) to reduce misses from spread/latency.
-	float m_BlockFireOnFriendlyAimRadiusMeters = 0.05f;
+	float m_BlockFireOnFriendlyAimRadiusMeters = 0.1f;
 
 
 	// Aim-line teammate HUD hint (left wrist HUD):
@@ -4340,7 +4363,7 @@ public:
 
 	bool m_HitSoundEnabled = false;
 	float m_HitSoundPlaybackCooldownSeconds = 0.03f;
-	std::string m_HitSoundSpec = "game:vrmod/hit.wav";
+	std::string m_HitSoundSpec = "game:vrmod/hit.mp3";
 	float m_HitSoundVolume = 1.2f;
 	bool m_HitSoundPending = false;
 	uint32_t m_HitSoundPendingMergedCount = 0;
@@ -4351,8 +4374,8 @@ public:
 	bool m_KillSoundEnabled = false;
 	float m_KillSoundDetectionWindowSeconds = 0.75f;
 	float m_KillSoundPlaybackCooldownSeconds = 0.04f;
-	std::string m_KillSoundNormalSpec = "game:vrmod/kill.wav";
-	std::string m_KillSoundHeadshotSpec = "game:vrmod/headshot.wav";
+	std::string m_KillSoundNormalSpec = "game:vrmod/kill.mp3";
+	std::string m_KillSoundHeadshotSpec = "game:vrmod/headshot.mp3";
 	float m_KillSoundVolume = 1.8f;
 	float m_HeadshotSoundVolume = 1.3f;
 	float m_FeedbackSoundSpatialBlend = 0.0f;

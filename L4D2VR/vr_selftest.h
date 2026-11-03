@@ -253,6 +253,15 @@ namespace l4d2vr_selftest
         inline Vec3 CentreChest() { return V(0.12f, 0.0f, -0.40f); }      // sternum / belly pouch
         inline Vec3 OverLeftShoulder() { return V(-0.10f, -0.15f, -0.05f); }
         inline Vec3 LeftHip() { return V(-0.05f, -0.22f, -0.80f); }
+        // A hand on a belt holster's grip, and at the upper chest by the collar bone.
+        inline Vec3 RightBelt() { return V(-0.02f, 0.24f, -0.62f); }
+        inline Vec3 LeftBelt() { return V(-0.02f, -0.24f, -0.62f); }
+        inline Vec3 RightUpperChest() { return V(0.10f, 0.10f, -0.25f); }
+        inline Vec3 LeftUpperChest() { return V(0.10f, -0.10f, -0.30f); }
+        // A rifle slung across the chest (grip on the right of the belly, barrel
+        // down toward the left hip): its pistol grip and its handguard.
+        inline Vec3 SlungRifleGrip() { return V(0.14f, 0.10f, -0.50f); }
+        inline Vec3 SlungRifleForegrip() { return V(0.14f, -0.08f, -0.66f); }
         inline Vec3 Push() { return V(0.70f, 0.15f, -0.30f); }               // gun bash end point
     }
 

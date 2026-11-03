@@ -870,11 +870,11 @@ namespace
         l4d2vr_holster::BodyFrame frame{};
         if (!vr->GetHolsterBodyFrame(frame) || !frame.valid)
             return false;
-        // The pouch hangs on the free hand's hip: it changes sides when the
-        // configured off hand holds the gun (vr_item_hand.h).
-        Vector pouchLocal = vr->m_HolsterLayout.magPouch;
-        if (vr->m_ItemHandSwapped.load(std::memory_order_acquire))
-            pouchLocal.y = -pouchLocal.y;
+        // The pouch stays on the configured off-hand upper chest (Forefront's
+        // fixed ammo pouch). When the other hand holds the gun (vr_item_hand.h)
+        // the free hand reaches across the chest for it: mirroring it would put
+        // it on top of the grenade holster.
+        const Vector pouchLocal = vr->m_HolsterLayout.magPouch;
         point = l4d2vr_holster::RootToWorld(frame, pouchLocal);
         forward = frame.forward;
         right = VrHandMath::Normalize(Vector(frame.forward.y, -frame.forward.x, 0.0f));

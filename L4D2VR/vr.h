@@ -3423,6 +3423,7 @@ public:
 	bool RunSelfTestRealisticStep(const std::string& step, float t, C_BasePlayer* player);
 	bool RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
 	bool RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlayer* player);
+	bool RunEmptyHandsSelfTestStep(float t, C_BasePlayer* player);
 	int SelfTestAmmoTransaction(C_BasePlayer* player, int kind, bool begin, int& clipOut, int& reserveOut);
 	// Slap step: the pouch's world position and the held fresh magazine's centre.
 	bool GetMagazineSlapSelfTestPoints(Vector& pouch, Vector& heldCenter, bool& heldValid);

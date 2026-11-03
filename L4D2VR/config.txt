@@ -482,7 +482,7 @@ GunBashSweepEnabled=true
 HolsterReleaseDrop=true
 # Toggle grips (Pavlov style): one firm squeeze takes an item and the hand keeps it;
 # the next squeeze lets it go (puts it away inside its holster, drops it elsewhere).
-# false = hold the grip to keep the item.
+# Off: hold the grip to keep the item.
 GripToggle=true
 # Pavlov VR reload feel: per-weapon slide/bolt pull, chamber return and magazine
 # insert depth taken from Pavlov (your own per-weapon overrides still win).
@@ -519,6 +519,10 @@ ChestSlingDropDistanceMeters=0.6
 ChestSlingGrabRadiusMeters=0.15
 // Point a controller at a menu panel to move the cursor; the trigger clicks (for runtimes such as XRizer without the SteamVR laser mouse).
 MenuLaserPointerEnabled=true
+// VR Options menu: hold the pause button (left B on Index, Y on Quest/Touch, menu on Vive/WMR) this long
+// to open it (0 = off). It also opens from the VR Options button next to the game's main and pause
+// menus, F8 and the vroptions console command.
+VrOptionsMenuHoldSeconds=0.8
 # Holsters are placed like Pavlov VR's inventory (root 75 cm below the head,
 # hip capsules, back sphere, chest pockets); their facing follows your head at this speed.
 HolsterYawFollowSpeed=20
@@ -583,6 +587,11 @@ ManualThrowPinRequired=true
 ManualThrowHandVelocityScale=2.5
 ThrowableHoldAngleOffsetDeg=0,0,20
 ManualThrowVelocityWindowMs=80
+// Physics throw assistance (GrenadeThrowMode=physics only): gently steers a hand throw onto the spot
+// your hand points at, but only when the throw is already heading there (within about 25 degrees,
+// a similar arc and speed). Strength 0 keeps your throw as it is, 1 lands it on the spot.
+GrenadeThrowAssist=true
+GrenadeThrowAssistStrength=0.5
 
 # Object pull uses the existing weapon-hand Grip binding; there is no separate SteamVR Object Pull action.
 # Merely point anywhere on a supported item's collision bounds to select it and show its native outline.

@@ -85,6 +85,10 @@ CHANGES = [
     "2.0.0: survivor hand poses follow Pavlov's hand poses for holding guns, magazines, slides, grenades and items. The separate SteamVR glove models are retired.",
     "2.0.2: easier shotgun pumping: the pump cocks at 7 of its 10 cm and chambers anywhere in the last 3.5 cm, a fast rack is never missed at any frame rate, the pump is caught from further away and stays caught through a tracking blip, and holding the foregrip racks it too (ManualPump... settings).",
     "2.0.2: stance recoil: guns kick less crouched, much more while jumping, and more the faster you move, following each gun's own L4D2 accuracy values (RecoilStanceEnabled and per-part scales).",
+    "2.0.4: an item in your left hand is always held by a mirrored left hand, on every hand setting (also with NativeViewmodelHandsOnly off or arm cropping on); the right hand is never moved onto the left controller (ItemHandMirror retired).",
+    "2.0.4: chest sling: letting go of a rifle, SMG, shotgun or sniper near your body hangs it on your chest with both hands free; grab its handle or foregrip with either hand to take it (that hand becomes the trigger hand); let go at arm's length to drop it (ChestSlingEnabled).",
+    "2.0.4: Zoey's (and every survivor's) hands no longer stretch away from the wrist: the forearm helper bones follow the solved hand.",
+    "2.0.4: no more debug boxes around the magazine and bolt while two-handing (MagazineBoxDebugEnabled and ShowInventoryAnchors off, also for existing configs).",
 ]
 
 

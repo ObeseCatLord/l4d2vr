@@ -62,9 +62,11 @@ void VR::UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot)
     if (localPlayer && m_HolsterItemsVisible && m_Game)
     {
         const int highlight = m_HolsterHighlightSlot.load(std::memory_order_acquire);
+        const bool slung = ChestSlingActive();
         for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
         {
-            if (slot == activeSlot)
+            // The active item is in the hand, unless it hangs on the chest sling.
+            if (slot == activeSlot && !slung)
                 continue;
             void* const weapon = localPlayer->Weapon_GetSlot(slot);
             if (!weapon)
@@ -89,6 +91,7 @@ void VR::UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot)
             item.weaponId = HolsterReadWeaponId(weapon);
             item.shape = HolsterShapeForWeaponId(item.weaponId);
             item.highlighted = slot == highlight;
+            item.sling = slot == activeSlot && slung;
         }
     }
 
@@ -112,6 +115,8 @@ bool VR::BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::It
     l4d2vr_holster::BodyFrame frame{};
     if (!GetHolsterBodyFrame(frame))
         return false;
+    if (item.sling)
+        return BuildChestSlingPose(frame, pose);
     pose = l4d2vr_holster::BuildItemPose(frame, m_HolsterLayout,
         static_cast<l4d2vr_holster::Zone>(item.slot), item.shape);
     if (m_SelfTestEnabled && m_SelfTestBackPreviewMeters > 0.0f &&

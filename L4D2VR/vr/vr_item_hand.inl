@@ -615,7 +615,7 @@ bool VR::GetItemHandMirrorPlanes(l4d2vr_hand_mirror::Mat34& gunMirror, l4d2vr_ha
     const int itemId = m_ActiveGunWeaponId.load(std::memory_order_acquire);
     const auto plane = l4d2vr_hand_mirror::PlaneForItem(l4d2vr_handpose::IsGun(itemId),
         itemId == static_cast<int>(C_WeaponCSBase::WeaponID::MELEE),
-        m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire));
+        m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) || ChestSlingActive());
     Vector gunPoint{};
     Vector gunRight{};
     if (plane == l4d2vr_hand_mirror::Plane::Controller)

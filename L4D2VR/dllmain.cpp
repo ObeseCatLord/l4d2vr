@@ -3099,6 +3099,10 @@ namespace
             l4d2vr_offhand_pose::kDefaultRotationText, true },
         { "2026-11-02_offhand_pose_offset", "NativeViewmodelLeftHandPoseOffsetMeters",
             l4d2vr_offhand_pose::kDefaultOffsetText, true },
+        // Headset session 6: the magazine/bolt debug boxes were on in the shipped
+        // config and showed up while two-handing.
+        { "2026-11-03_magazine_debug_boxes_off", "MagazineBoxDebugEnabled", "false" },
+        { "2026-11-03_inventory_anchor_boxes_off", "ShowInventoryAnchors", "false" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3250,8 +3254,10 @@ namespace
         sampleKeys.insert("RightAmmoHudNativeWidthMeters");
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("AmbidextrousItemHands");
+        sampleKeys.insert("ChestSlingEnabled");
+        sampleKeys.insert("ChestSlingDropDistanceMeters");
+        sampleKeys.insert("ChestSlingGrabRadiusMeters");
         sampleKeys.insert("ItemHandOffRadiusMeters");
-        sampleKeys.insert("ItemHandMirror");
         sampleKeys.insert("VrHandsTwoHandedAimShortGunsRearHandOnly");
         sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawFollowSpeed");

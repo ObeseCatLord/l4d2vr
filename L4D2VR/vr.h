@@ -2332,6 +2332,17 @@ public:
 	bool m_FirstPersonBodyEnabled = false;
 	bool m_FirstPersonBodyHideHead = true;
 	bool m_FirstPersonBodyHideArms = true;
+	// Torso yaw (vr_body_ik.h): the head may look this far off the torso before
+	// it turns; past that it follows with this time constant. The hard limit is
+	// WorldModelVRPoseBodyYawDeadzoneDeg.
+	float m_FirstPersonBodyYawDeadbandDeg = 30.0f;
+	float m_FirstPersonBodyYawFollowSeconds = 0.30f;
+	// The body's own arms are solved by two-bone IK from its shoulders to the
+	// VR hands (vr_body_ik.h) instead of being trimmed at the shoulder. Out of
+	// reach both segments stretch up to this factor (then the shoulder slides
+	// up to 6 cm; the hand never detaches).
+	bool m_FirstPersonBodyArmIK = true;
+	float m_FirstPersonBodyArmMaxStretch = 1.12f;
 	// Multiplayer world-model reconstruction. The server only relays the compact
 	// HMD + two-controller packet; observers apply this visual IK locally.
 	// On by default so VR players (and desktop clients running the mod) see
@@ -3500,6 +3511,13 @@ public:
 	// across later steps, so a following shot= photographs that scene.
 	bool m_SelfTestLookActive = false;
 	float m_SelfTestLookPitch = 0.0f;           // degrees, positive looks down
+	float m_SelfTestLookYaw = 0.0f;             // lookyaw=: head-only yaw, degrees (positive = left)
+	// Body-arm IK / torso yaw read-back for the bodyik= and bodyyaw= checks
+	// (written by the render hooks).
+	std::atomic<float> m_SelfTestBodyYawLagDeg{ 0.0f };
+	std::atomic<int> m_SelfTestBodyArmSolvedMask{ 0 };
+	std::atomic<float> m_SelfTestBodyArmWristGapMeters[2]{ { -1.0f }, { -1.0f } };
+	std::atomic<float> m_SelfTestBodyArmElbowGapMeters[2]{ { -1.0f }, { -1.0f } };
 	bool m_SelfTestRuntimeHands = false;        // runtimehands=1: controllers from the runtime, not scripted
 	bool m_SelfTestSimHands = false;            // runtimehands=sim: OpenVR raw poses equal to Monado's static simulated controllers
 	bool m_SelfTestFreezeHead = false;          // freezehead=1: head fixed at tracking (0, 1.6, 0) facing -Z

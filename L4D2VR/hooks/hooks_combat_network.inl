@@ -544,8 +544,9 @@ namespace
 
 		if (vr->m_HasAimLine)
 		{
-			start = vr->m_AimLineStart;
-			end = vr->m_AimLineEnd;
+			// The visible laser: vanilla start, ends where the bullet lands.
+			start = vr->m_AimLaserStart;
+			end = vr->m_AimLaserEnd;
 
 			Vector direction = end - start;
 			if (!direction.IsZero())

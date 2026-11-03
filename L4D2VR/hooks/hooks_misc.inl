@@ -3829,11 +3829,21 @@ namespace
         if (weaponBone >= 0 && vr_vm_stabilize::SafeRead(b + weaponBone, m)) rel(vr_vm_stabilize::GetOrigin(m), w);
         if (vr_vm_stabilize::SafeRead(b, m)) rel(vr_vm_stabilize::GetOrigin(m), r);
         rel(info.origin, o);
-        Game::logMsg("[VR][SelfTest] gunhand stage=%s model=%s hand=%d (%.1f %.1f %.1f) wbone=%d (%.1f %.1f %.1f) bone0=(%.1f %.1f %.1f) origin=(%.1f %.1f %.1f)",
-            stage, lower.c_str(), hand, h[0], h[1], h[2], weaponBone, w[0], w[1], w[2], r[0], r[1], r[2], o[0], o[1], o[2]);
+        // The left hand bone in the LEFT controller's frame (akimbo, support hand).
+        float lh[3]{};
+        if (leftHand >= 0 && vr_vm_stabilize::SafeRead(b + leftHand, m))
+        {
+            Vector lf{}, lr{}, lu{};
+            QAngle::AngleVectors(vr->GetLeftControllerAbsAngle(), &lf, &lr, &lu);
+            const Vector d = vr_vm_stabilize::GetOrigin(m) - vr->GetLeftControllerAbsPos();
+            lh[0] = DotProduct(d, lf) * s; lh[1] = DotProduct(d, lr) * s; lh[2] = DotProduct(d, lu) * s;
+        }
+        Game::logMsg("[VR][SelfTest] gunhand stage=%s model=%s hand=%d (%.1f %.1f %.1f) lhand@left=(%.1f %.1f %.1f) wbone=%d (%.1f %.1f %.1f) bone0=(%.1f %.1f %.1f) origin=(%.1f %.1f %.1f)",
+            stage, lower.c_str(), hand, h[0], h[1], h[2], lh[0], lh[1], lh[2], weaponBone, w[0], w[1], w[2], r[0], r[1], r[2], o[0], o[1], o[2]);
 
         // The drawn arms: which hand holds the gun and where it is.
-        const bool drawnStage = std::strcmp(stage, "armik") == 0 || std::strcmp(stage, "final") == 0;
+        const bool drawnStage = std::strcmp(stage, "armik") == 0 || std::strcmp(stage, "final") == 0 ||
+            std::strcmp(stage, "clipset") == 0;
         if (!drawnStage || !HooksModelNameIsArmsOrHands(lower))
             return;
         // The model's own left hand holds a left-held item when it was remapped
@@ -3861,7 +3871,7 @@ namespace
             probe.anchorGapCm = (vr_vm_stabilize::GetOrigin(hm) - target).Length() * s;
         }
         probe.leftBone = useLeft;
-        probe.armIk = std::strcmp(stage, "armik") == 0;
+        probe.path = std::strcmp(stage, "armik") == 0 ? "armik" : (std::strcmp(stage, "clipset") == 0 ? "clipset" : "classic");
         std::lock_guard<std::mutex> lock(vr->m_GunHandProbeMutex);
         vr->m_GunHandDrawn = probe;
         vr->m_GunHandDrawnSerial.fetch_add(1u, std::memory_order_acq_rel);
@@ -19349,8 +19359,10 @@ namespace
             vr->m_IsThirdPersonCamera || !drawState || !pBones || modelName.empty())
             return;
         const int weaponId = vr->m_ActiveGunWeaponId.load(std::memory_order_acquire);
-        if (!l4d2vr_handpose::IsGun(weaponId) || vr->m_DualPistolsActive.load(std::memory_order_acquire) ||
-            vr->ChestSlingActive() || vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire))
+        // (Akimbo pistols too: the left gun is retargeted to the left controller
+        // from the right gun's hold afterwards, ApplyIndependentDualPistolBones.)
+        if (!l4d2vr_handpose::IsGun(weaponId) || vr->ChestSlingActive() ||
+            vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire))
             return;
         const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
         const bool armsModel = HooksModelNameIsArmsOrHands(lowerModel);
@@ -28482,6 +28494,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         {
             for (const HooksNativeViewmodelHandsOnlyClipSet& clipSet : nativeHandsOnlyClipSets)
             {
+                if (clipSet.side == 1)  // the gun hand's isolated arm
+                    HooksGunHandStageTrace(m_VR, state, modelName, *pDrawInfo, clipSet.isolatedBones, "clipset");
                 if (nativeHandsOnlyQueueMode == 0)
                 {
                     ScopedNativeViewmodelHandsOnlyClipPlane nativeHandsOnlyClip(m_VR, clipSet);

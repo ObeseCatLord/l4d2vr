@@ -3385,6 +3385,7 @@ namespace
         sampleKeys.insert("IronSightAimEnabled");
         sampleKeys.insert("GunRigidInHand");
         sampleKeys.insert("GunHandOnController");
+        sampleKeys.insert("VanillaLaserPlacement");
         sampleKeys.insert("MeleeInertiaEnabled");
         sampleKeys.insert("MeleeSwingMinTipSpeed");
         sampleKeys.insert("MeleeSwingMinHandSpeedLong");

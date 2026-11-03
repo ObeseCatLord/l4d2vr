@@ -378,6 +378,7 @@ ViewmodelAutoGripAlignDebugLog=false
 // The red aim line. Off by default: aim with the sights. The aim ray is still traced for bullets.
 AimLineEnabled=false
 AimLineOnlyWhenLaserSight=false
+VanillaLaserPlacement=true
 AimLineTimingAligned=true
 MeleeAimLineEnabled=false
 BlockFireOnFriendlyAimEnabled=false

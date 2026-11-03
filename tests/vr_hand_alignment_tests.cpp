@@ -111,6 +111,20 @@ int main()
         Check(Near(l4d2vr_ammo_grip::Origin(translated)-l4d2vr_ammo_grip::Origin(held),motion));
     }
     Check(!l4d2vr_ammo_grip::BodyWorld(Vector(0.0f,0.0f,1.0f),Vector(0.0f,-1.0f,0.0f),p,boxCenter,held));
+    // The chest pouch stands the spare upright: the box's +Y (along the
+    // magazine) goes up, +Z forward, +X to the body's left; still rigid.
+    for (int i=0;i<8;++i)
+    {
+        Vector forward, right, up;
+        QAngle::AngleVectors(QAngle(0.0f,static_cast<float>(i)*45.0f,0.0f),&forward,&right,&up);
+        const Vector chest=p+forward*3.0f+right*-4.0f-Vector(0.0f,0.0f,12.0f);
+        VrHandMatrix4 upright{};
+        Check(l4d2vr_ammo_grip::BodyWorldUpright(forward,right,chest,boxCenter,upright));
+        Check(Near(Point(upright,boxCenter),chest) && l4d2vr_ammo_grip::Rigid(upright));
+        Check(Near(l4d2vr_ammo_grip::Axis(upright,1),Vector(0.0f,0.0f,1.0f)));
+        Check(Near(l4d2vr_ammo_grip::Axis(upright,2),forward));
+        Check(Near(l4d2vr_ammo_grip::Axis(upright,0),right*-1.0f));
+    }
 
     // Natural hold: with the off hand turned as the gun hand and raised by the
     // tilt, the spare sits exactly as the magazine sits in the well, whatever

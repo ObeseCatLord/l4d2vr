@@ -2295,7 +2295,7 @@ namespace
                 Vector reprojected{};
                 if (MagazineInteractionReprojectScenePointToViewmodelLayer(vr, pouch, reprojected))
                     pouch = reprojected;
-                return l4d2vr_ammo_grip::BodyWorld(forward, right, pouch,
+                return l4d2vr_ammo_grip::BodyWorldUpright(forward, right, pouch,
                     MagazineInteractionBoxCenterLocal(vr->m_MagazineInteractionSocketBox), outWorld) &&
                     MagazineInteractionMatrixLooksRenderable(outWorld);
             }
@@ -4975,7 +4975,8 @@ bool VR::GetBodyAmmoPreviewWorld(const MagazineInteractionBoxSnapshot& box, VrHa
         return false;
     Vector origin{}, forward{}, right{};
     Vector pickup{};
-    if (!MagazineInteractionResolvePavlovPouch(this, pickup, forward, right))
+    const bool chestPouch = MagazineInteractionResolvePavlovPouch(this, pickup, forward, right);
+    if (!chestPouch)
     {
         if (!GetBodyInventoryPose(origin, forward, right))
             return false;
@@ -4986,8 +4987,9 @@ bool VR::GetBodyAmmoPreviewWorld(const MagazineInteractionBoxSnapshot& box, VrHa
     Vector reprojected{};
     if (MagazineInteractionReprojectScenePointToViewmodelLayer(this, pickup, reprojected))
         pickup = reprojected;
-    return l4d2vr_ammo_grip::BodyWorld(forward, right, pickup,
-        MagazineInteractionBoxCenterLocal(box), outWorld) && MagazineInteractionMatrixLooksRenderable(outWorld);
+    return (chestPouch ? l4d2vr_ammo_grip::BodyWorldUpright(forward, right, pickup,
+        MagazineInteractionBoxCenterLocal(box), outWorld) :
+        l4d2vr_ammo_grip::BodyWorld(forward, right, pickup, MagazineInteractionBoxCenterLocal(box), outWorld)) && MagazineInteractionMatrixLooksRenderable(outWorld);
 }
 
 bool VR::HasFreshMagazineInteractionDebugBoxWork() const

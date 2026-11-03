@@ -1,0 +1,909 @@
+#pragma once
+
+// Opus voice chat (2.0.5): the std-only half, shared by the client DLL, the
+// dedicated plugin and the unit tests (tests/vr_opus_voice_tests.cpp).
+//
+// L4D2's own voice codec is fixed (no sv_voicecodec; vaudio_miles/speex at
+// 11 kHz), which is why stock voice sounds grainy. Mod clients carry their own
+// voice instead: 48 kHz mono Opus, 20 ms frames, through the L4D2VR server
+// (dedicated plugin or a modded listen host), feature-gated by OpusVoice
+// (0x2000). Players and servers without it keep the game's own voice.
+//
+// Wire (all text, through the same string-command channel as the pose relay):
+//   client -> server  l4d2vr_voice_hello <version> <flags>   opt in (flags: Hello*)
+//   server -> client  l4d2vr_voice_ack <version>             relay accepted
+//   client -> server  l4d2vr_voice_up <frame>                 one 20 ms frame,
+//                     sent unreliably (IVEngineClient::ServerCmd(.., false))
+//   server -> client  l4d2vr_voice_rx <player> <frame>        relayed frame
+//   server -> client  l4d2vr_voice_peers <lo> <hi>            players (bit i-1)
+//                     that send Opus: their stock voice is dropped by this
+//                     client (each is heard once, through Opus)
+// <frame> is base64url (no padding) of:
+//   [0] version (1)  [1] flags (Start, End)  [2..3] sequence (LE)
+//   [4] talkspurt id [5] Opus bytes N        [6..] N Opus bytes (N = 0 only with End)
+// IVEngineClient::ServerCmd formats "cmd %s" into 255 bytes, so a voice_up
+// command stays below 250 characters: kMaxOpusBytes caps the encoder.
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace l4d2vr_voice
+{
+    constexpr int kSampleRate = 48000;
+    constexpr int kFrameMs = 20;
+    constexpr int kFrameSamples = kSampleRate * kFrameMs / 1000;   // 960
+    constexpr unsigned kProtocolVersion = 1u;
+    constexpr int kHeaderBytes = 6;
+    constexpr int kMaxOpusBytes = 160;          // 64 kbps peak per 20 ms frame
+    constexpr int kMaxFrameBytes = kHeaderBytes + kMaxOpusBytes;
+    constexpr int kMaxFrameTextChars = (kMaxFrameBytes * 4 + 2) / 3;  // 222
+    constexpr int kMaxPlayers = 64;
+
+    constexpr char kHelloCommand[] = "l4d2vr_voice_hello";
+    constexpr char kAckCommand[] = "l4d2vr_voice_ack";
+    constexpr char kUpCommand[] = "l4d2vr_voice_up";
+    constexpr char kRxCommand[] = "l4d2vr_voice_rx";
+    constexpr char kPeersCommand[] = "l4d2vr_voice_peers";
+
+    enum FrameFlags : std::uint8_t { kFlagStart = 0x01u, kFlagEnd = 0x02u, kFlagMask = 0x03u };
+    enum HelloFlags : std::uint32_t
+    {
+        kHelloReceive = 0x1u,    // relay other players' Opus voice to me
+        kHelloTransmit = 0x2u,   // I send Opus voice (drop my stock voice on Opus clients)
+        kHelloLoopback = 0x4u,   // relay my own voice back to me (microphone test, self-test)
+        kHelloMask = 0x7u,
+    };
+
+    // The engine's ServerCmd buffer is 255 bytes including "cmd ".
+    static_assert(sizeof(kUpCommand) - 1 + 1 + kMaxFrameTextChars < 250, "voice_up must fit IVEngineClient::ServerCmd");
+
+    struct Frame
+    {
+        std::uint16_t sequence = 0u;
+        std::uint8_t talkspurt = 0u;
+        std::uint8_t flags = 0u;
+        std::uint8_t size = 0u;               // Opus bytes
+        std::uint8_t data[kMaxOpusBytes]{};
+    };
+
+    // Signed distance a - b on the uint16 sequence circle.
+    inline int SequenceDelta(std::uint16_t a, std::uint16_t b)
+    {
+        return static_cast<int>(static_cast<std::int16_t>(static_cast<std::uint16_t>(a - b)));
+    }
+
+    // ---- base64url (no padding) -------------------------------------------------
+    // Only [A-Za-z0-9_-]: none of these split a Source command (no quotes,
+    // semicolons, "//", or the tokenizer break set {}()':).
+    inline char Base64Char(unsigned v)
+    {
+        static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        return table[v & 63u];
+    }
+
+    inline int Base64Value(char c)
+    {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '-') return 62;
+        if (c == '_') return 63;
+        return -1;
+    }
+
+    // Returns the characters written (excluding the NUL), or -1 if out is too small.
+    inline int Base64Encode(const std::uint8_t* in, int length, char* out, std::size_t capacity)
+    {
+        if (length < 0 || !out) return -1;
+        const std::size_t needed = static_cast<std::size_t>((length * 4 + 2) / 3);
+        if (needed + 1 > capacity) return -1;
+        std::size_t o = 0;
+        int i = 0;
+        for (; i + 2 < length; i += 3)
+        {
+            const unsigned v = (unsigned(in[i]) << 16) | (unsigned(in[i + 1]) << 8) | unsigned(in[i + 2]);
+            out[o++] = Base64Char(v >> 18); out[o++] = Base64Char(v >> 12);
+            out[o++] = Base64Char(v >> 6); out[o++] = Base64Char(v);
+        }
+        if (length - i == 1)
+        {
+            const unsigned v = unsigned(in[i]) << 16;
+            out[o++] = Base64Char(v >> 18); out[o++] = Base64Char(v >> 12);
+        }
+        else if (length - i == 2)
+        {
+            const unsigned v = (unsigned(in[i]) << 16) | (unsigned(in[i + 1]) << 8);
+            out[o++] = Base64Char(v >> 18); out[o++] = Base64Char(v >> 12); out[o++] = Base64Char(v >> 6);
+        }
+        out[o] = '\0';
+        return static_cast<int>(o);
+    }
+
+    // Returns the bytes decoded, or -1 on a bad character, a bad length or overflow.
+    inline int Base64Decode(const char* text, std::uint8_t* out, int capacity)
+    {
+        if (!text || !out) return -1;
+        const std::size_t n = std::strlen(text);
+        if (n % 4 == 1) return -1;
+        const int bytes = static_cast<int>(n / 4 * 3 + (n % 4 ? n % 4 - 1 : 0));
+        if (bytes > capacity) return -1;
+        int o = 0;
+        unsigned acc = 0;
+        int bits = 0;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const int v = Base64Value(text[i]);
+            if (v < 0) return -1;
+            acc = (acc << 6) | static_cast<unsigned>(v);
+            bits += 6;
+            if (bits >= 8)
+            {
+                bits -= 8;
+                out[o++] = static_cast<std::uint8_t>((acc >> bits) & 0xFFu);
+            }
+        }
+        // Canonical: the unused low bits of the last character are zero.
+        if (bits > 0 && (acc & ((1u << bits) - 1u)) != 0u) return -1;
+        return o;
+    }
+
+    // ---- frame <-> text --------------------------------------------------------------
+    inline bool ValidFrame(const Frame& f)
+    {
+        if ((f.flags & ~kFlagMask) != 0u || f.size > kMaxOpusBytes) return false;
+        return f.size > 0u || (f.flags & kFlagEnd) != 0u;
+    }
+
+    inline int SerializeFrame(const Frame& f, std::uint8_t* out, int capacity)
+    {
+        if (!ValidFrame(f) || capacity < kHeaderBytes + f.size) return -1;
+        out[0] = static_cast<std::uint8_t>(kProtocolVersion);
+        out[1] = f.flags;
+        out[2] = static_cast<std::uint8_t>(f.sequence & 0xFFu);
+        out[3] = static_cast<std::uint8_t>(f.sequence >> 8);
+        out[4] = f.talkspurt;
+        out[5] = f.size;
+        if (f.size) std::memcpy(out + kHeaderBytes, f.data, f.size);
+        return kHeaderBytes + f.size;
+    }
+
+    inline bool ParseFrameBytes(const std::uint8_t* in, int length, Frame& f)
+    {
+        f = Frame{};
+        if (!in || length < kHeaderBytes || in[0] != kProtocolVersion) return false;
+        f.flags = in[1];
+        f.sequence = static_cast<std::uint16_t>(in[2] | (in[3] << 8));
+        f.talkspurt = in[4];
+        f.size = in[5];
+        if (length != kHeaderBytes + f.size || !ValidFrame(f)) return false;
+        if (f.size) std::memcpy(f.data, in + kHeaderBytes, f.size);
+        return true;
+    }
+
+    inline bool EncodeFrameText(const Frame& f, char* out, std::size_t capacity)
+    {
+        std::uint8_t bytes[kMaxFrameBytes];
+        const int n = SerializeFrame(f, bytes, sizeof(bytes));
+        return n > 0 && Base64Encode(bytes, n, out, capacity) > 0;
+    }
+
+    inline bool DecodeFrameText(const char* text, Frame& f)
+    {
+        f = Frame{};
+        if (!text || std::strlen(text) > static_cast<std::size_t>(kMaxFrameTextChars)) return false;
+        std::uint8_t bytes[kMaxFrameBytes];
+        const int n = Base64Decode(text, bytes, sizeof(bytes));
+        return n > 0 && ParseFrameBytes(bytes, n, f);
+    }
+
+    // ---- small parsers (commands) ---------------------------------------------------
+    inline bool ParseUnsigned(const char* text, std::uint32_t maximum, std::uint32_t& out)
+    {
+        out = 0u;
+        if (!text || !*text) return false;
+        std::uint64_t v = 0u;
+        for (const char* p = text; *p; ++p)
+        {
+            if (*p < '0' || *p > '9') return false;
+            v = v * 10u + static_cast<unsigned>(*p - '0');
+            if (v > maximum) return false;
+        }
+        out = static_cast<std::uint32_t>(v);
+        return true;
+    }
+
+    inline bool ParseHex32(const char* text, std::uint32_t& out)
+    {
+        out = 0u;
+        if (!text || !*text) return false;
+        int digits = 0;
+        for (const char* p = text; *p; ++p)
+        {
+            unsigned nibble;
+            if (*p >= '0' && *p <= '9') nibble = unsigned(*p - '0');
+            else if (*p >= 'a' && *p <= 'f') nibble = unsigned(*p - 'a' + 10);
+            else if (*p >= 'A' && *p <= 'F') nibble = unsigned(*p - 'A' + 10);
+            else return false;
+            if (++digits > 8) return false;
+            out = (out << 4) | nibble;
+        }
+        return true;
+    }
+
+    inline std::uint64_t PlayerBit(int playerIndex)
+    {
+        return (playerIndex >= 1 && playerIndex <= kMaxPlayers) ? (std::uint64_t{ 1 } << (playerIndex - 1)) : 0u;
+    }
+
+    inline bool FormatPeers(std::uint64_t mask, char* out, std::size_t capacity)
+    {
+        const int n = std::snprintf(out, capacity, "%s %x %x\n", kPeersCommand,
+            static_cast<unsigned>(mask & 0xFFFFFFFFu), static_cast<unsigned>(mask >> 32));
+        return n > 0 && static_cast<std::size_t>(n) < capacity;
+    }
+
+    // ---- settings -------------------------------------------------------------------
+    enum class TransmitMode : std::uint8_t { PushToTalk, VoiceActivation };
+
+    struct Settings
+    {
+        bool enabled = true;                 // OpusVoiceEnabled
+        int bitrate = 32000;                 // OpusVoiceBitrate (bits/s, 12000..64000)
+        bool fec = true;                     // OpusVoiceFec (in-band FEC, upstream is unreliable)
+        int expectedLossPercent = 5;         // OpusVoiceExpectedLossPercent (FEC strength)
+        TransmitMode mode = TransmitMode::PushToTalk;   // OpusVoiceMode = ptt | vad
+        float vadSensitivity = 0.55f;        // OpusVoiceVadSensitivity (0..1, higher opens on quieter speech)
+        float micGain = 1.0f;                // OpusVoiceMicGain (0..4)
+        float volume = 1.0f;                 // OpusVoiceVolume (0..2)
+        bool positional = true;              // OpusVoicePositional
+        float radioVolume = 0.55f;           // OpusVoiceRadioVolume: distant talkers (0..1)
+        float spatialDistanceMeters = 18.0f; // OpusVoiceSpatialDistanceMeters: fully "radio" from here
+        bool agc = true;                     // OpusVoiceAgc
+        float agcMaxGain = 6.0f;             // OpusVoiceAgcMaxGain (1..16)
+        bool loopback = false;               // OpusVoiceLoopback: hear yourself through the server
+        std::string pushToTalkKey;           // OpusVoicePushToTalkKey: extra desktop key ("" = the game's voice key only)
+        float testToneHz = 0.0f;             // OpusVoiceTestToneHz: replaces the microphone (testing)
+        std::string testDump;                // OpusVoiceTestDump: file prefix for decoded audio (testing)
+    };
+
+    inline std::string Lower(std::string s)
+    {
+        for (char& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return s;
+    }
+
+    inline std::string Trim(const std::string& s)
+    {
+        std::size_t b = 0, e = s.size();
+        while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r' || s[b] == '\n')) ++b;
+        while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r' || s[e - 1] == '\n')) --e;
+        return s.substr(b, e - b);
+    }
+
+    inline bool ParseBoolText(const std::string& raw, bool fallback)
+    {
+        const std::string v = Lower(Trim(raw));
+        if (v == "1" || v == "true" || v == "on" || v == "yes") return true;
+        if (v == "0" || v == "false" || v == "off" || v == "no") return false;
+        return fallback;
+    }
+
+    inline float ParseFloatText(const std::string& raw, float fallback)
+    {
+        const std::string v = Trim(raw);
+        if (v.empty()) return fallback;
+        char* end = nullptr;
+        const float f = std::strtof(v.c_str(), &end);
+        return (end && *end == '\0' && std::isfinite(f)) ? f : fallback;
+    }
+
+    // lookup(key, value) -> true when the key is set. Out-of-range values clamp.
+    template <class Lookup>
+    Settings ParseSettings(Lookup&& lookup)
+    {
+        Settings s;
+        std::string v;
+        auto str = [&](const char* key) -> bool { v.clear(); return lookup(key, v); };
+        if (str("OpusVoiceEnabled")) s.enabled = ParseBoolText(v, s.enabled);
+        if (str("OpusVoiceBitrate"))
+            s.bitrate = static_cast<int>(std::clamp(ParseFloatText(v, float(s.bitrate)), 12000.0f, 64000.0f));
+        if (str("OpusVoiceFec")) s.fec = ParseBoolText(v, s.fec);
+        if (str("OpusVoiceExpectedLossPercent"))
+            s.expectedLossPercent = static_cast<int>(std::clamp(ParseFloatText(v, float(s.expectedLossPercent)), 0.0f, 40.0f));
+        if (str("OpusVoiceMode"))
+        {
+            const std::string m = Lower(Trim(v));
+            if (m == "vad" || m == "voice" || m == "voiceactivation" || m == "open") s.mode = TransmitMode::VoiceActivation;
+            else if (m == "ptt" || m == "pushtotalk" || m == "push") s.mode = TransmitMode::PushToTalk;
+        }
+        if (str("OpusVoiceVadSensitivity")) s.vadSensitivity = std::clamp(ParseFloatText(v, s.vadSensitivity), 0.0f, 1.0f);
+        if (str("OpusVoiceMicGain")) s.micGain = std::clamp(ParseFloatText(v, s.micGain), 0.0f, 4.0f);
+        if (str("OpusVoiceVolume")) s.volume = std::clamp(ParseFloatText(v, s.volume), 0.0f, 2.0f);
+        if (str("OpusVoicePositional")) s.positional = ParseBoolText(v, s.positional);
+        if (str("OpusVoiceRadioVolume")) s.radioVolume = std::clamp(ParseFloatText(v, s.radioVolume), 0.0f, 1.0f);
+        if (str("OpusVoiceSpatialDistanceMeters"))
+            s.spatialDistanceMeters = std::clamp(ParseFloatText(v, s.spatialDistanceMeters), 2.0f, 200.0f);
+        if (str("OpusVoiceAgc")) s.agc = ParseBoolText(v, s.agc);
+        if (str("OpusVoiceAgcMaxGain")) s.agcMaxGain = std::clamp(ParseFloatText(v, s.agcMaxGain), 1.0f, 16.0f);
+        if (str("OpusVoiceLoopback")) s.loopback = ParseBoolText(v, s.loopback);
+        if (str("OpusVoicePushToTalkKey")) s.pushToTalkKey = Trim(v);
+        if (str("OpusVoiceTestToneHz")) s.testToneHz = std::clamp(ParseFloatText(v, 0.0f), 0.0f, 8000.0f);
+        if (str("OpusVoiceTestDump")) s.testDump = Trim(v);
+        return s;
+    }
+
+    // VR/config.txt text (key=value, // # ; comments). Later keys win.
+    inline Settings ParseSettingsText(const std::string& text)
+    {
+        std::vector<std::pair<std::string, std::string>> kv;
+        std::size_t pos = 0;
+        while (pos <= text.size())
+        {
+            std::size_t nl = text.find('\n', pos);
+            if (nl == std::string::npos) nl = text.size();
+            std::string line = text.substr(pos, nl - pos);
+            pos = nl + 1;
+            for (const char* c : { "//", "#", ";" })
+            {
+                const std::size_t cut = line.find(c);
+                if (cut != std::string::npos) line.erase(cut);
+            }
+            const std::size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = Trim(line.substr(0, eq));
+            if (key.size() >= 3 && static_cast<unsigned char>(key[0]) == 0xEF &&
+                static_cast<unsigned char>(key[1]) == 0xBB && static_cast<unsigned char>(key[2]) == 0xBF)
+                key = Trim(key.substr(3));
+            if (!key.empty()) kv.emplace_back(key, Trim(line.substr(eq + 1)));
+            if (nl == text.size()) break;
+        }
+        return ParseSettings([&](const char* key, std::string& out) {
+            bool found = false;
+            for (const auto& p : kv)
+                if (Lower(p.first) == Lower(key)) { out = p.second; found = true; }
+            return found;
+        });
+    }
+
+    // ---- voice activation (energy gate, adaptive noise floor) ------------------------
+    // Opens after two loud frames (40 ms), closes after kHangoverFrames quiet
+    // frames; the caller keeps kPrerollFrames so the word onset is sent too.
+    class Vad
+    {
+    public:
+        static constexpr int kOpenFrames = 2;
+        static constexpr int kHangoverFrames = 15;   // 300 ms
+        static constexpr int kPrerollFrames = 3;     // 60 ms
+
+        void Reset() { *this = Vad{}; }
+
+        // sensitivity 0..1 (higher opens on quieter speech). Returns the gate.
+        bool Update(const std::int16_t* pcm, int n, float sensitivity)
+        {
+            double sum = 0.0;
+            for (int i = 0; i < n; ++i) sum += double(pcm[i]) * double(pcm[i]);
+            const float rms = n > 0 ? static_cast<float>(std::sqrt(sum / n)) : 0.0f;
+            m_Level = m_Level * 0.7f + rms * 0.3f;
+            if (m_Noise < 0.0f) m_Noise = std::max(rms, 30.0f);
+            const float s = std::clamp(sensitivity, 0.0f, 1.0f);
+            // Open at 3.2x (sensitivity 1) .. 10x (0) the noise floor, and above an absolute floor.
+            const float ratio = 10.0f - 6.8f * s;
+            const float floorRms = 400.0f - 330.0f * s;
+            const float openAt = std::max(m_Noise * ratio, floorRms);
+            const float closeAt = openAt * 0.6f;
+            if (!m_Active)
+            {
+                m_Loud = rms > openAt ? m_Loud + 1 : 0;
+                if (m_Loud >= kOpenFrames) { m_Active = true; m_Quiet = 0; }
+                // The floor follows the quiet signal quickly and loud frames slowly.
+                m_Noise += (rms - m_Noise) * (rms < openAt ? 0.08f : 0.01f);
+            }
+            else
+            {
+                if (rms < closeAt) { if (++m_Quiet >= kHangoverFrames) { m_Active = false; m_Loud = 0; } }
+                else m_Quiet = 0;
+                if (rms < closeAt) m_Noise += (rms - m_Noise) * 0.02f;
+            }
+            m_Noise = std::clamp(m_Noise, 10.0f, 8000.0f);
+            return m_Active;
+        }
+
+        bool Active() const { return m_Active; }
+        float Level() const { return m_Level; }
+        float Noise() const { return m_Noise; }
+
+    private:
+        float m_Noise = -1.0f, m_Level = 0.0f;
+        int m_Loud = 0, m_Quiet = 0;
+        bool m_Active = false;
+    };
+
+    // ---- transmit state (gate -> frames to send) --------------------------------------
+    // Push-to-talk keeps sending kPttTailFrames after the release (the last
+    // syllable); voice activation sends the pre-roll before the first frame.
+    class Transmitter
+    {
+    public:
+        static constexpr int kPttTailFrames = 8;   // 160 ms
+
+        struct Step
+        {
+            bool resetEncoder = false;   // a new talkspurt: OPUS_RESET_STATE first
+            int prerollFrames = 0;       // encode this many pre-roll frames (oldest first) before `encode`
+            bool encode = false;         // encode the current frame
+            bool sendEnd = false;        // send an empty End frame (talkspurt over)
+        };
+
+        // gate = push-to-talk held or the VAD open; allowed = the session may send.
+        Step Update(bool gate, bool pushToTalkMode, bool allowed, int prerollAvailable)
+        {
+            Step s;
+            if (!allowed)
+            {
+                if (m_Transmitting) { s.sendEnd = true; m_Transmitting = false; }
+                m_Tail = 0;
+                return s;
+            }
+            if (gate) m_Tail = pushToTalkMode ? kPttTailFrames : 0;
+            const bool sending = gate || (pushToTalkMode && m_Tail > 0);
+            if (!gate && m_Tail > 0) --m_Tail;
+            if (sending && !m_Transmitting)
+            {
+                m_Transmitting = true;
+                if (++m_Talkspurt == 0u) m_Talkspurt = 1u;
+                m_FirstOfSpurt = true;
+                s.resetEncoder = true;
+                s.prerollFrames = pushToTalkMode ? 0 : std::clamp(prerollAvailable, 0, Vad::kPrerollFrames);
+                s.encode = true;
+            }
+            else if (sending)
+            {
+                s.encode = true;
+            }
+            else if (m_Transmitting)
+            {
+                s.sendEnd = true;
+                m_Transmitting = false;
+            }
+            return s;
+        }
+
+        // Stamps a frame about to be sent (sequence, talkspurt, Start flag).
+        void Stamp(Frame& f, bool end)
+        {
+            f.sequence = m_Sequence++;
+            f.talkspurt = m_Talkspurt;
+            f.flags = end ? static_cast<std::uint8_t>(kFlagEnd) : std::uint8_t{ 0 };
+            if (!end && m_FirstOfSpurt) { f.flags |= kFlagStart; m_FirstOfSpurt = false; }
+        }
+
+        bool Transmitting() const { return m_Transmitting; }
+        std::uint8_t Talkspurt() const { return m_Talkspurt; }
+
+    private:
+        bool m_Transmitting = false;
+        bool m_FirstOfSpurt = false;
+        int m_Tail = 0;
+        std::uint16_t m_Sequence = 0u;
+        std::uint8_t m_Talkspurt = 0u;
+    };
+
+    // ---- jitter buffer ---------------------------------------------------------------
+    // Pull-driven: the playback clock calls Next() once per 20 ms of audio it
+    // needs, so the device clock paces playout. Arrival times only decide when
+    // a talkspurt starts and how deep the buffer is kept (adaptive target).
+    class JitterBuffer
+    {
+    public:
+        static constexpr int kCapacity = 24;          // 480 ms
+        static constexpr int kMinTargetMs = 60;
+        static constexpr int kMaxTargetMs = 240;
+        static constexpr int kMaxEmptyConceal = 5;    // 100 ms of PLC with nothing buffered, then stop
+        static constexpr double kSilenceResetMs = 600.0;
+
+        enum class Action { None, Decode, DecodeFec, Conceal, End };
+        struct Output
+        {
+            Action action = Action::None;
+            Frame frame{};   // Decode: the frame; DecodeFec: the NEXT frame (its FEC carries the missing one)
+        };
+        struct Stats
+        {
+            std::uint32_t inserted = 0, duplicates = 0, late = 0, overflow = 0;
+            std::uint32_t decoded = 0, fec = 0, concealed = 0, skipped = 0, talkspurts = 0, underruns = 0;
+        };
+
+        void Reset()
+        {
+            m_Count = 0;
+            m_Playing = false;
+            m_EmptyConceal = 0;
+            m_HaveSpurt = false;
+        }
+
+        void Insert(const Frame& f, double nowMs)
+        {
+            if (!ValidFrame(f)) return;
+            if (!m_HaveSpurt || nowMs - m_LastArrival > kSilenceResetMs)
+            {
+                // First frame, or after a long silence: start clean.
+                Reset();
+                BeginSpurt(f, nowMs);
+            }
+            else if (f.talkspurt != m_Spurt)
+            {
+                // The next talkspurt: sequence numbers continue across spurts, so
+                // frames of the old one still buffered keep their order.
+                BeginSpurt(f, nowMs);
+            }
+            m_LastArrival = nowMs;
+            // Arrival spread relative to the sender's 20 ms clock -> target delay.
+            const double transit = nowMs - SequenceDelta(f.sequence, m_SpurtBaseSeq) * double(kFrameMs);
+            m_TransitMin = std::min(m_TransitMin, transit);
+            m_TransitMax = std::max(m_TransitMax, transit);
+            const int spread = static_cast<int>(m_TransitMax - m_TransitMin);
+            const int wanted = std::clamp(spread + kFrameMs, kMinTargetMs, kMaxTargetMs);
+            if (wanted > m_TargetMs) m_TargetMs = wanted;   // grows at once; shrinks between talkspurts
+
+            if (m_Playing && SequenceDelta(f.sequence, m_Expected) < 0) { ++m_Stats.late; return; }
+            for (int i = 0; i < m_Count; ++i)
+                if (m_Frames[i].sequence == f.sequence) { ++m_Stats.duplicates; return; }
+            if (m_Count == kCapacity) { ++m_Stats.overflow; DropOldest(); }
+            int at = m_Count;
+            while (at > 0 && SequenceDelta(m_Frames[at - 1].sequence, f.sequence) > 0) { m_Frames[at] = m_Frames[at - 1]; --at; }
+            m_Frames[at] = f;
+            ++m_Count;
+            ++m_Stats.inserted;
+        }
+
+        Output Next(double nowMs)
+        {
+            Output out;
+            if (!m_Playing)
+            {
+                if (m_Count == 0) return out;
+                // Start once the first frame waited the target delay, or the buffer holds it.
+                const bool waited = nowMs - m_FirstArrival >= m_TargetMs;
+                const bool deep = m_Count * kFrameMs >= m_TargetMs;
+                if (!waited && !deep) return out;
+                m_Playing = true;
+                m_Expected = m_Frames[0].sequence;
+                m_EmptyConceal = 0;
+            }
+            // Far too much buffered (a burst after a stall): skip ahead to the target.
+            if (m_Count * kFrameMs > m_TargetMs + 6 * kFrameMs)
+            {
+                while (m_Count > 1 && m_Count * kFrameMs > m_TargetMs)
+                {
+                    DropOldest();
+                    ++m_Stats.skipped;
+                }
+                m_Expected = m_Frames[0].sequence;
+            }
+            // A long gap (many frames lost upstream): jump to the next frame
+            // rather than conceal it all (PLC fades to silence after ~100 ms anyway).
+            if (m_Count > 0 && SequenceDelta(m_Frames[0].sequence, m_Expected) > kMaxEmptyConceal)
+            {
+                m_Stats.skipped += static_cast<std::uint32_t>(SequenceDelta(m_Frames[0].sequence, m_Expected));
+                m_Expected = m_Frames[0].sequence;
+            }
+            const int found = Find(m_Expected);
+            if (found >= 0)
+            {
+                out.frame = m_Frames[found];
+                Remove(found);
+                m_EmptyConceal = 0;
+                ++m_Expected;
+                if (out.frame.size == 0u && (out.frame.flags & kFlagEnd))
+                {
+                    out.action = Action::End;
+                    FinishSpurt();
+                    return out;
+                }
+                out.action = Action::Decode;
+                ++m_Stats.decoded;
+                return out;
+            }
+            if (m_Count > 0)
+            {
+                // Missing frame with later ones buffered: FEC from the next one, else PLC.
+                const int next = Find(static_cast<std::uint16_t>(m_Expected + 1u));
+                if (next >= 0)
+                {
+                    out.action = Action::DecodeFec;
+                    out.frame = m_Frames[next];
+                    ++m_Stats.fec;
+                }
+                else
+                {
+                    out.action = Action::Conceal;
+                    ++m_Stats.concealed;
+                }
+                m_Impairment = std::min(m_Impairment + 1, 4);
+                ++m_Expected;
+                m_EmptyConceal = 0;
+                // Drop frames that can no longer play in order.
+                for (int i = 0; i < m_Count;)
+                    if (SequenceDelta(m_Frames[i].sequence, m_Expected) < 0) Remove(i); else ++i;
+                return out;
+            }
+            // Nothing buffered: conceal briefly (late frames), then stop.
+            ++m_Stats.underruns;
+            if (++m_EmptyConceal > kMaxEmptyConceal)
+            {
+                out.action = Action::End;
+                FinishSpurt();
+                return out;
+            }
+            out.action = Action::Conceal;
+            ++m_Stats.concealed;
+            m_Impairment = std::min(m_Impairment + 1, 4);
+            ++m_Expected;
+            return out;
+        }
+
+        bool Playing() const { return m_Playing; }
+        int Count() const { return m_Count; }
+        int TargetMs() const { return m_TargetMs; }
+        const Stats& GetStats() const { return m_Stats; }
+
+    private:
+        int Find(std::uint16_t seq) const
+        {
+            for (int i = 0; i < m_Count; ++i) if (m_Frames[i].sequence == seq) return i;
+            return -1;
+        }
+        void Remove(int i)
+        {
+            for (int j = i + 1; j < m_Count; ++j) m_Frames[j - 1] = m_Frames[j];
+            --m_Count;
+        }
+        void DropOldest() { if (m_Count > 0) Remove(0); }
+        void BeginSpurt(const Frame& f, double nowMs)
+        {
+            m_HaveSpurt = true;
+            m_Spurt = f.talkspurt;
+            m_FirstArrival = nowMs;
+            m_SpurtBaseSeq = f.sequence;
+            m_TransitMin = 1e30;
+            m_TransitMax = -1e30;
+            ++m_Stats.talkspurts;
+        }
+        void FinishSpurt()
+        {
+            // Adapt for the next talkspurt: rough ones keep a deeper buffer.
+            m_TargetMs = m_Impairment ? std::min(kMaxTargetMs, std::max(m_TargetMs, kMinTargetMs + 20 * m_Impairment))
+                                      : std::max(kMinTargetMs, m_TargetMs - 20);
+            m_Impairment = 0;
+            m_Playing = false;
+            m_EmptyConceal = 0;
+            // Frames still buffered belong to the next talkspurt (it starts after
+            // its own target delay); anything older can no longer play.
+            for (int i = 0; i < m_Count;)
+                if (SequenceDelta(m_Frames[i].sequence, m_Expected) < 0) Remove(i); else ++i;
+            if (m_Count == 0) m_HaveSpurt = false;
+        }
+
+        Frame m_Frames[kCapacity]{};
+        int m_Count = 0;
+        bool m_Playing = false;
+        bool m_HaveSpurt = false;
+        std::uint8_t m_Spurt = 0u;
+        std::uint16_t m_Expected = 0u;
+        std::uint16_t m_SpurtBaseSeq = 0u;
+        double m_FirstArrival = 0.0, m_LastArrival = -1e30;
+        double m_TransitMin = 1e30, m_TransitMax = -1e30;
+        int m_TargetMs = kMinTargetMs;
+        int m_Impairment = 0;
+        int m_EmptyConceal = 0;
+        Stats m_Stats{};
+    };
+
+    // ---- negotiation (client) -------------------------------------------------------------
+    class ClientNegotiation
+    {
+    public:
+        static constexpr int kHelloAttempts = 4;
+        static constexpr double kHelloRetryMs = 1500.0;
+
+        struct Inputs
+        {
+            bool enabled = false;        // OpusVoiceEnabled and in a game
+            bool serverFeature = false;  // OpusVoice in l4d2vr_feature_ack
+            bool transmit = false;       // a microphone (or test tone) is usable
+            bool loopback = false;
+            double nowMs = 0.0;
+        };
+
+        void Reset() { *this = ClientNegotiation{}; }
+
+        // Returns the hello flags to send now, or -1. Flags 0 = opt out.
+        int Update(const Inputs& in)
+        {
+            const bool want = in.enabled && in.serverFeature;
+            const std::uint32_t flags = want
+                ? (kHelloReceive | (in.transmit ? kHelloTransmit : 0u) | (in.loopback ? kHelloLoopback : 0u)) : 0u;
+            if (!want)
+            {
+                m_Acked = false;
+                m_Peers = 0u;
+                if (m_SentFlags > 0) { m_SentFlags = 0; m_Attempts = 0; return 0; }   // opt out once
+                m_SentFlags = -1;
+                return -1;
+            }
+            if (static_cast<int>(flags) != m_SentFlags)
+            {
+                m_SentFlags = static_cast<int>(flags);
+                m_Attempts = 1;
+                m_LastHelloMs = in.nowMs;
+                return static_cast<int>(flags);
+            }
+            if (!m_Acked && m_Attempts < kHelloAttempts && in.nowMs - m_LastHelloMs >= kHelloRetryMs)
+            {
+                ++m_Attempts;
+                m_LastHelloMs = in.nowMs;
+                return static_cast<int>(flags);
+            }
+            return -1;
+        }
+
+        // A new server feature ack (map change, reconnect): handshake again.
+        void Restart() { m_SentFlags = -1; m_Acked = false; m_Attempts = 0; m_Peers = 0u; }
+
+        void OnAck(std::uint32_t version) { if (version >= kProtocolVersion && m_SentFlags > 0) m_Acked = true; }
+        void OnPeers(std::uint32_t lo, std::uint32_t hi) { if (m_Acked) m_Peers = (std::uint64_t{ hi } << 32) | lo; }
+
+        bool Active() const { return m_Acked && m_SentFlags > 0; }
+        bool TransmitAllowed() const { return Active() && (m_SentFlags & kHelloTransmit) != 0; }
+        std::uint64_t Peers() const { return Active() ? m_Peers : 0u; }
+        // Stock voice from this player (1-based) duplicates its Opus voice.
+        bool DropStockVoiceFrom(int playerIndex) const { return (Peers() & PlayerBit(playerIndex)) != 0u; }
+        int SentFlags() const { return m_SentFlags; }
+
+    private:
+        int m_SentFlags = -1;
+        int m_Attempts = 0;
+        double m_LastHelloMs = 0.0;
+        bool m_Acked = false;
+        std::uint64_t m_Peers = 0u;
+    };
+
+    // ---- spatial playback --------------------------------------------------------------
+    struct Vec3 { float x = 0.0f, y = 0.0f, z = 0.0f; };
+    struct Gains { float left = 1.0f, right = 1.0f; };
+
+    constexpr float kUnitsPerMeter = 39.37f;
+
+    // Source axes: yaw 0 looks along +x, the listener's right is (sin yaw, -cos yaw).
+    // Near talkers are panned (constant power, at most 70% to one side) and
+    // attenuated with distance; from spatialDistanceMeters on a talker is a
+    // centred "radio" voice at radioVolume, so a teammate across the map stays
+    // audible (L4D2's own voice is not positional at all).
+    inline Gains SpatialGains(const Vec3& listener, float listenerYawDeg, const Vec3& speaker, const Settings& s)
+    {
+        if (!s.positional) return { 1.0f, 1.0f };
+        const float dx = speaker.x - listener.x, dy = speaker.y - listener.y, dz = speaker.z - listener.z;
+        const float distUnits = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float meters = distUnits / kUnitsPerMeter;
+        const float yaw = listenerYawDeg * 3.14159265f / 180.0f;
+        const float horizontal = std::sqrt(dx * dx + dy * dy);
+        float pan = horizontal > 1.0f ? (dx * std::sin(yaw) - dy * std::cos(yaw)) / horizontal : 0.0f;   // +1 right
+        pan = std::clamp(pan, -1.0f, 1.0f) * 0.7f;
+        const float angle = (pan + 1.0f) * 0.25f * 3.14159265f;      // 0..pi/2
+        const float panL = std::cos(angle) * 1.41421356f, panR = std::sin(angle) * 1.41421356f;
+        // Full level within 1.5 m, then a gentle roll-off (half at ~7.5 m).
+        const float positional = 1.0f / (1.0f + std::max(0.0f, meters - 1.5f) / 6.0f);
+        const float blend = std::clamp(meters / std::max(s.spatialDistanceMeters, 1.0f), 0.0f, 1.0f);
+        Gains g;
+        g.left = (1.0f - blend) * positional * panL + blend * s.radioVolume;
+        g.right = (1.0f - blend) * positional * panR + blend * s.radioVolume;
+        // Never quieter than the radio level (teammates must stay intelligible).
+        const float floorLevel = s.radioVolume * 0.85f;
+        g.left = std::max(g.left, floorLevel * (pan > 0.0f ? 1.0f - pan * 0.5f : 1.0f));
+        g.right = std::max(g.right, floorLevel * (pan < 0.0f ? 1.0f + pan * 0.5f : 1.0f));
+        return g;
+    }
+
+    // ---- automatic gain control (received voice) -------------------------------------
+    // Brings each talker to one speech level whatever their microphone: the
+    // level follows speech frames only (above a floor), falls fast, rises slowly,
+    // ramps across the frame and never clips.
+    class Agc
+    {
+    public:
+        void Reset() { *this = Agc{}; }
+        void Process(std::int16_t* pcm, int n, bool enabled, float maxGain)
+        {
+            if (!enabled || n <= 0) { m_Applied = 1.0f; return; }
+            constexpr float kTarget = 5000.0f, kFloor = 300.0f;   // RMS ~ -16 dBFS speech, ~ -41 dBFS floor
+            double sum = 0.0;
+            int peak = 1;
+            for (int i = 0; i < n; ++i) { sum += double(pcm[i]) * pcm[i]; peak = std::max(peak, std::abs(int(pcm[i]))); }
+            const float rms = static_cast<float>(std::sqrt(sum / n));
+            if (rms > kFloor)
+            {
+                m_Level = m_Level <= 0.0f ? rms : m_Level + (rms - m_Level) * (rms > m_Level ? 0.3f : 0.05f);
+                const float want = std::clamp(kTarget / m_Level, 0.5f, std::max(1.0f, maxGain));
+                m_Gain += (want - m_Gain) * (want < m_Gain ? 0.3f : 0.05f);
+            }
+            const float gain = std::min(m_Gain, 32000.0f / float(peak));
+            const float from = m_Applied;
+            for (int i = 0; i < n; ++i)
+            {
+                const float g = from + (gain - from) * float(i + 1) / float(n);
+                pcm[i] = static_cast<std::int16_t>(std::clamp(static_cast<int>(std::lround(pcm[i] * g)), -32768, 32767));
+            }
+            m_Applied = gain;
+        }
+        float Gain() const { return m_Applied; }
+    private:
+        float m_Level = 0.0f, m_Gain = 1.0f, m_Applied = 1.0f;
+    };
+
+    // ---- mixing ---------------------------------------------------------------------------
+    // Soft limiter for the summed mix (float, 1.0 = full scale): linear to 0.75,
+    // then a smooth knee that approaches 1.0.
+    inline float SoftLimit(float x)
+    {
+        const float a = std::fabs(x);
+        if (a <= 0.75f) return x;
+        const float over = a - 0.75f;
+        const float y = 0.75f + 0.25f * (over / (over + 0.25f));
+        return x < 0.0f ? -y : y;
+    }
+
+    // ---- test signal and analysis --------------------------------------------------------------
+    class ToneSource
+    {
+    public:
+        void Configure(double hz, double onMs = 0.0, double offMs = 0.0) { m_Hz = hz; m_OnMs = onMs; m_OffMs = offMs; }
+        bool Enabled() const { return m_Hz > 0.0; }
+        void Fill(std::int16_t* out, int n)
+        {
+            const double period = m_OnMs + m_OffMs;
+            for (int i = 0; i < n; ++i, ++m_Sample)
+            {
+                const double t = double(m_Sample) / kSampleRate;
+                const bool on = period <= 0.0 || std::fmod(t * 1000.0, period) < m_OnMs;
+                out[i] = on ? static_cast<std::int16_t>(9000.0 * std::sin(2.0 * 3.14159265358979 * m_Hz * t))
+                            : static_cast<std::int16_t>((static_cast<int>(m_Sample * 7919u) % 41) - 20);
+            }
+        }
+    private:
+        double m_Hz = 0.0, m_OnMs = 0.0, m_OffMs = 0.0;
+        std::uint64_t m_Sample = 0u;
+    };
+
+    // Goertzel power of one frequency (normalized by n^2).
+    inline double TonePower(const std::int16_t* pcm, int n, double hz)
+    {
+        if (n <= 0) return 0.0;
+        const double w = 2.0 * 3.14159265358979 * hz / kSampleRate;
+        const double c = 2.0 * std::cos(w);
+        double s1 = 0.0, s2 = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            const double s0 = pcm[i] / 32768.0 + c * s1 - s2;
+            s2 = s1; s1 = s0;
+        }
+        return (s1 * s1 + s2 * s2 - c * s1 * s2) / (double(n) * n);
+    }
+
+    // Tone versus the strongest of a few off-tone probes, in dB.
+    inline double ToneToNoiseDb(const std::int16_t* pcm, int n, double hz)
+    {
+        const double tone = TonePower(pcm, n, hz);
+        double other = 1e-12;
+        for (double f : { hz * 0.5, hz * 1.37, hz * 2.11, hz * 2.9, 3100.0, 6200.0 })
+            if (std::fabs(f - hz) > 40.0) other = std::max(other, TonePower(pcm, n, f));
+        return 10.0 * std::log10(std::max(tone, 1e-12) / other);
+    }
+}

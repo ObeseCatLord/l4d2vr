@@ -1130,6 +1130,12 @@ public:
 
 	Vector m_AimLineStart = { 0,0,0 };
 	Vector m_AimLineEnd = { 0,0,0 };
+	// The drawn laser (VanillaLaserPlacement): from the controller ray like
+	// V.0.8.2 to where the bullet ray (m_AimLineStart/End, the sight line) hits.
+	Vector m_AimLaserStart = { 0,0,0 };
+	Vector m_AimLaserEnd = { 0,0,0 };
+	bool m_AimLaserConverged = false;
+	bool m_VanillaLaserPlacement = true;
 
 	// Third-person convergence: point hit by the *rendered* aim ray (camera/reticle ray).
 	// Bullets may be steered to aim at this point so the rendered line and bullet direction
@@ -2628,7 +2634,7 @@ public:
 		float axes[3][3]{};
 		float anchorGapCm = -1.0f;
 		bool leftBone = false;   // the model's own left hand holds the gun
-		bool armIk = false;      // drawn by the arm IK (else the classic draw)
+		const char* path = ""; // armik | clipset (cropped hands) | final (classic viewmodel)
 	};
 	GunHandDrawnProbe m_GunHandDrawn{};
 	std::atomic<uint32_t> m_GunHandDrawnSerial{ 0u };

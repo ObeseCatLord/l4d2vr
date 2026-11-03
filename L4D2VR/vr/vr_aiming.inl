@@ -2088,6 +2088,11 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
         m_IsThirdPersonCamera && camDelta.LengthSqr() > (5.0f * 5.0f))
         originBase += camDelta;
 
+    // The laser's start as the original mod (V.0.8.2) placed it: on the
+    // controller ray, before the bullet calibration offset and the sight line.
+    const Vector vanillaLaserDirection = direction;
+    const Vector vanillaLaserStart = useAutoGripAimPose ? originBase : originBase + direction * 2.0f;
+
     if (!isThrowable && !useMouse && !frontViewEyeAim && !frontViewControllerEyeOrigin &&
         !ApplyBulletAimOffset(originBase, direction, controllerUp))
     {
@@ -2222,6 +2227,41 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
     m_HasAimLine = true;
     m_HasThrowArc = false;
 
+    // The visible laser (2.0.5, user: "where they are in vanilla, not attached
+    // to the sights"): it starts where the original mod starts it, on the
+    // controller ray (moved into the viewmodel layer like V.0.8.2), and ends
+    // on the point the bullet ray (the sight line, m_AimLineStart/End) hits,
+    // so the dot stays where the shot lands. Bullets keep the sight line.
+    Vector laserStart = origin;
+    Vector laserEnd = target;
+    bool laserConverged = false;
+    if (ironSightRay && m_VanillaLaserPlacement && localPlayer && m_Game && m_Game->m_EngineTrace)
+    {
+        laserStart = vanillaLaserStart;
+        Vector vanillaEnd = laserStart + vanillaLaserDirection * maxDistance;
+        VR_FormatAimLineSegmentToViewmodelLayer(this, laserStart, vanillaEnd);
+        CGameTrace hitTrace;
+        Ray_t hitRay;
+        C_BaseEntity* mountedUseEnt = GetMountedGunUseEntity(localPlayer);
+        C_BaseCombatWeapon* weaponForTrace = localPlayer->GetActiveWeapon();
+        IClientEntityList* entityList = m_Game ? m_Game->m_ClientEntityList : nullptr;
+        IHandleEntity* safeMountedUseEnt = VR_GetSafeTraceSkipEntity(entityList, reinterpret_cast<IHandleEntity*>(mountedUseEnt));
+        IHandleEntity* safeWeapon = VR_GetSafeTraceSkipEntity(entityList, reinterpret_cast<IHandleEntity*>(weaponForTrace));
+        CTraceFilterSkipThreeEntities hitFilter((IHandleEntity*)localPlayer, safeMountedUseEnt, safeWeapon, 0);
+        hitRay.Init(origin, target);
+        laserEnd = (VR_SafeTraceRay(m_Game->m_EngineTrace, hitRay, STANDARD_TRACE_MASK, static_cast<CTraceFilter*>(&hitFilter), hitTrace) &&
+            hitTrace.fraction > 0.0f && hitTrace.fraction < 1.0f) ? hitTrace.endpos : target;
+        laserConverged = !((laserEnd - laserStart).IsZero());
+        if (!laserConverged)
+        {
+            laserStart = origin;
+            laserEnd = target;
+        }
+    }
+    m_AimLaserStart = laserStart;
+    m_AimLaserEnd = laserEnd;
+    m_AimLaserConverged = laserConverged;
+
     if (d3dAimLineNeedsVisibleSegment && localPlayer && m_Game && m_Game->m_EngineTrace
         && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame())
     {
@@ -2235,7 +2275,8 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
         IHandleEntity* safeActiveWeapon = VR_GetSafeTraceSkipEntity(entityList, reinterpret_cast<IHandleEntity*>(activeWeaponForTrace));
         CTraceFilterSkipThreeEntities tracefilterThree((IHandleEntity*)localPlayer, safeMountedUseEnt, safeActiveWeapon, 0);
         CTraceFilter* pTraceFilter = static_cast<CTraceFilter*>(&tracefilterThree);
-        visibleRay.Init(origin, target);
+        visibleEnd = laserEnd;
+        visibleRay.Init(laserStart, laserEnd);
         if (VR_SafeTraceRay(m_Game->m_EngineTrace, visibleRay, STANDARD_TRACE_MASK, pTraceFilter, visibleTrace)
             && visibleTrace.fraction < 1.0f
             && visibleTrace.fraction > 0.0f)
@@ -2244,20 +2285,20 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
         }
 
         std::lock_guard<std::mutex> lock(m_D3DAimLineOverlayMutex);
-        m_D3DAimLineWorldStart = origin;
+        m_D3DAimLineWorldStart = laserStart;
         m_D3DAimLineWorldEnd = visibleEnd;
-        m_HasD3DAimLineWorldSegment = !((visibleEnd - origin).IsZero());
+        m_HasD3DAimLineWorldSegment = !((visibleEnd - laserStart).IsZero());
     }
     else
     {
         std::lock_guard<std::mutex> lock(m_D3DAimLineOverlayMutex);
-        m_D3DAimLineWorldStart = origin;
-        m_D3DAimLineWorldEnd = target;
-        m_HasD3DAimLineWorldSegment = !((target - origin).IsZero());
+        m_D3DAimLineWorldStart = laserStart;
+        m_D3DAimLineWorldEnd = laserEnd;
+        m_HasD3DAimLineWorldSegment = !((laserEnd - laserStart).IsZero());
     }
 
     if (!queued && allowAimLineDraw && !scopeOnlyAimLine && !deferDebugAimOverlayForCleanMirror)
-        DrawAimLine(origin, target);
+        DrawAimLine(laserStart, laserEnd);
 }
 
 void VR::UpdateAimTeammateHudTarget(C_BasePlayer* localPlayer, const Vector& start, const Vector& end, bool aimLineActive)
@@ -3769,8 +3810,9 @@ bool VR::BuildRenderAimLineSegment(C_BasePlayer* localPlayer, Vector& start, Vec
     {
         if (!m_HasAimLine)
             return false;
-        start = m_AimLineStart;
-        end = m_AimLineEnd;
+        // The visible laser (vanilla start, ends where the bullet lands).
+        start = m_AimLaserStart;
+        end = m_AimLaserEnd;
         return !((end - start).IsZero());
     }
 
@@ -3908,6 +3950,9 @@ bool VR::BuildRenderAimLineSegment(C_BasePlayer* localPlayer, Vector& start, Vec
         // In third-person, avoid using the update-thread converge point here (it may be in a different phase);
         // draw a pure controller ray so the line always stays attached to the hand.
         end = visualEnd;
+        // First person with the sight line: end where the bullet lands.
+        if (!m_IsThirdPersonCamera && m_AimLaserConverged && m_HasAimLine && !m_HasThrowArc)
+            end = m_AimLaserEnd;
     }
 
     return !((end - start).IsZero());

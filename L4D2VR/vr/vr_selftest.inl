@@ -505,7 +505,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             "weapon=%d drawn(cm) fwd=%.1f right=%.1f up=%.1f dist=%.1f anchorGap=%.1f hand=%s path=%s x=(%.2f %.2f %.2f) y=(%.2f %.2f %.2f) z=(%.2f %.2f %.2f)",
             drawn.weaponId, drawn.pos[0], drawn.pos[1], drawn.pos[2],
             std::sqrt(drawn.pos[0] * drawn.pos[0] + drawn.pos[1] * drawn.pos[1] + drawn.pos[2] * drawn.pos[2]),
-            drawn.anchorGapCm, drawn.leftBone ? "left" : "right", drawn.armIk ? "armik" : "classic",
+            drawn.anchorGapCm, drawn.leftBone ? "left" : "right", drawn.path,
             drawn.axes[0][0], drawn.axes[0][1], drawn.axes[0][2], drawn.axes[1][0], drawn.axes[1][1], drawn.axes[1][2],
             drawn.axes[2][0], drawn.axes[2][1], drawn.axes[2][2]);
         // Target (GunHandOnController): the drawn gun hand within 2 cm of where

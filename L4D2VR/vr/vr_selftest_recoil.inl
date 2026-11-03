@@ -10,7 +10,7 @@
 //       eye looks down its sights (the rear sight <relief> cm in front of it,
 //       10 by default): the scope camera must render and the left eye's lens
 //       must show its picture (PASS); saves scope_<gun>_l/_r. Then the gun turns
-//       40 degrees away: the left lens must go black. Logs [VR][Scope] lines.
+//       75 degrees away: the left lens must go black. Logs [VR][Scope] lines.
 //   recoiltest=<give name>:<1|2>[:<seconds>]  fires with one hand or with the
 //       support hand on the foregrip; measures the aim excursion per frame, the
 //       fired rays against the kick they were fired with, the recovery, and
@@ -186,7 +186,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         {
             m_SelfTestStage = 4;
             m_RecoilTestAligning = false;
-            m_SelfTestRightAngLocal.y += 40.0f;
+            m_SelfTestRightAngLocal.y += 75.0f;
         }
         if (atS(4, 7.5f) || (m_SelfTestStage == 4 && t > 11.0f))
         {
@@ -202,7 +202,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
             m_RecoilEnabled = m_RecoilTestSavedEnabled;
             m_RecoilTestEyeRelief = m_SelfTestValueC > 0 ? m_SelfTestValueC / 1000.0f : 0.10f;
             m_SelfTestRightWorldValid = false;
-            m_SelfTestRightAngLocal.y -= 40.0f;
+            m_SelfTestRightAngLocal.y -= 75.0f;
         }
         return m_SelfTestStage >= 5 && t > 8.5f;
     }

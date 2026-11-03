@@ -164,7 +164,17 @@ void VR::ApplySelfTestPoses()
     auto sceneTracking = [&](const Vec3& local)
     {
         const Vector offset = l4d2vr_holster::ToWorld(sceneFrame, Vector(local.x, local.y, local.z)) - m_HmdPosAbs;
-        return WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        Vec3 p = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        if (m_SelfTestLookYaw != 0.0f)
+        {
+            // The holster frame follows the head: lookyaw= turns the head
+            // alone, so undo it for the scene hands (they stay put).
+            const float a = -m_SelfTestLookYaw * 3.14159265f / 180.0f;
+            const float dx = p.x - h.x, dy = p.y - h.y;
+            p.x = h.x + dx * std::cos(a) - dy * std::sin(a);
+            p.y = h.y + dx * std::sin(a) + dy * std::cos(a);
+        }
+        return p;
     };
 
     Vec3 rightLocal = m_SelfTestRightLocal;

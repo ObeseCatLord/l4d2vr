@@ -165,7 +165,7 @@ namespace
         { "Roomscale1To1Movement", CfgOptionType::Bool, "\346\210\277\351\227\264\347\247\273\345\212\250", "1:1\347\247\273\345\212\250", 0.0f, 0.0f, "false" },
         { "Roomscale1To1ServerMove", CfgOptionType::Bool, "\346\210\277\351\227\264\347\247\273\345\212\250", "VR \xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8\xE7\xA7\xBB\xE5\x8A\xA8", 0.0f, 0.0f, "true" },
         { "Roomscale1To1MovementScale", CfgOptionType::Float, "\346\210\277\351\227\264\347\247\273\345\212\250", "1:1\347\247\273\345\212\250\350\267\235\347\246\273\345\200\215\347\216\207", 0.0f, 4.0f, "1.0" },
-        { "Roomscale1To1MinApplyMeters", CfgOptionType::Float, "\346\210\277\351\227\264\347\247\273\345\212\250", "\346\234\200\345\260\217\345\272\224\347\224\250\350\267\235\347\246\273", 0.0f, 0.3f, "0.1" },
+        { "Roomscale1To1MinApplyMeters", CfgOptionType::Float, "\346\210\277\351\227\264\347\247\273\345\212\250", "\346\234\200\345\260\217\345\272\224\347\224\250\350\267\235\347\246\273", 0.0f, 0.3f, "0.005" },
         { "Roomscale1To1PhysicalCrouch", CfgOptionType::Bool, "\346\210\277\351\227\264\347\247\273\345\212\250", "\347\216\260\345\256\236\350\271\262\344\274\217", 0.0f, 0.0f, "true" },
         { "Roomscale1To1CrouchEnterMeters", CfgOptionType::Float, "\346\210\277\351\227\264\347\247\273\345\212\250", "\350\271\262\344\274\217\350\247\246\345\217\221\351\253\230\345\272\246\345\267\256", 0.05f, 1.0f, "0.25" },
         { "Roomscale1To1CrouchExitMeters", CfgOptionType::Float, "\346\210\277\351\227\264\347\247\273\345\212\250", "\350\271\262\344\274\217\351\207\212\346\224\276\351\253\230\345\272\246\345\267\256", 0.0f, 1.0f, "0.18" },
@@ -211,13 +211,13 @@ namespace
         { "HudAlwaysVisible", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "HUD \xE6\x80\xBB\xE6\x98\xAF\xE5\x8F\xAF\xE8\xA7\x81", 0.0f, 0.0f, "false" },
         { "HudAlwaysHidden", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "\xE7\xA6\x81\xE7\x94\xA8\xE6\x8A\xAC\xE6\x89\x8BHUD", 0.0f, 0.0f, "false" },
        
-        { "LeftWristHudEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\x90\xAF\xE7\x94\xA8\xE7\x8A\xB6\xE6\x80\x81HUD\xEF\xBC\x88\xE5\x89\xAF\xE6\x89\x8B\xEF\xBC\x89", 0.0f, 0.0f, "false" },
+        { "LeftWristHudEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\x90\xAF\xE7\x94\xA8\xE7\x8A\xB6\xE6\x80\x81HUD\xEF\xBC\x88\xE5\x89\xAF\xE6\x89\x8B\xEF\xBC\x89", 0.0f, 0.0f, "true" },
         { "LeftWristHudWidthMeters", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD\xE5\xAE\xBD\xE5\xBA\xA6\xEF\xBC\x88\xE7\xB1\xB3\xEF\xBC\x89", 0.01f, 0.4f, "0.1" },
         { "LeftWristHudXOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD X\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "0.01" },
         { "LeftWristHudYOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD Y\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "0.01" },
         { "LeftWristHudZOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD Z\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "-0.0" },
         { "LeftWristHudAngleOffset", CfgOptionType::Vec3, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD\xE8\xA7\x92\xE5\xBA\xA6\xE5\x81\x8F\xE7\xA7\xBB (\xE4\xBF\xAF\xE4\xBB\xB0,\xE5\x81\x8F\xE8\x88\xAA,\xE7\xBF\xBB\xE6\xBB\x9A)", -180.0f, 180.0f, "-75,0,0" },
-        { "RightAmmoHudEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\x90\xAF\xE7\x94\xA8\xE5\xBC\xB9\xE8\x8D\xAFHUD\xEF\xBC\x88\xE6\x8C\x81\xE6\x9E\xAA\xE6\x89\x8B\xEF\xBC\x89", 0.0f, 0.0f, "false" },
+        { "RightAmmoHudEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\x90\xAF\xE7\x94\xA8\xE5\xBC\xB9\xE8\x8D\xAFHUD\xEF\xBC\x88\xE6\x8C\x81\xE6\x9E\xAA\xE6\x89\x8B\xEF\xBC\x89", 0.0f, 0.0f, "true" },
         { "RightAmmoHudWidthMeters", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD\xE5\xAE\xBD\xE5\xBA\xA6\xEF\xBC\x88\xE7\xB1\xB3\xEF\xBC\x89", 0.01f, 0.5f, "0.13" },
         { "RightAmmoHudXOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD X\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "-0.07" },
         { "RightAmmoHudYOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD Y\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "0.03" },
@@ -248,11 +248,11 @@ namespace
         { "WorldModelVRPoseLeftHandRotationOffsetDeg", CfgOptionType::Vec3, "\xE8\xBA\xAB\xE4\xBD\x93 / \xE4\xB8\x96\xE7\x95\x8C\xE6\xA8\xA1\xE5\x9E\x8B", "\xE5\xB7\xA6\xE6\x89\x8B\xE6\x8E\x8C\xE6\x97\x8B\xE8\xBD\xAC\xE8\xA7\x92\xE5\xBA\xA6\x20\x28\xE4\xBF\xAF\xE4\xBB\xB0\x2C\xE5\x81\x8F\xE8\x88\xAA\x2C\xE7\xBF\xBB\xE6\xBB\x9A\x29", -180.0f, 180.0f, "0,0,0" },
         { "WorldModelVRPoseRightHandRotationOffsetDeg", CfgOptionType::Vec3, "\xE8\xBA\xAB\xE4\xBD\x93 / \xE4\xB8\x96\xE7\x95\x8C\xE6\xA8\xA1\xE5\x9E\x8B", "\xE5\x8F\xB3\xE6\x89\x8B\xE6\x8E\x8C\xE6\x97\x8B\xE8\xBD\xAC\xE8\xA7\x92\xE5\xBA\xA6\x20\x28\xE4\xBF\xAF\xE4\xBB\xB0\x2C\xE5\x81\x8F\xE8\x88\xAA\x2C\xE7\xBF\xBB\xE6\xBB\x9A\x29", -180.0f, 180.0f, "0,0,0" },
         { "ClothingMaterials", CfgOptionType::Bool, "\xE8\xBA\xAB\xE4\xBD\x93 / \xE7\xAC\xAC\xE4\xB8\x80\xE4\xBA\xBA\xE7\xA7\xB0", "\xE9\x9A\x90\xE8\x97\x8F\xE8\xA7\x92\xE8\x89\xB2\xE6\x9C\x8D\xE8\xA3\x85\xE6\x9D\x90\xE8\xB4\xA8", 0.0f, 0.0f, "true" },
-        { "HiddenMaterialNames", CfgOptionType::String, "\xE8\xBA\xAB\xE4\xBD\x93 / \xE7\xAC\xAC\xE4\xB8\x80\xE4\xBA\xBA\xE7\xA7\xB0", "\xE8\xA7\x92\xE8\x89\xB2\xE6\x9D\x90\xE8\xB4\xA8\xE9\x9A\x90\xE8\x97\x8F\xE8\xA7\x84\xE5\x88\x99", 0.0f, 0.0f, "" },
+        { "HiddenMaterialNames", CfgOptionType::String, "\xE8\xBA\xAB\xE4\xBD\x93 / \xE7\xAC\xAC\xE4\xB8\x80\xE4\xBA\xBA\xE7\xA7\xB0", "\xE8\xA7\x92\xE8\x89\xB2\xE6\x9D\x90\xE8\xB4\xA8\xE9\x9A\x90\xE8\x97\x8F\xE8\xA7\x84\xE5\x88\x99", 0.0f, 0.0f, "francis:xie-v2,francis:xie,coach:xie-v2,coach:xie,nick:xie-v2,nick:xie,louis:xie-v2,louis:xie,ellis:xie-v2,ellis:xie,bill:xie-v2,bill:xie,rochelle:xie-v2,rochelle:xie,zoey:xie-v2,zoey:xie" },
         
-        { "VrHandsEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "VR \xE5\x8F\x8C\xE6\x89\x8B", 0.0f, 0.0f, "false" },
+        { "VrHandsEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "VR \xE5\x8F\x8C\xE6\x89\x8B", 0.0f, 0.0f, "true" },
         { "VrHandsGlovesEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "VR \xE6\x89\x8B\xE5\xA5\x97", 0.0f, 0.0f, "false" },
-        { "NativeViewmodelArmCroppingEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8\x20\x2F\x20\x56\x52\x20\xE5\x8F\x8C\xE6\x89\x8B", "\xE8\xA3\x81\xE5\x88\x87\xE5\x8E\x9F\xE7\x94\x9F\xE8\xA7\x86\xE5\x9B\xBE\xE6\xA8\xA1\xE5\x9E\x8B\xE6\x89\x8B\xE8\x87\x82", 0.0f, 0.0f, "true" },
+        { "NativeViewmodelArmCroppingEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8\x20\x2F\x20\x56\x52\x20\xE5\x8F\x8C\xE6\x89\x8B", "\xE8\xA3\x81\xE5\x88\x87\xE5\x8E\x9F\xE7\x94\x9F\xE8\xA7\x86\xE5\x9B\xBE\xE6\xA8\xA1\xE5\x9E\x8B\xE6\x89\x8B\xE8\x87\x82", 0.0f, 0.0f, "false" },
         { "NativeViewmodelLeftArmAnchorOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\xB7\xA6\xE8\x87\x82\xE9\x94\x9A\xE7\x82\xB9\xE4\xBD\x8D\xE7\xBD\xAE\xEF\xBC\x88\xE7\xB1\xB3\xEF\xBC\x89", -0.5f, 0.5f, "0,0,0" },
         { "NativeViewmodelRightArmAnchorOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\xB3\xE8\x87\x82\xE9\x94\x9A\xE7\x82\xB9\xE4\xBD\x8D\xE7\xBD\xAE\xEF\xBC\x88\xE7\xB1\xB3\xEF\xBC\x89", -0.5f, 0.5f, "0,0,0" },
         { "NativeViewmodelLeftArmAnchorRotationOffsetDeg", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\xB7\xA6\xE8\x87\x82\xE9\x94\x9A\xE7\x82\xB9\xE8\xA7\x92\xE5\xBA\xA6\xEF\xBC\x88\xE4\xBF\xAF\xE4\xBB\xB0\x2C\xE5\x81\x8F\xE8\x88\xAA\x2C\xE7\xBF\xBB\xE6\xBB\x9A\xEF\xBC\x89", -180.0f, 180.0f, "0,0,0" },
@@ -270,13 +270,13 @@ namespace
         { "VrHandsVirtualStockStrength", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE8\x99\x9A\xE6\x8B\x9F\xE6\x9E\xAA\xE6\x89\x98\xE5\xBC\xBA\xE5\xBA\xA6", 0.0f, 1.0f, "0.65" },
         { "VrHandsVirtualStockOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE8\x99\x9A\xE6\x8B\x9F\xE6\x9E\xAA\xE6\x89\x98\xE5\x81\x8F\xE7\xA7\xBB", -0.75f, 0.75f, "-0.28,0.16,-0.12" },
         
-        { "MagazineInteractionEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE6\x89\x8B\xE5\x8A\xA8\xE6\x8D\xA2\xE5\xBC\xB9", 0.0f, 0.0f, "false" },
+        { "MagazineInteractionEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE6\x89\x8B\xE5\x8A\xA8\xE6\x8D\xA2\xE5\xBC\xB9", 0.0f, 0.0f, "true" },
         { "MagazineInteractionQuickReloadMode", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "Quick Reload Mode", 0.0f, 0.0f, "false" },
         { "MagazineInteractionUseButtonGripInput", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE6\x8C\x89\xE9\x94\xAE\xE6\x8A\x93\xE6\x8F\xA1\xE6\x8D\xA2\xE5\xBC\xB9", 0.0f, 0.0f, "true" },
         { "MagazineInteractionUseButtonDisbleReloadCommand", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE8\xB7\xB3\xE8\xBF\x87\xE8\x87\xAA\xE5\x8A\xA8\xE8\xA3\x85\xE5\xBC\xB9", 0.0f, 0.0f, "false" },
         { "MagazineInteractionSeparateButtonInput", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE5\x89\xAF\xE6\x89\x8B\xE5\xA7\x8B\xE7\xBB\x88\xE4\xBD\xBF\xE7\x94\xA8\xE6\x8A\x93\xE6\x8F\xA1\xE9\x94\xAE\xEF\xBC\x88\x47\x72\x69\x70\xEF\xBC\x89\xE8\xBF\x9B\xE8\xA1\x8C\xE8\xBE\x85\xE5\x8A\xA9\xE6\x8F\xA1\xE6\x8C\x81\x2F\xE5\xBC\xB9\xE5\x8C\x8A\xE4\xBA\xA4\xE4\xBA\x92\xE3\x80\x82", 0.0f, 0.0f, "false" },
         { "MagazineBoxDebugEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE5\xBC\xB9\xE5\x8C\xA3\xE8\xB0\x83\xE8\xAF\x95\xE6\xA1\x86", 0.0f, 0.0f, "false" },
-        { "MagazineInteractionSuppressEmptyClipAutoReload", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE6\x8A\x91\xE5\x88\xB6\xE7\xA9\xBA\xE5\xBC\xB9\xE5\x8C\xA3\xE8\x87\xAA\xE5\x8A\xA8\xE6\x8D\xA2\xE5\xBC\xB9", 0.0f, 0.0f, "false" },
+        { "MagazineInteractionSuppressEmptyClipAutoReload", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE6\x8A\x91\xE5\x88\xB6\xE7\xA9\xBA\xE5\xBC\xB9\xE5\x8C\xA3\xE8\x87\xAA\xE5\x8A\xA8\xE6\x8D\xA2\xE5\xBC\xB9", 0.0f, 0.0f, "true" },
         { "MagazineInteractionShotgunShellsPerInsert", CfgOptionType::Int, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE9\x9C\xB0\xE5\xBC\xB9\xE6\x9E\xAA\xE5\x8D\x95\xE6\xAC\xA1\xE8\xA3\x85\xE5\xBC\xB9\xE6\x95\xB0", 1.0f, 8.0f, "1" },
         { "MagazineInteractionFreshMagazinePickupOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "\xE6\x96\xB0\xE5\xBC\xB9\xE5\x8C\xA3\xE6\x8B\xBE\xE5\x8F\x96\xE5\x81\x8F\xE7\xA7\xBB", -1.5f, 1.5f, "0.45,-0.28,0.25" },
         { "MagazineInteractionFreshMagazineWristAnchorOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / \xE6\x8D\xA2\xE5\xBC\xB9", "Fresh Mag Wrist Offset", -0.25f, 0.25f, "0,0,0" },
@@ -301,7 +301,7 @@ namespace
         { "BulletAimRotationYawDeg", CfgOptionType::Float, "Weapons / Fire", "Bullet Aim Yaw", -180.0f, 180.0f, "0.0" },
         { "BulletAimRotationRollDeg", CfgOptionType::Float, "Weapons / Fire", "Bullet Aim Roll", -180.0f, 180.0f, "0.0" },
         { "AutoRepeatSemiAutoFire", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x8D\x95\xE5\x8F\x91\xE6\x9E\xAA\xE9\x95\xBF\xE6\x8C\x89\xE8\xBF\x9E\xE5\x8F\x91", 0.0f, 0.0f, "false" },
-        { "AutoRepeatSemiAutoFireHz", CfgOptionType::Float, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE8\xBF\x9E\xE7\x82\xB9\xE9\xA2\x91\xE7\x8E\x87 (Hz)", 1.0f, 12.0f, "20.0" },
+        { "AutoRepeatSemiAutoFireHz", CfgOptionType::Float, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE8\xBF\x9E\xE7\x82\xB9\xE9\xA2\x91\xE7\x8E\x87 (Hz)", 1.0f, 12.0f, "12.0" },
         { "AutoRepeatSprayPushEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE8\x87\xAA\xE5\x8A\xA8 Spray-Push", 0.0f, 0.0f, "false" },
         { "AutoRepeatSprayPushDelayTicks", CfgOptionType::Int, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "Spray-Push \xE5\xBB\xB6\xE8\xBF\x9F Tick", 0.0f, 120.0f, "0" },
         { "AutoRepeatSprayPushHoldTicks", CfgOptionType::Int, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "Spray-Push \xE4\xBF\x9D\xE6\x8C\x81 Tick", 0.0f, 120.0f, "1" },
@@ -339,6 +339,7 @@ namespace
         { "HolsterItemsVisible", CfgOptionType::Bool, "Hands / Holsters", "Show holstered items", 0.0f, 0.0f, "true" },
         { "HolsterInstantDraw", CfgOptionType::Bool, "Hands / Holsters", "Instant weapon switches", 0.0f, 0.0f, "true" },
         { "AmbidextrousItemHands", CfgOptionType::Bool, "Hands / Holsters", "Use items in the hand that takes them", 0.0f, 0.0f, "true" },
+        { "ItemHandLeftArmModel", CfgOptionType::Bool, "Hands / Holsters", "Real left hand for left-held items", 0.0f, 0.0f, "true" },
         { "ItemHandOffRadiusMeters", CfgOptionType::Float, "Hands / Holsters", "Hand-off reach (m)", 0.05f, 0.3f, "0.14" },
         { "ChestSlingEnabled", CfgOptionType::Bool, "Hands / Holsters", "Chest sling for long guns", 0.0f, 0.0f, "true" },
         { "ChestSlingDropDistanceMeters", CfgOptionType::Float, "Hands / Holsters", "Sling: drop beyond (m)", 0.3f, 2.0f, "0.6" },
@@ -389,6 +390,7 @@ namespace
         { "SightAutoAlignEnabled", CfgOptionType::Bool, "Weapons / Aim", "Align crosshair with sights", 0.0f, 0.0f, "true" },
         { "IronSightAimEnabled", CfgOptionType::Bool, "Weapons / Aim", "Fire along the iron sights", 0.0f, 0.0f, "true" },
         { "GunRigidInHand", CfgOptionType::Bool, "Weapons / Aim", "Gun rigid in the hand", 0.0f, 0.0f, "true" },
+        { "GunHandOnController", CfgOptionType::Bool, "Weapons / Aim", "Gun hand on the controller", 0.0f, 0.0f, "true" },
         { "RecoilEnabled", CfgOptionType::Bool, "Weapons / Aim", "Pavlov recoil", 0.0f, 0.0f, "true" },
         { "RecoilScale", CfgOptionType::Float, "Weapons / Aim", "Recoil strength", 0.0f, 4.0f, "1.0" },
         { "RecoilStanceEnabled", CfgOptionType::Bool, "Weapons / Aim", "Stance recoil", 0.0f, 0.0f, "true" },
@@ -448,11 +450,12 @@ namespace
         { "CustomAction2Command", CfgOptionType::String, "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C", "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C" "2\xE6\x8C\x87\xE4\xBB\xA4", 0.0f, 0.0f, "" },
         { "CustomAction3Command", CfgOptionType::String, "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C", "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C" "3\xE6\x8C\x87\xE4\xBB\xA4", 0.0f, 0.0f, "" },
         { "CustomAction4Command", CfgOptionType::String, "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C", "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C" "4\xE6\x8C\x87\xE4\xBB\xA4", 0.0f, 0.0f, "" },
-        { "CustomAction5Command", CfgOptionType::String, "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C", "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C" "5\xE6\x8C\x87\xE4\xBB\xA4", 0.0f, 0.0f, "vr_afk_fall_guard_hold" },
+        { "CustomAction5Command", CfgOptionType::String, "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C", "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89\xE5\x8A\xA8\xE4\xBD\x9C" "5\xE6\x8C\x87\xE4\xBB\xA4", 0.0f, 0.0f, "" },
         
         
         { "D3DAimLineOverlayEnabled", CfgOptionType::Bool, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "\xE5\x90\xAF\xE7\x94\xA8\xE7\x9E\x84\xE5\x87\x86\xE7\xBA\xBF", 0.0f, 0.0f, "false" },
         { "AimLineOnlyWhenLaserSight", CfgOptionType::Bool, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "\xE4\xBB\x85\xE5\x9C\xA8\xE6\xBF\x80\xE5\x85\x89\xE7\x9E\x84\xE5\x87\x86\xE5\xBC\x80\xE5\x90\xAF\xE6\x97\xB6\xE6\x98\xBE\xE7\xA4\xBA\xE7\x9E\x84\xE5\x87\x86\xE7\xBA\xBF", 0.0f, 0.0f, "false" },
+        { "VanillaLaserPlacement", CfgOptionType::Bool, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "Laser from the controller (original mod)", 0.0f, 0.0f, "true" },
         { "D3DAimLineOverlayWidthPixels", CfgOptionType::Float, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "D3D \xE7\x9E\x84\xE5\x87\x86\xE7\xBA\xBF\xE5\xAE\xBD\xE5\xBA\xA6", 0.0f, 20.0f, "2.0" },
         { "D3DAimLineOverlayOutlinePixels", CfgOptionType::Float, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "D3D \xE7\x9E\x84\xE5\x87\x86\xE7\xBA\xBF\xE6\x8F\x8F\xE8\xBE\xB9\xE5\xAE\xBD\xE5\xBA\xA6", 0.0f, 20.0f, "1.0" },
         { "D3DAimLineOverlayEndpointPixels", CfgOptionType::Float, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "D3D \xE7\x9E\x84\xE5\x87\x86\xE7\xBA\xBF\xE7\xAB\xAF\xE7\x82\xB9\xE5\xA4\xA7\xE5\xB0\x8F", 0.0f, 20.0f, "1.5" },
@@ -469,8 +472,8 @@ namespace
         { "InventoryHudMarkerSeparation", CfgOptionType::Float, "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F / \xE9\x94\x9A\xE7\x82\xB9", "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F HUD \xE6\xA0\x87\xE8\xAE\xB0\xE9\x97\xB4\xE8\xB7\x9D", 0.0f, 2.0f, "0.14" },
 
         { "FlashlightEnhancementEnabled", CfgOptionType::Bool, "\xE9\x80\x9A\xE7\x94\xA8", "\xE6\x89\x8B\xE7\x94\xB5\xE5\xA2\x9E\xE5\xBC\xBA", 0.0f, 0.0f, "false" },
-        { "AutoFlashlightEnabled", CfgOptionType::Bool, "\xE9\x80\x9A\xE7\x94\xA8", "\xE8\x87\xAA\xE5\x8A\xA8\xE6\x89\x8B\xE7\x94\xB5\xE7\xAD\x92", 0.0f, 0.0f, "true" },
-        { "AutoFlashlightDarkThreshold", CfgOptionType::Float, "\xE9\x80\x9A\xE7\x94\xA8", "\xE8\x87\xAA\xE5\x8A\xA8\xE6\x89\x8B\xE7\x94\xB5\xE7\xAD\x92\xE9\xBB\x91\xE6\x9A\x97\xE9\x98\x88\xE5\x80\xBC", 0.0f, 255.0f, "45" },
+        { "AutoFlashlightEnabled", CfgOptionType::Bool, "\xE9\x80\x9A\xE7\x94\xA8", "\xE8\x87\xAA\xE5\x8A\xA8\xE6\x89\x8B\xE7\x94\xB5\xE7\xAD\x92", 0.0f, 0.0f, "false" },
+        { "AutoFlashlightDarkThreshold", CfgOptionType::Float, "\xE9\x80\x9A\xE7\x94\xA8", "\xE8\x87\xAA\xE5\x8A\xA8\xE6\x89\x8B\xE7\x94\xB5\xE7\xAD\x92\xE9\xBB\x91\xE6\x9A\x97\xE9\x98\x88\xE5\x80\xBC", 0.0f, 255.0f, "8" },
     };
 
     constexpr int kCfgOptionSpecCount = (int)(sizeof(kCfgOptionSpecs) / sizeof(kCfgOptionSpecs[0]));
@@ -483,7 +486,7 @@ namespace
         { "MagazineInteractionSocketCaptureBoxHalfExtentsMeters", CfgOptionType::Vec3, "", "", 0.0f, 0.5f, "0,0,0" },
         { "MagazineInteractionSocketCaptureBoxLocalOffsetMeters", CfgOptionType::Vec3, "", "", -0.5f, 0.5f, "0,0,0" },
         { "MagazineInteractionSocketCaptureBoxLocalRotationOffsetDeg", CfgOptionType::Vec3, "", "", -180.0f, 180.0f, "0,0,0" },
-        { "MagazineInteractionSocketCaptureAngleDeg", CfgOptionType::Float, "", "", 0.0f, 89.0f, "35" },
+        { "MagazineInteractionSocketCaptureAngleDeg", CfgOptionType::Float, "", "", 0.0f, 89.0f, "45" },
         { "MagazineInteractionSocketRequiredDepthMeters", CfgOptionType::Float, "", "", 0.0f, 0.25f, "0.04" },
         { "MagazineInteractionSocketRequiredOverlapFraction", CfgOptionType::Float, "", "", 0.0f, 1.0f, "0.45" },
         { "MagazineInteractionBoltGrabPaddingMeters", CfgOptionType::Float, "", "", 0.0f, 0.25f, "0.10" },
@@ -811,6 +814,7 @@ namespace
         
         { "D3DAimLineOverlayEnabled", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "Enable Aim-Line", "\345\220\257\347\224\250\347\236\204\345\207\206\347\272\277", "Draws a screen-space aim line overlay using the D3D layer.", "\344\275\277\347\224\250 D3D \345\261\202\347\273\230\345\210\266\345\261\217\345\271\225\347\251\272\351\227\264\347\232\204\347\236\204\345\207\206\347\272\277\350\246\206\347\233\226\345\261\202\343\200\202", "Useful if you want a flat overlay instead of only world-space helpers.", "\345\246\202\346\236\234\344\275\240\346\203\263\344\275\277\347\224\250\345\271\263\351\235\242\350\246\206\347\233\226\345\261\202\357\274\214\350\200\214\344\270\215\345\217\252\344\276\235\350\265\226\344\270\226\347\225\214\347\251\272\351\227\264\350\276\205\345\212\251\347\272\277\357\274\214\345\217\257\344\273\245\345\274\200\345\220\257\343\200\202" },
         { "AimLineOnlyWhenLaserSight", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "Show Aim Line Only With Laser Sight", "\344\273\205\345\234\250\346\277\200\345\205\211\347\236\204\345\207\206\345\274\200\345\220\257\346\227\266\346\230\276\347\244\272\347\236\204\345\207\206\347\272\277", "When enabled, the VR aim line is hidden unless your firearm has the in-game laser sight upgrade active.", "\345\274\200\345\220\257\345\220\216\357\274\214\351\231\244\351\235\236\346\236\252\346\242\260\345\267\262\346\277\200\346\264\273\346\270\270\346\210\217\345\206\205\347\232\204\346\277\200\345\205\211\347\236\204\345\207\206\345\215\207\347\272\247\357\274\214\345\220\246\345\210\231\351\232\220\350\227\217VR\347\236\204\345\207\206\347\272\277\343\200\202", "Throwable trajectory arcs are not affected.", "\346\212\225\346\216\267\347\211\251\346\212\233\347\211\251\347\272\277\344\270\215\345\217\227\345\275\261\345\223\215\343\200\202" },
+        { "VanillaLaserPlacement", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "Laser From The Controller", "Laser From The Controller", "The aim laser starts where the original L4D2VR mod starts it, at your controller, and ends where your bullet lands (the bullets follow the gun's sights).", "The aim laser starts where the original L4D2VR mod starts it, at your controller, and ends where your bullet lands (the bullets follow the gun's sights).", "Off: the laser runs along the sight line (2.0.0 to 2.0.4).", "Off: the laser runs along the sight line (2.0.0 to 2.0.4)." },
         { "D3DAimLineOverlayWidthPixels", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "D3D Aim-Line Width", "D3D \347\236\204\345\207\206\347\272\277\345\256\275\345\272\246", "Pixel width of the D3D aim-line overlay.", "D3D \347\236\204\345\207\206\347\272\277\350\246\206\347\233\226\345\261\202\347\232\204\345\203\217\347\264\240\345\256\275\345\272\246\343\200\202", "Increase only if the line is too thin to see clearly.", "\345\217\252\346\234\211\345\234\250\347\236\204\345\207\206\347\272\277\345\244\252\347\273\206\346\227\266\345\206\215\350\260\203\345\244\247\343\200\202" },
         { "D3DAimLineOverlayOutlinePixels", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "D3D Aim-Line Outline Width", "D3D \347\236\204\345\207\206\347\272\277\346\217\217\350\276\271\345\256\275\345\272\246", "Pixel width of the outline around the D3D aim-line.", "D3D \347\236\204\345\207\206\347\272\277\345\244\226\346\217\217\350\276\271\347\232\204\345\203\217\347\264\240\345\256\275\345\272\246\343\200\202", "Use a small outline to keep the line visible on bright scenes.", "\344\272\256\345\234\272\346\231\257\344\270\213\345\217\257\347\224\250\345\260\221\351\207\217\346\217\217\350\276\271\346\235\245\346\217\220\351\253\230\345\217\257\350\247\201\346\200\247\343\200\202" },
         { "D3DAimLineOverlayEndpointPixels", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "D3D Aim-Line Endpoint Size", "D3D \347\236\204\345\207\206\347\272\277\347\253\257\347\202\271\345\244\247\345\260\217", "Pixel size of the endpoint marker on the D3D aim-line overlay.", "D3D \347\236\204\345\207\206\347\272\277\350\246\206\347\233\226\345\261\202\347\253\257\347\202\271\346\240\207\350\256\260\347\232\204\345\203\217\347\264\240\345\244\247\345\260\217\343\200\202", "Raise it if you want the hit point marker to stand out more.", "\345\246\202\346\236\234\345\270\214\346\234\233\350\220\275\347\202\271\346\240\207\350\256\260\346\233\264\351\206\222\347\233\256\357\274\214\345\217\257\344\273\245\350\260\203\345\244\247\343\200\202" },
@@ -1160,6 +1164,7 @@ namespace
         { "ChestSlingEnabled", "Hands / Holsters", "Chest Sling", "Letting go of a rifle, SMG, shotgun, sniper rifle, M60 or grenade launcher near your body hangs it on a sling in front of your chest instead of dropping it: both hands are free (doors, pickups) and it cannot fire. Squeeze the grip at its handle or foregrip with either hand to take it; that hand becomes the trigger hand, so switching hands is: let go, grab the handle with the other hand. Letting go over a holster still stows it there.", "Off: letting go of a long gun drops it (or stows it over a holster). To drop a gun with the sling on, let go with your arm stretched away from your body." },
         { "ChestSlingDropDistanceMeters", "Hands / Holsters", "Sling Drop Distance", "Letting go of a long gun with your hand farther than this from the sling (arm stretched out) drops it to the floor instead of slinging it.", "Default 0.6 m: a normal hold slings, a deliberate arm's-length release drops." },
         { "ChestSlingGrabRadiusMeters", "Hands / Holsters", "Sling Grab Reach", "How close a squeezing hand must be to the slung gun's handle or foregrip to take it.", "Default 0.15 m." },
+        { "ItemHandLeftArmModel", "Hands / Holsters", "Real Left Hand", "An item in your left hand is held by the survivor's own left arm and hand (its fingers take the mirrored grip); your right arm is the free hand.", "Off: the right arm is drawn reflected onto the left controller (2.0.4 behaviour)." },
         { "AmbidextrousItemHands", "Hands / Holsters", "Ambidextrous Items", "The hand that takes an item holds and uses it: draw a gun with your left hand and it aims and fires from the left trigger, a grenade drawn left is thrown from the left. Your other hand becomes the support hand (foregrip, magazines, slides) and the magazine pouch moves to its hip.", "Hand an item over by squeezing it with your free hand, or let go with the item hand while the free hand holds the foregrip." },
         { "ItemHandOffRadiusMeters", "Hands / Holsters", "Hand-Off Reach", "How close your free hand must be to the item hand for its squeeze to take the item over.", "Squeezes on the foregrip, a magazine, the bolt or slide do those instead." },
         { "MagazineEmptyGlowEnabled", "Hands / Manual Reload", "Glow Empty Magazine", "An empty gun never reloads by itself; its magazine glows instead.", "" },
@@ -1186,6 +1191,7 @@ namespace
         { "VrHandsTwoHandedStabilizerBeta", "Hands / VR Hands", "Stabilizer Motion Response", "How fast the stabilizer loosens as you swing the weapon. Higher has less lag.", "1.5 by default." },
         { "ConsumableGesturesEnabled", "Hands / Items", "Consumable Gestures", "Bring pills to your mouth or stab adrenaline into your chest or other arm to use them.", "The trigger still works." },
         { "CrosshairEnabled", "Weapons / Aim", "Dynamic Spread Crosshair", "Shows an X crosshair at the aim point whose gap grows with the weapon's current inaccuracy.", "Off by default: aim with the sights." },
+        { "GunHandOnController", "Weapons / Aim", "Gun Hand On The Controller", "Every gun is drawn with your hand's wrist where the empty hand's is, on the controller (plus Right Hand Pose Offset); before, each gun's idle animation put the hand somewhere else (the magnum 9 cm, Uzi/MAC-10 13 cm behind, military sniper 17 cm ahead).", "Only moves the gun: its angle and the sight line are unchanged." },
         { "GunRigidInHand", "Weapons / Aim", "Gun Rigid In The Hand", "L4D2's idle sway and firing animation no longer move the gun in your hand; the slide and bolt still move. The only kick is the recoil.", "" },
         { "IronSightAimEnabled", "Weapons / Aim", "Fire Along The Iron Sights", "Bullets leave along the gun's sight line (rear sight through front sight, or the scope axis), so shots land on the sight picture at every distance.", "" },
         { "RecoilEnabled", "Weapons / Aim", "Pavlov Recoil", "Each shot kicks the gun in your hand like the same gun in Pavlov VR; bullets follow the kicked gun, so you counter it yourself. Hold the foregrip to tame two-handed guns.", "" },
@@ -1964,6 +1970,7 @@ namespace
             "SightAutoAlignEnabled",
             "IronSightAimEnabled",
             "GunRigidInHand",
+            "GunHandOnController",
             "RecoilEnabled",
             "SpreadDisabled",
             "ShotgunPavlovPattern",
@@ -2690,6 +2697,7 @@ ViewmodelAutoGripAlignDebugLog=false
 
 AimLineEnabled=false
 AimLineOnlyWhenLaserSight=false
+VanillaLaserPlacement=true
 AimLineTimingAligned=true
 MeleeAimLineEnabled=false
 BlockFireOnFriendlyAimEnabled=false

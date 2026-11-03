@@ -470,8 +470,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         {
             m_SelfTestStage = 1;
             m_SelfTestValueA = static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire));
+            m_SelfTestValueB = static_cast<int>(m_GunHandDrawnSerial.load(std::memory_order_acquire));
+            m_GunHandStageTraceUntilMs.store(GetTickCount64() + 400u, std::memory_order_release);
         }
-        if (static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire)) == m_SelfTestValueA && t < 3.0f)
+        // The drawn hand is the result; the arm IK input (classic draws have none) is extra.
+        if (static_cast<int>(m_GunHandDrawnSerial.load(std::memory_order_acquire)) == m_SelfTestValueB && t < 3.0f)
+            return false;
+        if (static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire)) == m_SelfTestValueA && t < 0.5f)
             return false;
         GunHandProbe probe{};
         {
@@ -489,7 +494,23 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             probe.pos[0] * m_VRScale, probe.pos[1] * m_VRScale, probe.pos[2] * m_VRScale,
             probe.axes[0][0], probe.axes[0][1], probe.axes[0][2], probe.axes[1][0], probe.axes[1][1], probe.axes[1][2],
             probe.axes[2][0], probe.axes[2][1], probe.axes[2][2]);
-        SelfTestReport("gunhand", static_cast<int>(m_GunHandProbeSerial.load(std::memory_order_acquire)) != m_SelfTestValueA, detail);
+        Game::logMsg("[VR][SelfTest] gunhand input: %s", detail);
+        GunHandDrawnProbe drawn{};
+        {
+            std::lock_guard<std::mutex> lock(m_GunHandProbeMutex);
+            drawn = m_GunHandDrawn;
+        }
+        const bool haveDrawn = static_cast<int>(m_GunHandDrawnSerial.load(std::memory_order_acquire)) != m_SelfTestValueB;
+        std::snprintf(detail, sizeof(detail),
+            "weapon=%d drawn(cm) fwd=%.1f right=%.1f up=%.1f dist=%.1f anchorGap=%.1f hand=%s path=%s x=(%.2f %.2f %.2f) y=(%.2f %.2f %.2f) z=(%.2f %.2f %.2f)",
+            drawn.weaponId, drawn.pos[0], drawn.pos[1], drawn.pos[2],
+            std::sqrt(drawn.pos[0] * drawn.pos[0] + drawn.pos[1] * drawn.pos[1] + drawn.pos[2] * drawn.pos[2]),
+            drawn.anchorGapCm, drawn.leftBone ? "left" : "right", drawn.path,
+            drawn.axes[0][0], drawn.axes[0][1], drawn.axes[0][2], drawn.axes[1][0], drawn.axes[1][1], drawn.axes[1][2],
+            drawn.axes[2][0], drawn.axes[2][1], drawn.axes[2][2]);
+        // Target (GunHandOnController): the drawn gun hand within 2 cm of where
+        // the empty hand sits.
+        SelfTestReport("gunhand", haveDrawn && drawn.anchorGapCm >= 0.0f && drawn.anchorGapCm < 2.0f, detail);
         return true;
     }
 

@@ -85,6 +85,7 @@ CHANGES = [
     "2.0.0: survivor hand poses follow Pavlov's hand poses for holding guns, magazines, slides, grenades and items. The separate SteamVR glove models are retired.",
     "2.0.2: easier shotgun pumping: the pump cocks at 7 of its 10 cm and chambers anywhere in the last 3.5 cm, a fast rack is never missed at any frame rate, the pump is caught from further away and stays caught through a tracking blip, and holding the foregrip racks it too (ManualPump... settings).",
     "2.0.2: stance recoil: guns kick less crouched, much more while jumping, and more the faster you move, following each gun's own L4D2 accuracy values (RecoilStanceEnabled and per-part scales).",
+    "2.0.4: full-body mode: your body's arms reach your VR hands (two-bone IK from the body's own shoulders, natural elbows, one hand per side, a small stretch instead of a detached hand) and your torso turns to follow your head (after a 30 degree deadband, at once when a hand goes far out to the side); other VR players' bodies turn the same way (FirstPersonBodyArmIK, FirstPersonBodyYawDeadbandDeg).",
 ]
 
 

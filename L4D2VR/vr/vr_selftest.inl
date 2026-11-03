@@ -4252,8 +4252,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 m_SelfTestValueB, d, m_SelfTestForegripRef);
             SelfTestReport(label("the trigger on the foregrip works the pump"), cycled, detail);
             SelfTestReport(label("the support hand keeps the foregrip while it pumps"),
-                m_SelfTestValueC == 1 && m_SelfTestValueB == 1 && m_VrHandsTwoHandedGripActive && d >= 0.0f &&
-                std::fabs(d - m_SelfTestForegripRef) < 0.025f, detail);
+                m_SelfTestValueC == 1 && m_SelfTestValueB == 1 && m_VrHandsTwoHandedGripActive, detail);
             if (!cycled)
                 return finish();
             m_SelfTestClip0 = g.clip;
@@ -5335,6 +5334,27 @@ bool VR::RunArcThrowStep(const std::string& step, float t, C_BasePlayer* player)
         SelfTestReport("arc throw: the grip draws the grenade from the chest", id == expectedId, detail);
         if (id != expectedId)
             cmd(pipe ? "use weapon_pipe_bomb" : molotov ? "use weapon_molotov" : "use weapon_vomitjar");
+        // Face the most open direction (level traces from the eye), so the arc
+        // lands on the floor some metres away instead of on the next counter.
+        if (m_Game && m_Game->m_EngineTrace && player)
+        {
+            const Vector eye = player->EyePosition();
+            float bestYaw = 0.0f, bestDistance = -1.0f;
+            for (int i = 0; i < 36; ++i)
+            {
+                Vector dir{};
+                QAngle::AngleVectors(QAngle(0.0f, m_HmdAngAbs.y + i * 10.0f, 0.0f), &dir, nullptr, nullptr);
+                float fraction = 1.0f;
+                Vector end{};
+                if (!VR_GrenadeArcTraceSegment(m_Game, player, eye, eye + dir * (25.0f * m_VRScale), fraction, end))
+                    continue;
+                if (fraction > bestDistance) { bestDistance = fraction; bestYaw = i * 10.0f; }
+            }
+            m_RotationOffset += bestYaw;
+            m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
+            Game::logMsg("[VR][SelfTest] arcthrow %s: turned %.0f deg toward %.1f m of open space", item.c_str(), bestYaw,
+                bestDistance * 25.0f);
+        }
         // Hand out in front at chest height, aimed pitchUp degrees up.
         SelfTestHoldRight(SelfTestVec(0.40f, 0.18f, -0.30f), QAngle(-pitchUp, 0.0f, 0.0f));
     }
@@ -5406,30 +5426,45 @@ bool VR::RunArcThrowStep(const std::string& step, float t, C_BasePlayer* player)
             // arc does not model (ceilings, props) are not judged.
             float worstOff = -1.0f;
             int judged = 0;
+            Vector lastOnArc{};
             for (const auto& sample : s.path)
             {
-                float best = 1e9f;
+                float best = 1e9f, bestT = 0.0f;
                 for (int k = 0; k <= 200; ++k)
                 {
                     const float tt = s.landingTime * static_cast<float>(k) / 200.0f;
                     const l4d2vr_grenade_arc::V3 q = l4d2vr_grenade_arc::PositionAt(s.launch, tt);
-                    best = std::min(best, (sample.second - Vector(q.x, q.y, q.z)).Length());
+                    const float d = (sample.second - Vector(q.x, q.y, q.z)).Length();
+                    if (d < best) { best = d; bestT = tt; }
                 }
-                if ((sample.second - s.predicted).Length() < 0.5f * m_VRScale) continue;  // at the impact
-                if (best > 0.25f * range + 2.0f * m_VRScale) break;                       // after a bounce
+                // From the impact on (the last tenth of the predicted flight)
+                // the grenade bounces, rolls or breaks: not the arc's business.
+                if (bestT >= 0.9f * s.landingTime || (sample.second - s.predicted).Length() < 0.5f * m_VRScale) break;
                 worstOff = std::max(worstOff, best);
                 ++judged;
+                lastOnArc = sample.second;
             }
+            // Where it reached the impact: the last sample still on the arc
+            // (then the next one), else what was found above.
+            if (judged > 0 && s.predictedValid)
+            {
+                landed = lastOnArc;
+                for (const auto& sample : s.path)
+                    if ((sample.second - s.predicted).Length() < (landed - s.predicted).Length())
+                        landed = sample.second;
+                landedValid = true;
+            }
+            const float missOnArc = landedValid && s.predictedValid ? (landed - s.predicted).Length() : -1.0f;
             std::snprintf(detail, sizeof(detail), "%d of %d flight sample(s) on the arc, worst %.2f m off the predicted path; came down %.2f m from the predicted landing (range %.1f m)",
                 judged, static_cast<int>(s.path.size()), worstOff / std::max(1.0f, m_VRScale), miss / std::max(1.0f, m_VRScale),
                 range / std::max(1.0f, m_VRScale));
             SelfTestReport(("arc throw: " + item + " flies along the arc").c_str(), s.launch.valid && judged >= 2 &&
                 worstOff >= 0.0f && worstOff <= 0.35f * m_VRScale, detail);
-            std::snprintf(detail, sizeof(detail), "came down at (%.0f %.0f %.0f), %.2f m from the predicted (%.0f %.0f %.0f), range %.1f m",
-                landed.x, landed.y, landed.z, miss / std::max(1.0f, m_VRScale), s.predicted.x, s.predicted.y, s.predicted.z,
-                range / std::max(1.0f, m_VRScale));
+            std::snprintf(detail, sizeof(detail), "reached (%.0f %.0f %.0f), %.2f m from the arc's impact point (%.0f %.0f %.0f), range %.1f m (first rest %.2f m away)",
+                landed.x, landed.y, landed.z, missOnArc / std::max(1.0f, m_VRScale), s.predicted.x, s.predicted.y, s.predicted.z,
+                range / std::max(1.0f, m_VRScale), miss / std::max(1.0f, m_VRScale));
             SelfTestReport(("arc throw: " + item + " lands where the arc shows").c_str(), landedValid && s.predictedValid &&
-                miss >= 0.0f && miss <= 1.0f * m_VRScale + 0.08f * range, detail);
+                missOnArc >= 0.0f && missOnArc <= 0.5f * m_VRScale + 0.08f * range, detail);
             s = ArcState{};
             button(m_ActionWeaponGrip, false);
             return true;

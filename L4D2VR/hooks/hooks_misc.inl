@@ -19538,13 +19538,43 @@ namespace
         // lands on Pg*T (a left hand on the same grip), the free hand on Ps*T'
         // (a right hand around the right controller).
         bool handMirror = false;
+        Vector armMirrorNormal = bodyRight;   // the mirror plane's normal (below)
         l4d2vr_hand_mirror::Mat34 bodyMirror = l4d2vr_hand_mirror::Identity();
         l4d2vr_hand_mirror::Mat34 supportLocalMirror = l4d2vr_hand_mirror::Identity();
         if (outMirrored && vr->ItemHandMirrorWanted())
         {
             l4d2vr_hand_mirror::Mat34 gunLocalMirror{};
-            const float bodyPoint[3] = { viewOrigin.x, viewOrigin.y, viewOrigin.z };
-            const float bodyNormal[3] = { bodyRight.x, bodyRight.y, bodyRight.z };
+            // With the first-person body, mirror across the body's own
+            // midline (between its shoulders), so the mirrored arm roots on
+            // the body's other shoulder exactly; the head can sit off that
+            // line (torso yaw deadband, lean).
+            Vector mirrorPoint = viewOrigin;
+            Vector mirrorNormal = bodyRight;
+            if (haveFirstPersonBodyFrame && firstPersonBodyState && vr->m_FirstPersonBodyArmIK)
+            {
+                const int eyeSlot = HooksFirstPersonBodyEyeSlot(firstPersonBodyState->eyeIndex);
+                HooksBodyArmSolution bodySolution{};
+                if (eyeSlot >= 0)
+                {
+                    std::lock_guard<std::mutex> lock(HooksBodyArmSolutionMutex());
+                    bodySolution = HooksBodyArmSolutionStorage()[eyeSlot];
+                }
+                if (bodySolution.owner == vr && bodySolution.sceneState == firstPersonBodyState &&
+                    bodySolution.sceneSerial == firstPersonBodyState->sceneSerial &&
+                    bodySolution.valid[0] && bodySolution.valid[1])
+                {
+                    Vector across = bodySolution.shoulder[1] - bodySolution.shoulder[0];
+                    across -= bodyUp * DotProduct(across, bodyUp);
+                    if (VectorNormalize(across) > 0.0f && DotProduct(across, bodyRight) > 0.7f)
+                    {
+                        mirrorPoint = (bodySolution.shoulder[0] + bodySolution.shoulder[1]) * 0.5f;
+                        mirrorNormal = across;
+                    }
+                }
+            }
+            armMirrorNormal = mirrorNormal;
+            const float bodyPoint[3] = { mirrorPoint.x, mirrorPoint.y, mirrorPoint.z };
+            const float bodyNormal[3] = { mirrorNormal.x, mirrorNormal.y, mirrorNormal.z };
             if (vr->GetItemHandMirrorPlanes(gunLocalMirror, supportLocalMirror) &&
                 l4d2vr_hand_mirror::Reflection(bodyPoint, bodyNormal, bodyMirror))
             {
@@ -20255,7 +20285,7 @@ namespace
                 bodySolution.owner == vr &&
                 bodySolution.sceneState == firstPersonBodyState &&
                 bodySolution.sceneSerial == firstPersonBodyState->sceneSerial;
-            Vector mirrorNormal = bodyRight;
+            Vector mirrorNormal = armMirrorNormal;
             const bool mirrorNormalValid = VectorNormalize(mirrorNormal) > 0.0f;
             for (int slot = 0; bodySolutionCurrent && slot < 2; ++slot)
             {

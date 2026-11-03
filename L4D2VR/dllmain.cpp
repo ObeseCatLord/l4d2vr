@@ -3099,6 +3099,9 @@ namespace
             l4d2vr_offhand_pose::kDefaultRotationText, true },
         { "2026-11-02_offhand_pose_offset", "NativeViewmodelLeftHandPoseOffsetMeters",
             l4d2vr_offhand_pose::kDefaultOffsetText, true },
+        // The full first-person body is off by default (user, 2026-11-03);
+        // players can turn it back on (its arms now reach the VR hands).
+        { "2026-11-03_first_person_body_off", "FirstPersonBodyEnabled", "false" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

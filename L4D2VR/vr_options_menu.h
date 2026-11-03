@@ -68,7 +68,7 @@ namespace l4d2vr_options_menu
         { "SnapTurning", RowKind::Toggle, "Snap turning", "Turn in fixed steps with the right stick instead of smoothly.", 0, 0, 0, "false" },
         { "SnapTurnAngle", RowKind::Slider, "Snap turn angle", "How far one snap turns.", 15.0f, 120.0f, 15.0f, "45.0", nullptr, "SnapTurning", false, " deg" },
         { "TurnSpeed", RowKind::Slider, "Smooth turn speed", "How fast the right stick turns you when snap turning is off.", 0.1f, 1.0f, 0.05f, "0.3", nullptr, "!SnapTurning" },
-        { "MoveDirectionFromController", RowKind::Choice, "Walk direction", "Which way the left stick walks.", 0, 0, 0, "false", "false:Where you look|true:Where the hand points" },
+        { "MoveDirectionFromController", RowKind::Choice, "Walk direction", "Which way the left stick walks.", 0, 0, 0, "false", "false:Where you look|true:Hand points" },
         { "LeftHanded", RowKind::Choice, "Dominant hand", "Your gun hand. Left swaps the hands and their buttons.", 0, 0, 0, "false", "false:Right|true:Left" },
         { "Roomscale1To1Movement", RowKind::Toggle, "Room-scale 1:1 movement", "Walking in your room moves the survivor one to one.", 0, 0, 0, "false" },
         { "Roomscale1To1PhysicalCrouch", RowKind::Toggle, "Physical crouching", "Ducking for real crouches the survivor.", 0, 0, 0, "true" },
@@ -80,7 +80,7 @@ namespace l4d2vr_options_menu
     inline const Row kBodyRows[] = {
         { "FirstPersonBodyEnabled", RowKind::Toggle, "Full body", "Show your survivor's body below you.", 0, 0, 0, "false" },
         { "FirstPersonBodyArmIK", RowKind::Toggle, "Body arms reach your hands", "The body's arms follow your VR hands.", 0, 0, 0, "true", nullptr, "FirstPersonBodyEnabled" },
-        { "NativeViewmodelHandsOnly", RowKind::Choice, "Hand mode", "How the survivor's arms are shown in first person.", 0, 0, 0, "true", "true:Arms follow your hands|false:Game's animated arms" },
+        { "NativeViewmodelHandsOnly", RowKind::Choice, "Hand mode", "How the survivor's arms are shown in first person.", 0, 0, 0, "true", "true:Follow your hands|false:Game animation" },
         { "NativeViewmodelArmCroppingEnabled", RowKind::Toggle, "Hands only (cropped arms)", "Show only the hands, not the arms.", 0, 0, 0, "false" },
         { "AmbidextrousItemHands", RowKind::Toggle, "Either hand takes items", "The hand that draws an item holds and uses it.", 0, 0, 0, "true" },
         { "ChestSlingEnabled", RowKind::Toggle, "Chest sling", "Let go of a long gun near your body to hang it on your chest.", 0, 0, 0, "true" },
@@ -116,7 +116,7 @@ namespace l4d2vr_options_menu
     inline const Row kHudRows[] = {
         { "LeftWristHudEnabled", RowKind::Toggle, "Health on your wrist", "Team health on the off-hand wrist.", 0, 0, 0, "true" },
         { "RightAmmoHudEnabled", RowKind::Toggle, "Ammo on your wrist", "Ammo on the gun hand's wrist.", 0, 0, 0, "true" },
-        { "WristHudStyle", RowKind::Choice, "Wrist HUD style", "The game's own HUD pieces or simple panels.", 0, 0, 0, "native", "native:Game HUD|custom:Simple panels" },
+        { "WristHudStyle", RowKind::Choice, "Wrist HUD style", "The game's own HUD pieces or simple panels.", 0, 0, 0, "native", "native:Game HUD|custom:Simple" },
         { "HudAlwaysVisible", RowKind::Toggle, "Floating HUD always on", "Keep the floating game HUD in view all the time.", 0, 0, 0, "false" },
         { "HudAlwaysHidden", RowKind::Toggle, "No floating HUD", "Never show the floating game HUD (wrist HUDs only).", 0, 0, 0, "false" },
         { "HudDistance", RowKind::Slider, "Floating HUD distance", "Metres from your head.", 0.5f, 3.0f, 0.1f, "1.3", nullptr, "!HudAlwaysHidden", false, " m" },

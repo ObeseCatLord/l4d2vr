@@ -465,7 +465,11 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             std::lock_guard<std::mutex> lock(m_GunHandProbeMutex);
             probe = m_GunHandProbe;
         }
-        char detail[320];
+        char detail[480];
+        Game::logMsg("[VR][SelfTest] gunhand extra: root(cm)=(%.1f %.1f %.1f) vmOffset(units)=(%.2f %.2f %.2f) vmAngOffset=(%.1f %.1f %.1f)",
+            probe.root[0] * 100.0f, probe.root[1] * 100.0f, probe.root[2] * 100.0f,
+            m_ViewmodelPosOffset.x, m_ViewmodelPosOffset.y, m_ViewmodelPosOffset.z,
+            m_ViewmodelAngOffset.x, m_ViewmodelAngOffset.y, m_ViewmodelAngOffset.z);
         std::snprintf(detail, sizeof(detail),
             "weapon=%d pos(cm) fwd=%.1f right=%.1f up=%.1f units=(%.2f %.2f %.2f) x=(%.2f %.2f %.2f) y=(%.2f %.2f %.2f) z=(%.2f %.2f %.2f)",
             probe.weaponId, probe.pos[0] * 100.0f, probe.pos[1] * 100.0f, probe.pos[2] * 100.0f,
@@ -1515,6 +1519,15 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     // ---- Render verification scenes -----------------------------------------
     // look=<pitch>: scripted head pitch in degrees (positive looks down; "off"
     // returns to the headset's own). Holds for the following steps.
+    // nocursor=1|0: the HUD capture takes the gameplay path of a player without
+    // a cursor (the headless window always shows one).
+    if (step.rfind("nocursor=", 0) == 0)
+    {
+        m_SelfTestNoCursor = step.size() > 9 && step[9] == '1';
+        Game::logMsg("[VR][SelfTest] cursor treated as %s", m_SelfTestNoCursor ? "hidden" : "the window reports it");
+        return true;
+    }
+
     if (step.rfind("look=", 0) == 0)
     {
         if (at(0, 0.0f))

@@ -3040,6 +3040,8 @@ namespace
         const char* value = nullptr;
         // Only replace the old shipped 0,0,0 (or a missing key), never a tuned value.
         bool onlyIfLegacyZeroVector = false;
+        // Only replace this old shipped value (or a missing key), never a tuned one.
+        const char* onlyIfValue = nullptr;
     };
 
     bool TryGetConfigParameterValue(const std::string& text, const std::string& targetKey, std::string& outValue)
@@ -3103,6 +3105,9 @@ namespace
         // config and showed up while two-handing.
         { "2026-11-03_magazine_debug_boxes_off", "MagazineBoxDebugEnabled", "false" },
         { "2026-11-03_inventory_anchor_boxes_off", "ShowInventoryAnchors", "false" },
+        // Pavlov-sized foregrip catch (an 11.5 cm hand sphere on the handguard): the
+        // 5 cm target box made two-handing awkward. Only the old default changes.
+        { "2026-11-03_pavlov_foregrip_box", "VrHandsTwoHandedGripTargetBoxScale", "1.5", false, "1.0" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3179,6 +3184,16 @@ namespace
                 std::string current;
                 const bool present = TryGetConfigParameterValue(configText, migration.key, current);
                 if (!l4d2vr_offhand_pose::ShouldMigrateLegacyZero(present, current))
+                {
+                    appliedIds.insert(migration.id);
+                    continue;
+                }
+            }
+            if (migration.onlyIfValue)
+            {
+                std::string current;
+                const bool present = TryGetConfigParameterValue(configText, migration.key, current);
+                if (present && TrimAsciiWhitespace(current) != migration.onlyIfValue)
                 {
                     appliedIds.insert(migration.id);
                     continue;

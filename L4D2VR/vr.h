@@ -2510,7 +2510,7 @@ public:
 	bool m_VrHandsGlovesHideArmsBeforeFallback = false;
 	bool m_VrHandsMotionRangeWithoutController = false;
 	bool m_VrHandsRightUseViewmodelPose = false;
-	float m_VrHandsTwoHandedGripTargetBoxScale = 1.0f;
+	float m_VrHandsTwoHandedGripTargetBoxScale = 1.5f;
 	bool m_VrHandsTwoHandedGripHeldMode = false;
 	bool m_VrHandsRealBulletSpreadEnabled = false;
 	bool m_VrHandsTwoHandedAimMountFriendly = false;
@@ -2564,6 +2564,7 @@ public:
 		int weaponId = 0;
 		float pos[3]{};      // metres along the controller's forward, right, up
 		float axes[3][3]{};  // the hand bone's x, y, z axes in the same frame
+		float root[3]{};     // the arms model's root bone, same frame (metres)
 	};
 	std::mutex m_GunHandProbeMutex;
 	GunHandProbe m_GunHandProbe{};
@@ -3539,6 +3540,7 @@ public:
 	// across later steps, so a following shot= photographs that scene.
 	bool m_SelfTestLookActive = false;
 	float m_SelfTestLookPitch = 0.0f;           // degrees, positive looks down
+	bool m_SelfTestNoCursor = false;            // nocursor=1: VGUI paints as for a player without a cursor
 	bool m_SelfTestRuntimeHands = false;        // runtimehands=1: controllers from the runtime, not scripted
 	bool m_SelfTestSimHands = false;            // runtimehands=sim: OpenVR raw poses equal to Monado's static simulated controllers
 	bool m_SelfTestFreezeHead = false;          // freezehead=1: head fixed at tracking (0, 1.6, 0) facing -Z

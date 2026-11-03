@@ -163,12 +163,10 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
         // the gun, as after a hand-off; a toggle grip holds it).
         m_ItemHandAdoptHeld = true;
         RequestItemHand(physicalLeft, l4d2vr_item_hand::Reason::HandOff);
-        if (!m_AmbidextrousItemHands)
-        {
-            // Without ambidextrous items only the item hand can hold it: the
-            // support hand puts it back in that hand.
-            m_ChestSlingTakeSerial.fetch_add(1u, std::memory_order_acq_rel);
-        }
+        // The grip owns it again once the hands have traded (CreateMove), so
+        // letting go slings it again. Without ambidextrous items the support
+        // hand puts it back in the item hand.
+        m_ChestSlingTakeSerial.fetch_add(1u, std::memory_order_acq_rel);
     }
     else
     {

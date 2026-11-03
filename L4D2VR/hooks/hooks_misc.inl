@@ -9326,6 +9326,10 @@ namespace
     // draw of a weapon in a new session shows it resting in the hand.
     constexpr const char* kViewmodelIdlePosesPath = "VR\\viewmodel_idle_poses.bin";
     constexpr uint32_t kViewmodelIdlePosesMagic = 0x50564C34u; // "4LVP"
+    // 2: 2.0.4 discards the idle poses learned before it once (session 6: the
+    // auto shotgun and SPAS poses cached in a headset install put the hand
+    // 21 cm off the controller; freshly learned ones are within 3 cm).
+    constexpr uint32_t kViewmodelIdlePosesVersion = 2u;
 
     inline void HooksLoadViewmodelIdlePoses(HolsterInstantDrawPoseState& state)
     {
@@ -9339,7 +9343,7 @@ namespace
         in.read(reinterpret_cast<char*>(&magic), 4);
         in.read(reinterpret_cast<char*>(&version), 4);
         in.read(reinterpret_cast<char*>(&count), 4);
-        if (!in || magic != kViewmodelIdlePosesMagic || version != 1u || count > 4096u)
+        if (!in || magic != kViewmodelIdlePosesMagic || version != kViewmodelIdlePosesVersion || count > 4096u)
             return;
         int loaded = 0;
         for (uint32_t i = 0; i < count; ++i)
@@ -9389,7 +9393,7 @@ namespace
             if (pair.second.valid && pair.second.numBones > 0 && pair.first.size() <= 512u &&
                 static_cast<int>(pair.second.frozenLocalBones.size()) == pair.second.numBones)
                 ++count;
-        const uint32_t header[3] = { kViewmodelIdlePosesMagic, 1u, count };
+        const uint32_t header[3] = { kViewmodelIdlePosesMagic, kViewmodelIdlePosesVersion, count };
         out.write(reinterpret_cast<const char*>(header), sizeof(header));
         for (const auto& pair : state.readyPoses)
         {
@@ -17676,6 +17680,13 @@ namespace
                 VR::GunHandProbe probe{};
                 probe.weaponId = vr->m_ActiveGunWeaponId.load(std::memory_order_acquire);
                 probe.pos[0] = DotProduct(d, cf); probe.pos[1] = DotProduct(d, cr); probe.pos[2] = DotProduct(d, cu);
+                vr_vm_stabilize::Mat3x4 rootBone{};
+                if (vr_vm_stabilize::SafeRead(sourceBones, rootBone))
+                {
+                    const Vector r = (vr_vm_stabilize::GetOrigin(rootBone) - vr->GetRightControllerAbsPos()) /
+                        (std::max)(0.001f, vr->m_VRScale);
+                    probe.root[0] = DotProduct(r, cf); probe.root[1] = DotProduct(r, cr); probe.root[2] = DotProduct(r, cu);
+                }
                 for (int a = 0; a < 3; ++a)
                 {
                     const Vector axis(outTarget.m[0][a], outTarget.m[1][a], outTarget.m[2][a]);
@@ -18684,6 +18695,18 @@ namespace
             vr_vm_stabilize::Mul(inverseSourceHand, sourceBone, relativeToHand);
             vr_vm_stabilize::Mul(currentBones[hand], relativeToHand, followed);
             if (!HooksNativeViewmodelHandsOnlyMatrixFinite(followed))
+                continue;
+            // Only a sane helper: a rigid basis near the wrist (a cropped or
+            // collapsed source pose must not be copied).
+            bool rigid = true;
+            for (int c = 0; c < 3 && rigid; ++c)
+            {
+                const float len = std::sqrt(followed.m[0][c] * followed.m[0][c] + followed.m[1][c] * followed.m[1][c] +
+                    followed.m[2][c] * followed.m[2][c]);
+                rigid = std::fabs(len - 1.0f) < 0.05f;
+            }
+            const Vector helperOrigin = vr_vm_stabilize::GetOrigin(followed);
+            if (!rigid || (helperOrigin - vr_vm_stabilize::GetOrigin(currentBones[hand])).Length() > 16.0f)
                 continue;
             currentBones[bone] = followed;
             helperMask[static_cast<size_t>(bone)] = 1u;
@@ -27886,7 +27909,10 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
 
     const bool inGame = m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame();
     const bool isPaused = m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused();
-    const bool cursorVisible = (m_Game && m_Game->m_VguiSurface) ? m_Game->m_VguiSurface->IsCursorVisible() : false;
+    // nocursor=1 (self-test): the headless window always reports a visible
+    // cursor; this takes the gameplay path a player without a cursor takes.
+    const bool cursorVisible = (m_Game && m_Game->m_VguiSurface) ? m_Game->m_VguiSurface->IsCursorVisible() &&
+        !m_VR->m_SelfTestNoCursor : false;
     const bool focusedInGameVgui = inGame && (isPaused || cursorVisible);
     const bool gameplayHudRequested = inGame && m_VR->IsGameplayHudRequested();
 

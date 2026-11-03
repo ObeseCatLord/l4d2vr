@@ -56,7 +56,7 @@ bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlaye
         return true;
     if (at(0, 0.0f))
     {
-        cmd("give rifle"); cmd("give pistol");
+        cmd("give rifle"); // survivors spawn with a pistol (a second one would be akimbo)
         button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false);
         button(m_ActionPrimaryAttack, false); button(m_ActionSecondaryAttack, false);
         SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));

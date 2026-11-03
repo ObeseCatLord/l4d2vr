@@ -2130,13 +2130,24 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             if (index == vr::k_unTrackedDeviceIndexInvalid || index >= vr::k_unMaxTrackedDeviceCount)
                 return false;
             const vr::TrackedDevicePose_t& pose = m_Poses[index];
-            if (!pose.bDeviceIsConnected || !pose.bPoseIsValid || pose.eTrackingResult != vr::TrackingResult_Running_OK)
-                return false;
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 4; ++c)
-                    if (!std::isfinite(pose.mDeviceToAbsoluteTracking.m[r][c]))
-                        return false;
-            return true;
+            // 2.0.4: a valid, finite pose is enough (the hands use the same test).
+            // Requiring TrackingResult_Running_OK hid both wrist HUDs on OpenXR
+            // runtimes that report positions as valid but not "tracked" (the
+            // backend then reports Fallback_RotationOnly): wrist UIs gone in 2.0.x.
+            const bool usable = l4d2vr_controller_identity::UsablePose(pose);
+            if (pose.bDeviceIsConnected && pose.eTrackingResult != vr::TrackingResult_Running_OK)
+            {
+                static int s_LoggedResult[2] = { -1, -1 };
+                const int slot = index == leftControllerIndex ? 0 : 1;
+                if (s_LoggedResult[slot] != static_cast<int>(pose.eTrackingResult))
+                {
+                    s_LoggedResult[slot] = static_cast<int>(pose.eTrackingResult);
+                    Game::logMsg("[VR][WristHUD] controller %u tracking result %d (valid=%d): wrist HUD %s",
+                        static_cast<unsigned>(index), static_cast<int>(pose.eTrackingResult), pose.bPoseIsValid ? 1 : 0,
+                        usable ? "still shown" : "hidden");
+                }
+            }
+            return usable;
         };
     const vr::TrackedDeviceIndex_t offHandIndex =
         controllerPoseUsable(leftControllerIndex) ? leftControllerIndex : vr::k_unTrackedDeviceIndexInvalid;
@@ -2321,25 +2332,33 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             const vr::VROverlayHandle_t handle = left ? m_LeftWristHudHandle : m_RightAmmoHudHandle;
             const vr::TrackedDeviceIndex_t device = left ? offHandIndex : gunHandIndex;
             m_NativeWristHudWanted.store(true, std::memory_order_release);
-            if (!m_NativeWristHudTexReady[side].load(std::memory_order_acquire))
-            {
-                // Wanted in game but the capture never produced a texture: after 4 s
-                // use the custom wrist panels instead of showing nothing.
-                const uint64_t nowMs = GetTickCount64();
-                if (m_NativeWristHudWantedSinceMs == 0)
-                    m_NativeWristHudWantedSinceMs = nowMs;
-                else if (nowMs - m_NativeWristHudWantedSinceMs > 4000u && !m_NativeWristHudFallback)
+            // Wanted in game but no fresh native crop for 4 s: use the custom
+            // wrist panels instead of showing nothing (2.0.4).
+            auto notShown = [&](const char* why) -> bool
                 {
-                    m_NativeWristHudFallback = true;
-                    Game::logMsg("[VR][WristHUD] no native wrist texture after 4 s in game (last gate: %s): using the custom wrist panels",
-                        m_NativeWristHudLastGate.load(std::memory_order_acquire));
-                }
-                return false;
-            }
-            m_NativeWristHudWantedSinceMs = 0;
+                    const uint64_t nowMs = GetTickCount64();
+                    if (m_NativeWristHudWantedSinceMs == 0)
+                        m_NativeWristHudWantedSinceMs = nowMs;
+                    else if (nowMs - m_NativeWristHudWantedSinceMs > 4000u && !m_NativeWristHudFallback)
+                    {
+                        m_NativeWristHudFallback = true;
+                        Game::logMsg("[VR][WristHUD] no native wrist HUD for 4 s in game (%s; last capture gate: %s): using the custom wrist panels",
+                            why, m_NativeWristHudLastGate.load(std::memory_order_acquire));
+                    }
+                    return false;
+                };
+            if (!m_NativeWristHudTexReady[side].load(std::memory_order_acquire))
+                return notShown("no wrist texture yet");
+            // Menus and cursor UI stop the capture (they paint over the HUD):
+            // keep showing the last crops meanwhile instead of hiding the wrists.
+            const bool menuUp = (m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
+                (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
             const uint64_t contentMs = m_NativeWristHudContentMs[side].load(std::memory_order_acquire);
-            if (contentMs == 0 || GetTickCount64() - contentMs > 1000u)
-                return false;
+            if (contentMs == 0)
+                return notShown("no HUD crop yet");
+            if (!menuUp && GetTickCount64() - contentMs > 1000u)
+                return notShown("the HUD crop is older than 1 s");
+            m_NativeWristHudWantedSinceMs = 0;
             const uint32_t used = m_NativeWristHudUsedSize[side].load(std::memory_order_acquire);
             const int usedW = (int)(used >> 16);
             const int usedH = (int)(used & 0xFFFFu);

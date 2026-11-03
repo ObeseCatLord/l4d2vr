@@ -30,6 +30,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
     static uint32_t s_gripDrawSerial = 0u;
     static uintptr_t s_previousGripWeapon = 0u;
     static uintptr_t s_pendingGripAdoption = 0u;
+    static uint64_t s_chestSlingAdoptUntilMs = 0u;   // a hand took the gun off the sling: adopt it once its grip is down
     static l4d2vr_grip::DropReturn s_gripDropReturn;
     static l4d2vr_dual::TriggerRouter s_dualPistolTriggers;
     static l4d2vr_pistol::Ownership s_pistolOwnership;
@@ -2016,7 +2017,19 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                 if (takeSerial != s_chestSlingTakeSerial)
                 {
                     s_chestSlingTakeSerial = takeSerial;
+                    s_chestSlingAdoptUntilMs = GetTickCount64() + 800u;
+                }
+                // The other hand's take changes hands first (next tracking
+                // update): keep asking until that hand's grip is down.
+                if (s_chestSlingAdoptUntilMs != 0u && GetTickCount64() < s_chestSlingAdoptUntilMs &&
+                    weaponGripActionActive && weaponGripDown)
+                {
                     s_pendingGripAdoption = activeWeaponTag;
+                    s_chestSlingAdoptUntilMs = 0u;
+                }
+                else if (s_chestSlingAdoptUntilMs != 0u && GetTickCount64() >= s_chestSlingAdoptUntilMs)
+                {
+                    s_chestSlingAdoptUntilMs = 0u;
                 }
             }
             if (!weaponGripActionActive || !weaponGripDown || s_pendingGripAdoption != activeWeaponTag)

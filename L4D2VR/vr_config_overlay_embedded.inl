@@ -218,7 +218,7 @@ namespace
         { "LeftWristHudZOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD Z\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "-0.0" },
         { "LeftWristHudAngleOffset", CfgOptionType::Vec3, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE7\x8A\xB6\xE6\x80\x81HUD\xE8\xA7\x92\xE5\xBA\xA6\xE5\x81\x8F\xE7\xA7\xBB (\xE4\xBF\xAF\xE4\xBB\xB0,\xE5\x81\x8F\xE8\x88\xAA,\xE7\xBF\xBB\xE6\xBB\x9A)", -180.0f, 180.0f, "-75,0,0" },
         { "RightAmmoHudEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\x90\xAF\xE7\x94\xA8\xE5\xBC\xB9\xE8\x8D\xAFHUD\xEF\xBC\x88\xE6\x8C\x81\xE6\x9E\xAA\xE6\x89\x8B\xEF\xBC\x89", 0.0f, 0.0f, "false" },
-        { "RightAmmoHudWidthMeters", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD\xE5\xAE\xBD\xE5\xBA\xA6\xEF\xBC\x88\xE7\xB1\xB3\xEF\xBC\x89", 0.01f, 0.5f, "0.8" },
+        { "RightAmmoHudWidthMeters", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD\xE5\xAE\xBD\xE5\xBA\xA6\xEF\xBC\x88\xE7\xB1\xB3\xEF\xBC\x89", 0.01f, 0.5f, "0.13" },
         { "RightAmmoHudXOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD X\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "-0.07" },
         { "RightAmmoHudYOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD Y\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "0.03" },
         { "RightAmmoHudZOffset", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE6\x89\x8B\xE6\x9F\x84\xEF\xBC\x89", "\xE5\xBC\xB9\xE8\x8D\xAFHUD Z\xE5\x81\x8F\xE7\xA7\xBB", -0.25f, 0.25f, "-0.09" },
@@ -255,7 +255,7 @@ namespace
         { "NativeViewmodelRightArmAnchorRotationOffsetDeg", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\xB3\xE8\x87\x82\xE9\x94\x9A\xE7\x82\xB9\xE8\xA7\x92\xE5\xBA\xA6\xEF\xBC\x88\xE4\xBF\xAF\xE4\xBB\xB0\x2C\xE5\x81\x8F\xE8\x88\xAA\x2C\xE7\xBF\xBB\xE6\xBB\x9A\xEF\xBC\x89", -180.0f, 180.0f, "0,0,0" },
         { "NativeViewmodelArmShoulderSpacingOffsetMeters", CfgOptionType::Float, "\346\211\213\351\203\250 / VR \345\217\214\346\211\213", "\350\247\206\345\233\276\346\250\241\345\236\213\346\211\213\350\207\202\351\227\264\350\267\235\345\201\217\347\247\273", -0.5f, 0.5f, "0" },
         { "NativeViewmodelArmElbowPoleBias", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE8\x82\x98\xE9\x83\xA8\xE6\x9E\x81\xE7\x82\xB9\xE5\x81\x8F\xE7\xBD\xAE\xEF\xBC\x88\xE5\x89\x8D\xE5\x90\x8E\x2C\xE5\xA4\x96\xE5\x90\x91\x2C\xE4\xB8\x8A\xE4\xB8\x8B\xEF\xBC\x89", -4.0f, 4.0f, "-0.05,0.20,-1.0" },
-        { "VrHandsTwoHandedGripTargetBoxScale", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\x8C\xE6\x89\x8B\xE6\x8C\x81\xE6\x9E\xAA\xE8\xA7\xA6\xE5\x8F\x91\xE8\x8C\x83\xE5\x9B\xB4", 0.25f, 8.0f, "1.0" },
+        { "VrHandsTwoHandedGripTargetBoxScale", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\x8C\xE6\x89\x8B\xE6\x8C\x81\xE6\x9E\xAA\xE8\xA7\xA6\xE5\x8F\x91\xE8\x8C\x83\xE5\x9B\xB4", 0.25f, 8.0f, "1.5" },
         { "VrHandsTwoHandedGripHeldMode", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE9\x9C\x8A\xE8\xA6\x81\xE9\x95\xBF\xE6\x8C\x89\xE6\x8F\xA1\xE6\x8C\x81\xE9\x94\xAE\xE4\xBB\xA5\xE4\xBF\x9D\xE6\x8C\x81\xE5\x89\xAF\xE6\x89\x8B\xE6\x8A\x93\xE6\x8F\xA1\xE6\x8A\xA4\xE6\x9C\xA8\xE3\x80\x82", 0.0f, 0.0f, "false" },
         { "VrHandsRealBulletSpreadEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE7\x9C\x9F\xE5\xAE\x9E\xE5\xAD\x90\xE5\xBC\xB9\xE6\x95\xA3\xE5\xB8\x83", 0.0f, 0.0f, "false" },
         { "VrHandsTwoHandedAimMountFriendly", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\xAE\x9E\xE4\xBD\x93\xE6\x9E\xAA\xE6\x89\x98\xE6\xA8\xA1\xE5\xBC\x8F", 0.0f, 0.0f, "false" },
@@ -336,7 +336,9 @@ namespace
         { "HolsterInstantDraw", CfgOptionType::Bool, "Hands / Holsters", "Instant weapon switches", 0.0f, 0.0f, "true" },
         { "AmbidextrousItemHands", CfgOptionType::Bool, "Hands / Holsters", "Use items in the hand that takes them", 0.0f, 0.0f, "true" },
         { "ItemHandOffRadiusMeters", CfgOptionType::Float, "Hands / Holsters", "Hand-off reach (m)", 0.05f, 0.3f, "0.14" },
-        { "ItemHandMirror", CfgOptionType::Bool, "Hands / Holsters", "Mirror the hands for a left-held item", 0.0f, 0.0f, "true" },
+        { "ChestSlingEnabled", CfgOptionType::Bool, "Hands / Holsters", "Chest sling for long guns", 0.0f, 0.0f, "true" },
+        { "ChestSlingDropDistanceMeters", CfgOptionType::Float, "Hands / Holsters", "Sling: drop beyond (m)", 0.3f, 2.0f, "0.6" },
+        { "ChestSlingGrabRadiusMeters", CfgOptionType::Float, "Hands / Holsters", "Sling: grab reach (m)", 0.05f, 0.35f, "0.15" },
         { "MeleeGripReachMeters", CfgOptionType::Float, "Hands / Melee", "Melee grip reach (m)", 0.0f, 0.4f, "0.12" },
         { "MotionOnlyMeleeAndShove", CfgOptionType::Bool, "Hands / Melee", "Motion-only melee and shove", 0.0f, 0.0f, "true" },
         { "MenuLaserPointerEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Menu laser pointer", 0.0f, 0.0f, "true" },
@@ -410,7 +412,7 @@ namespace
         { "MotionGestureHoldDuration", CfgOptionType::Float, "\xE5\x8A\xA8\xE4\xBD\x9C\xE6\x89\x8B\xE5\x8A\xBF", "\xE6\x89\x8B\xE5\x8A\xBF\xE6\x8C\x89\xE4\xBD\x8F\xE6\x97\xB6\xE9\x95\xBF", 0.0f, 1.0f, "0.2" },
         
         { "InventoryGestureRange", CfgOptionType::Float, "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F / \xE9\x94\x9A\xE7\x82\xB9", "\xE9\x81\x93\xE5\x85\xB7\xE9\x94\x9A\xE7\x82\xB9\xE6\x8A\x93\xE5\x8F\x96\xE7\x9A\x84\xE6\x9C\x89\xE6\x95\x88\xE8\x8C\x83\xE5\x9B\xB4", 0.1f, 0.5f, "0.16" },
-        { "ShowInventoryAnchors", CfgOptionType::Bool, "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F / \xE9\x94\x9A\xE7\x82\xB9", "\xE6\x98\xBE\xE7\xA4\xBA\xE9\x81\x93\xE5\x85\xB7\xE6\xA0\x8F\xE6\x8A\x93\xE5\x8F\x96\xE5\x8C\xBA\xE5\x9F\x9F\xEF\xBC\x88\xE4\xB8\x8D\xE7\x86\x9F\xE6\x82\x89\xE4\xBD\x8D\xE7\xBD\xAE\xE6\x97\xB6\xE5\xBB\xBA\xE8\xAE\xAE\xE5\xBC\x80\xE5\x90\xAF\xEF\xBC\x89", 0.0f, 0.0f, "true" },
+        { "ShowInventoryAnchors", CfgOptionType::Bool, "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F / \xE9\x94\x9A\xE7\x82\xB9", "\xE6\x98\xBE\xE7\xA4\xBA\xE9\x81\x93\xE5\x85\xB7\xE6\xA0\x8F\xE6\x8A\x93\xE5\x8F\x96\xE5\x8C\xBA\xE5\x9F\x9F\xEF\xBC\x88\xE4\xB8\x8D\xE7\x86\x9F\xE6\x82\x89\xE4\xBD\x8D\xE7\xBD\xAE\xE6\x97\xB6\xE5\xBB\xBA\xE8\xAE\xAE\xE5\xBC\x80\xE5\x90\xAF\xEF\xBC\x89", 0.0f, 0.0f, "false" },
         
         { "ScopeEnabled", CfgOptionType::Bool, "\xE5\x85\x89\xE5\xAD\xA6", "\xE5\x90\xAF\xE7\x94\xA8\xE6\x9E\xAA\xE6\xA2\xB0\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C", 0.0f, 0.0f, "true" },
         { "ScopeRTTSize", CfgOptionType::Int, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE6\xB8\xB2\xE6\x9F\x93\xE5\x88\x86\xE8\xBE\xA8\xE7\x8E\x87", 128.0f, 1024.0f, "512" },
@@ -1147,8 +1149,10 @@ namespace
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). SteamVR and the OpenXR backend bring their own laser, which then works on every panel." },
         { "HolsterInstantDraw", "Hands / Holsters", "Instant Weapon Switches", "Every weapon switch (holster draws, pickups, slot keys, after a throw or a medkit) puts the item straight into your hand: the draw animation never plays.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
+        { "ChestSlingEnabled", "Hands / Holsters", "Chest Sling", "Letting go of a rifle, SMG, shotgun, sniper rifle, M60 or grenade launcher near your body hangs it on a sling in front of your chest instead of dropping it: both hands are free (doors, pickups) and it cannot fire. Squeeze the grip at its handle or foregrip with either hand to take it; that hand becomes the trigger hand, so switching hands is: let go, grab the handle with the other hand. Letting go over a holster still stows it there.", "Off: letting go of a long gun drops it (or stows it over a holster). To drop a gun with the sling on, let go with your arm stretched away from your body." },
+        { "ChestSlingDropDistanceMeters", "Hands / Holsters", "Sling Drop Distance", "Letting go of a long gun with your hand farther than this from the sling (arm stretched out) drops it to the floor instead of slinging it.", "Default 0.6 m: a normal hold slings, a deliberate arm's-length release drops." },
+        { "ChestSlingGrabRadiusMeters", "Hands / Holsters", "Sling Grab Reach", "How close a squeezing hand must be to the slung gun's handle or foregrip to take it.", "Default 0.15 m." },
         { "AmbidextrousItemHands", "Hands / Holsters", "Ambidextrous Items", "The hand that takes an item holds and uses it: draw a gun with your left hand and it aims and fires from the left trigger, a grenade drawn left is thrown from the left. Your other hand becomes the support hand (foregrip, magazines, slides) and the magazine pouch moves to its hip.", "Hand an item over by squeezing it with your free hand, or let go with the item hand while the free hand holds the foregrip." },
-        { "ItemHandMirror", "Hands / Holsters", "Mirrored Left Hand", "An item in your left hand is held by a proper left hand (the survivor's right hand mirrored, finger poses included) and your free right hand shows a right hand.", "Off: the survivor's right hand holds it on your left controller and the hands cross over." },
         { "ItemHandOffRadiusMeters", "Hands / Holsters", "Hand-Off Reach", "How close your free hand must be to the item hand for its squeeze to take the item over.", "Squeezes on the foregrip, a magazine, the bolt or slide do those instead." },
         { "MagazineEmptyGlowEnabled", "Hands / Manual Reload", "Glow Empty Magazine", "An empty gun never reloads by itself; its magazine glows instead.", "" },
         { "MagazineDropEnabled", "Hands / Manual Reload", "Drop Released Magazines", "Released magazines fall to the floor and disappear after a while.", "" },
@@ -2455,7 +2459,7 @@ LeftWristHudYOffset=0.01
 LeftWristHudZOffset=-0.0
 LeftWristHudAngleOffset=-75,0,0
 RightAmmoHudEnabled=false
-RightAmmoHudWidthMeters=0.8
+RightAmmoHudWidthMeters=0.13
 RightAmmoHudXOffset=-0.07
 RightAmmoHudYOffset=0.03
 RightAmmoHudZOffset=-0.09
@@ -2509,7 +2513,7 @@ FirstPersonBodyHideWorldWeapon=true
 HideArms=false
 VrHandsEnabled=true
 VrHandsGlovesEnabled=false
-VrHandsTwoHandedGripTargetBoxScale=1.0
+VrHandsTwoHandedGripTargetBoxScale=1.5
 VrHandsTwoHandedGripHeldMode=false
 VrHandsRealBulletSpreadEnabled=false
 VrHandsTwoHandedAimMountFriendly=false
@@ -2575,7 +2579,7 @@ VrHandsLeftHandedLeftPoseOffsetMeters=0,0,0
 VrHandsLeftHandedTwoHandedRightPoseOffsetMeters=0,0,0
 VrHandsLeftHandedViewmodelPoseOffsetMeters=0,0,0
 VrHandsLeftHandedViewmodelPoseRotationOffsetDeg=0,0,0
-MagazineBoxDebugEnabled=true
+MagazineBoxDebugEnabled=false
 ViewmodelBoneLabelsEnabled=false
 MagazineInteractionEnabled=true
 MagazineInteractionQuickReloadMode=false
@@ -2755,7 +2759,7 @@ InventoryBackOffset=0.12,0.0,0.1
 InventoryLeftWaistOffset=0.45,-0.28,0.25
 InventoryRightWaistOffset=0.45,0.28,0.25
  
-ShowInventoryAnchors=true
+ShowInventoryAnchors=false
 InventoryAnchorColor=0,255,255,255
 InventoryHudMarkerDistance=0.45
 InventoryHudMarkerUpOffset=-0.10

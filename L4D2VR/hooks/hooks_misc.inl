@@ -895,7 +895,8 @@ namespace
     {
         return vr &&
             (vr->m_NativeViewmodelHandsOnly ||
-                vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire));
+                vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
+                vr->ChestSlingActive());
     }
 
     inline bool HooksNativeViewmodelHandsOnlyHideArmsRequested(VR* vr)
@@ -903,7 +904,7 @@ namespace
         if (!vr)
             return true;
         const bool emptyHandsPlaceholderActive =
-            vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
+            vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) || vr->ChestSlingActive();
         return vr->m_HideArms && !emptyHandsPlaceholderActive;
     }
 
@@ -918,7 +919,10 @@ namespace
                 vr->m_NativeViewmodelLeftHandFreezeReady.load(
                     std::memory_order_acquire) != 0u) &&
             !HooksNativeViewmodelHandsOnlyHideArmsRequested(vr) &&
-            !HooksNativeViewmodelEffectiveArmCroppingEnabled(vr);
+            // An item in the physical left hand is drawn by a mirrored arm IK
+            // (ItemHandMirror): the cropped hands-only path cannot mirror, so
+            // the arms are solved (uncropped) while the item is in that hand.
+            (!HooksNativeViewmodelEffectiveArmCroppingEnabled(vr) || vr->ItemHandMirrorWanted());
     }
 
     inline bool HooksNativeViewmodelFullArmControllerPairReady(VR* vr)
@@ -9322,6 +9326,10 @@ namespace
     // draw of a weapon in a new session shows it resting in the hand.
     constexpr const char* kViewmodelIdlePosesPath = "VR\\viewmodel_idle_poses.bin";
     constexpr uint32_t kViewmodelIdlePosesMagic = 0x50564C34u; // "4LVP"
+    // 2: 2.0.4 discards the idle poses learned before it once (session 6: the
+    // auto shotgun and SPAS poses cached in a headset install put the hand
+    // 21 cm off the controller; freshly learned ones are within 3 cm).
+    constexpr uint32_t kViewmodelIdlePosesVersion = 2u;
 
     inline void HooksLoadViewmodelIdlePoses(HolsterInstantDrawPoseState& state)
     {
@@ -9335,7 +9343,7 @@ namespace
         in.read(reinterpret_cast<char*>(&magic), 4);
         in.read(reinterpret_cast<char*>(&version), 4);
         in.read(reinterpret_cast<char*>(&count), 4);
-        if (!in || magic != kViewmodelIdlePosesMagic || version != 1u || count > 4096u)
+        if (!in || magic != kViewmodelIdlePosesMagic || version != kViewmodelIdlePosesVersion || count > 4096u)
             return;
         int loaded = 0;
         for (uint32_t i = 0; i < count; ++i)
@@ -9385,7 +9393,7 @@ namespace
             if (pair.second.valid && pair.second.numBones > 0 && pair.first.size() <= 512u &&
                 static_cast<int>(pair.second.frozenLocalBones.size()) == pair.second.numBones)
                 ++count;
-        const uint32_t header[3] = { kViewmodelIdlePosesMagic, 1u, count };
+        const uint32_t header[3] = { kViewmodelIdlePosesMagic, kViewmodelIdlePosesVersion, count };
         out.write(reinterpret_cast<const char*>(header), sizeof(header));
         for (const auto& pair : state.readyPoses)
         {
@@ -15810,8 +15818,11 @@ namespace
         vr_vm_stabilize::Mat3x4& outDelta,
         vr_vm_stabilize::Mat3x4* outTargetAnchor = nullptr)
     {
+        // The empty-hands placeholder and a gun on the chest sling both leave
+        // the right hand free at its controller.
         const bool emptyHandsPlaceholderActive =
-            vr && vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
+            vr && (vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
+                vr->ChestSlingActive());
         const bool buildLeftControllerTarget = keepSide.side == -1;
         const bool buildEmptyRightControllerTarget =
             keepSide.side == 1 && emptyHandsPlaceholderActive;
@@ -17651,13 +17662,43 @@ namespace
             sideInfo.side == -1 && vr->IsVrHandsTwoHandedGripPoseActive();
         const bool rightUsesWeaponPose =
             sideInfo.side == 1 &&
-            !vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
+            !vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) &&
+            !vr->ChestSlingActive();
         if (leftUsesWeaponPose || rightUsesWeaponPose)
         {
-            return vr_vm_stabilize::SafeRead(
+            const bool ok = vr_vm_stabilize::SafeRead(
                 sourceBones + sideInfo.hand,
                 outTarget) &&
                 HooksNativeViewmodelHandsOnlyMatrixFinite(outTarget);
+            if (ok && rightUsesWeaponPose && vr->m_SelfTestEnabled)
+            {
+                // gunhand self-test probe: the gun hand in the controller's frame.
+                Vector cf{}, cr{}, cu{};
+                QAngle::AngleVectors(vr->GetRightControllerAbsAngle(), &cf, &cr, &cu);
+                const Vector d = (vr_vm_stabilize::GetOrigin(outTarget) - vr->GetRightControllerAbsPos()) /
+                    (std::max)(0.001f, vr->m_VRScale);
+                VR::GunHandProbe probe{};
+                probe.weaponId = vr->m_ActiveGunWeaponId.load(std::memory_order_acquire);
+                probe.pos[0] = DotProduct(d, cf); probe.pos[1] = DotProduct(d, cr); probe.pos[2] = DotProduct(d, cu);
+                vr_vm_stabilize::Mat3x4 rootBone{};
+                if (vr_vm_stabilize::SafeRead(sourceBones, rootBone))
+                {
+                    const Vector r = (vr_vm_stabilize::GetOrigin(rootBone) - vr->GetRightControllerAbsPos()) /
+                        (std::max)(0.001f, vr->m_VRScale);
+                    probe.root[0] = DotProduct(r, cf); probe.root[1] = DotProduct(r, cr); probe.root[2] = DotProduct(r, cu);
+                }
+                for (int a = 0; a < 3; ++a)
+                {
+                    const Vector axis(outTarget.m[0][a], outTarget.m[1][a], outTarget.m[2][a]);
+                    probe.axes[a][0] = DotProduct(axis, cf);
+                    probe.axes[a][1] = DotProduct(axis, cr);
+                    probe.axes[a][2] = DotProduct(axis, cu);
+                }
+                std::lock_guard<std::mutex> lock(vr->m_GunHandProbeMutex);
+                vr->m_GunHandProbe = probe;
+                vr->m_GunHandProbeSerial.fetch_add(1u, std::memory_order_acq_rel);
+            }
+            return ok;
         }
 
         vr_vm_stabilize::Mat3x4 ignoredDelta{};
@@ -20233,7 +20274,7 @@ namespace
 
                 const bool emptyHandsPlaceholderActive =
                     vr->m_ManualInventoryEmptyHandsActive.load(
-                        std::memory_order_acquire);
+                        std::memory_order_acquire) || vr->ChestSlingActive();
                 const bool leftTwoHandedGrip =
                     chain.side == -1 &&
                     vr->IsVrHandsTwoHandedGripPoseActive();
@@ -26479,8 +26520,11 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             return;
         if (teleportSuppressibleViewmodel)
             m_VR->DrawVrHandsWorldDepthMaskBeforeViewmodel();
+        // A gun on the chest sling is drawn on the chest by the holster
+        // renderer; the viewmodel keeps only the free hands.
         const bool emptyHandsPlaceholderActive =
-            m_VR->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
+            m_VR->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
+            m_VR->ChestSlingActive();
         if (emptyHandsPlaceholderActive &&
             teleportSuppressibleViewmodel &&
             !HooksModelNameIsArmsOrHands(vr_vm_stabilize::ToLowerAscii(modelName)))
@@ -27433,12 +27477,23 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
                 // mirrored left hand the arm IK draws around it.
                 void* weaponBones = pBonesToWorldFinal;
                 bool mirrorWeapon = false;
-                if (m_VR && pBonesToWorldFinal && !nativeViewmodelArmsOrHandsModel &&
-                    (drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerModelForCalibrationHide)) &&
+                // Classic viewmodel (NativeViewmodelHandsOnly off): both hands
+                // are the game's own animation around the gun, so the arms are
+                // mirrored across the gun's plane together with it and the left
+                // controller shows a LEFT hand (session 6: it showed the right
+                // hand moved to the left side).
+                const bool classicArmsMirror =
+                    m_VR && nativeViewmodelArmsOrHandsModel &&
+                    !HooksNativeViewmodelHandsOnlyActive(m_VR);
+                if (m_VR && pBonesToWorldFinal &&
+                    (!nativeViewmodelArmsOrHandsModel || classicArmsMirror) &&
+                    (drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerModelForCalibrationHide) ||
+                        classicArmsMirror) &&
                     !HooksDrawIsHolsteredItem(m_VR, info) &&
                     m_VR->ItemHandMirrorWanted() &&
-                    HooksNativeViewmodelFullArmIkActive(m_VR) &&
-                    HooksNativeViewmodelFullArmControllerPairReady(m_VR))
+                    (!HooksNativeViewmodelHandsOnlyActive(m_VR) ||
+                        (HooksNativeViewmodelFullArmIkActive(m_VR) &&
+                            HooksNativeViewmodelFullArmControllerPairReady(m_VR))))
                 {
                     int mirrorBoneCount = 0;
                     l4d2vr_hand_mirror::Mat34 gunMirror{};
@@ -27787,7 +27842,10 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
 
     const bool inGame = m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame();
     const bool isPaused = m_Game && m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused();
-    const bool cursorVisible = (m_Game && m_Game->m_VguiSurface) ? m_Game->m_VguiSurface->IsCursorVisible() : false;
+    // nocursor=1 (self-test): the headless window always reports a visible
+    // cursor; this takes the gameplay path a player without a cursor takes.
+    const bool cursorVisible = (m_Game && m_Game->m_VguiSurface) ? m_Game->m_VguiSurface->IsCursorVisible() &&
+        !m_VR->m_SelfTestNoCursor : false;
     const bool focusedInGameVgui = inGame && (isPaused || cursorVisible);
     const bool gameplayHudRequested = inGame && m_VR->IsGameplayHudRequested();
 

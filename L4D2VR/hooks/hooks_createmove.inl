@@ -30,6 +30,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
     static uint32_t s_gripDrawSerial = 0u;
     static uintptr_t s_previousGripWeapon = 0u;
     static uintptr_t s_pendingGripAdoption = 0u;
+    static uint64_t s_chestSlingAdoptUntilMs = 0u;   // a hand took the gun off the sling: adopt it once its grip is down
     static l4d2vr_grip::DropReturn s_gripDropReturn;
     static l4d2vr_dual::TriggerRouter s_dualPistolTriggers;
     static l4d2vr_pistol::Ownership s_pistolOwnership;
@@ -2037,6 +2038,28 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             const bool gripDropHere =
                 !m_VR->m_HolsterHandInOwnZone.load(std::memory_order_acquire) &&
                 !m_VR->m_HolsterHandOverOtherZone.load(std::memory_order_acquire);
+            {
+                // A hand took the gun off the chest sling: its grip owns it.
+                static uint32_t s_chestSlingTakeSerial = 0u;
+                const uint32_t takeSerial = m_VR->m_ChestSlingTakeSerial.load(std::memory_order_acquire);
+                if (takeSerial != s_chestSlingTakeSerial)
+                {
+                    s_chestSlingTakeSerial = takeSerial;
+                    s_chestSlingAdoptUntilMs = GetTickCount64() + 800u;
+                }
+                // The other hand's take changes hands first (next tracking
+                // update): keep asking until that hand's grip is down.
+                if (s_chestSlingAdoptUntilMs != 0u && GetTickCount64() < s_chestSlingAdoptUntilMs &&
+                    weaponGripActionActive && weaponGripDown)
+                {
+                    s_pendingGripAdoption = activeWeaponTag;
+                    s_chestSlingAdoptUntilMs = 0u;
+                }
+                else if (s_chestSlingAdoptUntilMs != 0u && GetTickCount64() >= s_chestSlingAdoptUntilMs)
+                {
+                    s_chestSlingAdoptUntilMs = 0u;
+                }
+            }
             if (!weaponGripActionActive || !weaponGripDown || s_pendingGripAdoption != activeWeaponTag)
                 s_pendingGripAdoption = 0u;
             if (gripDropEligible && s_pendingGripAdoption != 0u)
@@ -2071,12 +2094,18 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                     l4d2vr_input::GripSample::Generation(leftGrip), gripDropHere)
                 : l4d2vr_dual::Hand::None;
             m_VR->m_PistolOwnershipMask.store(s_pistolOwnership.Mask(), std::memory_order_release);
-			const bool gripDropRequested = s_weaponGripRelease.Update(
+			const bool gripReleaseRequested = s_weaponGripRelease.Update(
                 gripDropEligible && !pistolGripMode && !dualReloadHoldsGuns,
 				weaponGripActionActive,
 				weaponGripDown,
 				activeWeaponTag, l4d2vr_input::GripSample::Generation(weaponGripInputState), gripDropHere) ||
                 pistolDropHand != l4d2vr_dual::Hand::None;
+            // Chest sling: a long gun let go near the body hangs on the chest
+            // instead of dropping (vr_chest_sling.h); nothing goes to the server.
+            const bool slingCaught = gripReleaseRequested && pistolDropHand == l4d2vr_dual::Hand::None &&
+                !carriedProp && l4d2vr_chest_sling::IsLongGun(activeWeaponId) &&
+                m_VR->ChestSlingCatchRelease(activeWeaponTag, activeWeaponId);
+            const bool gripDropRequested = gripReleaseRequested && !slingCaught;
 			// Hand throw: tap the trigger (pin), let go of the grip to throw; or
 			// hold the trigger through the swing and let go of it.
 			bool handThrowNow = false;
@@ -2487,6 +2516,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         m_VR->RecordMeleeCommand(cmd->command_number, meleeEligible,
             reinterpret_cast<uintptr_t>(localPlayerForAutoActions), reinterpret_cast<uintptr_t>(routingPistol));
     }
+    // A gun on the chest sling cannot fire, aim-shove or reload.
+    if (m_VR && m_VR->ChestSlingActive())
+        cmd->buttons = l4d2vr_chest_sling::FilterButtons(cmd->buttons, true);
     // The pose this firing command is fired along (sent with it, and used by
     // the listen host when it runs the command).
     if (m_VR)

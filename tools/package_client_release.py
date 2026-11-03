@@ -93,6 +93,12 @@ CHANGES = [
     "2.0.4: the SCAR's 3-round burst kicks like Pavlov's burst rifle (the M16) instead of a semi-auto marksman rifle, about 5x less; two-handed it barely climbs.",
     "2.0.4: reloads closer to Pavlov: the pistol, magnum, M16, SCAR and hunting rifle lock open when empty (take the slide or bolt and let go to chamber); pistol, magnum, hunting rifle and scout magazines and shotgun shells go in as soon as they are lined up in the well; magazines seat at 95% of their depth; the longest bolts pull 11.4 cm.",
     "2.0.4: grenades and pills sit visibly on your chest: the chest pockets moved 10 cm forward and 4 cm down (they were under your chin, out of view) and take a slightly wider reach.",
+    "2.0.4: an item in your left hand is always held by a mirrored left hand, on every hand setting (also with NativeViewmodelHandsOnly off or arm cropping on); the right hand is never moved onto the left controller (ItemHandMirror retired).",
+    "2.0.4: chest sling: letting go of a rifle, SMG, shotgun or sniper near your body hangs it on your chest with both hands free; grab its handle or foregrip with either hand to take it (that hand becomes the trigger hand); let go at arm's length to drop it (ChestSlingEnabled).",
+    "2.0.4: grabbing closer to Pavlov: the support hand catches the foregrip from further away (VrHandsTwoHandedGripTargetBoxScale 1.5), and a slung gun is taken anywhere along its body.",
+    "2.0.4: the weapon idle poses learned by older versions are relearned once: cached ones put the hand on the auto shotgun and SPAS 21 cm away from the controller.",
+    "2.0.4: wrist HUDs come back: they were hidden whenever the runtime reported a controller as valid but not tracked; they now also keep the last picture while a menu is open and fall back to the simple wrist panels if the game HUD cannot be captured; both wrist HUDs are switched back on once for existing configs.",
+    "2.0.4: no more debug boxes around the magazine and bolt while two-handing (MagazineBoxDebugEnabled and ShowInventoryAnchors off, also for existing configs).",
 ]
 
 

@@ -25399,6 +25399,20 @@ static void CapturePhysicalScopeLens(VR* vr, void* state, const std::string& mod
     const vr_vm_stabilize::Mat3x4* bones)
 {
     if (!vr || !vr->IsPhysicalScopeMode() || !vr->m_ScopeEnabled || !bones) return;
+    // [VR][Scope] once per model and reason: why an optic's viewmodel gave no lens.
+    const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
+    const bool opticModel = lowerModel.find("v_huntingrifle") != std::string::npos ||
+        lowerModel.find("v_sniper_military") != std::string::npos || lowerModel.find("v_rif_sg552") != std::string::npos ||
+        lowerModel.find("v_snip_awp") != std::string::npos || lowerModel.find("v_snip_scout") != std::string::npos;
+    auto noLens = [&](const char* why, uint32_t value)
+    {
+        static std::mutex s_mutex;
+        static std::unordered_set<std::string> s_logged;
+        if (!opticModel) return;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (s_logged.insert(lowerModel + "|" + why).second)
+            Game::logMsg("[VR][Scope] no lens from %s: %s (%u)", lowerModel.c_str(), why, value);
+    };
     const uint8_t* hdr = nullptr;
     uint32_t checksum = 0u;
     int length = 0, count = 0, table = 0;
@@ -25408,9 +25422,17 @@ static void CapturePhysicalScopeLens(VR* vr, void* state, const std::string& mod
         !vr_vm_stabilize::SafeRead(hdr + 156,count) ||
         !vr_vm_stabilize::SafeRead(hdr + 160,table) ||
         length < 408 || length > 32 * 1024 * 1024 || count <= 3 || count > 256 ||
-        table < 408 || table > length || count * 216 > length - table) return;
-    const auto* profile = l4d2vr_optics::FindModel(vr_vm_stabilize::ToLowerAscii(modelName),checksum);
-    if (!profile) return;
+        table < 408 || table > length || count * 216 > length - table)
+    {
+        noLens("studio header unreadable", static_cast<uint32_t>(length));
+        return;
+    }
+    const auto* profile = l4d2vr_optics::FindModel(lowerModel,checksum);
+    if (!profile)
+    {
+        noLens("model path or checksum not in the optics table (checksum)", checksum);
+        return;
+    }
     vr_vm_stabilize::Mat3x4 bind{}, world{};
     if (!vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(hdr + table + 3 * 216 + 96),bind) ||
         !vr_vm_stabilize::SafeRead(bones + 3,world)) return;
@@ -25423,7 +25445,11 @@ static void CapturePhysicalScopeLens(VR* vr, void* state, const std::string& mod
     const float scale = lens.right.Length();
     if (!std::isfinite(scale) || scale < 0.1f || scale > 4.0f ||
         !l4d2vr_optics::Normalize(lens.forward) || !l4d2vr_optics::Normalize(lens.right) ||
-        !l4d2vr_optics::Normalize(lens.up)) return;
+        !l4d2vr_optics::Normalize(lens.up))
+    {
+        noLens("bone scale or axes invalid", 0u);
+        return;
+    }
     lens.radius = profile->radius * scale;
     vr->PublishPhysicalScopeLens(lens);
 }
@@ -27162,8 +27188,17 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
                 drawEntityIsViewmodelClass);
         }
     }
-    if (drawEntityIsViewmodelClass && !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass)
-        CapturePhysicalScopeLens(m_VR, state, modelName, reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBonesToWorldFinal));
+    // The held optic's rear lens. L4D2's viewmodel entity is a CTerrorViewModel,
+    // not the CBaseViewModel the class test above knows, so the held gun is
+    // recognised by its v_ model as well (never a holstered copy of it).
+    // Before 2.0.4 the lens was never captured: no scope ever rendered.
+    if (!m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass && pBonesToWorldFinal)
+    {
+        const std::string lowerScopeModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        if ((drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerScopeModel)) &&
+            !HooksModelNameIsArmsOrHands(lowerScopeModel) && !HooksDrawIsHolsteredItem(m_VR, info))
+            CapturePhysicalScopeLens(m_VR, state, modelName, reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBonesToWorldFinal));
+    }
     MaybeCaptureVrHandsVmPose(
         m_VR,
         state,

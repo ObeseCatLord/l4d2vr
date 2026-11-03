@@ -2867,7 +2867,10 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
 			!attackDown && ManualInventoryThrowWeaponIdRequiresCustomDrop(encodedCarryWeaponId);
 		const bool releasedThrowable = previousWeaponThrowable && previousAttackDown && !attackDown;
 		const int releasedWeaponId = activeWeaponIsThrowable ? serverWeaponId : previousThrowableWeaponId;
-		const bool manualThrowActive = s_ManualThrowHooksReady && m_VR && m_VR->m_ManualThrowEnabled;
+		// GrenadeThrowMode=arc: grenades keep the game's own throw (aimed by the
+		// view angles); props and inventory drops still use the manual path.
+		const bool manualThrowActive = s_ManualThrowHooksReady && m_VR && m_VR->m_ManualThrowEnabled &&
+			!m_VR->m_GrenadeThrowArc;
 		const bool manualCarryThrowActive =
 			ManualCarryThrowBackendIsReady(encodedCarryWeaponId) &&
 			m_VR && m_VR->m_ManualThrowEnabled;

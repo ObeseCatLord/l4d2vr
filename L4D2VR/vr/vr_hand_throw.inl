@@ -36,7 +36,8 @@ void VR::UpdateHandThrowTracking()
 
 bool VR::HandThrowServerReady() const
 {
-    return m_IsVREnabled && m_ManualThrowEnabled && !m_MouseModeEnabled && !m_ForceNonVRServerMovement &&
+    // GrenadeThrowMode=arc throws natively along the shown arc instead.
+    return m_IsVREnabled && m_ManualThrowEnabled && !m_MouseModeEnabled && !m_ForceNonVRServerMovement && !GrenadeArcMode() &&
         m_EncodeVRUsercmd && Hooks::s_ServerUnderstandsVR && ServerFeature(l4d2vr_features::HandThrow);
 }
 
@@ -54,8 +55,10 @@ bool VR::EstimateHandThrowVelocity(bool leftHand, Vector& worldRelative) const
     l4d2vr_hand_throw::V3 tracking{};
     {
         std::lock_guard<std::mutex> lock(m_HandThrowMutex);
-        if (!m_HandThrowTracker[leftHand ? 0 : 1].Estimate(HandThrowNowSeconds(),
-            static_cast<float>(m_ManualThrowVelocityWindowMs) / 1000.0f, m_ManualThrowPeakVelocityBlend, tracking))
+        // The hand's peak over the release window (Pavlov), not the window's
+        // average: the trigger goes up while the hand already slows down.
+        if (!m_HandThrowTracker[leftHand ? 0 : 1].EstimateRelease(HandThrowNowSeconds(),
+            static_cast<float>(m_ManualThrowVelocityWindowMs) / 1000.0f, tracking))
             return false;
     }
     const l4d2vr_hand_throw::V3 world = l4d2vr_hand_throw::TrackingToWorld(tracking, m_RotationOffset, m_VRScale);
@@ -106,4 +109,35 @@ bool VR::HandThrowHidesViewmodel(const std::string& modelName) const
         return false;
     return modelName.find("v_pipebomb") != std::string::npos || modelName.find("v_molotov") != std::string::npos ||
         modelName.find("v_bile_flask") != std::string::npos;
+}
+
+// GrenadeThrowMode=arc on the dedicated plugin: opt out of its throw velocity
+// paths (ThrowVelocity: the native projectile re-aimed from the hand's motion;
+// HandThrow), so the grenade keeps L4D2's own throw along the shown arc. The
+// plugin answers with the reduced feature ack. Physics mode asks for all again.
+void VR::SendGrenadeThrowFeatureRequest()
+{
+    if (!m_Game || !Hooks::s_ServerUnderstandsVR || m_ServerFeatureMask.load(std::memory_order_acquire) == 0u)
+    {
+        if (!Hooks::s_ServerUnderstandsVR)
+            m_GrenadeFeatureRequestSent = -1;
+        return;
+    }
+    const int wanted = GrenadeArcMode() ? 1 : 0;
+    if (wanted == m_GrenadeFeatureRequestSent)
+        return;
+    // Nothing to opt back into: never ask a server that has not opted us out.
+    if (wanted == 0 && m_GrenadeFeatureRequestSent < 0)
+    {
+        m_GrenadeFeatureRequestSent = 0;
+        return;
+    }
+    const std::uint32_t mask = wanted
+        ? (l4d2vr_features::kKnownMask & ~(l4d2vr_features::ThrowVelocity | l4d2vr_features::HandThrow))
+        : l4d2vr_features::kKnownMask;
+    char command[64];
+    std::snprintf(command, sizeof(command), "l4d2vr_feature_hello %x %u", mask, l4d2vr_features::kVersion);
+    m_Game->ServerCmd(command, true);
+    m_GrenadeFeatureRequestSent = wanted;
+    Game::logMsg("[VR][Grenade] sent %s (GrenadeThrowMode=%s)", command, wanted ? "arc" : "physics");
 }

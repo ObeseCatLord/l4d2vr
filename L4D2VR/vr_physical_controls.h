@@ -323,12 +323,23 @@ namespace l4d2vr_physical
             return overturned;
         }
 
+        // ManualPumpEveryShot (default off since 2.0.4): off, the gun fires
+        // shell after shell like a semi-auto and the pump is only owed once the
+        // last shell has gone (`clip`, the count after the shot, reached 0), to
+        // chamber the next one loaded, as a slide or bolt chambers the first
+        // round. On: every shot needs a pump.
+        void SetEveryShot(bool everyShot) { m_EveryShot = everyShot; }
+        bool EveryShot() const { return m_EveryShot; }
+        static bool ShotNeedsCycle(bool everyShot, int clipAfterShot) { return everyShot || clipAfterShot <= 0; }
+
         void NotifyShot(std::uintptr_t weapon, int weaponId, int clip, std::uint32_t handle = 0u,
             int reserve = -1, std::uint64_t nowMs = 0u)
         {
             if (!weapon || (weaponId != 3 && weaponId != 8) || clip < 0)
                 return;
             Observe(weapon, weaponId, clip, handle);
+            if (!ShotNeedsCycle(m_EveryShot, clip))
+                return;
             for (auto& entry : m_Entries)
                 if (entry.weapon == weapon && entry.weaponId == weaponId && entry.handle == handle)
                 {
@@ -377,6 +388,7 @@ namespace l4d2vr_physical
             std::uint64_t backSince = 0u; // the count has been back above the shot since then
         };
         std::array<Entry, 16> m_Entries{};
+        bool m_EveryShot = true;
         std::uintptr_t m_Owner = 0u;
         std::size_t m_Next = 0u;
         bool m_Overturned = false;

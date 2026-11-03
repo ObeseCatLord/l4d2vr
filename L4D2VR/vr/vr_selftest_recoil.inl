@@ -5,6 +5,12 @@
 //       sight 12 cm in front of the eye, sight line along the view), fires one
 //       shot and measures where the fired ray hits against the sight line.
 //       Saves sight_<gun>_<m>m (the sight picture with the impact).
+//   scopecheck=<give name>[:<relief cm>]  a scoped gun (hunting_rifle,
+//       sniper_military, sniper_awp, sniper_scout, rifle_sg552) held so the left
+//       eye looks down its sights (the rear sight <relief> cm in front of it,
+//       10 by default): the scope camera must render and the left eye's lens
+//       must show its picture (PASS); saves scope_<gun>_l/_r. Then the gun turns
+//       75 degrees away: the left lens must go black. Logs [VR][Scope] lines.
 //   recoiltest=<give name>:<1|2>[:<seconds>]  fires with one hand or with the
 //       support hand on the foregrip; measures the aim excursion per frame, the
 //       fired rays against the kick they were fired with, the recovery, and
@@ -135,6 +141,71 @@ void VR::RecoilTestAlignSightsToEye(bool leftGun)
 
 bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled)
 {
+    if (step.rfind("scopecheck=", 0) == 0)
+    {
+        handled = true;
+        const std::string rest = step.substr(11);
+        const size_t colon = rest.find(':');
+        const std::string gun = rest.substr(0, colon);
+        bool fired = false;
+        auto atS = [&](int stage, float when) { if (fired || m_SelfTestStage != stage || t < when) return false; m_SelfTestStage = stage + 1; fired = true; return true; };
+        if (atS(0, 0.0f))
+        {
+            m_RecoilTestSavedEnabled = m_RecoilEnabled;
+            m_RecoilEnabled = false;
+            m_SelfTestValueC = static_cast<int>(m_RecoilTestEyeRelief * 1000.0f);
+            if (colon != std::string::npos)
+                m_RecoilTestEyeRelief = std::clamp(static_cast<float>(std::atof(rest.c_str() + colon + 1)) * 0.01f, 0.03f, 0.40f);
+            char text[96];
+            std::snprintf(text, sizeof(text), "give %s", gun.c_str());
+            if (m_Game) m_Game->ClientCmd_Unrestricted(text);
+            std::snprintf(text, sizeof(text), "use weapon_%s", gun.c_str());
+            if (m_Game) m_Game->ClientCmd_Unrestricted(text);
+        }
+        if (atS(1, 1.5f))
+        {
+            m_RecoilTestAligning = true;
+            m_SelfTestRightWorldValid = false;
+        }
+        if (m_RecoilTestAligning)
+            RecoilTestAlignSightsToEye();
+        if (atS(2, 4.5f))
+        {
+            LogPhysicalScopeState("scopecheck looking through", true);
+            const int stage = m_PhysicalScopeDiagStage.load(std::memory_order_acquire);
+            const int drawLeft = m_PhysicalScopeDiagDraw[0].load(std::memory_order_acquire);
+            char detail[192];
+            std::snprintf(detail, sizeof(detail), "stage %d (8 = active), left lens draw %d (4 = picture), left eye alpha %.2f, %.1f deg off the axis, relief %.1f cm, render fov %.2f",
+                stage, drawLeft, m_PhysicalScopeDiagAlpha[0], m_PhysicalScopeDiagOffAxisDeg[0],
+                m_PhysicalScopeDiagRelief[0] / std::max(0.001f, m_VRScale) * 100.0f, m_PhysicalScopeRenderFov);
+            SelfTestReport((gun + " scope shows its picture to the eye behind it").c_str(), stage == 8 && drawLeft == 4, detail);
+            SelfTestRequestShot("scope_" + gun, 3);
+            m_SelfTestSerial = m_SelfTestShotRequest.load(std::memory_order_acquire);
+        }
+        if (m_SelfTestStage == 3 && (m_SelfTestShotDone.load(std::memory_order_acquire) == m_SelfTestSerial || t > 9.0f))
+        {
+            m_SelfTestStage = 4;
+            m_RecoilTestAligning = false;
+            m_SelfTestRightAngLocal.y += 120.0f;
+        }
+        if (atS(4, 7.5f) || (m_SelfTestStage == 4 && t > 11.0f))
+        {
+            m_SelfTestStage = 5;
+            LogPhysicalScopeState("scopecheck gun turned away", true);
+            const int drawLeft = m_PhysicalScopeDiagDraw[0].load(std::memory_order_acquire);
+            const int stage = m_PhysicalScopeDiagStage.load(std::memory_order_acquire);
+            char detail[160];
+            std::snprintf(detail, sizeof(detail), "stage %d, left lens draw %d, left eye %.1f deg off the axis",
+                stage, drawLeft, m_PhysicalScopeDiagOffAxisDeg[0]);
+            SelfTestReport((gun + " scope is black to an eye outside its eyebox").c_str(), drawLeft != 4, detail);
+            SelfTestRequestShot("scope_" + gun + "_away", 1);
+            m_RecoilEnabled = m_RecoilTestSavedEnabled;
+            m_RecoilTestEyeRelief = m_SelfTestValueC > 0 ? m_SelfTestValueC / 1000.0f : 0.10f;
+            m_SelfTestRightWorldValid = false;
+            m_SelfTestRightAngLocal.y -= 120.0f;
+        }
+        return m_SelfTestStage >= 5 && t > 8.5f;
+    }
     // ironsight=0|1: fire along the sight line (1) or the old bore alignment
     // (0); forgets the measured per-model corrections so they are re-measured.
     if (step.rfind("ironsight=", 0) == 0)

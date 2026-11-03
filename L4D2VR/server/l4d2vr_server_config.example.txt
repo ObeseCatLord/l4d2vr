@@ -36,9 +36,9 @@ DropMaxSpeed=450
 # Hand throws (HandThrow): the grenade leaves the hand in the release command
 # itself. The client measures the hand velocity at headset rate; the
 # projectile gets hand velocity * ThrowHandVelocityScale + the player's own
-# velocity, clamped to ThrowMaxSpeed (1.5: a bit more than the arm). One throw
-# per HandThrowMinIntervalMs.
-ThrowHandVelocityScale=1.5
+# velocity, clamped to ThrowMaxSpeed (2.5: the hand's peak speed, so a natural
+# throw carries about as far as the game's own). One throw per HandThrowMinIntervalMs.
+ThrowHandVelocityScale=2.5
 HandThrowMinIntervalMs=250
 
 # Eye-override windows in executed commands, and the use aim mode

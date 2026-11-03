@@ -45,10 +45,12 @@ static const Reference kReference[] = {
     { 26, true, 10, -4.6949f, 15.0000f, 1.4613f },  // Gun_AK47
     { 26, false, 1, -3.0061f, 8.0461f, -0.2829f },  // Gun_AK47
     { 26, false, 10, -19.5191f, 45.0000f, 7.3066f },  // Gun_AK47
-    { 9, true, 1, -1.5031f, 3.2185f, -0.3279f },  // Gun_SCAR20
-    { 9, true, 10, -2.6996f, 10.0000f, -10.0000f },  // Gun_SCAR20
-    { 9, false, 1, -4.9856f, 32.1846f, -3.2794f },  // Gun_SCAR20
-    { 9, false, 10, -5.5895f, 45.0000f, -90.0000f },  // Gun_SCAR20
+    // The L4D2 SCAR fires 3-round bursts: Pavlov's burst M16 (2.0.4; was the
+    // semi-auto SCAR-20, 3.2 deg a shot two-handed, 32 deg one-handed).
+    { 9, true, 1, -2.2546f, 0.5901f, -0.0415f },  // Gun_M16
+    { 9, true, 10, -2.5871f, 5.0000f, 1.2560f },  // Gun_M16
+    { 9, false, 1, -5.4847f, 2.9503f, -0.2075f },  // Gun_M16
+    { 9, false, 10, -5.6539f, 29.5025f, 6.2800f },  // Gun_M16
     { 34, true, 1, -2.6667f, 0.8046f, -0.0548f },  // Gun_Galil
     { 34, true, 10, -2.6699f, 8.0461f, 1.5814f },  // Gun_Galil
     { 34, false, 1, -10.6667f, 5.6323f, -0.3837f },  // Gun_Galil

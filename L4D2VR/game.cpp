@@ -1305,6 +1305,7 @@ void Game::ResetAllPlayerVRInfo()
     if (m_VR) m_VR->m_ServerPhysicalInteractionVersion.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ShotgunPatternSent = -1;
+    if (m_VR) m_VR->m_GrenadeFeatureRequestSent = -1;
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         m_PlayersVRInfo.fill(Player{});
@@ -1333,6 +1334,7 @@ void Game::ResetVRPoseServerSession()
     if (m_VR) m_VR->m_ServerPhysicalInteractionVersion.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ShotgunPatternSent = -1;
+    if (m_VR) m_VR->m_GrenadeFeatureRequestSent = -1;
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         for (Player& player : m_PlayersVRInfo)

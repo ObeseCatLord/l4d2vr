@@ -33,8 +33,10 @@ namespace l4d2vr_reload_tuning
 
     // Hand travel that is too short is lost in tracking noise; longer than a
     // forearm's comfortable pull is tiring on a viewmodel-sized gun.
+    // 2.0.4: 11.4 cm, Pavlov's longest handle (AutoSniper / AutoShotgun
+    // 30 cm x 0.38); it was 10 cm.
     constexpr float kMinPullMeters = 0.03f;
-    constexpr float kMaxPullMeters = 0.10f;
+    constexpr float kMaxPullMeters = 0.114f;
     // Our magazine depth check needs the magazine box to overlap the well this
     // much; Pavlov's deeper goals (Uzi 13 cm, 1911 9 cm) are capped here.
     constexpr float kMinInsertMeters = 0.01f;
@@ -50,7 +52,8 @@ namespace l4d2vr_reload_tuning
         const float ratio = h.coking > 0.001f ? h.rechamber / h.coking : 0.0f;
         t.pullMeters = pull;
         t.returnMeters = std::clamp(pull * ratio, 0.0f, pull - 0.005f);
-        t.insertDepthMeters = std::clamp(h.slideGoalCm * 0.01f, kMinInsertMeters, kMaxInsertMeters);
+        // Pavlov seats a magazine once it is 95 % of SlideGoalThreshold in.
+        t.insertDepthMeters = std::clamp(h.slideGoalCm * 0.0095f, kMinInsertMeters, kMaxInsertMeters);
         t.visualTravelMeters = std::min(pull, h.visualCm * 0.01f);
         return t;
     }
@@ -60,12 +63,15 @@ namespace l4d2vr_reload_tuning
     inline bool ForWeapon(int weaponId, Tuning& out)
     {
         // { range cm, coking, rechamber, slide goal cm, visual slide travel cm }
-        // Pavlov source gun in the comment.
+        // Pavlov source gun in the comment. Guns whose Pavlov magazine slides
+        // home by itself once it is in the well (bEasyMagSlide: M9, Desert
+        // Eagle, SKS, Kar98 and the shotgun shells) take the shallowest seat
+        // (1 cm): once lined up in the well it goes in.
         PavlovHandle h{};
         switch (weaponId)
         {
-        case 1:  h = { 20.0f, 0.38f, 0.20f,  3.0f, 3.0f }; break; // pistol        <- M9
-        case 32: h = { 25.0f, 0.38f, 0.175f, 2.0f, 3.5f }; break; // magnum        <- Desert Eagle
+        case 1:  h = { 20.0f, 0.38f, 0.20f,  1.0f, 3.0f }; break; // pistol        <- M9 (easy slide)
+        case 32: h = { 25.0f, 0.38f, 0.175f, 1.0f, 3.5f }; break; // magnum        <- Desert Eagle (easy slide)
         case 2:  h = { 20.0f, 0.38f, 0.11f,  2.0f, 4.0f }; break; // uzi           <- MP5 (closed-bolt SMG)
         case 7:  h = {  5.0f, 1.00f, 0.65f,  2.0f, 4.0f }; break; // mac10         <- Kriss Vector
         case 33: h = { 20.0f, 0.38f, 0.11f,  2.0f, 5.0f }; break; // mp5           <- MP5
@@ -73,18 +79,37 @@ namespace l4d2vr_reload_tuning
         case 26: h = { 25.0f, 0.38f, 0.11f,  1.0f, 8.0f }; break; // ak47          <- AK47
         case 9:  h = { 10.0f, 0.80f, 0.55f,  2.0f, 6.0f }; break; // scar          <- SCAR
         case 34: h = {  8.0f, 0.80f, 0.30f,  2.0f, 6.0f }; break; // sg552         <- Galil
-        case 6:  h = { 10.0f, 1.00f, 0.50f,  4.0f, 7.0f }; break; // hunting rifle <- SKS
+        case 6:  h = { 10.0f, 1.00f, 0.50f,  1.0f, 7.0f }; break; // hunting rifle <- SKS (easy slide)
         case 10: h = { 30.0f, 0.38f, 0.11f,  2.0f, 7.0f }; break; // military      <- AutoSniper
         case 35: h = { 12.0f, 0.90f, 0.80f,  2.0f, 9.0f }; break; // awp           <- AWP
-        case 36: h = { 12.0f, 0.90f, 0.85f,  4.0f, 9.0f }; break; // scout         <- Kar98
+        case 36: h = { 12.0f, 0.90f, 0.85f,  1.0f, 9.0f }; break; // scout         <- Kar98 (easy slide)
         case 3:                                                    // pump shotgun  <- Shotgun
-        case 8:  h = { 17.0f, 1.00f, 0.20f,  2.0f, 9.0f }; break; // chrome        <- Shotgun
+        case 8:  h = { 17.0f, 1.00f, 0.20f,  1.0f, 9.0f }; break; // chrome        <- Shotgun (shell: 1 cm, easy slide)
         case 4:                                                    // autoshotgun   <- AutoShotgun
-        case 11: h = { 30.0f, 0.38f, 0.11f,  2.0f, 7.0f }; break; // spas          <- AutoShotgun
+        case 11: h = { 30.0f, 0.38f, 0.11f,  1.0f, 7.0f }; break; // spas          <- AutoShotgun (shell: 1 cm, easy slide)
         default: return false;
         }
         out = FromPavlov(h);
         return true;
+    }
+
+    // Pavlov bLockBolt: the slide or bolt locks open on the last round (M9,
+    // Desert Eagle, M16, SCAR20, SKS). With a fresh magazine in, the locked
+    // handle only has to be taken and let go (it slingshots forward and
+    // chambers); a full rack works too.
+    inline bool LocksOpenWhenEmpty(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 1:  // pistol        <- M9
+        case 32: // magnum        <- Desert Eagle
+        case 5:  // m16           <- M16
+        case 9:  // scar          <- M16 / SCAR20
+        case 6:  // hunting rifle <- SKS
+            return true;
+        default:
+            return false;
+        }
     }
 
     // Pavlov magazine slap (bAllowMagSlap): striking the seated magazine with a

@@ -625,7 +625,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					? reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon()) : nullptr;
 				// A HandThrow server throws from the hand itself (below).
 				const bool throwable = throwWeapon && m_VR->m_ManualThrowEnabled && !m_VR->m_MouseModeEnabled &&
-					!m_VR->HandThrowServerReady() && m_VR->IsThrowableWeapon(throwWeapon);
+					!m_VR->GrenadeArcMode() && !m_VR->HandThrowServerReady() && m_VR->IsThrowableWeapon(throwWeapon);
 				const bool attackDownForThrow = (cmd->buttons & (1 << 0)) != 0;
 				if (throwable && attackDownForThrow && !s_t0ThrowPrevAttack)
 					m_VR->TriggerPhysicalHandHapticPulse(m_VR->IsGameplayHandLeftPhysical(false), 0.025f, 140.0f, 0.2f, 2); // pin pulled
@@ -1190,6 +1190,34 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		!m_VR->m_AdjustingViewmodel && !m_VR->m_AdjustingScope)
 	{
 		cmd->viewangles = m_VR->m_PhysicalShoveAngles;
+	}
+
+	// GrenadeThrowMode=arc: while a grenade is in the hand, the view angles are
+	// the hand's aim (the arc's direction), so the game's own throw leaves along
+	// the arc it shows (ThrowGrenade throws along the eye angles; the plugin's
+	// throw eye override uses the same angles from the encoded pose). Movement
+	// keeps its world direction.
+	{
+		C_WeaponCSBase* const arcWeapon = localPlayerForAutoActions
+			? reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon()) : nullptr;
+		if (m_VR->GrenadeArcMode() && arcWeapon && m_VR->IsThrowableWeapon(arcWeapon) && m_VR->m_HasThrowArc &&
+			!m_VR->m_LastAimDirection.IsZero() && !m_VR->m_AdjustingViewmodel && !m_VR->m_AdjustingScope)
+		{
+			QAngle arcAngles{};
+			QAngle::VectorAngles(m_VR->m_LastAimDirection, arcAngles);
+			NormalizeAndClampViewAngles(arcAngles);
+			arcAngles.z = 0.0f;
+			QAngle oldYawOnly(0.f, cmd->viewangles.y, 0.f);
+			Vector oldForward, oldRight, oldUp;
+			QAngle::AngleVectors(oldYawOnly, &oldForward, &oldRight, &oldUp);
+			const Vector worldMove = oldForward * cmd->forwardmove + oldRight * cmd->sidemove;
+			cmd->viewangles = arcAngles;
+			QAngle newYawOnly(0.f, cmd->viewangles.y, 0.f);
+			Vector newForward, newRight, newUp;
+			QAngle::AngleVectors(newYawOnly, &newForward, &newRight, &newUp);
+			cmd->forwardmove = DotProduct(worldMove, newForward);
+			cmd->sidemove = DotProduct(worldMove, newRight);
+		}
 	}
 
 	// Keep Source's main-thread viewangles aligned with the VR audio listener while
@@ -2290,7 +2318,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		constexpr uint32_t kManualThrowViewmodelThrowableActive = 1u << 0;
 		constexpr uint32_t kManualThrowViewmodelTriggerHeld = 1u << 1;
 		uint32_t manualThrowViewmodelInputState = 0u;
-		if (m_VR->m_IsVREnabled && m_VR->m_ManualThrowEnabled && localPlayerForAutoActions)
+		if (m_VR->m_IsVREnabled && m_VR->m_ManualThrowEnabled && !m_VR->GrenadeArcMode() && localPlayerForAutoActions)
 		{
 			C_WeaponCSBase* manualThrowWeapon =
 				reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon());

@@ -256,9 +256,9 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             std::snprintf(detail, sizeof(detail), "item hand %s, active slot %d", hand, SelfTestActiveSlot(player) + 1);
             SelfTestReport("ambidextrous: starts in the right hand", !ItemHandIsPhysicalLeft() &&
                 SelfTestActiveSlot(player) == 1, detail);
-            // The rifle hangs on the dominant (right) half of the back; the left
-            // hand reaches it over the right shoulder.
-            SelfTestReachLeft(body::OverRightShoulder(), SelfTestVec(-60.0f, 0.0f, 0.0f), 1.0f);
+            // The rifle hangs on the chest sling; the left hand takes it by
+            // its handguard, down toward the left hip.
+            SelfTestReachLeft(body::SlungRifleForegrip(), SelfTestVec(30.0f, 0.0f, 0.0f), 1.0f);
         }
         if (at(3, 4.4f)) { button(m_ActionOffHandGrip, true); }
         if (at(4, 4.6f)) { button(m_ActionOffHandGrip, false); }
@@ -271,15 +271,15 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
                 SelfTestActiveSlot(player) + 1, hand);
             SelfTestReport("ambidextrous: left hand draws the rifle into the left hand",
                 SelfTestActiveSlot(player) == 0 && ItemHandIsPhysicalLeft() && ActiveItemHand() == l4d2vr_dual::Hand::Left, detail);
-            std::snprintf(detail, sizeof(detail), "pouch %.2f m %s of the head (free hand is the right)",
+            std::snprintf(detail, sizeof(detail), "pouch %.2f m %s of the head (stays on the off-hand chest)",
                 std::fabs(side(pouch)), side(pouch) < 0.0f ? "left" : "right");
-            SelfTestReport("ambidextrous: pouch on the free (right) hip", pouchValid && side(pouch) > 0.05f, detail);
+            SelfTestReport("ambidextrous: pouch stays on the off-hand (left) upper chest", pouchValid && side(pouch) < -0.05f, detail);
             SelfTestReachLeft(SelfTestVec(0.42f, -0.12f, -0.32f), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
             SelfTestHoldRight(body::RightReady(), QAngle(0.0f, -25.0f, 0.0f));
         }
         if (at(6, 6.6f))
         {
-            // The rifle came over the right shoulder; once the left hand is back
+            // The rifle came off the chest sling; once the left hand is back
             // in front-left, the gun must be there with it.
             const float gunSide = side(m_RightControllerPosAbs);
             std::snprintf(detail, sizeof(detail), "gun hand %.2f m %s of the head",
@@ -327,7 +327,8 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             std::snprintf(detail, sizeof(detail), "clip %d -> %d; aim %.1f deg from the head", m_SelfTestValueA, clip(), yaw);
             SelfTestReport("ambidextrous: the right hand fires after the hand-off",
                 clip() >= 0 && clip() < m_SelfTestValueA && std::fabs(yaw + 25.0f) < 8.0f, detail);
-            SelfTestReachLeft(body::LeftChest(), SelfTestVec(30.0f, -40.0f, 0.0f), 0.5f);
+            // The grenade is on the dominant (right) upper chest: the left hand reaches across.
+            SelfTestReachLeft(body::RightUpperChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);
         }
         if (at(18, 15.4f)) { button(m_ActionOffHandGrip, true); }
         if (at(19, 15.6f)) { button(m_ActionOffHandGrip, false); }
@@ -358,7 +359,8 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
                 grenade ? "still occupied" : "empty", SelfTestActiveWeaponId(player), hand);
             SelfTestReport("ambidextrous: left hand throws the pipe bomb", grenade == nullptr, detail);
             cmd("hurtme 40"); // pills are only taken below full health
-            SelfTestReachLeft(body::RightChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);
+            // The pills hang on the off-hand (left) hip.
+            SelfTestReachLeft(body::LeftHip(), SelfTestVec(60.0f, 0.0f, 0.0f), 0.6f);
         }
         if (at(26, 21.8f)) { button(m_ActionOffHandGrip, true); }
         if (at(27, 22.0f)) { button(m_ActionOffHandGrip, false); }
@@ -490,7 +492,8 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
             void* const kit = player->Weapon_GetSlot(3);
             std::snprintf(detail, sizeof(detail), "health %d -> %d, medkit %s", m_SelfTestValueA, health(), kit ? "still held" : "used");
             SelfTestReport("ambidextrous: the left trigger heals with the left-held medkit", !kit && health() > m_SelfTestValueA, detail);
-            SelfTestReachLeft(body::RightChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);
+            // The adrenaline hangs on the off-hand (left) hip.
+            SelfTestReachLeft(body::LeftHip(), SelfTestVec(60.0f, 0.0f, 0.0f), 0.6f);
         }
         if (at(9, 14.0f)) { button(m_ActionOffHandGrip, true); }
         if (at(10, 14.2f)) { button(m_ActionOffHandGrip, false); }

@@ -112,14 +112,29 @@ messages (`CLC_VoiceData`/`SVC_VoiceData`)? Their payload is relayed by the engi
 on every server, and vanilla clients would decode Opus frames as noise; the string-command
 channel is already proven on the plugin and the listen host.
 
+## Measured (headless self-tests, 2026-11-03)
+
+Test tone instead of a microphone, voice looped back through the server (`opusvoice` step):
+
+| Server | Frames back | Concealed (FEC+PLC) | Jitter buffer | 440 Hz after the round trip |
+|---|---|---|---|---|
+| Local listen host | 209/209 | 0% | 60 ms | 68-74 dB over off-tone bins |
+| Marmot (dedicated plugin, internet) | 209/209 | 2-8% in the first long talkspurt | 300 ms (its maximum) | 56-64 dB |
+
+On Marmot frames arrive with gaps of up to ~270 ms (the reliable server-to-client channel at
+`cl_updaterate 20`); every frame arrives, but some arrive after their playout slot while the
+buffer is still growing. A two-player test with real microphones has not been done yet.
+
 ## Limits and known gaps
 
 * Opus voice needs both players to have the mod (2.0.5+) and the server to have `OpusVoice`.
 * The game's "talking" icon does not light up for a player heard through Opus (their game voice
   packets are dropped); vrmod_log.txt logs voice statistics every 5 s while voice is in use.
 * Voice-activation speech reaches mod players only.
-* Downstream frames use the reliable channel: a lost packet delays (rather than drops) voice; the
-  jitter buffer absorbs it.
+* Downstream frames use the reliable channel: a lost packet delays (rather than drops) voice, and
+  frames come in bursts; on a remote server that costs up to 300 ms of buffering and some
+  concealment at the start of a conversation. A possible next step is an unreliable downstream
+  (a user message only mod clients receive).
 
 ## Server operators
 

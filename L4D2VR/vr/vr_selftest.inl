@@ -1497,6 +1497,24 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return t >= 0.2f;
     }
 
+    // heldhand=left|right: the active item goes to that physical hand
+    // (ambidextrous item hands, as if that hand had taken it).
+    if (step.rfind("heldhand=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            const bool left = step.substr(9) == "left";
+            RequestItemHand(left, l4d2vr_item_hand::Reason::HandOff);
+            Game::logMsg("[VR][SelfTest] held item to the %s hand", left ? "left" : "right");
+        }
+        if (t < 1.0f)
+            return false;
+        const bool physicalLeft = ItemHandIsPhysicalLeft();
+        std::snprintf(detail, sizeof(detail), "item hand is physical %s", physicalLeft ? "left" : "right");
+        SelfTestReport(step.c_str(), physicalLeft == (step.substr(9) == "left"), detail);
+        return true;
+    }
+
     // bodyyaw=<min>:<max>: PASS when the head-to-torso yaw lag (degrees,
     // absolute) of the first-person body is within [min, max].
     if (step.rfind("bodyyaw=", 0) == 0)

@@ -23634,10 +23634,10 @@ namespace
 
     // Rotation about pivot taking direction from onto direction to.
     inline vr_vm_stabilize::Mat3x4 HooksBodyIkRotationAbout(
-        const Vector& pivot, const Vector& from, const Vector& to)
+        const Vector& pivot, const Vector& from, const Vector& to, float fraction = 1.0f)
     {
         float r[3][3];
-        l4d2vr_body_ik::RotationBetween(HooksBodyIkVec(from), HooksBodyIkVec(to), r);
+        l4d2vr_body_ik::RotationBetween(HooksBodyIkVec(from), HooksBodyIkVec(to), r, fraction);
         vr_vm_stabilize::Mat3x4 delta = vr_vm_stabilize::Identity();
         for (int row = 0; row < 3; ++row)
         {
@@ -23771,6 +23771,30 @@ namespace
             // (stretch, or the drawn arm's proportions) along the limb.
             ok = ok && HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
                 upper, HooksBodyIkRotationAbout(solvedShoulder, elbow0 - shoulder, solvedElbow - solvedShoulder), bones);
+            // Clothing helpers around the shoulder (L4D2's hlp_jacket_arm_*
+            // under the clavicle, hlp_jacket_armpit_* under the chest) follow
+            // the upper arm in the game's own animation; frozen, they tear the
+            // sleeve into spikes when the arm rises. Give them half the swing.
+            if (ok)
+            {
+                const int clavicle = side < 0 ? layout.leftClavicleBone : layout.rightClavicleBone;
+                const vr_vm_stabilize::Mat3x4 halfSwing = HooksBodyIkRotationAbout(
+                    solvedShoulder, elbow0 - shoulder, solvedElbow - solvedShoulder, 0.5f);
+                for (int bone = 0; ok && bone < layout.numBones; ++bone)
+                {
+                    if (bone == upper)
+                        continue;
+                    const int parent = layout.boneParents[static_cast<size_t>(bone)];
+                    const std::string lowerName =
+                        vr_vm_stabilize::ToLowerAscii(layout.boneNames[static_cast<size_t>(bone)]);
+                    const bool clavicleHelper = clavicle >= 0 && parent == clavicle;
+                    const bool armpitHelper = lowerName.find("armpit") != std::string::npos &&
+                        HooksNativeViewmodelHandsOnlyBoneSide(lowerName) == side;
+                    if (clavicleHelper || armpitHelper)
+                        ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(
+                            layout.boneParents, layout.numBones, bone, halfSwing, bones);
+                }
+            }
             if (ok)
             {
                 const float solvedUpper = (solvedElbow - solvedShoulder).Length();

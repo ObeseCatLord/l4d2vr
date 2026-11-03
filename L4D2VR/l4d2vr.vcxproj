@@ -73,14 +73,14 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>d3d9</TargetName>
-    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openvr\include;$(SolutionDir)thirdparty\openxr\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openvr\include;$(SolutionDir)thirdparty\openxr\include;$(SolutionDir)thirdparty\opus\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ProjectDir)include;$(ExecutablePath)</ExecutablePath>
     <LibraryPath>$(SolutionDir)thirdparty\ozz-animation-install\win32\lib\$(Configuration);$(SolutionDir)thirdparty\directx\d3dx9\lib\x86;$(DXSDK_DIR)Lib\x86;$(SolutionDir)thirdparty\minhook\lib\$(Configuration);$(SolutionDir)thirdparty\openvr\lib\win32;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <TargetName>d3d9</TargetName>
-    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openvr\include;$(SolutionDir)thirdparty\openxr\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)thirdparty\cgltf;$(SolutionDir)thirdparty\ozz-animation-install\win32\include;$(SolutionDir)thirdparty\directx\d3dx9\include;$(SolutionDir)dxvk_new\include\vulkan\include;$(SolutionDir)dxvk_new\include\spirv\include;$(SolutionDir)dxvk_new\include;$(SolutionDir)dxvk_new\include\shaders;$(SolutionDir)dxvk_new\src\d3d9\shaders;$(SolutionDir)dxvk_new;$(DXSDK_DIR)Include;$(SolutionDir)thirdparty\minhook\include;$(SolutionDir)thirdparty\openvr\include;$(SolutionDir)thirdparty\openxr\include;$(SolutionDir)thirdparty\opus\include;$(ProjectDir)sdk;$(ProjectDir);$(SolutionDir);$(SolutionDir)dxvk_new\src\d3d9;$(SolutionDir)dxvk_new\subprojects\libdisplay-info\include;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ProjectDir)include;$(ExecutablePath)</ExecutablePath>
     <LibraryPath>$(SolutionDir)thirdparty\ozz-animation-install\win32\lib\$(Configuration);$(SolutionDir)thirdparty\directx\d3dx9\lib\x86;$(DXSDK_DIR)Lib\x86;$(SolutionDir)thirdparty\minhook\lib\$(Configuration);$(SolutionDir)thirdparty\openvr\lib\win32;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
@@ -457,6 +457,9 @@
     <ClInclude Include="..\dxvk_new\src\vulkan\vulkan_util.h" />
     <ClInclude Include="..\dxvk_new\tests\test_utils.h" />
     <ClInclude Include="game.h" />
+    <ClInclude Include="vr_opus_voice.h" />
+    <ClInclude Include="vr_opus_voice_client.h" />
+    <ClInclude Include="server_core\vr_server_voice.h" />
     <ClInclude Include="vr_pose_protocol.h" />
     <ClInclude Include="vr_backend\vr_backend.h" />
     <ClInclude Include="vr_backend\openxr_frame_ring.h" />
@@ -684,6 +687,1095 @@
     <ClCompile Include="..\dxvk_new\src\wsi\win32\wsi_window_win32.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="game.cpp" />
+    <ClCompile Include="vr_opus_voice_client.cpp" />
+    <ClCompile Include="..\thirdparty\opus\celt\bands.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\celt.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\celt_decoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\celt_encoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\celt_lpc.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\cwrs.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\entcode.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\entdec.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\entenc.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\kiss_fft.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\laplace.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\mathops.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\mdct.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\modes.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\pitch.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\quant_bands.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\rate.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\celt\vq.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\A2NLSF.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\CNG.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\HP_variable_cutoff.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\LPC_analysis_filter.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\LPC_fit.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\LPC_inv_pred_gain.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\LP_variable_cutoff.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF2A.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_VQ.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_VQ_weights_laroia.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_decode.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_del_dec_quant.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_encode.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_stabilize.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NLSF_unpack.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NSQ.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\NSQ_del_dec.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\PLC.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\VAD.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\VQ_WMat_EC.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\ana_filt_bank_1.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\biquad_alt.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\bwexpander.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\bwexpander_32.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\check_control_input.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\code_signs.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\control_SNR.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\control_audio_bandwidth.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\control_codec.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\debug.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\dec_API.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decode_core.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decode_frame.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decode_indices.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decode_parameters.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decode_pitch.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decode_pulses.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\decoder_set_fs.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\enc_API.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\encode_indices.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\encode_pulses.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\gain_quant.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\init_decoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\init_encoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\inner_prod_aligned.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\interpolate.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\lin2log.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\log2lin.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\pitch_est_tables.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\process_NLSFs.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\quant_LTP_gains.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_down2.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_down2_3.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_private_AR2.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_private_IIR_FIR.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_private_down_FIR.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_private_up2_HQ.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\resampler_rom.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\shell_coder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\sigm_Q15.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\sort.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\stereo_LR_to_MS.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\stereo_MS_to_LR.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\stereo_decode_pred.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\stereo_encode_pred.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\stereo_find_predictor.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\stereo_quant_pred.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\sum_sqr_shift.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\table_LSF_cos.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_LTP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_NLSF_CB_NB_MB.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_NLSF_CB_WB.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_gain.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_other.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_pitch_lag.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\tables_pulses_per_block.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\LPC_analysis_filter_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\LPC_inv_pred_gain_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\LTP_analysis_filter_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\LTP_scale_ctrl_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\apply_sine_window_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\autocorrelation_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\burg_modified_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\bwexpander_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\corrMatrix_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\encode_frame_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\energy_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\find_LPC_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\find_LTP_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\find_pitch_lags_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\find_pred_coefs_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\inner_product_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\k2a_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\noise_shape_analysis_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\pitch_analysis_core_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\process_gains_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\regularize_correlations_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\residual_energy_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\scale_copy_vector_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\scale_vector_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\schur_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\sort_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\warped_autocorrelation_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\silk\float\wrappers_FLP.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\analysis.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\mapping_matrix.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\mlp.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\mlp_data.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_decoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_encoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_multistream.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_multistream_decoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_multistream_encoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_projection_decoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\opus_projection_encoder.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\thirdparty\opus\src\repacketizer.c">
+      <AdditionalIncludeDirectories>$(SolutionDir)thirdparty\opus\include;$(SolutionDir)thirdparty\opus\celt;$(SolutionDir)thirdparty\opus\silk;$(SolutionDir)thirdparty\opus\silk\float;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>OPUS_BUILD;USE_ALLOCA;HAVE_LRINTF;HAVE_LRINT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)opus\%(Filename).obj</ObjectFileName>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
     <ClCompile Include="hooks.cpp" />
     <ClCompile Include="sdk\checksum_crc.cpp" />
     <ClCompile Include="vr.cpp" />

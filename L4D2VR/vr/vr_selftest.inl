@@ -455,6 +455,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (handled)
             return done;
     }
+    // Opus voice chat (vr_selftest_voice.inl).
+    {
+        bool handled = false;
+        const bool done = RunVoiceSelfTestStep(step, t, player, handled);
+        if (handled)
+            return done;
+    }
 
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
@@ -546,11 +553,13 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         // (ThrowVelocity, HandThrow): compare the rest.
         const uint32_t throwBits = GrenadeArcMode() && m_GrenadeFeatureRequestSent == 1
             ? (l4d2vr_features::ThrowVelocity | l4d2vr_features::HandThrow) : 0u;
-        const uint32_t core = (mask | throwBits) & ~l4d2vr_features::ShotgunPattern;
+        // OpusVoice (0x2000) is new in 2.0.5: plugins before it lack the bit.
+        const uint32_t core = (mask | throwBits | l4d2vr_features::OpusVoice) & ~l4d2vr_features::ShotgunPattern;
+        const uint32_t voice = l4d2vr_features::OpusVoice;
         SelfTestReport("server capabilities", Hooks::s_ServerUnderstandsVR &&
             (core == (l4d2vr_features::kKnownMask & ~l4d2vr_features::ShotgunPattern) ||
-                core == (l4d2vr_features::kPreDualMagTxnMask & ~l4d2vr_features::ShotgunPattern) ||
-                core == l4d2vr_features::kPreHandThrowMask ||
+                core == ((l4d2vr_features::kPreDualMagTxnMask | voice) & ~l4d2vr_features::ShotgunPattern) ||
+                core == (l4d2vr_features::kPreHandThrowMask | voice) ||
                 core == l4d2vr_features::kListenHostMask ||
                 core == (l4d2vr_features::kListenHostMask | l4d2vr_features::HandThrow)), detail);
         return true;

@@ -2303,8 +2303,17 @@ void VR::ProcessInput()
     bool voiceSecondaryJustPressed = false;
     bool voiceComboValid = getComboStates(m_VoiceRecordCombo, voicePrimaryData, voiceSecondaryData,
         voicePrimaryDown, voiceSecondaryDown, voicePrimaryJustPressed, voiceSecondaryJustPressed);
-    const bool voiceComboActive = voiceComboValid && voicePrimaryDown && voiceSecondaryDown;
-    const bool voiceComboJustActivated = voiceComboValid && ((voicePrimaryJustPressed && voiceSecondaryDown) || (voiceSecondaryJustPressed && voicePrimaryDown));
+    // The VoicePushToTalk button (OpenXR binding) talks like the combo: the
+    // game's voice (+voicerecord, for players without the mod) and Opus voice.
+    vr::InputDigitalActionData_t voicePttData{};
+    bool voicePttDown = false;
+    bool voicePttJustPressed = false;
+    const bool voicePttValid = getActionState(&m_ActionVoicePushToTalk, voicePttData, voicePttDown, voicePttJustPressed);
+    m_VoicePushToTalkDown = voicePttValid && voicePttDown;
+    OpusVoiceClient::SetControllerPushToTalk(m_VoicePushToTalkDown);
+    const bool voiceComboActive = (voiceComboValid && voicePrimaryDown && voiceSecondaryDown) || m_VoicePushToTalkDown;
+    const bool voiceComboJustActivated = (voiceComboValid && ((voicePrimaryJustPressed && voiceSecondaryDown) || (voiceSecondaryJustPressed && voicePrimaryDown))) ||
+        (voicePttValid && voicePttJustPressed && voicePttDown);
     vr::InputDigitalActionData_t speechToTextActionData{};
     bool speechToTextDown = false;
     bool speechToTextJustPressed = false;
@@ -2410,7 +2419,7 @@ void VR::ProcessInput()
         UpdateVoiceRecordCommandState();
     }
 
-    if (m_VoiceRecordActive && (!voiceComboActive || !voiceComboValid))
+    if (m_VoiceRecordActive && !voiceComboActive)
     {
         m_VoiceRecordActive = false;
         UpdateVoiceRecordCommandState();

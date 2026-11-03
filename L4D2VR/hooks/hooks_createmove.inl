@@ -13,6 +13,8 @@ static bool IsClientAttachedToLadder(Game* game, C_BasePlayer* player)
 
 bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime, CUserCmd* cmd)
 {
+	// Opus voice chat runs every client frame, VR or desktop (before any early return).
+	if (m_Game) m_Game->UpdateOpusVoice();
 	// When returning from spectator/observer back to a live player entity ("rescued"),
 	// VR origin can be desynced. Force a recenter/reset once on that transition.
 	// Netvars (client):

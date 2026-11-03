@@ -333,6 +333,35 @@ ViewmodelDisableMoveBob=false
 
 RequireSecondaryAttackForItemSwitch=false
 VoiceRecordCombo=Crouch+Reload
+# Opus voice chat (2.0.5): with other players who have the mod, on servers with the
+# L4D2VR plugin or a modded host, voice is 48 kHz Opus instead of the game's grainy
+# 11 kHz voice, and comes from where the talker stands. Everyone else keeps the game's
+# own voice. Push to talk: the game's voice key, the voice combo above, or the
+# VoicePushToTalk controller button (Quest: left menu button, Index: right trackpad press).
+OpusVoiceEnabled=true
+// ptt = push to talk, vad = voice activation (vad is heard by mod players only).
+OpusVoiceMode=ptt
+OpusVoiceVadSensitivity=0.55
+// Bits per second (12000-64000). 32000 = clear full-band speech.
+OpusVoiceBitrate=32000
+// In-band forward error correction: a lost frame is rebuilt from the next one.
+OpusVoiceFec=true
+OpusVoiceExpectedLossPercent=5
+OpusVoiceMicGain=1.0
+// Voice chat volume (0-2), separate from the game's sound volume.
+OpusVoiceVolume=1.0
+// Each talker evens out to the same loudness (quiet microphones are raised up to this much).
+OpusVoiceAgc=true
+OpusVoiceAgcMaxGain=6
+// Talkers are heard from where they stand (left/right, quieter with distance) and,
+// from OpusVoiceSpatialDistanceMeters on, as a centred radio voice at OpusVoiceRadioVolume.
+OpusVoicePositional=true
+OpusVoiceRadioVolume=0.55
+OpusVoiceSpatialDistanceMeters=18
+// Hear yourself through the server (microphone test).
+OpusVoiceLoopback=false
+// Extra desktop push-to-talk key (for example V, CAPSLOCK, MOUSE4); empty = the game's voice key only.
+OpusVoicePushToTalkKey=
 SpeechToTextEnabled=false
 SpeechToTextSendChatEnabled=true
 SpeechToTextSendVoiceEnabled=false

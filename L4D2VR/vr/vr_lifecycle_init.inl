@@ -1407,6 +1407,7 @@ int VR::SetActionManifest(const char* fileName)
         { "/actions/main/in/LedgeGuardToggle", &m_ActionLedgeGuardToggle, false },
         { "/actions/main/in/EffectiveAttackRangeAutoFireToggle", &m_ActionEffectiveAttackRangeAutoFireToggle, false },
         { "/actions/main/in/SpeechToText", &m_ActionSpeechToText, false },
+        { "/actions/main/in/VoicePushToTalk", &m_ActionVoicePushToTalk, false },
         { "/actions/main/in/MenuSelect", &m_MenuSelect, true },
         { "/actions/main/in/MenuBack", &m_MenuBack, true },
         { "/actions/main/in/MenuUp", &m_MenuUp, true },

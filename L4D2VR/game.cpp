@@ -28,6 +28,8 @@
 #include "sigscanner.h"
 #include "vr_pose_protocol.h"
 #include "sdk/ivdebugoverlay.h"
+#include "vr_opus_voice_client.h"
+#include "server_core/vr_server_voice.h"
 
 static_assert(sizeof(edict_t) == sizeof(l4d2vr_edict::Layout32), "Unexpected L4D2 native edict size");
 static_assert(offsetof(CBaseEdict, m_NetworkSerialNumber) == 4u, "Unexpected L4D2 native serial offset");
@@ -838,6 +840,8 @@ namespace
         const std::uint32_t previous = g_Game->m_VR->m_ServerFeatureMask.exchange(mask, std::memory_order_acq_rel);
         if (previous != mask)
             Game::logMsg("[VR][FeatureAck] server features 0x%03X (protocol %lu)", mask, version);
+        // Every capability bundle (new map, reconnect) restarts the voice handshake.
+        OpusVoiceClient::OnServerFeatures(mask);
     }
 
     void __cdecl OnL4D2VRShellCapability(const SourceCCommand& command)
@@ -956,6 +960,41 @@ namespace
             std::numeric_limits<float>::quiet_NaN());
     }
 
+    // ---- Opus voice (server -> client) ----
+    void __cdecl OnL4D2VRVoiceAckCommand(const SourceCCommand& command)
+    {
+        std::uint32_t version = 0u;
+        if (command.ArgC() == 2 && l4d2vr_voice::ParseUnsigned(command.Arg(1), 255u, version))
+            OpusVoiceClient::OnAck(version);
+    }
+    void __cdecl OnL4D2VRVoicePeersCommand(const SourceCCommand& command)
+    {
+        std::uint32_t lo = 0u, hi = 0u;
+        if (command.ArgC() == 3 && l4d2vr_voice::ParseHex32(command.Arg(1), lo) && l4d2vr_voice::ParseHex32(command.Arg(2), hi))
+            OpusVoiceClient::OnPeers(lo, hi);
+    }
+    void __cdecl OnL4D2VRVoiceRxCommand(const SourceCCommand& command)
+    {
+        std::uint32_t player = 0u;
+        if (command.ArgC() == 3 && l4d2vr_voice::ParseUnsigned(command.Arg(1), l4d2vr_voice::kMaxPlayers, player))
+            OpusVoiceClient::OnFrame(static_cast<int>(player), command.Arg(2));
+    }
+    // +voicerecord / -voicerecord (the game's voice key and the VR voice
+    // combo) also key Opus push-to-talk; the originals still run, so players
+    // without the mod hear the game's own voice.
+    SourceRegisteredConCommand* g_OriginalVoiceRecordStart = nullptr;
+    SourceRegisteredConCommand* g_OriginalVoiceRecordStop = nullptr;
+    void __cdecl OnVoiceRecordStartCommand(const SourceCCommand& command)
+    {
+        OpusVoiceClient::SetStockVoiceRecord(true);
+        if (g_OriginalVoiceRecordStart) g_OriginalVoiceRecordStart->Dispatch(command);
+    }
+    void __cdecl OnVoiceRecordStopCommand(const SourceCCommand& command)
+    {
+        OpusVoiceClient::SetStockVoiceRecord(false);
+        if (g_OriginalVoiceRecordStop) g_OriginalVoiceRecordStop->Dispatch(command);
+    }
+
     void __cdecl OnVRConfigCommand(const SourceCCommand&)
     {
         L4D2VRConfigOverlay_Open();
@@ -1022,6 +1061,19 @@ namespace
         &OnL4D2VRPoseReceiveCommand,
         "Receives a relayed L4D2VR world-model pose.",
         kFcvarServerCanExecute);
+    SourceRegisteredConCommand g_L4D2VRVoiceAckCommand(
+        l4d2vr_voice::kAckCommand, &OnL4D2VRVoiceAckCommand,
+        "Accepts the server's Opus voice relay.", kFcvarServerCanExecute);
+    SourceRegisteredConCommand g_L4D2VRVoicePeersCommand(
+        l4d2vr_voice::kPeersCommand, &OnL4D2VRVoicePeersCommand,
+        "Players whose voice arrives as Opus.", kFcvarServerCanExecute);
+    SourceRegisteredConCommand g_L4D2VRVoiceRxCommand(
+        l4d2vr_voice::kRxCommand, &OnL4D2VRVoiceRxCommand,
+        "Receives a relayed Opus voice frame.", kFcvarServerCanExecute);
+    SourceRegisteredConCommand g_VoiceRecordStartCommand(
+        "+voicerecord", &OnVoiceRecordStartCommand, "Start voice recording (game voice + Opus).", 0);
+    SourceRegisteredConCommand g_VoiceRecordStopCommand(
+        "-voicerecord", &OnVoiceRecordStopCommand, "Stop voice recording (game voice + Opus).", 0);
     SourceRegisteredConCommand g_VRConfigCommand(
         kVRConfigCommandName,
         &OnVRConfigCommand,
@@ -1078,6 +1130,29 @@ namespace
                 cvar->RegisterConCommand(&g_VRConfigCommand);
             if (!cvar->FindCommandBase(kVROptionsCommandName))
                 cvar->RegisterConCommand(&g_VROptionsCommand);
+            if (!cvar->FindCommandBase(l4d2vr_voice::kAckCommand))
+                cvar->RegisterConCommand(&g_L4D2VRVoiceAckCommand);
+            if (!cvar->FindCommandBase(l4d2vr_voice::kPeersCommand))
+                cvar->RegisterConCommand(&g_L4D2VRVoicePeersCommand);
+            if (!cvar->FindCommandBase(l4d2vr_voice::kRxCommand))
+                cvar->RegisterConCommand(&g_L4D2VRVoiceRxCommand);
+            {
+                SourceConCommandBase* start = cvar->FindCommandBase("+voicerecord");
+                SourceConCommandBase* stop = cvar->FindCommandBase("-voicerecord");
+                if (start && stop && start != reinterpret_cast<SourceConCommandBase*>(&g_VoiceRecordStartCommand) &&
+                    stop != reinterpret_cast<SourceConCommandBase*>(&g_VoiceRecordStopCommand))
+                {
+                    g_OriginalVoiceRecordStart = reinterpret_cast<SourceRegisteredConCommand*>(start);
+                    g_OriginalVoiceRecordStop = reinterpret_cast<SourceRegisteredConCommand*>(stop);
+                    g_VoiceRecordStartCommand.m_nFlags = start->m_nFlags;
+                    g_VoiceRecordStopCommand.m_nFlags = stop->m_nFlags;
+                    cvar->UnregisterConCommand(start);
+                    cvar->UnregisterConCommand(stop);
+                    cvar->RegisterConCommand(&g_VoiceRecordStartCommand);
+                    cvar->RegisterConCommand(&g_VoiceRecordStopCommand);
+                }
+                Game::logMsg("[VR][Voice] voice key hook=%d", g_OriginalVoiceRecordStart ? 1 : 0);
+            }
 
             SourceConCommandBase* cachePrintSummary =
                 cvar->FindCommandBase(kCachePrintSummaryCommandName);
@@ -1333,6 +1408,8 @@ void Game::ResetAllPlayerVRInfo()
             m_BuiltinVRPoseRelayMutex);
         m_BuiltinVRPoseRelayClients.fill(VRPoseRelayServerClient{});
     }
+    OpusVoiceClient::OnSessionReset();
+    ResetListenVoiceRelay();
 }
 
 void Game::ResetVRPoseServerSession()
@@ -1373,6 +1450,8 @@ void Game::ResetVRPoseServerSession()
             m_BuiltinVRPoseRelayMutex);
         m_BuiltinVRPoseRelayClients.fill(VRPoseRelayServerClient{});
     }
+    OpusVoiceClient::OnSessionReset();
+    ResetListenVoiceRelay();
 }
 
 namespace
@@ -2064,6 +2143,146 @@ bool Game::HandleBuiltinVRPoseRelayCommand(
     }
 
     return true;
+}
+
+
+// ---- Opus voice: the modded listen host's relay (same Relay as the plugin) ----
+namespace
+{
+    // engine.dll "VoiceServer002" (CVoiceServer): slot 0 is the MSVC deleting
+    // destructor, slot 1 GetClientListening(receiver, sender), 1-based.
+    void* ListenVoiceServerInterface()
+    {
+        static void* voiceServer = TryInterfaceNoError("engine.dll", "VoiceServer002");
+        return voiceServer;
+    }
+
+    bool ListenVoiceCanHear(int receiver, int sender)
+    {
+        void* voiceServer = ListenVoiceServerInterface();
+        if (!voiceServer) return true;
+        __try
+        {
+            using Fn = bool(__thiscall*)(void*, int, int);
+            const auto fn = reinterpret_cast<Fn>((*reinterpret_cast<void***>(voiceServer))[1]);
+            return fn(voiceServer, receiver, sender);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return true;
+        }
+    }
+
+    struct ListenVoiceSlot { edict_t* entity = nullptr; unsigned serial = 0u; };
+
+    class ListenVoiceHost final : public l4d2vr_voice_server::RelayHost
+    {
+    public:
+        std::array<ListenVoiceSlot, l4d2vr_voice::kMaxPlayers + 1> slots{};
+        void* helpers = nullptr;
+        bool Connected(int index) const override
+        {
+            if (index < 1 || index > l4d2vr_voice::kMaxPlayers) return false;
+            const ListenVoiceSlot& slot = slots[static_cast<std::size_t>(index)];
+            int current = -1;
+            unsigned serial = 0u;
+            return slot.entity && VRPoseRelayReadEdictIdentity(slot.entity, current, serial) &&
+                current == index && serial == slot.serial;
+        }
+        void Send(int index, const char* text) override
+        {
+            if (Connected(index)) VRPoseRelaySendClientCommand(helpers, slots[static_cast<std::size_t>(index)].entity, text);
+        }
+        bool CanHear(int receiver, int sender) const override { return ListenVoiceCanHear(receiver, sender); }
+        std::uint64_t NowMs() const override { return VRPoseTickMs(); }
+        void Log(const char* line) override { Game::logMsg("[VR][Voice] listen host: %s", line); }
+    };
+
+    ListenVoiceHost g_ListenVoiceHost;
+    l4d2vr_voice_server::Relay g_ListenVoiceRelay;
+    std::recursive_mutex g_ListenVoiceMutex;
+}
+
+bool Game::HandleBuiltinVoiceCommand(edict_t* entity, const void* sourceCommand)
+{
+    VRPoseRelayCommandView command{};
+    if (!VRPoseRelayReadCommand(sourceCommand, command) || !l4d2vr_voice_server::Relay::IsVoiceCommand(command.name))
+        return false;
+    int index = -1;
+    unsigned serial = 0u;
+    if (!m_ServerPluginHelpers || !VRPoseRelayReadEdictIdentity(entity, index, serial)) return true;
+    std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+    g_ListenVoiceHost.helpers = m_ServerPluginHelpers;
+    ListenVoiceSlot& slot = g_ListenVoiceHost.slots[static_cast<std::size_t>(index)];
+    if (slot.entity != entity || slot.serial != serial)
+    {
+        // A new client in this slot: forget the old one's voice state.
+        g_ListenVoiceRelay.Reset(g_ListenVoiceHost, index);
+        slot.entity = entity;
+        slot.serial = serial;
+    }
+    g_ListenVoiceRelay.SetEnabled(true);
+    const char* argv[3] = { command.name, command.argument1, command.argument2 };
+    const int argc = std::min(command.argumentCount, 3);
+    g_ListenVoiceRelay.ClientCommand(g_ListenVoiceHost, index, argc, argv);
+    return true;
+}
+
+void Game::ResetListenVoiceRelay()
+{
+    std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+    g_ListenVoiceRelay.ResetAll();
+    g_ListenVoiceHost.slots.fill(ListenVoiceSlot{});
+}
+
+// Once per client frame (CreateMove): Opus voice handshake, sending, positions.
+void Game::UpdateOpusVoice()
+{
+    if (!m_EngineClient) return;
+    // Main thread, MinHook initialized: hook the stock voice receive once.
+    OpusVoiceClient::InstallStockVoiceFilter();
+    if (g_L4D2VRDesktopMode || !m_VR || !m_VR->m_IsVREnabled) OpusVoiceClient::PollDesktopSettings();
+    OpusVoiceClient::FrameInputs in;
+    in.inGame = m_EngineClient->IsInGame();
+    in.localPlayer = in.inGame ? m_EngineClient->GetLocalPlayer() : 0;
+    // The feature mask is cleared with the server session (ResetVRPoseServerSession);
+    // s_ServerUnderstandsVR is also reset when the map finishes loading, after
+    // the ack may already have arrived, so it is not a gate here.
+    in.serverFeatures = m_VR ? m_VR->m_ServerFeatureMask.load(std::memory_order_acquire) : 0u;
+    if (in.inGame)
+    {
+        if (m_VR && m_VR->m_IsVREnabled)
+        {
+            in.listener = { m_VR->m_HmdPosAbs.x, m_VR->m_HmdPosAbs.y, m_VR->m_HmdPosAbs.z };
+            in.listenerYawDeg = m_VR->m_HmdAngAbs.y;
+        }
+        else
+        {
+            C_BaseEntity* local = GetClientEntity(in.localPlayer);
+            if (local)
+            {
+                const Vector origin = local->GetAbsOrigin();
+                in.listener = { origin.x, origin.y, origin.z + 64.0f };
+            }
+            QAngle view{};
+            m_EngineClient->GetViewAngles(view);
+            in.listenerYawDeg = view.y;
+        }
+        const HWND foreground = GetForegroundWindow();
+        DWORD pid = 0;
+        if (foreground) GetWindowThreadProcessId(foreground, &pid);
+        in.gameWindowFocused = pid == GetCurrentProcessId();
+        in.speakerHead = [this](int player, l4d2vr_voice::Vec3& head) {
+            C_BaseEntity* entity = GetClientEntity(player);
+            if (!entity) return false;
+            const Vector origin = entity->GetAbsOrigin();
+            if (!std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z)) return false;
+            head = { origin.x, origin.y, origin.z + 64.0f };   // eye height of a standing survivor
+            return true;
+        };
+        in.serverCommand = [this](const char* text, bool reliable) { ServerCmd(text, reliable); };
+    }
+    OpusVoiceClient::Frame(in);
 }
 
 void Game::HandleVRPoseServerAck(int protocolVersion)

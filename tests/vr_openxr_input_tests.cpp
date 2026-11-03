@@ -109,7 +109,7 @@ int main()
             "/actions/main/in/Pause", "/actions/main/in/NonVRServerMovementAngleToggle",
             "/actions/main/in/ScopeToggle", "/actions/main/in/FriendlyFireBlockToggle",
             "/actions/main/in/CustomAction1", "/actions/main/in/CustomAction2", "/actions/main/in/CustomAction3",
-            "/actions/main/in/CustomAction4", "/actions/main/in/CustomAction5",
+            "/actions/main/in/CustomAction4", "/actions/main/in/CustomAction5", "/actions/main/in/VoicePushToTalk",
             "/actions/base/in/skeleton_lefthand", "/actions/base/in/skeleton_righthand",
         };
         for (const char* name : modNames)
@@ -229,6 +229,20 @@ int main()
         Check(HasBinding(idx, Action::ActivateVR, Hand::Right, "/input/a/click") && HasBinding(idx, Action::MagazineRelease, Hand::Right, "/input/a/click") &&
             HasBinding(idx, Action::MenuSelect, Hand::Right, "/input/a/click"), "index select/release/activate = right A");
         Check(HasBinding(idx, Action::Scoreboard, Hand::Left, "/input/trackpad/force"), "index scoreboard = left trackpad press");
+        // Opus voice push-to-talk on inputs nothing else uses.
+        Check(HasBinding(idx, Action::VoicePushToTalk, Hand::Right, "/input/trackpad/force"), "index voice ptt = right trackpad press");
+        for (xi::ProfileId id : { xi::ProfileId::Touch, xi::ProfileId::TouchPro, xi::ProfileId::TouchPlus, xi::ProfileId::Cosmos,
+                 xi::ProfileId::Focus3, xi::ProfileId::HpReverb, xi::ProfileId::Pico4 })
+        {
+            const xi::Profile& p = P(id);
+            CheckS(HasBinding(p, Action::VoicePushToTalk, Hand::Left, "/input/menu/click"), std::string("voice ptt = left menu on ") + p.key);
+            for (const xi::Binding& b : p.bindings)
+                if (b.action != Action::VoicePushToTalk && b.hand == Hand::Left)
+                    CheckS(std::strcmp(b.input, "/input/menu/click") != 0, std::string("left menu free for voice on ") + p.key);
+        }
+        for (const xi::Binding& b : idx.bindings)
+            if (b.action != Action::VoicePushToTalk && b.hand == Hand::Right)
+                Check(std::strcmp(b.input, "/input/trackpad/force") != 0, "right trackpad free for voice on index");
         Check(BindingsOf(idx, Action::WeaponGrip, Hand::Left).empty() && BindingsOf(idx, Action::OffHandGrip, Hand::Right).empty(),
             "grips are one hand each (leftright manifest)");
         float press = 0.0f, release = 0.0f;

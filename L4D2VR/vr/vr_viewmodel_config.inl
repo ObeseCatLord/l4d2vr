@@ -1910,7 +1910,7 @@ void VR::ParseConfigFile()
     // are retired (the survivor's own viewmodel hands are used for everyone):
     // VrHandsGlovesEnabled is ignored.
     const bool vrHandsEntryEnabled =
-        getBool("VrHandsEnabled", false) || m_LeftHanded;
+        getBool("VrHandsEnabled", true) || m_LeftHanded;
     m_VrHandsGlovesEnabled = false;
     m_VrHandsGloveFingerMaxCurl[0] = std::clamp(
         getFloat("VrHandsGloveThumbMaxCurl", m_VrHandsGloveFingerMaxCurl[0]),
@@ -3265,7 +3265,7 @@ void VR::ParseConfigFile()
     m_GameLaserSightEndOffset.z = std::clamp(m_GameLaserSightEndOffset.z, -256.0f, 256.0f);
     m_ManualThrowEnabled = getBool("ManualThrowEnabled", m_ManualThrowEnabled);
     m_GripReleaseDropEnabled = getBool("GripReleaseDropEnabled", false);
-    m_BodyGripInventoryEnabled = getBool("BodyGripInventoryEnabled", false);
+    m_BodyGripInventoryEnabled = getBool("BodyGripInventoryEnabled", true);
     m_BodyGripInventoryUseModelPelvis = getBool("BodyGripInventoryUseModelPelvis", true);
     m_PhysicalReloadOnUnsupportedServers = getBool("PhysicalReloadOnUnsupportedServers", true);
     m_SightAutoAlignEnabled = getBool("SightAutoAlignEnabled", true);
@@ -3282,6 +3282,7 @@ void VR::ParseConfigFile()
     m_RecoilDebugLog = getBool("RecoilDebugLog", false);
     m_IronSightAimEnabled = getBool("IronSightAimEnabled", true);
     m_GunRigidInHand = getBool("GunRigidInHand", true);
+    m_GunHandOnController = getBool("GunHandOnController", true);
     m_MeleeInertiaEnabled = getBool("MeleeInertiaEnabled", true);
     // Ancient Dungeon VR style swing gates: tip and hand speed plus travel.
     m_MeleeSwingMinTipSpeed = std::clamp(getFloat("MeleeSwingMinTipSpeed", 4.5f), 0.5f, 20.0f);
@@ -3348,13 +3349,14 @@ void VR::ParseConfigFile()
     // ItemHandMirror is retired (headset session 6): an item in the left hand is
     // always held by a mirrored left hand; the right hand never moves over.
     m_ItemHandMirror = true;
+    m_ItemHandLeftArmModel = getBool("ItemHandLeftArmModel", true);
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
     // Pavlov's inventory follows the head yaw at interpolation speed 20.
     m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 20.0f), 1.0f, 60.0f);
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
     m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
     m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);
-    m_ManualPumpEnabled = getBool("ManualPumpEnabled", false);
+    m_ManualPumpEnabled = getBool("ManualPumpEnabled", true);
     m_ManualPumpTravelMeters = std::clamp(getFloat("ManualPumpTravelMeters", 0.10f), 0.04f, 0.25f);
     m_ManualPumpCockFraction = std::clamp(getFloat("ManualPumpCockFraction", 0.70f),
         l4d2vr_physical::kPumpMinCockFraction, 1.0f);

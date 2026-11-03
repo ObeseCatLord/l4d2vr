@@ -205,6 +205,32 @@ namespace l4d2vr_ammo_grip
         result = world; return true;
     }
 
+    // The spare standing upright in a chest pouch (Forefront's ammo pouch):
+    // the magazine box's local frame is the weapon bone's (+Y = the gun's
+    // top, along which a magazine runs; +Z = the barrel), so local Y goes to
+    // world up, local Z to the body's forward and local X to its left. A
+    // proper rotation: left x up = forward.
+    inline bool BodyWorldUpright(const Vector& forward, const Vector& right,
+        const Vector& centerWorld, const Vector& boxCenterLocal, VrHandMatrix4& result)
+    {
+        if (!Finite(forward) || !Finite(right) || !Finite(centerWorld) || !Finite(boxCenterLocal)) return false;
+        auto world = VrHandMath::Identity();
+        const Vector up(0.0f, 0.0f, 1.0f);
+        for (int row = 0; row < 3; ++row)
+        {
+            VrHandMath::Set(world, row, 0, -right[row]);
+            VrHandMath::Set(world, row, 1, up[row]);
+            VrHandMath::Set(world, row, 2, forward[row]);
+        }
+        if (!Rigid(world)) return false;
+        const Vector origin = centerWorld - Rotate(world, boxCenterLocal);
+        if (!Finite(origin)) return false;
+        VrHandMath::Set(world, 0, 3, origin.x);
+        VrHandMath::Set(world, 1, 3, origin.y);
+        VrHandMath::Set(world, 2, 3, origin.z);
+        result = world; return true;
+    }
+
     // Where a closed hand holds a spare magazine or shell: the hole between
     // the palm and the curled fingers. Built from the drawn hand's rigid
     // bones only (the wrist, the four knuckles, the thumb root), so it does

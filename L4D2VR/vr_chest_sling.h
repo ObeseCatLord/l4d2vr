@@ -3,8 +3,14 @@
 #include <cmath>
 #include <cstdint>
 
-// Chest sling for long guns (ChestSlingEnabled, 2.0.4), as in Contractors or
-// Battlefront-style VR shooters.
+// Chest sling for long guns (ChestSlingEnabled, 2.0.4; Forefront's chest
+// sling since 2.0.5) and empty hands (HolsterEmptyHands, 2.0.5).
+//
+// 2.0.5: the sling is Forefront's (vr_holster.h SlingPose): the slot1 gun hangs
+// there whether it is the active weapon or not. Putting any item away in its
+// own holster, or letting go of a sidearm near the body, stows it the same
+// way: it stays L4D2's active weapon but hangs on the body, and both hands are
+// empty (see vr.h m_ChestSlungWeapon / m_StowedSlot).
 //
 // Letting go of a held long gun (rifles, SMGs, shotguns, snipers, the M60 and
 // the grenade launcher) no longer drops it: it hangs on a sling in front of the
@@ -61,6 +67,8 @@ namespace l4d2vr_chest_sling
         int weaponId = 0;
         float handToSlingMeters = 0.0f; // the releasing hand to the sling point
         float dropDistanceMeters = 0.6f;// ChestSlingDropDistanceMeters
+        float handSpeedMetersPerSecond = 0.0f; // sidearms: a hand this fast throws (melee throw)
+        float throwSpeedMetersPerSecond = 2.5f;
     };
 
     // What letting go does: hang the gun on the sling, or drop it (anything
@@ -70,6 +78,30 @@ namespace l4d2vr_chest_sling
         if (!in.dropRequested)
             return ReleaseAction::None;
         if (!in.enabled || !IsLongGun(in.weaponId))
+            return ReleaseAction::Drop;
+        if (!std::isfinite(in.handToSlingMeters) || in.handToSlingMeters < 0.0f)
+            return ReleaseAction::Sling;
+        return in.handToSlingMeters > in.dropDistanceMeters ? ReleaseAction::Drop : ReleaseAction::Sling;
+    }
+
+    // Slot2 items that return to the hip holster when let go near the body
+    // (HolsterEmptyHands, Forefront's sidearm/knife reset): pistol, magnum,
+    // melee weapons and the chainsaw.
+    inline bool IsSidearm(int weaponId)
+    {
+        return weaponId == 1 || weaponId == 32 || weaponId == 19 || weaponId == 20;
+    }
+
+    // What letting go of a sidearm does: None (not a sidearm, or the option
+    // off: the old drop rules apply), Sling (back into the hip holster: the
+    // hand is within dropDistanceMeters of it, or the distance is unknown) or
+    // Drop (the arm is stretched away from the body).
+    inline ReleaseAction OnSidearmRelease(const ReleaseInput& in)
+    {
+        if (!in.dropRequested || !in.enabled || !IsSidearm(in.weaponId))
+            return ReleaseAction::None;
+        // A swing that lets go is a throw (melee weapons fly), not a holster.
+        if (std::isfinite(in.handSpeedMetersPerSecond) && in.handSpeedMetersPerSecond > in.throwSpeedMetersPerSecond)
             return ReleaseAction::Drop;
         if (!std::isfinite(in.handToSlingMeters) || in.handToSlingMeters < 0.0f)
             return ReleaseAction::Sling;

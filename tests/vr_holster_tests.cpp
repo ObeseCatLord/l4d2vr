@@ -39,6 +39,10 @@ static void TestYawFollow()
     // Wraparound takes the short way.
     y = FollowBodyYaw(170.0f, true, -170.0f, 0.0f, 0.016f, 20.0f);
     CHECK(y > 170.0f || y < -170.0f);
+    // Forefront (speed 0, the default): the head yaw every frame, no lag.
+    CHECK(Near(FollowBodyYaw(0.0f, true, 75.0f, 0.0f, 0.011f, 0.0f), 75.0f, 0.001f));
+    CHECK(Near(FollowBodyYaw(10.0f, true, -120.0f, 5.0f, 0.011f, 0.0f), -120.0f, 0.001f));
+    CHECK(Near(Layout{}.rootDropMeters, -0.60f, 1e-6f));
 }
 
 static BodyFrame Frame(bool leftHanded = false)
@@ -58,43 +62,50 @@ static void TestZones()
     // dominant hand, up), not at our own zone centres.
     const Vector atHip = ToWorld(frame, Vector(-0.05f, 0.22f, -0.80f));
     const Vector relaxedAtSide = ToWorld(frame, Vector(0.0f, 0.25f, -0.75f));
-    const Vector overShoulder = ToWorld(frame, Vector(-0.10f, 0.15f, -0.05f));
+    const Vector slungGrip = ToWorld(frame, Vector(0.14f, 0.10f, -0.50f));
     const Vector gunReady = ToWorld(frame, Vector(0.35f, 0.20f, -0.30f));
     CHECK(atHip.y < 0.0f); // dominant (right) side is -y
     CHECK(FindZone(frame, layout, atHip, 0x1Fu) == Zone::Secondary);
     CHECK(FindZone(frame, layout, relaxedAtSide, 0x1Fu) == Zone::Secondary);
     CHECK(FindZone(frame, layout, atHip, 0x1Du) == Zone::None); // secondary empty
-    CHECK(FindZone(frame, layout, overShoulder, 0x1Fu) == Zone::Primary);
+    CHECK(FindZone(frame, layout, slungGrip, 0x1Fu) == Zone::Primary);
+    CHECK(FindZone(frame, layout, slungGrip, 0x1Eu) == Zone::None); // no long gun
     CHECK(FindZone(frame, layout, gunReady, 0x1Fu) == Zone::None);
-    // Chest pockets: reach for the pocketed item.
-    CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Throwable), 0x1Fu) == Zone::Throwable);
-    CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Consumable), 0x1Fu) == Zone::Consumable);
-    // The kit is on the back now, over the off shoulder: never at the belly.
-    CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, Zone::Medical), 0x1Fu) == Zone::Medical);
-    CHECK(FindZone(frame, layout, ToWorld(frame, Vector(0.08f, 0.0f, -0.51f)), 0x1Fu) == Zone::None);
-    // Putting a chest item back: anywhere in the vest.
-    CHECK(HandInHolsterVolume(frame, layout, Zone::Consumable, ToWorld(frame, Vector(0.10f, 0.0f, -0.45f))));
+    // Every zone takes a hand at its own handle.
+    for (int zone = 0; zone < kZoneCount; ++zone)
+        CHECK(FindZone(frame, layout, ZoneCenterWorld(frame, layout, static_cast<Zone>(zone)), 0x1Fu) == static_cast<Zone>(zone));
+    // The middle of the belly, between the sling's grip and the hips, is not a holster.
+    CHECK(FindZone(frame, layout, ToWorld(frame, Vector(0.30f, 0.0f, -0.45f)), 0x1Fu) == Zone::None);
+    // Putting an item back: in its own grab volume.
+    CHECK(HandInHolsterVolume(frame, layout, Zone::Consumable, ZoneCenterWorld(frame, layout, Zone::Consumable)));
     CHECK(!HandInHolsterVolume(frame, layout, Zone::Consumable, gunReady + Vector(20.0f, 0.0f, 0.0f)));
+    CHECK(HandInHolsterVolume(frame, layout, Zone::Primary, slungGrip));
     // Left-handed mirrors the hip to +y.
     const BodyFrame left = Frame(true);
     CHECK(ZoneCenterWorld(left, layout, Zone::Secondary).y > 0.0f);
+    CHECK(ZoneCenterWorld(left, layout, Zone::Consumable).y < 0.0f);
 }
 
-static void TestPavlovRoot()
+static void TestForefrontRoot()
 {
     const Layout layout{};
     BodyFrame frame = MakeFrame(Vector(0.0f, 0.0f, 100.0f), 0.0f, false, 40.0f, 1.0f);
     ApplyPavlovRoot(frame, layout, Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, -1.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, -1.0f);
-    CHECK(Near(frame.root.z, 100.0f - 0.75f * 40.0f, 0.01f)); // 75 cm below the head
+    CHECK(Near(frame.root.z, 100.0f - 0.60f * 40.0f, 0.01f)); // Forefront: 60 cm straight below the head
     CHECK(Near(frame.root.x, 0.0f, 0.01f));
-    // Looking straight down pulls it back 8 cm.
+    // No Pavlov curves: looking straight down and reaching to the floor move nothing.
     BodyFrame down = MakeFrame(Vector(0.0f, 0.0f, 100.0f), 0.0f, false, 40.0f, 1.0f);
-    ApplyPavlovRoot(down, layout, Vector(0.001f, 0.0f, -1.0f), Vector(0.0f, -1.0f, 0.0f), Vector(1.0f, 0.0f, 0.0f), false, -1.0f);
-    CHECK(Near(down.root.x, -0.08f * 40.0f, 0.2f));
-    // The off hand at the floor pushes it 60 cm back; above 25 cm, not at all.
+    ApplyPavlovRoot(down, layout, Vector(0.001f, 0.0f, -1.0f), Vector(0.0f, -1.0f, 0.0f), Vector(1.0f, 0.0f, 0.0f), false, 0.0f);
+    CHECK(Near(down.root.x, 0.0f, 0.01f) && Near(down.root.y, 0.0f, 0.01f));
+    // The Pavlov curves still work when a layout sets them.
+    Layout pavlov{};
+    pavlov.rootDropMeters = -0.75f;
+    pavlov.lookDownBackMeters = 0.08f;
+    pavlov.reachFloorBackMeters = 0.60f;
     BodyFrame reach = MakeFrame(Vector(0.0f, 0.0f, 100.0f), 0.0f, false, 40.0f, 1.0f);
-    ApplyPavlovRoot(reach, layout, Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, -1.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, 0.0f);
+    ApplyPavlovRoot(reach, pavlov, Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, -1.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, 0.0f);
     CHECK(Near(reach.root.x, -0.60f * 40.0f, 0.01f));
+    CHECK(Near(reach.root.z, 100.0f - 0.75f * 40.0f, 0.01f));
     CHECK(Near(ReachFloorBackFraction(0.171f), 26.5f / 60.0f, 0.01f));
     CHECK(ReachFloorBackFraction(0.30f) == 0.0f);
 }
@@ -118,7 +129,7 @@ static void TestItemPoseOrthonormal()
             CHECK(DotProduct(cross, pose.axisZ) > 0.99f); // right-handed
         }
     const ItemPose pistol = BuildItemPose(frame, layout, Zone::Secondary, ItemShape::Pistol);
-    CHECK(pistol.axisZ.z < -0.9f); // muzzle down (canted 23 degrees forward, as in Pavlov)
+    CHECK(pistol.axisZ.z < -0.99f); // muzzle straight down (Forefront's secondary)
 }
 
 static void TestGrabFsm()
@@ -151,6 +162,31 @@ static void TestGrabFsm()
     in.ownZoneUnderHand = Zone::Secondary;
     out = fsm.Update(in);
     CHECK(out.holsterTo == 0);
+    CHECK(out.putAwaySlot == 1); // empty hands: the pistol goes away, nothing is drawn
+    // The only item: put away with nothing to switch to (empty hands still stow it).
+    {
+        GrabFsm only;
+        GrabInput one{};
+        one.ready = true;
+        one.activeSlot = 1;
+        one.occupiedMask = 0x02u;
+        one.gripDown = true;
+        only.Update(one);
+        one.gripDown = false;
+        one.ownZoneUnderHand = Zone::Secondary;
+        const GrabOutput put = only.Update(one);
+        CHECK(put.putAwaySlot == 1 && put.holsterTo == -1);
+        // Stowed (no item in hand, activeSlot -1): a squeeze in the air holds
+        // nothing, so letting go puts nothing away.
+        one.activeSlot = -1;
+        one.ownZoneUnderHand = Zone::None;
+        one.gripDown = true;
+        only.Update(one);
+        one.gripDown = false;
+        one.ownZoneUnderHand = Zone::Secondary;
+        const GrabOutput none = only.Update(one);
+        CHECK(none.putAwaySlot == -1 && none.holsterTo == -1);
+    }
     // Not ready resets.
     in.ready = false;
     in.gripDown = true;
@@ -205,8 +241,9 @@ static void TestControlReadyUsesCameraReport()
 
 static void TestHolsterPlacementNearHead()
 {
-    // Default layout at VRScale 43.2: every item rests on its vest socket, on the
-    // body below the head.
+    // Default layout at VRScale 43.2: every item rests at its socket on the
+    // body below the head (hip items hang from their grip at the socket, the
+    // slung gun's grip is at the slot1 socket, the rest are centred on it).
     BodyFrame frame = MakeFrame(Vector(100.0f, 200.0f, 64.0f), 90.0f, false, 43.2f, 1.0f);
     ApplyPavlovRoot(frame, Layout{}, Vector(0.0f, 1.0f, 0.0f), Vector(1.0f, 0.0f, 0.0f), Vector(0.0f, 0.0f, 1.0f), false, -1.0f);
     const Layout layout{};
@@ -216,26 +253,41 @@ static void TestHolsterPlacementNearHead()
             (zone == 3 ? ItemShape::Kit : ItemShape::Equipment));
         const ItemPose pose = BuildItemPose(frame, layout, static_cast<Zone>(zone), shape);
         CHECK(pose.valid);
-        const Vector centerUnits = ReferenceToCenterUnits(shape);
-        const Vector center = pose.origin + pose.axisX * centerUnits.x + pose.axisY * centerUnits.y +
-            pose.axisZ * centerUnits.z;
         const Vector socket = RootToWorld(frame, layout.socket[zone]);
-        CHECK(Near(center.x, socket.x, 0.01f) && Near(center.y, socket.y, 0.01f) && Near(center.z, socket.z, 0.01f));
-        const Vector d = center - frame.head;
+        Vector anchor{};
+        if (zone == 0)
+        {
+            // The gun's centre is slingHandleToCenterMeters down the barrel from the grip.
+            const Vector c = ReferenceToCenterUnits(shape);
+            anchor = pose.origin + pose.axisX * c.x + pose.axisY * c.y + pose.axisZ * c.z -
+                pose.axisZ * (layout.slingHandleToCenterMeters * frame.unitsPerMeter);
+        }
+        else if (zone == 1)
+        {
+            anchor = pose.origin; // the pistol's bone (grip end) at the hip socket
+        }
+        else
+        {
+            const Vector c = ReferenceToCenterUnits(shape);
+            anchor = pose.origin + pose.axisX * c.x + pose.axisY * c.y + pose.axisZ * c.z;
+        }
+        CHECK(Near(anchor.x, socket.x, 0.01f) && Near(anchor.y, socket.y, 0.01f) && Near(anchor.z, socket.z, 0.01f));
+        const Vector d = socket - frame.head;
         const float meters = std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
-        CHECK(meters > 0.25f && meters < 0.7f);
-        CHECK(center.z < frame.head.z);
+        CHECK(meters > 0.2f && meters < 0.7f);
+        CHECK(socket.z < frame.head.z);
     }
     // Hip (slot 2) sits on the dominant (right) side: yaw 90 faces +y, right is +x.
     const ItemPose hip = BuildItemPose(frame, layout, Zone::Secondary, ItemShape::Pistol);
     CHECK(hip.origin.x > frame.head.x);
-    // Chest items stand upright and in front of the back plane.
-    const ItemPose pills = BuildItemPose(frame, layout, Zone::Consumable, ItemShape::Equipment);
-    CHECK(pills.axisY.z > 0.99f);
-    CHECK(ToLocal(frame, RootToWorld(frame, layout.socket[4])).x > 0.0f);
-    // The long gun and the kit are on the back; the hip and pockets are not.
-    CHECK(IsBackZone(Zone::Primary) && IsBackZone(Zone::Medical));
+    // The pills hang on the other hip, the grenade on the dominant upper chest.
+    CHECK(RootToWorld(frame, layout.socket[4]).x < frame.head.x);
+    CHECK(RootToWorld(frame, layout.socket[2]).x > frame.head.x);
+    CHECK(ToLocal(frame, RootToWorld(frame, layout.socket[2])).x > 0.0f);
+    // Only the kit is on the back now; the long gun is on the chest.
+    CHECK(IsBackZone(Zone::Medical) && !IsBackZone(Zone::Primary));
     CHECK(!IsBackZone(Zone::Secondary) && !IsBackZone(Zone::Throwable) && !IsBackZone(Zone::Consumable));
+    CHECK(IsHipZone(Zone::Secondary) && IsHipZone(Zone::Consumable) && !IsHipZone(Zone::Throwable));
 }
 
 static void TestNearAnyZone()
@@ -302,90 +354,89 @@ static Body MakeBody(float yawDeg, float pitchDownDeg, float rollDeg, bool leftH
 }
 
 // Physical hand targets (head-yaw frame, y toward the physical right hand).
+// Where a real adult's hand goes for each body place (independent of the
+// layout's numbers; the same body model as the in-game self-test).
 static const Vector kOverRightShoulder(-0.10f, 0.15f, -0.05f);
 static const Vector kOverLeftShoulder(-0.10f, -0.15f, -0.05f);
 static const Vector kRightHip(-0.05f, 0.22f, -0.80f);
 static const Vector kLeftHip(-0.05f, -0.22f, -0.80f);
-static const Vector kRightChest(0.10f, 0.12f, -0.35f);
-static const Vector kLeftChest(0.10f, -0.12f, -0.35f);
+static const Vector kRightBelt(-0.02f, 0.24f, -0.62f);   // hand on a belt holster's grip
+static const Vector kLeftBelt(-0.02f, -0.24f, -0.62f);
+static const Vector kRightUpperChest(0.10f, 0.10f, -0.25f); // by the collar bone
+static const Vector kLeftUpperChest(0.10f, -0.10f, -0.30f);
+static const Vector kSlungGripRight(0.14f, 0.10f, -0.50f);  // pistol grip of a rifle slung across the chest
+static const Vector kSlungForegripRight(0.14f, -0.08f, -0.66f); // its handguard, toward the other hip
 static const Vector kRightReady(0.40f, 0.15f, -0.35f);
 static const Vector kLeftReady(0.32f, -0.18f, -0.42f);
-static const Vector kMagPouchReach(0.02f, -0.20f, -0.55f); // off hand at the pouch (headset log)
 
 static Vector Mirror(const Vector& v) { return Vector(v.x, -v.y, v.z); }
 
-static void TestBackHalvesRealisticBody()
+static void TestForefrontLayoutRealisticBody()
 {
     const Layout layout{};
     for (int handed = 0; handed < 2; ++handed)
     {
         const bool leftHanded = handed == 1;
-        // Physical side of the dominant shoulder / hip.
-        const Vector domShoulder = leftHanded ? kOverLeftShoulder : kOverRightShoulder;
-        const Vector offShoulder = leftHanded ? kOverRightShoulder : kOverLeftShoulder;
-        const Vector domHip = leftHanded ? kLeftHip : kRightHip;
-        const Vector offHip = leftHanded ? kRightHip : kLeftHip;
-        const Vector domChest = leftHanded ? kLeftChest : kRightChest;
-        const Vector offChest = leftHanded ? kRightChest : kLeftChest;
-        const Vector pouch = leftHanded ? Mirror(kMagPouchReach) : kMagPouchReach;
+        auto dom = [&](const Vector& v) { return leftHanded ? Mirror(v) : v; }; // physical point on the dominant side
+        const Vector domShoulder = dom(kOverRightShoulder), offShoulder = dom(kOverLeftShoulder);
+        const Vector domHip = dom(kRightHip), offHip = dom(kLeftHip);
+        const Vector domBelt = dom(kRightBelt), offBelt = dom(kLeftBelt);
+        const Vector domUpperChest = dom(kRightUpperChest), offUpperChest = dom(kLeftUpperChest);
+        const Vector slungGrip = dom(kSlungGripRight), slungForegrip = dom(kSlungForegripRight);
         for (float yaw : { 0.0f, 37.0f, -150.0f })
         for (float pitch : { 0.0f, 35.0f, 60.0f, -25.0f, -40.0f })
         for (float roll : { 0.0f, 15.0f, -15.0f })
         {
             const Body body = MakeBody(yaw, pitch, roll, leftHanded);
             const BodyFrame& f = body.frame;
+            auto at = [&](const Vector& v) { return body.At(v.x, v.y, v.z); };
             CHECK(f.valid);
             CHECK((pitch > 0.0f) == (f.headForward.z < -0.1f)); // positive pitch looks down
-            // Over the dominant shoulder: the long gun; over the off shoulder:
-            // the kit, whichever hand reaches (the zones only see positions).
-            CHECK(FindZone(f, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu) == Zone::Primary);
-            CHECK(FindZone(f, layout, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu) == Zone::Medical);
-            // A hand held further back over each shoulder (fully reached behind).
-            const Vector deepDom = domShoulder + Vector(-0.12f, 0.0f, -0.05f);
-            const Vector deepOff = offShoulder + Vector(-0.12f, 0.0f, -0.05f);
-            CHECK(FindZone(f, layout, body.At(deepDom.x, deepDom.y, deepDom.z), 0x1Fu) == Zone::Primary);
-            CHECK(FindZone(f, layout, body.At(deepOff.x, deepOff.y, deepOff.z), 0x1Fu) == Zone::Medical);
-            // An empty half takes nothing: reaching for the missing rifle never
-            // draws the kit, and the other way round.
-            CHECK(FindZone(f, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu & ~0x01u) == Zone::None);
-            CHECK(FindZone(f, layout, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu & ~0x08u) == Zone::None);
-            // Hips and chest pockets.
-            CHECK(FindZone(f, layout, body.At(domHip.x, domHip.y, domHip.z), 0x1Fu) == Zone::Secondary);
-            CHECK(FindZone(f, layout, body.At(offChest.x, offChest.y, offChest.z), 0x1Fu) == Zone::Throwable);
-            CHECK(FindZone(f, layout, body.At(domChest.x, domChest.y, domChest.z), 0x1Fu) == Zone::Consumable);
-            // The off-hand hip is the magazine pouch: never a holster draw,
-            // even looking up, where the back sphere swings down to it.
-            CHECK(FindZone(f, layout, body.At(offHip.x, offHip.y, offHip.z), 0x1Fu) == Zone::None);
-            CHECK(FindZone(f, layout, body.At(pouch.x, pouch.y, pouch.z), 0x1Fu) == Zone::None);
-            CHECK(HandAtMagazinePouch(f, layout, body.At(pouch.x, pouch.y, pouch.z)));
-            CHECK(!HandAtMagazinePouch(f, layout, body.At(domHip.x, domHip.y, domHip.z)));
+            // slot1, the chest sling: by its grip or along the gun.
+            CHECK(FindZone(f, layout, at(slungGrip), 0x1Fu) == Zone::Primary);
+            CHECK(FindZone(f, layout, at(slungForegrip), 0x1Fu) == Zone::Primary);
+            // slot2 dominant hip, slot5 off-hand hip: the belt grip or the hand
+            // hanging lower at the side.
+            CHECK(FindZone(f, layout, at(domHip), 0x1Fu) == Zone::Secondary);
+            CHECK(FindZone(f, layout, at(domBelt), 0x1Fu) == Zone::Secondary);
+            CHECK(FindZone(f, layout, at(offHip), 0x1Fu) == Zone::Consumable);
+            CHECK(FindZone(f, layout, at(offBelt), 0x1Fu) == Zone::Consumable);
+            // slot3: the dominant upper chest.
+            CHECK(FindZone(f, layout, at(domUpperChest), 0x1Fu) == Zone::Throwable);
+            // slot4: the back, over either shoulder (the whole sphere is the kit's).
+            CHECK(FindZone(f, layout, at(offShoulder), 0x1Fu) == Zone::Medical);
+            CHECK(FindZone(f, layout, at(domShoulder), 0x1Fu) == Zone::Medical);
+            CHECK(FindZone(f, layout, at(offShoulder + Vector(-0.12f, 0.0f, -0.05f)), 0x1Fu) == Zone::Medical);
+            // The magazine pouch (off-hand upper chest) never draws a holster
+            // item, even looking up, where the back sphere swings down to it.
+            CHECK(HandAtMagazinePouch(f, layout, at(offUpperChest)));
+            CHECK(FindZone(f, layout, at(offUpperChest), 0x1Fu) == Zone::None);
+            CHECK(!HandAtMagazinePouch(f, layout, at(domUpperChest)));
+            CHECK(!HandAtMagazinePouch(f, layout, at(slungGrip)));
+            // Empty slots take nothing: no rifle, no pistol, no grenade.
+            CHECK(FindZone(f, layout, at(slungGrip), 0x1Eu) == Zone::None);
+            CHECK(FindZone(f, layout, at(domBelt), 0x1Du) == Zone::None);
+            CHECK(FindZone(f, layout, at(domUpperChest), 0x1Bu) != Zone::Throwable);
             // Hands held out in front take nothing.
-            CHECK(FindZone(f, layout, body.At(kRightReady.x, kRightReady.y, kRightReady.z), 0x1Fu) == Zone::None);
-            CHECK(FindZone(f, layout, body.At(kLeftReady.x, kLeftReady.y, kLeftReady.z), 0x1Fu) == Zone::None);
-            // Holding the rifle (not drawable): its own half takes nothing
-            // (squeezing there puts it away), the kit half swaps to the kit.
-            CHECK(FindZone(f, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu & ~0x01u) == Zone::None);
-            CHECK(HandInHolsterVolume(f, layout, Zone::Primary, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu));
-            CHECK(!HandInHolsterVolume(f, layout, Zone::Primary, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu));
-            // ... and with no kit, the whole back takes the rifle back (no drop).
-            CHECK(HandInHolsterVolume(f, layout, Zone::Primary, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu & ~0x08u));
-            CHECK(HandInHolsterVolume(f, layout, Zone::Medical, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu));
-            CHECK(!HandInHolsterVolume(f, layout, Zone::Medical, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu));
-            CHECK(HandInHolsterVolume(f, layout, Zone::Medical, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu & ~0x01u));
+            CHECK(FindZone(f, layout, at(kRightReady), 0x1Fu) == Zone::None);
+            CHECK(FindZone(f, layout, at(kLeftReady), 0x1Fu) == Zone::None);
+            // Putting items back: in their own volume, not in another one.
+            CHECK(HandInHolsterVolume(f, layout, Zone::Primary, at(slungGrip)));
+            CHECK(HandInHolsterVolume(f, layout, Zone::Secondary, at(domBelt)));
+            CHECK(!HandInHolsterVolume(f, layout, Zone::Secondary, at(offBelt)));
+            CHECK(HandInHolsterVolume(f, layout, Zone::Consumable, at(offBelt)));
+            CHECK(HandInHolsterVolume(f, layout, Zone::Throwable, at(domUpperChest)));
+            CHECK(HandInHolsterVolume(f, layout, Zone::Medical, at(offShoulder)));
+            CHECK(!HandInHolsterVolume(f, layout, Zone::Medical, at(kRightReady)));
             // Every reach counts as "near a holster" for the bash filter.
-            for (const Vector& p : { domShoulder, offShoulder, domHip, domChest, offChest })
-                CHECK(NearAnyZone(f, layout, body.At(p.x, p.y, p.z), 0.05f));
+            for (const Vector& p : { domShoulder, offShoulder, domBelt, offBelt, domUpperChest, slungGrip })
+                CHECK(NearAnyZone(f, layout, at(p), 0.05f));
             CHECK(!NearAnyZone(f, layout, body.At(0.65f, 0.15f, -0.30f), 0.05f));
         }
-        // A body yaw still catching up with a fast head turn (Pavlov's
-        // interpolation): the back split follows the head, so a 30 degree
-        // lag changes nothing.
-        for (float lag : { 30.0f, -30.0f })
-        {
-            const Body body = MakeBody(20.0f, 20.0f, 0.0f, leftHanded, lag);
-            CHECK(FindZone(body.frame, layout, body.At(domShoulder.x, domShoulder.y, domShoulder.z), 0x1Fu) == Zone::Primary);
-            CHECK(FindZone(body.frame, layout, body.At(offShoulder.x, offShoulder.y, offShoulder.z), 0x1Fu) == Zone::Medical);
-        }
+        // The equipment follows the head yaw exactly (Forefront): a body frame
+        // that lags is not a case; the zones turn with the head.
+        const Body turned = MakeBody(90.0f, 0.0f, 0.0f, leftHanded);
+        CHECK(FindZone(turned.frame, layout, turned.At(slungGrip.x, slungGrip.y, slungGrip.z), 0x1Fu) == Zone::Primary);
     }
 }
 
@@ -399,47 +450,59 @@ static void TestItemOrientationRealisticBody()
         const BodyFrame& f = body.frame;
         const Vector up(0.0f, 0.0f, 1.0f);
         const Vector domSide = leftHanded ? body.right * -1.0f : body.right; // physical dominant side
-        auto local = [&](const ItemPose& pose, ItemShape shape) {
-            const Vector c = ReferenceToCenterUnits(shape);
-            const Vector centre = pose.origin + pose.axisX * c.x + pose.axisY * c.y + pose.axisZ * c.z;
-            const Vector d = centre - body.head;
+        auto local = [&](const Vector& p) {
+            const Vector d = p - body.head;
             return Vector(DotProduct(d, body.fwd) / body.s, DotProduct(d, domSide) / body.s, d.z / body.s);
         };
-        // First aid kit: strapped upright on the off shoulder blade, its face
-        // (the cross, +X) out of the back. Never in front, never sideways.
+        auto centre = [&](const ItemPose& pose, ItemShape shape) {
+            const Vector c = ReferenceToCenterUnits(shape);
+            return local(pose.origin + pose.axisX * c.x + pose.axisY * c.y + pose.axisZ * c.z);
+        };
+        // First aid kit: strapped upright on the off shoulder blade (unchanged
+        // from 2.0.4), its face (the cross, +X) out of the back.
         for (ItemShape shape : { ItemShape::Kit, ItemShape::Defib })
         {
             const ItemPose kit = BuildItemPose(f, layout, Zone::Medical, shape);
             CHECK(kit.valid);
             CHECK(kit.axisY.z > 0.99f);                          // upright
             CHECK(DotProduct(kit.axisX, body.fwd) < -0.99f);     // face out of the back
-            const Vector p = local(kit, shape);
+            const Vector p = centre(kit, shape);
             CHECK(p.x < -0.15f && p.x > -0.40f);                 // behind the head, on the back
             CHECK(p.y < -0.05f);                                 // off-shoulder side
             CHECK(p.z < -0.25f && p.z > -0.55f);                 // shoulder blade height
         }
+        {
+            // Same world place as 2.0.4 (head offset (-0.25, -0.13, -0.39)).
+            const Vector socket = local(RootToWorld(f, layout.socket[3]));
+            CHECK(Near(socket.x, -0.25f, 0.005f) && Near(socket.y, -0.13f, 0.005f) && Near(socket.z, -0.39f, 0.005f));
+        }
         // Upgrade packs: flat side (+Z) out of the back, upright.
         const ItemPose pack = BuildItemPose(f, layout, Zone::Medical, ItemShape::Pack);
         CHECK(pack.axisY.z > 0.99f && DotProduct(pack.axisZ, body.fwd) < -0.99f);
-        // Long gun on the back (Pavlov's back socket): muzzle up, leaning toward
-        // the dominant shoulder, sights toward the dominant side, its flat side
-        // on the back.
+        // Long gun on the chest sling (Forefront's primary): barrel down toward
+        // the off-hand hip at 45 degrees, sights up toward the off shoulder, in
+        // the frontal plane, its left side against the body (right-handed).
         const ItemPose rifle = BuildItemPose(f, layout, Zone::Primary, ItemShape::LongGun);
-        CHECK(rifle.axisZ.z > 0.95f);
-        CHECK(DotProduct(rifle.axisZ, domSide) > 0.1f);
-        CHECK(DotProduct(rifle.axisY, domSide) > 0.95f);
-        CHECK(std::fabs(DotProduct(rifle.axisX, body.fwd)) > 0.95f);
-        const Vector rp = local(rifle, ItemShape::LongGun);
-        CHECK(rp.x < -0.2f && rp.y > 0.0f && rp.z < -0.3f);
-        // Pistol in the dominant hip holster: muzzle down and a little forward,
-        // slide toward the front, so the grip sticks up and back.
+        CHECK(Near(rifle.axisZ.z, -0.7071f, 0.01f) && Near(DotProduct(rifle.axisZ, domSide), -0.7071f, 0.01f));
+        CHECK(Near(rifle.axisY.z, 0.7071f, 0.01f) && Near(DotProduct(rifle.axisY, domSide), -0.7071f, 0.01f));
+        CHECK(std::fabs(DotProduct(rifle.axisZ, body.fwd)) < 0.01f);
+        CHECK(DotProduct(rifle.axisX, body.fwd) * (leftHanded ? -1.0f : 1.0f) < -0.99f);
+        const Vector grip = local(RootToWorld(f, layout.socket[0]));
+        CHECK(grip.x > 0.0f && grip.y > 0.0f && grip.z < -0.4f && grip.z > -0.6f); // dominant side of the belly
+        const Vector rc = centre(rifle, ItemShape::LongGun);
+        CHECK(rc.y < grip.y && rc.z < grip.z);                // the gun runs down toward the other hip
+        // Pistol in the dominant hip holster: barrel straight down, sights
+        // forward; it hangs from its grip at the socket.
         const ItemPose pistol = BuildItemPose(f, layout, Zone::Secondary, ItemShape::Pistol);
-        CHECK(pistol.axisZ.z < -0.9f && DotProduct(pistol.axisZ, body.fwd) > 0.3f);
-        CHECK(DotProduct(pistol.axisY, body.fwd) > 0.9f);
-        CHECK(std::fabs(DotProduct(pistol.axisX, domSide)) > 0.99f);
-        const Vector hp = local(pistol, ItemShape::Pistol);
-        CHECK(hp.y > 0.15f && hp.z < -0.4f);
-        // Pills and grenades: upright in the upper chest pockets, face forward.
+        CHECK(pistol.axisZ.z < -0.99f);
+        CHECK(DotProduct(pistol.axisY, body.fwd) > 0.99f);
+        const Vector hp = local(pistol.origin);
+        CHECK(hp.y > 0.15f && hp.z < -0.5f && hp.z > -0.7f);
+        CHECK(centre(pistol, ItemShape::Pistol).z < hp.z);  // the gun below its grip
+        // Melee on the same hip: handle at the socket, blade down.
+        const ItemPose melee = BuildItemPose(f, layout, Zone::Secondary, ItemShape::Melee);
+        CHECK(melee.axisY.z < -0.8f);
+        // Pills on the off-hand hip, the grenade on the dominant upper chest: upright, face forward.
         const ItemPose pills = BuildItemPose(f, layout, Zone::Consumable, ItemShape::Equipment);
         const ItemPose grenade = BuildItemPose(f, layout, Zone::Throwable, ItemShape::Equipment);
         for (const ItemPose* pose : { &pills, &grenade })
@@ -447,13 +510,19 @@ static void TestItemOrientationRealisticBody()
             CHECK(pose->axisY.z > 0.99f);
             CHECK(DotProduct(pose->axisX, body.fwd) > 0.99f);
         }
-        const Vector pp = local(pills, ItemShape::Equipment);
-        const Vector gp = local(grenade, ItemShape::Equipment);
-        CHECK(pp.y > 0.1f && gp.y < -0.1f);                  // pills dominant side, grenade off side
-        CHECK(pp.x > -0.05f && gp.x > -0.05f);               // on the chest, not behind it
-        CHECK(pp.z < -0.25f && pp.z > -0.40f);
+        const Vector pp = centre(pills, ItemShape::Equipment);
+        const Vector gp = centre(grenade, ItemShape::Equipment);
+        CHECK(pp.y < -0.15f && gp.y > 0.05f);                // pills off-hand hip, grenade dominant side
+        CHECK(gp.x > 0.0f);                                  // on the chest, in front of the eyes' plane
+        CHECK(gp.z < -0.15f && gp.z > -0.30f);               // upper chest
+        CHECK(pp.z < -0.5f && pp.z > -0.7f);                 // hip
+        // The magazine pouch: off-hand upper chest, 20 cm from the grenade.
+        const Vector mp = local(RootToWorld(f, layout.magPouch));
+        CHECK(mp.y < -0.05f && mp.z < -0.2f && mp.z > -0.35f && mp.x > 0.0f);
+        const Vector gm = mp - gp;
+        CHECK(std::sqrt(DotProduct(gm, gm)) > 0.2f);
         // Left-handed mirrors the world side; the poses stay proper rotations.
-        for (const ItemPose* pose : { &pills, &grenade, &pistol, &rifle, &pack })
+        for (const ItemPose* pose : { &pills, &grenade, &pistol, &rifle, &pack, &melee })
         {
             Vector cross{};
             CrossProduct(pose->axisX, pose->axisY, cross);
@@ -472,7 +541,7 @@ static void TestItemOrientationRealisticBody()
 
 int main()
 {
-    TestBackHalvesRealisticBody();
+    TestForefrontLayoutRealisticBody();
     TestItemOrientationRealisticBody();
     TestNearAnyZone();
     TestWeaponClasses();
@@ -480,7 +549,7 @@ int main()
     TestControlReadyUsesCameraReport();
     TestHolsterPlacementNearHead();
     TestYawFollow();
-    TestPavlovRoot();
+    TestForefrontRoot();
     TestZones();
     TestItemPoseOrthonormal();
     TestGrabFsm();

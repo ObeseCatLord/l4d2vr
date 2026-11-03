@@ -858,9 +858,9 @@ namespace
         return offset;
     }
 
-    // Pavlov's magazine pouch on the off-hand hip (Pavlov Shack layout):
-    // relative to the holster root (head - 0.75 m), toward the off side.
-    const Vector kPavlovPouchRootMeters(-0.0233f, -0.187f, 0.19f);
+    // The magazine pouch of the body layout (vr_holster.h Layout::magPouch:
+    // Forefront's ammo pouch on the off-hand upper chest since 2.0.5; Pavlov's
+    // off-hand hip before), relative to the equipment root.
     constexpr float kPavlovHandRadiusMeters = 0.115f;
 
     bool MagazineInteractionResolvePavlovPouch(const VR* vr, Vector& point, Vector& forward, Vector& right)
@@ -870,25 +870,28 @@ namespace
         l4d2vr_holster::BodyFrame frame{};
         if (!vr->GetHolsterBodyFrame(frame) || !frame.valid)
             return false;
-        // The pouch hangs on the free hand's hip: it changes sides when the
-        // configured off hand holds the gun (vr_item_hand.h).
-        Vector pouchLocal = kPavlovPouchRootMeters;
-        if (vr->m_ItemHandSwapped.load(std::memory_order_acquire))
-            pouchLocal.y = -pouchLocal.y;
+        // The pouch stays on the configured off-hand upper chest (Forefront's
+        // fixed ammo pouch). When the other hand holds the gun (vr_item_hand.h)
+        // the free hand reaches across the chest for it: mirroring it would put
+        // it on top of the grenade holster.
+        const Vector pouchLocal = vr->m_HolsterLayout.magPouch;
         point = l4d2vr_holster::RootToWorld(frame, pouchLocal);
         forward = frame.forward;
         right = VrHandMath::Normalize(Vector(frame.forward.y, -frame.forward.x, 0.0f));
         return l4d2vr_interaction::Finite(point) && right.Length() > 0.5f;
     }
 
-    // Hand reach to the pouch: Pavlov counts the hand's own radius.
+    // Hand reach to the pouch: the grab range plus the hand's own radius, at
+    // most the layout's pouch reach (on the chest the pouch sits 20 cm from
+    // the grenade: a reach past it would take a magazine instead).
     float MagazineInteractionPouchReachMeters(const VR* vr)
     {
         if (!vr)
             return 0.0f;
         Vector point{}, forward{}, right{};
         const float range = std::max(0.0f, vr->m_MagazineInteractionFreshMagazineGrabRangeMeters);
-        return MagazineInteractionResolvePavlovPouch(vr, point, forward, right) ? range + kPavlovHandRadiusMeters : range;
+        return MagazineInteractionResolvePavlovPouch(vr, point, forward, right)
+            ? std::min(range + kPavlovHandRadiusMeters, vr->m_HolsterLayout.magPouchReachMeters) : range;
     }
 
     bool MagazineInteractionBuildFreshMagazinePickupBox(
@@ -2292,7 +2295,7 @@ namespace
                 Vector reprojected{};
                 if (MagazineInteractionReprojectScenePointToViewmodelLayer(vr, pouch, reprojected))
                     pouch = reprojected;
-                return l4d2vr_ammo_grip::BodyWorld(forward, right, pouch,
+                return l4d2vr_ammo_grip::BodyWorldUpright(forward, right, pouch,
                     MagazineInteractionBoxCenterLocal(vr->m_MagazineInteractionSocketBox), outWorld) &&
                     MagazineInteractionMatrixLooksRenderable(outWorld);
             }
@@ -4972,7 +4975,8 @@ bool VR::GetBodyAmmoPreviewWorld(const MagazineInteractionBoxSnapshot& box, VrHa
         return false;
     Vector origin{}, forward{}, right{};
     Vector pickup{};
-    if (!MagazineInteractionResolvePavlovPouch(this, pickup, forward, right))
+    const bool chestPouch = MagazineInteractionResolvePavlovPouch(this, pickup, forward, right);
+    if (!chestPouch)
     {
         if (!GetBodyInventoryPose(origin, forward, right))
             return false;
@@ -4983,8 +4987,9 @@ bool VR::GetBodyAmmoPreviewWorld(const MagazineInteractionBoxSnapshot& box, VrHa
     Vector reprojected{};
     if (MagazineInteractionReprojectScenePointToViewmodelLayer(this, pickup, reprojected))
         pickup = reprojected;
-    return l4d2vr_ammo_grip::BodyWorld(forward, right, pickup,
-        MagazineInteractionBoxCenterLocal(box), outWorld) && MagazineInteractionMatrixLooksRenderable(outWorld);
+    return (chestPouch ? l4d2vr_ammo_grip::BodyWorldUpright(forward, right, pickup,
+        MagazineInteractionBoxCenterLocal(box), outWorld) :
+        l4d2vr_ammo_grip::BodyWorld(forward, right, pickup, MagazineInteractionBoxCenterLocal(box), outWorld)) && MagazineInteractionMatrixLooksRenderable(outWorld);
 }
 
 bool VR::HasFreshMagazineInteractionDebugBoxWork() const

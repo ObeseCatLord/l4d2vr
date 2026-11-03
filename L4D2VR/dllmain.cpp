@@ -3176,6 +3176,11 @@ namespace
         { "2026-11-03_magazine_interaction_on", "MagazineInteractionEnabled", "true", false, "false" },
         //   The viewmodel adjust combo moved the gun off the hand mid-game.
         { "2026-11-03_viewmodel_adjust_off", "ViewmodelAdjustEnabled", "false", false, "true" },
+        // 2.0.5 Forefront holsters: the equipment takes the head yaw every frame
+        // (was Pavlov's interpolation at speed 20). Only the old default changes.
+        { "2026-11-03_forefront_holster_yaw", "HolsterYawFollowSpeed", "0", false, "20" },
+        // 2.0.5 empty hands: putting an item away leaves the hand empty.
+        { "2026-11-03_forefront_empty_hands", "HolsterEmptyHands", "true", false, "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3350,6 +3355,7 @@ namespace
         sampleKeys.insert("AmbidextrousItemHands");
         sampleKeys.insert("ItemHandLeftArmModel");
         sampleKeys.insert("ChestSlingEnabled");
+        sampleKeys.insert("HolsterEmptyHands");
         sampleKeys.insert("ChestSlingDropDistanceMeters");
         sampleKeys.insert("ChestSlingGrabRadiusMeters");
         sampleKeys.insert("ItemHandOffRadiusMeters");

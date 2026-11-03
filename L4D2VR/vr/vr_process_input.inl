@@ -776,13 +776,18 @@ void VR::ProcessInput()
                 for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
                     if (localPlayer->Weapon_GetSlot(slot))
                         occupied |= 1u << slot;
-                const l4d2vr_holster::Zone zone =
-                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied);
                 int activeSlot = -1;
                 C_BaseCombatWeapon* const active = localPlayer->GetActiveWeapon();
                 for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
                     if (active && localPlayer->Weapon_GetSlot(slot) == active)
                         activeSlot = slot;
+                // Empty hands: the active item is the other hand's (it puts it
+                // away itself) or stowed (UpdateChestSling lets this hand take
+                // it back), so its holster is not this hand's to draw from.
+                if (m_HolsterEmptyHands && activeSlot >= 0)
+                    occupied &= ~(1u << activeSlot);
+                const l4d2vr_holster::Zone zone =
+                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied);
                 LogHolsterGripPress(true, &frame, m_LeftControllerPosAbs, true, static_cast<int>(zone), activeSlot);
                 if (zone != l4d2vr_holster::Zone::None && m_AmbidextrousItemHands &&
                     l4d2vr_holster::SlotIndex(zone) != activeSlot && !leftHeldPistol && !dualPistolsActive &&
@@ -1792,28 +1797,30 @@ void VR::ProcessInput()
 
             l4d2vr_holster::BodyFrame frame{};
             const bool frameValid = GetHolsterBodyFrame(frame);
+            // Empty hands: a stowed active weapon hangs on the body, so no hand
+            // holds anything (UpdateChestSling lets a hand take it back).
+            const bool activeStowed = activeSlot >= 0 && StowedSlot() == activeSlot;
+            const int heldSlot = activeStowed ? -1 : activeSlot;
+            // The active item is in the hand (or stowed, taken back by
+            // UpdateChestSling): only the other occupied slots are drawn here.
+            const std::uint32_t drawableMask =
+                activeSlot >= 0 ? (occupiedMask & ~(1u << activeSlot)) : occupiedMask;
             l4d2vr_holster::GrabInput grabInput{};
             grabInput.ready = ready && frameValid;
             grabInput.gripDown = gripDown;
-            grabInput.activeSlot = activeSlot;
+            grabInput.activeSlot = heldSlot;
             grabInput.occupiedMask = occupiedMask;
             if (frameValid)
             {
-                // The active item is in the hand, not in its holster: only the
-                // other occupied slots can be drawn from the body.
-                const std::uint32_t drawableMask =
-                    activeSlot >= 0 ? (occupiedMask & ~(1u << activeSlot)) : occupiedMask;
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
                     m_RightControllerPosAbs, drawableMask);
                 // The held item's own holster takes it back when the hand is in
-                // its volume (chest items: anywhere in the vest, as in Pavlov;
-                // back items: their half, or the whole back while the other
-                // half is empty).
-                const bool inOwnVolume = activeSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,
-                    m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(activeSlot), m_RightControllerPosAbs,
+                // its grab volume (Forefront: the item returns to its slot).
+                const bool inOwnVolume = heldSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,
+                    m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(heldSlot), m_RightControllerPosAbs,
                     occupiedMask);
                 grabInput.ownZoneUnderHand = inOwnVolume
-                    ? static_cast<l4d2vr_holster::Zone>(activeSlot)
+                    ? static_cast<l4d2vr_holster::Zone>(heldSlot)
                     : l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, 0x1Fu);
             }
 
@@ -1849,13 +1856,27 @@ void VR::ProcessInput()
             }
             m_HolsterHandOverOtherZone.store(frameValid && grabInput.handZone != l4d2vr_holster::Zone::None,
                 std::memory_order_release);
-            m_HolsterHandInOwnZone.store(frameValid && activeSlot >= 0 &&
-                grabInput.ownZoneUnderHand == static_cast<l4d2vr_holster::Zone>(activeSlot), std::memory_order_release);
+            m_HolsterHandInOwnZone.store(frameValid && heldSlot >= 0 &&
+                grabInput.ownZoneUnderHand == static_cast<l4d2vr_holster::Zone>(heldSlot), std::memory_order_release);
             const l4d2vr_holster::GrabOutput grab = m_HolsterGrab.Update(grabInput);
-            UpdateChestSling(localPlayer, ready, frameValid ? &frame : nullptr, occupiedMask, m_WeaponGripPhysicalDown,
-                grab.selectSlot >= 0 || grab.holsterTo >= 0 || grabInput.handZone != l4d2vr_holster::Zone::None);
-            m_HolsterHighlightSlot.store(grabInput.handZone != l4d2vr_holster::Zone::None
-                ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1, std::memory_order_release);
+            UpdateChestSling(localPlayer, ready, frameValid ? &frame : nullptr, drawableMask, m_WeaponGripPhysicalDown,
+                grab.selectSlot >= 0 || grab.holsterTo >= 0 || grab.putAwaySlot >= 0 ||
+                    grabInput.handZone != l4d2vr_holster::Zone::None);
+            {
+                // Glow: the item the hand would draw, or the stowed item it would
+                // take back (either hand).
+                int highlight = grabInput.handZone != l4d2vr_holster::Zone::None
+                    ? l4d2vr_holster::SlotIndex(grabInput.handZone) : -1;
+                if (highlight < 0 && activeStowed && frameValid)
+                {
+                    const std::uint32_t mask = drawableMask | (1u << activeSlot);
+                    const auto stowedZone = static_cast<l4d2vr_holster::Zone>(activeSlot);
+                    if (l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, mask) == stowedZone ||
+                        l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, mask) == stowedZone)
+                        highlight = activeSlot;
+                }
+                m_HolsterHighlightSlot.store(highlight, std::memory_order_release);
+            }
             {
                 // Hover pulse whenever the hand enters any holster: full strength
                 // where there is something to take (or the held item's own holster),
@@ -1954,7 +1975,17 @@ void VR::ProcessInput()
                 selectInventorySlot(grab.selectSlot);
                 Game::logMsg("[VR][Holster] grip draw slot=%d", grab.selectSlot + 1);
             }
-            if (grab.holsterTo >= 0 && grab.holsterTo < l4d2vr_holster::kZoneCount)
+            if (grab.putAwaySlot >= 0 && grab.putAwaySlot == activeSlot && m_HolsterEmptyHands && localPlayer)
+            {
+                // Forefront / Pavlov: putting the item away leaves the hand empty.
+                // L4D2 keeps it the active weapon, hidden on the body (stowed).
+                if (m_HolsterGrabHapticAmplitude > 0.0f)
+                    TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f, 2);
+                StowActiveWeapon(reinterpret_cast<uintptr_t>(localPlayer->GetActiveWeapon()), activeSlot,
+                    "put away in its holster");
+                Game::logMsg("[VR][Holster] holstered slot=%d -> empty hand", activeSlot + 1);
+            }
+            else if (grab.holsterTo >= 0 && grab.holsterTo < l4d2vr_holster::kZoneCount)
             {
                 if (m_HolsterGrabHapticAmplitude > 0.0f)
                     TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f, 2);

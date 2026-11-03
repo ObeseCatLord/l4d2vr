@@ -129,17 +129,28 @@ bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             s.talkspurtsSent - s_Base.talkspurtsSent);
         SelfTestReport("opus voice push-to-talk sends 50 frames/s", sent >= 185 && sent <= 215 &&
             s.talkspurtsSent - s_Base.talkspurtsSent == 1, detail);
-        std::snprintf(detail, sizeof(detail), "received %u of %u, decoded %u, FEC+PLC %u, mixed %u blocks, jitter target %d ms",
-            received, sent, decoded, repaired, mixed, s.lastJitterTargetMs);
-        SelfTestReport("opus voice comes back through the server", received + 10 >= sent && decoded + 20 >= received &&
-            repaired * 10 <= decoded + 10 && mixed >= 300, detail);
         std::snprintf(detail, sizeof(detail), "440 Hz %.1f dB over off-tone bins in %.2f s of decoded audio",
             s.loopbackToneDb, s.loopbackSamples / 48000.0);
         SelfTestReport("opus voice tone survives the round trip", s.loopbackToneDb >= 20.0 && s.loopbackSamples >= 48000u, detail);
         s_Mark = s;
     }
     if (at(3, 9.0f))
-        s_Mark = OpusVoiceClient::GetStats();   // the 160 ms tail and the End frame are out
+    {
+        // One second after the release: every frame sent while the button was
+        // held has had time to come back, even through a remote server's
+        // 300 ms jitter buffer.
+        const OpusVoiceClient::Stats s = OpusVoiceClient::GetStats();
+        const std::uint32_t sentHeld = s_Mark.framesSent - s_Base.framesSent;
+        const std::uint32_t received = s.framesReceived - s_Base.framesReceived;
+        const std::uint32_t decoded = s.decoded - s_Base.decoded;
+        const std::uint32_t repaired = (s.fec - s_Base.fec) + (s.concealed - s_Base.concealed);
+        const std::uint32_t mixed = s.mixedBlocks - s_Base.mixedBlocks;
+        std::snprintf(detail, sizeof(detail), "received %u (%u sent while held, + tail), decoded %u, FEC+PLC %u (%.1f%%), mixed %u blocks, jitter target %d ms",
+            received, sentHeld, decoded, repaired, decoded ? 100.0 * repaired / decoded : 0.0, mixed, s.lastJitterTargetMs);
+        SelfTestReport("opus voice comes back through the server", received >= sentHeld && decoded + 10 >= sentHeld &&
+            repaired * 20 <= decoded + 10 && mixed >= 400, detail);
+        s_Mark = s;   // the 160 ms tail and the End frame are out
+    }
     if (at(4, 10.5f))
     {
         const OpusVoiceClient::Stats s = OpusVoiceClient::GetStats();

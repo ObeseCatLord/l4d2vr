@@ -3132,6 +3132,9 @@ namespace
         // The simple ammo panel shipped 0.8 m wide (the code default is 0.13).
         { "2026-11-03_custom_ammo_hud_width", "RightAmmoHudWidthMeters", "0.13", false, "0.8" },
         { "2026-11-03_pavlov_foregrip_box", "VrHandsTwoHandedGripTargetBoxScale", "1.5", false, "1.0" },
+        // The full first-person body is off by default (user, 2026-11-03);
+        // players can turn it back on (its arms now reach the VR hands).
+        { "2026-11-03_first_person_body_off", "FirstPersonBodyEnabled", "false" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

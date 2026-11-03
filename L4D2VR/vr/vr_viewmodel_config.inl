@@ -1364,6 +1364,19 @@ void VR::ParseConfigFile()
     m_FirstPersonBodyHideArms = getBool(
         "FirstPersonBodyHideArms",
         m_FirstPersonBodyHideArms);
+    m_FirstPersonBodyYawDeadbandDeg = std::clamp(
+        getFloat("FirstPersonBodyYawDeadbandDeg", m_FirstPersonBodyYawDeadbandDeg),
+        0.0f,
+        89.0f);
+    m_FirstPersonBodyYawFollowSeconds = std::clamp(
+        getFloat("FirstPersonBodyYawFollowSeconds", m_FirstPersonBodyYawFollowSeconds),
+        0.02f,
+        3.0f);
+    m_FirstPersonBodyArmIK = getBool("FirstPersonBodyArmIK", m_FirstPersonBodyArmIK);
+    m_FirstPersonBodyArmMaxStretch = std::clamp(
+        getFloat("FirstPersonBodyArmMaxStretch", m_FirstPersonBodyArmMaxStretch),
+        1.0f,
+        1.5f);
     m_WorldModelVRPoseEnabled = getBool(
         "WorldModelVRPoseEnabled",
         m_WorldModelVRPoseEnabled);

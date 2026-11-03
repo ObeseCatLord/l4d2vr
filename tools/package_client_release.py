@@ -99,6 +99,7 @@ CHANGES = [
     "2.0.4: the weapon idle poses learned by older versions are relearned once: cached ones put the hand on the auto shotgun and SPAS 21 cm away from the controller.",
     "2.0.4: wrist HUDs come back: they were hidden whenever the runtime reported a controller as valid but not tracked; they now also keep the last picture while a menu is open and fall back to the simple wrist panels if the game HUD cannot be captured; both wrist HUDs are switched back on once for existing configs.",
     "2.0.4: no more debug boxes around the magazine and bolt while two-handing (MagazineBoxDebugEnabled and ShowInventoryAnchors off, also for existing configs).",
+    "2.0.4: the full first-person body is now off by default (FirstPersonBodyEnabled; turned off once for existing configs). When you turn it on, your body's arms reach your VR hands (two-bone IK from the body's own shoulders, natural elbows, one hand per side, a small stretch instead of a detached hand) and your torso turns to follow your head (after a 30 degree deadband, at once when a hand goes far out to the side); other VR players' bodies turn the same way (FirstPersonBodyArmIK, FirstPersonBodyYawDeadbandDeg).",
 ]
 
 

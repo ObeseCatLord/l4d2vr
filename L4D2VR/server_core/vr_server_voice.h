@@ -29,6 +29,7 @@ namespace l4d2vr_voice_server
         // IVoiceServer::GetClientListening(receiver, sender), 1-based.
         virtual bool CanHear(int receiver, int sender) const = 0;
         virtual std::uint64_t NowMs() const = 0;
+        virtual void Log(const char* line) { (void)line; }
     protected:
         ~RelayHost() = default;
     };
@@ -114,6 +115,13 @@ namespace l4d2vr_voice_server
                 return;
             }
             const bool first = !c.hello;
+            if (first || c.flags != flags)
+            {
+                char log[96];
+                std::snprintf(log, sizeof(log), "L4D2VR server: player %d Opus voice hello (flags %u)\n", index,
+                    static_cast<unsigned>(flags));
+                host.Log(log);
+            }
             c.hello = true;
             c.flags = flags;
             if (first)
@@ -143,6 +151,13 @@ namespace l4d2vr_voice_server
             Frame frame;
             if (c.tokens < 1.0 || !DecodeFrameText(argv[1], frame)) { ++c.rejectedFrames; return; }
             c.tokens -= 1.0;
+            if (c.relayedFrames % 1500u == 0u)
+            {
+                char log[96];
+                std::snprintf(log, sizeof(log), "L4D2VR server: player %d Opus voice frames relayed %u (rejected %u)\n", index,
+                    static_cast<unsigned>(c.relayedFrames), static_cast<unsigned>(c.rejectedFrames));
+                host.Log(log);
+            }
             char line[48 + kMaxFrameTextChars];
             const int n = std::snprintf(line, sizeof(line), "%s %d %s\n", kRxCommand, index, argv[1]);
             if (n <= 0 || n >= static_cast<int>(sizeof(line))) { ++c.rejectedFrames; return; }

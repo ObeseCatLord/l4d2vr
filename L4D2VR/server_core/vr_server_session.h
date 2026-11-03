@@ -248,6 +248,7 @@ namespace l4d2vr_server
             }
             bool CanHear(int receiver, int sender) const override { return m_Session.m_Host.VoiceCanHear(receiver, sender); }
             std::uint64_t NowMs() const override { return m_Session.m_Host.NowMs(); }
+            void Log(const char* line) override { m_Session.m_Host.Log(line); }
         private:
             Session& m_Session;
         };

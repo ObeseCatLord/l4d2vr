@@ -16453,6 +16453,151 @@ namespace
     }
 
 
+    // ---- First-person body-arm IK shared state (FirstPersonBodyArmIK) --------
+    //
+    // The viewmodel draws the VR hands; the survivor body is drawn earlier in
+    // the same eye. The viewmodel arm IK publishes where each drawn wrist was,
+    // relative to the controller it follows, so the body's arms (solved first)
+    // reach the hands of this frame's controller poses. The body publishes its
+    // solved shoulder/elbow/wrist per eye so the viewmodel bends its elbow in
+    // the same plane. Sides are PHYSICAL sides (-1 left, +1 right).
+    inline int HooksBodyArmPhysicalSide(const VR* vr, int gameplaySide)
+    {
+        return (vr && vr->ItemHandIsPhysicalLeft()) ? -gameplaySide : gameplaySide;
+    }
+
+    inline bool HooksBodyArmControllerFrame(VR* vr, int gameplaySide, vr_vm_stabilize::Mat3x4& out)
+    {
+        if (!vr || !vr->m_IsVREnabled || (gameplaySide != -1 && gameplaySide != 1))
+            return false;
+        // Publisher (viewmodel) and reader (body) must see the same pose
+        // sample: prefer the render-frame snapshot whenever one exists.
+        const bool previousSnapshot = VR::t_UseRenderFrameSnapshot;
+        VR::t_UseRenderFrameSnapshot = true;
+        const Vector origin = gameplaySide > 0 ? vr->GetRightControllerAbsPos() : vr->GetLeftControllerAbsPos();
+        const QAngle angles = gameplaySide > 0 ? vr->GetRightControllerAbsAngle() : vr->GetLeftControllerAbsAngle();
+        VR::t_UseRenderFrameSnapshot = previousSnapshot;
+        if (!HooksNativeViewmodelHandsOnlyVectorFinite(origin) ||
+            !std::isfinite(angles.x) || !std::isfinite(angles.y) || !std::isfinite(angles.z))
+            return false;
+        vr_vm_stabilize::BuildFromOrgAngles(origin, angles, out);
+        return HooksNativeViewmodelHandsOnlyMatrixFinite(out);
+    }
+
+    struct HooksBodyArmHandCache
+    {
+        const VR* owner = nullptr;
+        bool valid[2]{};
+        std::uint64_t tickMs[2]{};
+        int frameGameplaySide[2]{};          // controller the wrist follows
+        Vector wristInController[2]{};
+        // The viewmodel arm's own segment lengths (game units): the body solves
+        // with them so both elbows land on the same point.
+        float upperLength[2]{};
+        float lowerLength[2]{};
+        // Cropped hands (NativeViewmodelArmCroppingEnabled): only the hand is
+        // drawn, so the body keeps its own forearm down to the wrist.
+        bool bodyForearm[2]{};
+    };
+
+    inline std::mutex& HooksBodyArmHandCacheMutex()
+    {
+        static std::mutex s_mutex;
+        return s_mutex;
+    }
+
+    inline HooksBodyArmHandCache& HooksBodyArmHandCacheStorage()
+    {
+        static HooksBodyArmHandCache s_cache{};
+        return s_cache;
+    }
+
+    inline int HooksBodyArmSlot(int physicalSide) { return physicalSide < 0 ? 0 : 1; }
+
+    // Viewmodel side: the drawn wrist of the gameplay chain gameplaySide.
+    inline void HooksBodyArmPublishDrawnWrist(
+        VR* vr,
+        int gameplaySide,
+        int frameGameplaySide,
+        const Vector& wristWorld,
+        float upperLength,
+        float lowerLength,
+        bool bodyForearm = false)
+    {
+        vr_vm_stabilize::Mat3x4 frame{};
+        vr_vm_stabilize::Mat3x4 inverse{};
+        if (!HooksNativeViewmodelHandsOnlyVectorFinite(wristWorld) ||
+            !HooksBodyArmControllerFrame(vr, frameGameplaySide, frame))
+            return;
+        vr_vm_stabilize::InvertTR(frame, inverse);
+        const Vector local = HooksTransformPoint(inverse, wristWorld);
+        if (!HooksNativeViewmodelHandsOnlyVectorFinite(local) || local.Length() > 1.0f * vr->m_VRScale)
+            return;
+        const int slot = HooksBodyArmSlot(HooksBodyArmPhysicalSide(vr, gameplaySide));
+        std::lock_guard<std::mutex> lock(HooksBodyArmHandCacheMutex());
+        HooksBodyArmHandCache& cache = HooksBodyArmHandCacheStorage();
+        if (cache.owner != vr)
+            cache = HooksBodyArmHandCache{};
+        cache.owner = vr;
+        cache.valid[slot] = true;
+        cache.tickMs[slot] = static_cast<std::uint64_t>(GetTickCount64());
+        cache.frameGameplaySide[slot] = frameGameplaySide;
+        cache.wristInController[slot] = local;
+        cache.upperLength[slot] = std::isfinite(upperLength) ? upperLength : 0.0f;
+        cache.lowerLength[slot] = std::isfinite(lowerLength) ? lowerLength : 0.0f;
+        cache.bodyForearm[slot] = bodyForearm;
+    }
+
+    // Body side: where the drawn wrist of the physical side is this frame.
+    inline bool HooksBodyArmReadWristTarget(VR* vr, int physicalSide, Vector& outWrist,
+        float* outUpperLength = nullptr, float* outLowerLength = nullptr, bool* outBodyForearm = nullptr)
+    {
+        HooksBodyArmHandCache cache{};
+        {
+            std::lock_guard<std::mutex> lock(HooksBodyArmHandCacheMutex());
+            cache = HooksBodyArmHandCacheStorage();
+        }
+        const int slot = HooksBodyArmSlot(physicalSide);
+        const std::uint64_t now = static_cast<std::uint64_t>(GetTickCount64());
+        if (cache.owner != vr || !cache.valid[slot] || now < cache.tickMs[slot] ||
+            now - cache.tickMs[slot] > 250u)
+            return false;
+        vr_vm_stabilize::Mat3x4 frame{};
+        if (!HooksBodyArmControllerFrame(vr, cache.frameGameplaySide[slot], frame))
+            return false;
+        outWrist = HooksTransformPoint(frame, cache.wristInController[slot]);
+        if (outUpperLength)
+            *outUpperLength = cache.upperLength[slot];
+        if (outLowerLength)
+            *outLowerLength = cache.lowerLength[slot];
+        if (outBodyForearm)
+            *outBodyForearm = cache.bodyForearm[slot];
+        return HooksNativeViewmodelHandsOnlyVectorFinite(outWrist);
+    }
+
+    struct HooksBodyArmSolution
+    {
+        const VR* owner = nullptr;
+        const void* sceneState = nullptr;
+        std::uint64_t sceneSerial = 0;
+        bool valid[2]{};
+        Vector shoulder[2]{};
+        Vector elbow[2]{};
+        Vector wrist[2]{};
+    };
+
+    inline std::mutex& HooksBodyArmSolutionMutex()
+    {
+        static std::mutex s_mutex;
+        return s_mutex;
+    }
+
+    inline HooksBodyArmSolution* HooksBodyArmSolutionStorage()
+    {
+        static HooksBodyArmSolution s_solutions[2]{};   // per eye slot
+        return s_solutions;
+    }
+
     struct HooksFirstPersonBodyViewmodelSkeleton
     {
         VR* owner = nullptr;
@@ -16649,21 +16794,65 @@ namespace
         return yaw;
     }
 
-    struct HooksTrackedBodyYawReference
+    // Fills the torso-yaw hand hints (horizontal hand offsets from the chest in
+    // the current torso frame, metres) for l4d2vr_body_ik::UpdateBodyYaw.
+    inline int HooksTrackedBodyYawHands(
+        const Vector& head,
+        const Vector& leftHand,
+        const Vector& rightHand,
+        float bodyWorldYaw,
+        float unitsPerMeter,
+        l4d2vr_body_ik::BodyYawHand (&outHands)[2])
     {
-        const VR* owner = nullptr;
-        std::uint32_t poseLockGeneration = 0u;
-        bool poseLockReady = false;
-        bool valid = false;
-        float physicalYawAtPoseLock = 0.0f;
-    };
+        outHands[0] = {};
+        outHands[1] = {};
+        if (!std::isfinite(unitsPerMeter) || unitsPerMeter <= 0.001f ||
+            !HooksNativeViewmodelHandsOnlyVectorFinite(head))
+        {
+            return 0;
+        }
+        Vector forward{}, right{}, up{};
+        QAngle::AngleVectors(QAngle(0.0f, bodyWorldYaw, 0.0f), &forward, &right, &up);
+        // The chest sits a little behind the eyes.
+        const Vector chest = head - forward * (0.08f * unitsPerMeter);
+        const Vector hands[2] = { leftHand, rightHand };
+        for (int i = 0; i < 2; ++i)
+        {
+            if (!HooksNativeViewmodelHandsOnlyVectorFinite(hands[i]))
+                continue;
+            const Vector d = hands[i] - chest;
+            outHands[i].valid = true;
+            outHands[i].forwardMeters = DotProduct(d, forward) / unitsPerMeter;
+            outHands[i].rightMeters = DotProduct(d, right) / unitsPerMeter;
+        }
+        return 2;
+    }
 
-    // Resolve the local player's rendered torso yaw independently from HMD yaw.
-    // Thumbstick/mouse turning rotates the body immediately through RotationOffset,
-    // while physical head yaw gets a comfort cone around the direction captured
-    // at delayed pose lock. Inside the cone the torso stays fixed; beyond it the
-    // torso follows only enough to keep the head at the edge.
-    // This is shared by first-person body anchoring and local third-person IK.
+    inline l4d2vr_body_ik::BodyYawConfig HooksTrackedBodyYawConfig(const VR* vr)
+    {
+        l4d2vr_body_ik::BodyYawConfig config{};
+        if (!vr)
+            return config;
+        config.deadbandDeg = std::clamp(vr->m_FirstPersonBodyYawDeadbandDeg, 0.0f, 89.0f);
+        config.maxLagDeg = std::clamp(
+            vr->m_WorldModelVRPoseBodyYawDeadzoneDeg,
+            config.deadbandDeg,
+            90.0f);
+        config.followSeconds = std::clamp(vr->m_FirstPersonBodyYawFollowSeconds, 0.02f, 3.0f);
+        return config;
+    }
+
+    // The local player's rendered torso yaw (first-person body, viewmodel arm
+    // roots, local third-person IK). Thumbstick/mouse turning rotates the torso
+    // immediately (the state lives in tracking space: world = turn + tracking
+    // yaw). Physical head yaw moves the torso through l4d2vr_body_ik:
+    // a deadband (FirstPersonBodyYawDeadbandDeg) inside which the head looks
+    // around freely, a smooth follow (FirstPersonBodyYawFollowSeconds) once it
+    // is exceeded, a hard limit (WorldModelVRPoseBodyYawDeadzoneDeg) and a fast
+    // turn while a hand is held far out to the side, so the shoulders stay
+    // under the head and the arms never wrap behind the torso. The state
+    // advances once per rendered frame; both eyes and every caller in a frame
+    // get the same value.
     inline float HooksTrackedBodyResolveVisualYaw(
         const VR* vr,
         float headWorldYaw)
@@ -16683,55 +16872,86 @@ namespace
         const std::uint32_t poseLockGeneration =
             vr->m_NativeViewmodelLeftHandFreezeGeneration.load(
                 std::memory_order_acquire);
-        const bool poseLockReady =
-            vr->m_NativeViewmodelLeftHandFreezeReady.load(
-                std::memory_order_acquire) != 0u;
-        float physicalYawAtPoseLock = 0.0f;
-        {
-            static std::mutex s_referenceMutex;
-            static HooksTrackedBodyYawReference s_reference;
-            std::lock_guard<std::mutex> lock(s_referenceMutex);
+        const std::uint32_t frameSeq =
+            vr->m_RenderFrameSeq.load(std::memory_order_acquire) & ~1u;
 
-            const bool identityChanged =
-                s_reference.owner != vr ||
-                s_reference.poseLockGeneration != poseLockGeneration;
-            const bool poseLockBecameReady =
-                poseLockReady && !s_reference.poseLockReady;
-            if (identityChanged || !s_reference.valid || poseLockBecameReady)
-            {
-                s_reference.owner = vr;
-                s_reference.poseLockGeneration = poseLockGeneration;
-                s_reference.valid = true;
-                s_reference.physicalYawAtPoseLock =
-                    HooksTrackedBodyWrapYaw(headWorldYaw - turnYaw);
-                if (poseLockReady)
-                {
-                    Game::logMsg(
-                        "[VR][TrackedBodyYaw] pose-lock reference headYaw=%.1f turnYaw=%.1f physicalYaw=%.1f generation=%u",
-                        headWorldYaw,
-                        turnYaw,
-                        s_reference.physicalYawAtPoseLock,
-                        poseLockGeneration);
-                }
-            }
-            s_reference.poseLockReady = poseLockReady;
-            physicalYawAtPoseLock = s_reference.physicalYawAtPoseLock;
+        struct TrackedBodyYawFollow
+        {
+            const VR* owner = nullptr;
+            std::uint32_t poseLockGeneration = 0u;
+            std::uint32_t frameSeq = 0u;
+            std::chrono::steady_clock::time_point lastAdvance{};
+            l4d2vr_body_ik::BodyYawState state{};
+        };
+        static std::mutex s_followMutex;
+        static TrackedBodyYawFollow s_follow;
+        std::lock_guard<std::mutex> lock(s_followMutex);
+
+        const auto now = std::chrono::steady_clock::now();
+        const float headTrackingYaw = HooksTrackedBodyWrapYaw(headWorldYaw - turnYaw);
+        if (s_follow.owner != vr ||
+            s_follow.poseLockGeneration != poseLockGeneration ||
+            !s_follow.state.valid ||
+            s_follow.lastAdvance.time_since_epoch().count() == 0 ||
+            now - s_follow.lastAdvance > std::chrono::milliseconds(500))
+        {
+            // New map/character or a long gap: start facing the head.
+            s_follow = TrackedBodyYawFollow{};
+            s_follow.owner = vr;
+            s_follow.poseLockGeneration = poseLockGeneration;
+            s_follow.frameSeq = frameSeq;
+            s_follow.lastAdvance = now;
+            s_follow.state.valid = true;
+            s_follow.state.bodyYawDeg = headTrackingYaw;
+            return HooksTrackedBodyWrapYaw(turnYaw + s_follow.state.bodyYawDeg);
         }
 
-        const float neutralBodyYaw = HooksTrackedBodyWrapYaw(
-            turnYaw + physicalYawAtPoseLock);
-
-        const float deadzone = std::clamp(
-            vr->m_WorldModelVRPoseBodyYawDeadzoneDeg,
-            0.0f,
-            90.0f);
-        const float headRelativeYaw = HooksTrackedBodyWrapYaw(
-            headWorldYaw - neutralBodyYaw);
-        if (std::fabs(headRelativeYaw) <= deadzone)
-            return neutralBodyYaw;
-
-        return HooksTrackedBodyWrapYaw(
-            headWorldYaw - std::copysign(deadzone, headRelativeYaw));
+        // Advance once per rendered frame (or after 25 ms if the frame counter
+        // stalls), so the two eyes and every caller agree.
+        const bool newFrame =
+            frameSeq != s_follow.frameSeq ||
+            now - s_follow.lastAdvance > std::chrono::milliseconds(25);
+        if (newFrame)
+        {
+            const float dt = std::chrono::duration<float>(now - s_follow.lastAdvance).count();
+            s_follow.frameSeq = frameSeq;
+            s_follow.lastAdvance = now;
+            VR* const mutableVr = const_cast<VR*>(vr);
+            const float unitsPerMeter =
+                (std::isfinite(vr->m_VRScale) && vr->m_VRScale > 0.001f) ? vr->m_VRScale : 39.37f;
+            l4d2vr_body_ik::BodyYawHand hands[2]{};
+            const int handCount = HooksTrackedBodyYawHands(
+                vr->m_HmdPosAbs,
+                mutableVr->GetLeftControllerAbsPos(),
+                mutableVr->GetRightControllerAbsPos(),
+                HooksTrackedBodyWrapYaw(turnYaw + s_follow.state.bodyYawDeg),
+                unitsPerMeter,
+                hands);
+            // Source yaw grows to the left: a hand on the right lowers it.
+            l4d2vr_body_ik::UpdateBodyYaw(
+                s_follow.state,
+                HooksTrackedBodyYawConfig(vr),
+                headTrackingYaw,
+                dt,
+                hands,
+                handCount,
+                -1.0f);
+        }
+        else
+        {
+            // Same frame: still honour the hard limit for a head sample taken
+            // later in the frame.
+            const float maxLag = HooksTrackedBodyYawConfig(vr).maxLagDeg;
+            const float err = HooksTrackedBodyWrapYaw(headTrackingYaw - s_follow.state.bodyYawDeg);
+            if (err > maxLag)
+                s_follow.state.bodyYawDeg = HooksTrackedBodyWrapYaw(headTrackingYaw - maxLag);
+            else if (err < -maxLag)
+                s_follow.state.bodyYawDeg = HooksTrackedBodyWrapYaw(headTrackingYaw + maxLag);
+        }
+        const_cast<VR*>(vr)->m_SelfTestBodyYawLagDeg.store(
+            HooksTrackedBodyWrapYaw(headTrackingYaw - s_follow.state.bodyYawDeg),
+            std::memory_order_relaxed);
+        return HooksTrackedBodyWrapYaw(turnYaw + s_follow.state.bodyYawDeg);
     }
 
     inline Vector HooksTrackedBodyClampPlanarLeanMeters(
@@ -19359,13 +19579,43 @@ namespace
         // lands on Pg*T (a left hand on the same grip), the free hand on Ps*T'
         // (a right hand around the right controller).
         bool handMirror = false;
+        Vector armMirrorNormal = bodyRight;   // the mirror plane's normal (below)
         l4d2vr_hand_mirror::Mat34 bodyMirror = l4d2vr_hand_mirror::Identity();
         l4d2vr_hand_mirror::Mat34 supportLocalMirror = l4d2vr_hand_mirror::Identity();
         if (outMirrored && vr->ItemHandMirrorWanted())
         {
             l4d2vr_hand_mirror::Mat34 gunLocalMirror{};
-            const float bodyPoint[3] = { viewOrigin.x, viewOrigin.y, viewOrigin.z };
-            const float bodyNormal[3] = { bodyRight.x, bodyRight.y, bodyRight.z };
+            // With the first-person body, mirror across the body's own
+            // midline (between its shoulders), so the mirrored arm roots on
+            // the body's other shoulder exactly; the head can sit off that
+            // line (torso yaw deadband, lean).
+            Vector mirrorPoint = viewOrigin;
+            Vector mirrorNormal = bodyRight;
+            if (haveFirstPersonBodyFrame && firstPersonBodyState && vr->m_FirstPersonBodyArmIK)
+            {
+                const int eyeSlot = HooksFirstPersonBodyEyeSlot(firstPersonBodyState->eyeIndex);
+                HooksBodyArmSolution bodySolution{};
+                if (eyeSlot >= 0)
+                {
+                    std::lock_guard<std::mutex> lock(HooksBodyArmSolutionMutex());
+                    bodySolution = HooksBodyArmSolutionStorage()[eyeSlot];
+                }
+                if (bodySolution.owner == vr && bodySolution.sceneState == firstPersonBodyState &&
+                    bodySolution.sceneSerial == firstPersonBodyState->sceneSerial &&
+                    bodySolution.valid[0] && bodySolution.valid[1])
+                {
+                    Vector across = bodySolution.shoulder[1] - bodySolution.shoulder[0];
+                    across -= bodyUp * DotProduct(across, bodyUp);
+                    if (VectorNormalize(across) > 0.0f && DotProduct(across, bodyRight) > 0.7f)
+                    {
+                        mirrorPoint = (bodySolution.shoulder[0] + bodySolution.shoulder[1]) * 0.5f;
+                        mirrorNormal = across;
+                    }
+                }
+            }
+            armMirrorNormal = mirrorNormal;
+            const float bodyPoint[3] = { mirrorPoint.x, mirrorPoint.y, mirrorPoint.z };
+            const float bodyNormal[3] = { mirrorNormal.x, mirrorNormal.y, mirrorNormal.z };
             if (vr->GetItemHandMirrorPlanes(gunLocalMirror, supportLocalMirror) &&
                 l4d2vr_hand_mirror::Reflection(bodyPoint, bodyNormal, bodyMirror))
             {
@@ -19510,10 +19760,18 @@ namespace
                     attachedUpperArmValid[slot] = true;
 
                     // Sleeve vertices near the seam may still carry clavicle or
-                    // chest weights. Copy every matching ancestor as well, so
-                    // those weights use the same body matrices as the torso mesh.
+                    // chest weights. Give those ancestors the body's orientation,
+                    // so they move with the torso mesh. The side's own bones
+                    // (clavicle) keep the VIEWMODEL's proportions, placed back from
+                    // the body shoulder: the third-person model can be smaller
+                    // (Zoey), and copying its clavicle matrix onto the arm
+                    // stretched the sleeve into ribbons. Shared spine bones are
+                    // copied from the body as before.
                     int current = boneParents[
                         static_cast<size_t>(chain.upperArm)];
+                    int rebuiltChild = chain.upperArm;
+                    Vector rebuiltChildOrigin = attachedUpperArmOrigin[slot];
+                    bool rebuildChain = true;
                     for (int guard = 0;
                         guard < numBones && current >= 0 && current < numBones;
                         ++guard)
@@ -19525,11 +19783,59 @@ namespace
                             HooksNativeViewmodelHandsOnlyMatrixFinite(
                                 bodyBones[static_cast<size_t>(bodyBone)]))
                         {
+                            vr_vm_stabilize::Mat3x4 placed =
+                                bodyBones[static_cast<size_t>(bodyBone)];
+                            const int namedSide = HooksNativeViewmodelHandsOnlyBoneSide(
+                                vr_vm_stabilize::ToLowerAscii(
+                                    boneNames[static_cast<size_t>(current)]));
+                            vr_vm_stabilize::Mat3x4 sourceAncestor{};
+                            vr_vm_stabilize::Mat3x4 sourceChild{};
+                            vr_vm_stabilize::Mat3x4 rigidBody{};
+                            vr_vm_stabilize::Mat3x4 rigidSource{};
+                            vr_vm_stabilize::Mat3x4 inverseSource{};
+                            if (rebuildChain && namedSide == chain.side &&
+                                vr_vm_stabilize::SafeRead(sourceBones + current, sourceAncestor) &&
+                                vr_vm_stabilize::SafeRead(sourceBones + rebuiltChild, sourceChild) &&
+                                HooksViewmodelAutoGripNormalizeRigidMatrix(placed, rigidBody) &&
+                                HooksViewmodelAutoGripNormalizeRigidMatrix(sourceAncestor, rigidSource))
+                            {
+                                // The child's offset in this bone's frame, from the
+                                // viewmodel's own pose (bone lengths do not animate).
+                                vr_vm_stabilize::InvertTR(rigidSource, inverseSource);
+                                const Vector local = HooksTransformPoint(
+                                    inverseSource, vr_vm_stabilize::GetOrigin(sourceChild));
+                                rigidBody.m[0][3] = 0.0f;
+                                rigidBody.m[1][3] = 0.0f;
+                                rigidBody.m[2][3] = 0.0f;
+                                const Vector rotatedLocal = HooksTransformPoint(rigidBody, local);
+                                const Vector origin = rebuiltChildOrigin - rotatedLocal;
+                                if (HooksNativeViewmodelHandsOnlyVectorFinite(origin) &&
+                                    local.Length() < 0.5f * sourceUnitsPerMeter)
+                                {
+                                    rigidBody.m[0][3] = origin.x;
+                                    rigidBody.m[1][3] = origin.y;
+                                    rigidBody.m[2][3] = origin.z;
+                                    placed = rigidBody;
+                                    rebuiltChild = current;
+                                    rebuiltChildOrigin = origin;
+                                }
+                                else
+                                {
+                                    rebuildChain = false;
+                                }
+                            }
+                            else
+                            {
+                                rebuildChain = false;
+                            }
                             attachedAncestorMask[
                                 static_cast<size_t>(current)] = 1u;
                             attachedAncestorBones[
-                                static_cast<size_t>(current)] =
-                                bodyBones[static_cast<size_t>(bodyBone)];
+                                static_cast<size_t>(current)] = placed;
+                        }
+                        else
+                        {
+                            rebuildChain = false;
                         }
 
                         const int parent = boneParents[
@@ -20058,6 +20364,59 @@ namespace
             }
         }
 
+        // Body-arm IK: bend each viewmodel elbow in the plane of the body's
+        // solved arm (published by the body draw of this eye), so the drawn
+        // sleeve continues the body's upper arm instead of crossing it.
+        Vector bodyArmPoleLocal[2]{};
+        bool bodyArmPoleValid[2]{};
+        if (haveAttachedBodySkeleton && firstPersonBodyState && vr->m_FirstPersonBodyArmIK)
+        {
+            const int eyeSlot = HooksFirstPersonBodyEyeSlot(firstPersonBodyState->eyeIndex);
+            HooksBodyArmSolution bodySolution{};
+            if (eyeSlot >= 0)
+            {
+                std::lock_guard<std::mutex> lock(HooksBodyArmSolutionMutex());
+                bodySolution = HooksBodyArmSolutionStorage()[eyeSlot];
+            }
+            const bool bodySolutionCurrent =
+                bodySolution.owner == vr &&
+                bodySolution.sceneState == firstPersonBodyState &&
+                bodySolution.sceneSerial == firstPersonBodyState->sceneSerial;
+            Vector mirrorNormal = armMirrorNormal;
+            const bool mirrorNormalValid = VectorNormalize(mirrorNormal) > 0.0f;
+            for (int slot = 0; bodySolutionCurrent && slot < 2; ++slot)
+            {
+                const int gameplaySide = slot == 0 ? -1 : 1;
+                const int physicalSide = HooksBodyArmPhysicalSide(vr, gameplaySide);
+                // An item held across (no mirror) is drawn from the other
+                // shoulder: the body arm is not the same arm.
+                if (physicalSide != gameplaySide && !handMirror)
+                    continue;
+                const int bodySlot = HooksBodyArmSlot(physicalSide);
+                if (!bodySolution.valid[bodySlot])
+                    continue;
+                const Vector reach = bodySolution.wrist[bodySlot] - bodySolution.shoulder[bodySlot];
+                Vector axis = reach;
+                if (VectorNormalize(axis) <= 0.0f)
+                    continue;
+                const Vector toElbow = bodySolution.elbow[bodySlot] - bodySolution.shoulder[bodySlot];
+                Vector bend = toElbow - axis * DotProduct(toElbow, axis);
+                if (VectorNormalize(bend) <= 0.0f)
+                    continue;
+                if (handMirror)
+                {
+                    if (!mirrorNormalValid)
+                        continue;
+                    bend = bend - mirrorNormal * (2.0f * DotProduct(bend, mirrorNormal));
+                }
+                bodyArmPoleLocal[slot] = Vector(
+                    DotProduct(bend, armAnatomicalForward[slot]),
+                    DotProduct(bend, armAnatomicalRight[slot]) * static_cast<float>(gameplaySide),
+                    DotProduct(bend, armAnatomicalUp[slot]));
+                bodyArmPoleValid[slot] = HooksNativeViewmodelHandsOnlyVectorFinite(bodyArmPoleLocal[slot]);
+            }
+        }
+
         uint32_t seqEven = renderFrameSeq;
         if (seqEven == 0)
             seqEven = 2;
@@ -20194,6 +20553,9 @@ namespace
                     armGeometryValid[slot]
                     ? armRequiredStretchScale[slot]
                     : 1.0f;
+                const Vector* const anatomicalPole = bodyArmPoleValid[slot]
+                    ? &bodyArmPoleLocal[slot]
+                    : &vr->m_NativeViewmodelArmElbowPoleBias;
                 bool armSolved = HooksNativeViewmodelArmIkApplyArm(
                     boneParents,
                     numBones,
@@ -20212,7 +20574,7 @@ namespace
                     false,
                     perSideUpperArmStretchScale,
                     true,
-                    &vr->m_NativeViewmodelArmElbowPoleBias,
+                    anatomicalPole,
                     &failureStage);
                 if (!armSolved)
                 {
@@ -20245,7 +20607,7 @@ namespace
                         false,
                         1.0f,
                         true,
-                        &vr->m_NativeViewmodelArmElbowPoleBias,
+                        anatomicalPole,
                         &retryFailureStage);
                     if (!armSolved)
                     {
@@ -20498,6 +20860,60 @@ namespace
 
         if (handMirror)
             HooksHandMirrorApplyAll(bodyMirror, solvedBones, numBones);
+        // Where each hand is drawn, for the first-person body's arms.
+        if (vr->m_FirstPersonBodyArmIK)
+        {
+            const HooksNativeViewmodelArmIkChain* const chains[2] = { &leftChain, &rightChain };
+            for (int slot = 0; slot < 2; ++slot)
+            {
+                const int hand = chains[slot]->hand;
+                if (!solvedSide[slot] || hand < 0 || hand >= numBones)
+                    continue;
+                const int gameplaySide = slot == 0 ? -1 : 1;
+                // Weapon-posed hands (the gun hand, a two-handed support grip)
+                // move with the gun, i.e. the gameplay right controller.
+                const int frameSide = targetUsesNativeAnimation[slot] ? 1 : gameplaySide;
+                HooksBodyArmPublishDrawnWrist(
+                    vr,
+                    gameplaySide,
+                    frameSide,
+                    vr_vm_stabilize::GetOrigin(solvedBones[hand]),
+                    armGeometryValid[slot] ? armUpperLength[slot] : 0.0f,
+                    armGeometryValid[slot] ? armLowerLength[slot] : 0.0f);
+            }
+            // Self-test read-back: how far the drawn wrist and elbow are from
+            // the body arm's (both world space, this eye).
+            if (haveAttachedBodySkeleton && firstPersonBodyState)
+            {
+                const int eyeSlot = HooksFirstPersonBodyEyeSlot(firstPersonBodyState->eyeIndex);
+                HooksBodyArmSolution bodySolution{};
+                if (eyeSlot >= 0)
+                {
+                    std::lock_guard<std::mutex> lock(HooksBodyArmSolutionMutex());
+                    bodySolution = HooksBodyArmSolutionStorage()[eyeSlot];
+                }
+                const bool current = bodySolution.owner == vr &&
+                    bodySolution.sceneState == firstPersonBodyState &&
+                    bodySolution.sceneSerial == firstPersonBodyState->sceneSerial;
+                for (int slot = 0; slot < 2; ++slot)
+                {
+                    const int gameplaySide = slot == 0 ? -1 : 1;
+                    const int physicalSide = HooksBodyArmPhysicalSide(vr, gameplaySide);
+                    const int bodySlot = HooksBodyArmSlot(physicalSide);
+                    float wristGap = -1.0f, elbowGap = -1.0f;
+                    if (current && solvedSide[slot] && bodySolution.valid[bodySlot] &&
+                        (physicalSide == gameplaySide || handMirror))
+                    {
+                        wristGap = (vr_vm_stabilize::GetOrigin(solvedBones[chains[slot]->hand]) -
+                            bodySolution.wrist[bodySlot]).Length() / sourceUnitsPerMeter;
+                        elbowGap = (vr_vm_stabilize::GetOrigin(solvedBones[chains[slot]->forearm]) -
+                            bodySolution.elbow[bodySlot]).Length() / sourceUnitsPerMeter;
+                    }
+                    vr->m_SelfTestBodyArmWristGapMeters[bodySlot].store(wristGap, std::memory_order_relaxed);
+                    vr->m_SelfTestBodyArmElbowGapMeters[bodySlot].store(elbowGap, std::memory_order_relaxed);
+                }
+            }
+        }
         if (solvedSide[0] && handMirror)
         {
             // The magazine logic reads the free hand's wrist as a proper frame
@@ -20710,6 +21126,23 @@ namespace
 
                 if (set.planeCount <= 0)
                     return false;
+                // Where this cropped hand is drawn, for the first-person body's
+                // arm (which then keeps its own forearm down to the wrist).
+                if (vr->m_FirstPersonBodyArmIK && set.isolatedBones &&
+                    keepSide.hand >= 0 && keepSide.hand < numBones &&
+                    (keepSide.side == -1 || keepSide.side == 1))
+                {
+                    const bool weaponPosed = keepSide.side == 1 ||
+                        vr->IsVrHandsTwoHandedGripPoseActive();
+                    HooksBodyArmPublishDrawnWrist(
+                        vr,
+                        keepSide.side,
+                        weaponPosed ? 1 : keepSide.side,
+                        vr_vm_stabilize::GetOrigin(set.isolatedBones[keepSide.hand]),
+                        0.0f,
+                        0.0f,
+                        true);
+                }
                 outClipSets.push_back(set);
                 return true;
             };
@@ -22455,6 +22888,9 @@ namespace
         int rightUpperArmBone = -1;
         int leftForearmBone = -1;
         int rightForearmBone = -1;
+        // Body-arm IK (FirstPersonBodyArmIK): the hand bone below each forearm.
+        int leftHandBone = -1;
+        int rightHandBone = -1;
         Vector animationFreeHeadFromAnchor{};
         Vector animationFreeUpperChestFromAnchor{};
         Vector animationFreeLeftShoulderFromAnchor{};
@@ -22699,6 +23135,34 @@ namespace
             forearmNeedles,
             1,
             layout.rightForearmBone);
+
+        // The hand: the forearm's descendant named "hand" (ValveBiped.Bip01_L_Hand).
+        auto findHand = [&](int forearm, int side, int& outHand)
+            {
+                outHand = -1;
+                if (forearm < 0 || forearm >= layout.numBones)
+                    return;
+                for (int bone = 0; bone < layout.numBones; ++bone)
+                {
+                    if (bone == forearm ||
+                        !HooksNativeViewmodelHandsOnlyIsAncestor(
+                            layout.boneParents, bone, forearm, layout.numBones))
+                        continue;
+                    const std::string lowerName =
+                        vr_vm_stabilize::ToLowerAscii(boneNames[static_cast<size_t>(bone)]);
+                    if (HooksNativeViewmodelHandsOnlyBoneSide(lowerName) != side ||
+                        lowerName.find("hand") == std::string::npos ||
+                        lowerName.find("finger") != std::string::npos)
+                        continue;
+                    // Prefer the shallowest match (the hand, not a hand helper).
+                    if (outHand < 0 ||
+                        HooksNativeViewmodelHandsOnlyIsAncestor(
+                            layout.boneParents, outHand, bone, layout.numBones))
+                        outHand = bone;
+                }
+            };
+        findHand(layout.leftForearmBone, -1, layout.leftHandBone);
+        findHand(layout.rightForearmBone, 1, layout.rightHandBone);
 
         const size_t boneCount = static_cast<size_t>(layout.numBones);
         layout.hideHeadMask.assign(boneCount, 0u);
@@ -23292,6 +23756,230 @@ namespace
             bones);
     }
 
+    inline l4d2vr_body_ik::Vec3 HooksBodyIkVec(const Vector& v) { return { v.x, v.y, v.z }; }
+    inline Vector HooksBodyIkVector(const l4d2vr_body_ik::Vec3& v) { return Vector(v.x, v.y, v.z); }
+
+    // Rotation about pivot taking direction from onto direction to.
+    inline vr_vm_stabilize::Mat3x4 HooksBodyIkRotationAbout(
+        const Vector& pivot, const Vector& from, const Vector& to, float fraction = 1.0f)
+    {
+        float r[3][3];
+        l4d2vr_body_ik::RotationBetween(HooksBodyIkVec(from), HooksBodyIkVec(to), r, fraction);
+        vr_vm_stabilize::Mat3x4 delta = vr_vm_stabilize::Identity();
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int col = 0; col < 3; ++col)
+                delta.m[row][col] = r[row][col];
+            delta.m[row][3] = (&pivot.x)[row] -
+                (r[row][0] * pivot.x + r[row][1] * pivot.y + r[row][2] * pivot.z);
+        }
+        return delta;
+    }
+
+    inline vr_vm_stabilize::Mat3x4 HooksBodyIkTranslation(const Vector& offset)
+    {
+        vr_vm_stabilize::Mat3x4 delta = vr_vm_stabilize::Identity();
+        delta.m[0][3] = offset.x;
+        delta.m[1][3] = offset.y;
+        delta.m[2][3] = offset.z;
+        return delta;
+    }
+
+    // Lengthens one bone's mesh along the limb (the basis column most aligned
+    // with it), like the shoulder trim shortens it.
+    inline void HooksBodyIkScaleAlongLimb(vr_vm_stabilize::Mat3x4& bone, const Vector& limbDirection, float scale)
+    {
+        Vector dir = limbDirection;
+        if (!std::isfinite(scale) || std::fabs(scale - 1.0f) < 0.0001f || scale < 0.5f || scale > 2.5f ||
+            VectorNormalize(dir) <= 0.0f)
+            return;
+        int limbAxis = -1;
+        float best = -1.0f;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            Vector basis(bone.m[0][axis], bone.m[1][axis], bone.m[2][axis]);
+            if (VectorNormalize(basis) <= 0.0f)
+                continue;
+            const float alignment = std::fabs(DotProduct(basis, dir));
+            if (alignment > best)
+            {
+                best = alignment;
+                limbAxis = axis;
+            }
+        }
+        if (limbAxis < 0 || best < 0.7f)
+            return;
+        for (int row = 0; row < 3; ++row)
+            bone.m[row][limbAxis] *= scale;
+    }
+
+    // FirstPersonBodyArmIK: solve the body's arms from its own shoulders to
+    // the drawn VR hands (vr_body_ik.h two-bone IK, elbow pole down/out/back,
+    // small stretch then shoulder slide) and hide the body's hands under the
+    // VR hands. A side without a fresh hand target keeps the shoulder trim.
+    inline void HooksFirstPersonBodySolveArms(
+        VR* vr,
+        const HooksFirstPersonBodyBoneLayout& layout,
+        const Vector& bodyForward,
+        const Vector& bodyRight,
+        const Vector& bodyUp,
+        float unitsPerMeter,
+        vr_vm_stabilize::Mat3x4* bones,
+        bool (&outSolved)[2],
+        bool (&outKeptForearm)[2],
+        HooksBodyArmSolution& outSolution)
+    {
+        outSolved[0] = outSolved[1] = false;
+        outKeptForearm[0] = outKeptForearm[1] = false;
+        if (!vr || !bones || !vr->m_FirstPersonBodyArmIK)
+            return;
+        l4d2vr_body_ik::BodyFrame frame{};
+        frame.forward = HooksBodyIkVec(bodyForward);
+        frame.right = HooksBodyIkVec(bodyRight);
+        frame.up = HooksBodyIkVec(bodyUp);
+        l4d2vr_body_ik::ArmConfig config{};
+        config.maxStretch = std::clamp(vr->m_FirstPersonBodyArmMaxStretch, 1.0f, 1.5f);
+
+        for (int slot = 0; slot < 2; ++slot)
+        {
+            const int side = slot == 0 ? -1 : 1;
+            const int upper = side < 0 ? layout.leftUpperArmBone : layout.rightUpperArmBone;
+            const int fore = side < 0 ? layout.leftForearmBone : layout.rightForearmBone;
+            const int hand = side < 0 ? layout.leftHandBone : layout.rightHandBone;
+            if (upper < 0 || fore < 0 || hand < 0 ||
+                upper >= layout.numBones || fore >= layout.numBones || hand >= layout.numBones)
+                continue;
+            Vector target{};
+            float viewmodelUpper = 0.0f, viewmodelLower = 0.0f;
+            bool keepForearm = false;
+            if (!HooksBodyArmReadWristTarget(vr, side, target, &viewmodelUpper, &viewmodelLower, &keepForearm))
+                continue;
+
+            std::vector<vr_vm_stabilize::Mat3x4> backup(bones, bones + layout.numBones);
+            auto restore = [&]() { std::copy(backup.begin(), backup.end(), bones); };
+
+            const Vector shoulder = vr_vm_stabilize::GetOrigin(bones[upper]);
+            const Vector elbow0 = vr_vm_stabilize::GetOrigin(bones[fore]);
+            const Vector wrist0 = vr_vm_stabilize::GetOrigin(bones[hand]);
+            const float bodyUpper = (elbow0 - shoulder).Length();
+            const float bodyLower = (wrist0 - elbow0).Length();
+            if (!std::isfinite(bodyUpper) || !std::isfinite(bodyLower) ||
+                bodyUpper < 0.05f * unitsPerMeter || bodyLower < 0.05f * unitsPerMeter ||
+                bodyUpper > 0.8f * unitsPerMeter || bodyLower > 0.8f * unitsPerMeter)
+                continue;
+            // Solve with the drawn (viewmodel) arm's segment lengths when they
+            // are plausible for this body, so its elbow and the body's coincide:
+            // the body draws shoulder -> elbow, the VR hand's arm elbow -> hand.
+            const bool viewmodelLengthsUsable = !keepForearm &&
+                viewmodelUpper > bodyUpper * 0.6f && viewmodelUpper < bodyUpper * 1.6f &&
+                viewmodelLower > bodyLower * 0.6f && viewmodelLower < bodyLower * 1.6f;
+            const float upperLength = viewmodelLengthsUsable ? viewmodelUpper : bodyUpper;
+            const float lowerLength = viewmodelLengthsUsable ? viewmodelLower : bodyLower;
+
+            const l4d2vr_body_ik::Vec3 pole = l4d2vr_body_ik::ArmElbowPole(
+                frame, side, HooksBodyIkVec(shoulder), HooksBodyIkVec(target), unitsPerMeter);
+            const l4d2vr_body_ik::Vec3 fallbackPole = l4d2vr_body_ik::Normalized(
+                frame.right * static_cast<float>(side) - frame.forward * 0.3f - frame.up * 0.3f);
+            const l4d2vr_body_ik::ArmSolve solve = l4d2vr_body_ik::SolveTwoBoneArm(
+                HooksBodyIkVec(shoulder), HooksBodyIkVec(target), upperLength, lowerLength,
+                pole, fallbackPole, config, unitsPerMeter);
+            if (!solve.valid)
+                continue;
+            const Vector solvedShoulder = HooksBodyIkVector(solve.shoulder);
+            const Vector solvedElbow = HooksBodyIkVector(solve.elbow);
+            const Vector solvedWrist = HooksBodyIkVector(solve.wrist);
+
+            bool ok = true;
+            // Shoulder slide (only when far out of reach).
+            if (solve.shoulderShift > 0.0f)
+                ok = ok && HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
+                    upper, HooksBodyIkTranslation(solvedShoulder - shoulder), bones);
+            // Upper arm: swing onto the solved elbow, then fit its length
+            // (stretch, or the drawn arm's proportions) along the limb.
+            ok = ok && HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
+                upper, HooksBodyIkRotationAbout(solvedShoulder, elbow0 - shoulder, solvedElbow - solvedShoulder), bones);
+            // Clothing helpers around the shoulder (L4D2's hlp_jacket_arm_*
+            // under the clavicle, hlp_jacket_armpit_* under the chest) follow
+            // the upper arm in the game's own animation; frozen, they tear the
+            // sleeve into spikes when the arm rises. Give them half the swing.
+            if (ok)
+            {
+                const int clavicle = side < 0 ? layout.leftClavicleBone : layout.rightClavicleBone;
+                const vr_vm_stabilize::Mat3x4 halfSwing = HooksBodyIkRotationAbout(
+                    solvedShoulder, elbow0 - shoulder, solvedElbow - solvedShoulder, 0.5f);
+                for (int bone = 0; ok && bone < layout.numBones; ++bone)
+                {
+                    if (bone == upper)
+                        continue;
+                    const int parent = layout.boneParents[static_cast<size_t>(bone)];
+                    const std::string lowerName =
+                        vr_vm_stabilize::ToLowerAscii(layout.boneNames[static_cast<size_t>(bone)]);
+                    const bool clavicleHelper = clavicle >= 0 && parent == clavicle;
+                    const bool armpitHelper = lowerName.find("armpit") != std::string::npos &&
+                        HooksNativeViewmodelHandsOnlyBoneSide(lowerName) == side;
+                    if (clavicleHelper || armpitHelper)
+                        ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(
+                            layout.boneParents, layout.numBones, bone, halfSwing, bones);
+                }
+            }
+            if (ok)
+            {
+                const float solvedUpper = (solvedElbow - solvedShoulder).Length();
+                HooksBodyIkScaleAlongLimb(bones[upper], solvedElbow - solvedShoulder, solvedUpper / bodyUpper);
+                ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
+                    fore, HooksBodyIkTranslation(solvedElbow - vr_vm_stabilize::GetOrigin(bones[fore])), bones);
+            }
+            // Cropped VR hands: the body's own forearm reaches the wrist and
+            // only its hand disappears there.
+            if (ok && keepForearm)
+            {
+                const Vector elbowNow = vr_vm_stabilize::GetOrigin(bones[fore]);
+                const Vector wristNow = vr_vm_stabilize::GetOrigin(bones[hand]);
+                ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
+                    fore, HooksBodyIkRotationAbout(elbowNow, wristNow - elbowNow, solvedWrist - elbowNow), bones);
+                if (ok)
+                {
+                    HooksBodyIkScaleAlongLimb(bones[fore], solvedWrist - solvedElbow,
+                        (solvedWrist - solvedElbow).Length() / bodyLower);
+                    const vr_vm_stabilize::Mat3x4 collapsedHand =
+                        HooksNativeViewmodelHandsOnlyCollapsedBoneAt(solvedWrist);
+                    for (int bone = 0; bone < layout.numBones; ++bone)
+                    {
+                        if (HooksNativeViewmodelHandsOnlyIsAncestor(layout.boneParents, bone, hand, layout.numBones))
+                            bones[bone] = collapsedHand;
+                    }
+                    ok = (solvedWrist - target).Length() < 0.02f * unitsPerMeter;
+                }
+            }
+            // Below the elbow the VR hand's own arm is drawn (with the hand
+            // pose and forearm twist): the body's forearm and hand disappear
+            // into the elbow, so there is one forearm and one hand per side.
+            else if (ok)
+            {
+                const vr_vm_stabilize::Mat3x4 collapsed =
+                    HooksNativeViewmodelHandsOnlyCollapsedBoneAt(solvedElbow);
+                for (int bone = 0; bone < layout.numBones; ++bone)
+                {
+                    if (HooksNativeViewmodelHandsOnlyIsAncestor(layout.boneParents, bone, fore, layout.numBones))
+                        bones[bone] = collapsed;
+                }
+                const float error = (solvedWrist - target).Length();
+                ok = std::isfinite(error) && error < 0.02f * unitsPerMeter;
+            }
+            if (!ok)
+            {
+                restore();
+                continue;
+            }
+            outSolved[slot] = true;
+            outKeptForearm[slot] = keepForearm;
+            outSolution.valid[slot] = true;
+            outSolution.shoulder[slot] = solvedShoulder;
+            outSolution.elbow[slot] = solvedElbow;
+            outSolution.wrist[slot] = solvedWrist;
+        }
+    }
+
     inline bool HooksFirstPersonBodyBuildAnchoredBones(
         VR* vr,
         const HooksFirstPersonBodyEyeSceneState* bodyState,
@@ -23876,6 +24564,47 @@ namespace
             }
         }
 
+        // Body-arm IK: the body's own arms reach the drawn VR hands. Solved
+        // before the skeleton is published, so the viewmodel arm roots at the
+        // same (possibly slid) shoulders and bends its elbows in the same plane.
+        bool bodyArmSolved[2]{};
+        bool bodyArmKeptForearm[2]{};
+        HooksBodyArmSolution bodyArmSolution{};
+        HooksFirstPersonBodySolveArms(
+            vr,
+            s_layout,
+            forward,
+            right,
+            up,
+            unitsPerMeter,
+            anchoredBones,
+            bodyArmSolved,
+            bodyArmKeptForearm,
+            bodyArmSolution);
+        {
+            const int eyeSlot = HooksFirstPersonBodyEyeSlot(bodyState->eyeIndex);
+            if (eyeSlot >= 0)
+            {
+                bodyArmSolution.owner = vr;
+                bodyArmSolution.sceneState = bodyState;
+                bodyArmSolution.sceneSerial = bodyState->sceneSerial;
+                std::lock_guard<std::mutex> lock(HooksBodyArmSolutionMutex());
+                HooksBodyArmSolutionStorage()[eyeSlot] = bodyArmSolution;
+            }
+            static std::atomic<int> s_loggedBodyArmIk{ 0 };
+            const int solvedMask = (bodyArmSolved[0] ? 1 : 0) | (bodyArmSolved[1] ? 2 : 0);
+            vr->m_SelfTestBodyArmSolvedMask.store(solvedMask, std::memory_order_relaxed);
+            if (solvedMask != 0 && s_loggedBodyArmIk.exchange(solvedMask, std::memory_order_acq_rel) != solvedMask)
+            {
+                Game::logMsg(
+                    "[VR][FirstPersonBody] arm IK solved left=%d right=%d (bones upper=%d/%d fore=%d/%d hand=%d/%d)",
+                    bodyArmSolved[0] ? 1 : 0, bodyArmSolved[1] ? 1 : 0,
+                    s_layout.leftUpperArmBone, s_layout.rightUpperArmBone,
+                    s_layout.leftForearmBone, s_layout.rightForearmBone,
+                    s_layout.leftHandBone, s_layout.rightHandBone);
+            }
+        }
+
         // Capture the complete body skeleton after its final translation, torso
         // rotation and upper-chest lean, but before head/arm render trimming. The
         // viewmodel was authored by deleting body mesh while retaining this same
@@ -24020,14 +24749,17 @@ namespace
                 }
             };
 
-        trimArmBelowShoulder(
-            s_layout.leftUpperArmBone,
-            s_layout.leftForearmBone,
-            s_layout.hideLeftArmMask);
-        trimArmBelowShoulder(
-            s_layout.rightUpperArmBone,
-            s_layout.rightForearmBone,
-            s_layout.hideRightArmMask);
+        if (!bodyArmSolved[0])
+            trimArmBelowShoulder(
+                s_layout.leftUpperArmBone,
+                s_layout.leftForearmBone,
+                s_layout.hideLeftArmMask);
+        if (!bodyArmSolved[1])
+            trimArmBelowShoulder(
+                s_layout.rightUpperArmBone,
+                s_layout.rightForearmBone,
+                s_layout.hideRightArmMask);
+
 
         // Fail closed if a replacement model supplies a transform that our
         // frozen-branch reconstruction amplifies. Rigid anchoring preserves
@@ -24053,12 +24785,25 @@ namespace
                 return false;
             }
 
+            // A solved arm keeps its upper arm; its forearm and hand are
+            // collapsed into the elbow (the VR hand's arm continues there).
+            auto handSubtree = [&](int handBone) -> bool
+                {
+                    return handBone >= 0 && HooksNativeViewmodelHandsOnlyIsAncestor(
+                        s_layout.boneParents, bone, handBone, s_layout.numBones);
+                };
+            const bool leftArmCollapsed = bodyArmKeptForearm[0]
+                ? handSubtree(s_layout.leftHandBone)
+                : ((bodyArmSolved[0] || vr->m_FirstPersonBodyHideArms) &&
+                    s_layout.hideLeftArmMask[index] != 0u);
+            const bool rightArmCollapsed = bodyArmKeptForearm[1]
+                ? handSubtree(s_layout.rightHandBone)
+                : ((bodyArmSolved[1] || vr->m_FirstPersonBodyHideArms) &&
+                    s_layout.hideRightArmMask[index] != 0u);
             const bool intentionallyCollapsed =
                 (vr->m_FirstPersonBodyHideHead &&
                     s_layout.hideHeadMask[index] != 0u) ||
-                (vr->m_FirstPersonBodyHideArms &&
-                    (s_layout.hideLeftArmMask[index] != 0u ||
-                        s_layout.hideRightArmMask[index] != 0u));
+                leftArmCollapsed || rightArmCollapsed;
             if (intentionallyCollapsed)
             {
                 if (outputBasisLength > 1.0e-4)

@@ -166,6 +166,10 @@
         bool visualBodyYawTurning = false;
         float visualBodyYaw = 0.0f;
         std::uint64_t visualBodyYawTickMs = 0u;
+        // Remote VR players: the same torso-yaw follower as the local body
+        // (vr_body_ik.h), driven by their networked head and hands.
+        l4d2vr_body_ik::BodyYawState trackedBodyYaw{};
+        std::uint64_t trackedBodyYawTickMs = 0u;
         std::uint64_t lastStereoSceneGeneration = 0u;
         // Physical-crouch calibration (standing eye height, animated standing
         // pelvis height). Cleared by Reset() on entity/model changes and by
@@ -7225,6 +7229,65 @@
                 vr,
                 headWorldYaw);
         }
+        // Other VR players: their torso follows their networked head with the
+        // same deadband / smooth follow / hand rule as your own body, so the
+        // body they see matches the one you see of them.
+        const bool remoteTrackedBodyYaw =
+            !localPlayer &&
+            pose.bodyYawValid &&
+            (pose.validMask & l4d2vr_pose::kValidHmd) != 0u &&
+            std::isfinite(pose.bodyYaw) &&
+            std::isfinite(pose.hmd.angles.y);
+        if (remoteTrackedBodyYaw)
+        {
+            const float headWorldYaw =
+                HooksWorldPoseWrapAngle(pose.bodyYaw + pose.hmd.angles.y);
+            const float dt =
+                calibration.trackedBodyYawTickMs != 0u &&
+                        worldPoseNow > calibration.trackedBodyYawTickMs
+                    ? static_cast<float>(worldPoseNow - calibration.trackedBodyYawTickMs) / 1000.0f
+                    : 0.0f;
+            if (calibration.trackedBodyYawTickMs != 0u &&
+                worldPoseNow - calibration.trackedBodyYawTickMs > 500u)
+            {
+                calibration.trackedBodyYaw = {};
+            }
+            calibration.trackedBodyYawTickMs = worldPoseNow;
+            // Hands in the pose frame (game units, x forward, y right), turned
+            // into the current torso frame.
+            l4d2vr_body_ik::BodyYawHand hands[2]{};
+            const float unitsPerMeter =
+                (std::isfinite(vr->m_VRScale) && vr->m_VRScale > 0.001f) ? vr->m_VRScale : 39.37f;
+            const float torsoFromPose =
+                (calibration.trackedBodyYaw.valid
+                    ? HooksWorldPoseWrapAngle(calibration.trackedBodyYaw.bodyYawDeg - pose.bodyYaw)
+                    : pose.hmd.angles.y) * (l4d2vr_body_ik::kPi / 180.0f);
+            const float cs = std::cos(torsoFromPose), sn = std::sin(torsoFromPose);
+            const VRTrackedPoseLocal* const poseHands[2] = { &pose.leftHand, &pose.rightHand };
+            const std::uint8_t handBits[2] = { l4d2vr_pose::kValidLeftHand, l4d2vr_pose::kValidRightHand };
+            for (int i = 0; i < 2; ++i)
+            {
+                if ((pose.validMask & handBits[i]) == 0u)
+                    continue;
+                // Chest = 8 cm behind the head along the torso.
+                const float fx = poseHands[i]->position.x - pose.hmd.position.x;
+                const float fy = poseHands[i]->position.y - pose.hmd.position.y;
+                // Source yaw turns forward toward left (-right): rotate by -angle into the torso frame.
+                const float forward = fx * cs - fy * sn;
+                const float right = fx * sn + fy * cs;
+                hands[i].valid = std::isfinite(forward) && std::isfinite(right);
+                hands[i].forwardMeters = forward / unitsPerMeter + 0.08f;
+                hands[i].rightMeters = right / unitsPerMeter;
+            }
+            targetVisualBodyYaw = l4d2vr_body_ik::UpdateBodyYaw(
+                calibration.trackedBodyYaw,
+                HooksTrackedBodyYawConfig(vr),
+                headWorldYaw,
+                dt,
+                hands,
+                2,
+                -1.0f);
+        }
         float visualBodyYaw = sourceBodyYaw;
         float appliedBodyYaw = sourceBodyYaw;
         float visualBodyYawError = 0.0f;
@@ -7232,7 +7295,7 @@
         HooksWorldPoseUpdateVisualBodyYaw(
             vr,
             targetVisualBodyYaw,
-            instantLocalTrackedBodyYaw,
+            instantLocalTrackedBodyYaw || remoteTrackedBodyYaw,
             calibration,
             visualBodyYaw,
             visualBodyYawError,

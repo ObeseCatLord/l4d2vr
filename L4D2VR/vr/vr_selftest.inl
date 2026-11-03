@@ -110,6 +110,9 @@ void VR::ApplySelfTestPoses()
         m_HmdPose.TrackedDeviceAng.x = m_SelfTestLookPitch;
         m_HmdPose.TrackedDeviceAng.z = 0.0f;
     }
+    // lookyaw=: the head alone turns (hands below are placed from the unturned yaw).
+    if (m_SelfTestLookYaw != 0.0f)
+        m_HmdPose.TrackedDeviceAng.y += m_SelfTestLookYaw;
     // Hands are placed from the unswayed head, like a body that stays put while
     // the head looks and leans around.
     const Vec3 h = SelfTestVec(head.x, head.y, head.z);
@@ -161,7 +164,17 @@ void VR::ApplySelfTestPoses()
     auto sceneTracking = [&](const Vec3& local)
     {
         const Vector offset = l4d2vr_holster::ToWorld(sceneFrame, Vector(local.x, local.y, local.z)) - m_HmdPosAbs;
-        return WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        Vec3 p = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        if (m_SelfTestLookYaw != 0.0f)
+        {
+            // The holster frame follows the head: lookyaw= turns the head
+            // alone, so undo it for the scene hands (they stay put).
+            const float a = -m_SelfTestLookYaw * 3.14159265f / 180.0f;
+            const float dx = p.x - h.x, dy = p.y - h.y;
+            p.x = h.x + dx * std::cos(a) - dy * std::sin(a);
+            p.y = h.y + dx * std::sin(a) + dy * std::cos(a);
+        }
+        return p;
     };
 
     Vec3 rightLocal = m_SelfTestRightLocal;
@@ -1544,6 +1557,83 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             Game::logMsg("[VR][SelfTest] head pitch %s", m_SelfTestLookActive ? value.c_str() : "released");
         }
         return t >= 1.0f;
+    }
+
+    // lookyaw=<deg>: turn the head alone by this yaw (positive = left; 0 or
+    // "off" releases). Holds for the following steps. The hands stay put.
+    if (step.rfind("lookyaw=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            const std::string value = step.substr(8);
+            m_SelfTestLookYaw = value == "off" ? 0.0f
+                : std::clamp(static_cast<float>(std::atof(value.c_str())), -170.0f, 170.0f);
+            Game::logMsg("[VR][SelfTest] head yaw %.1f", m_SelfTestLookYaw);
+        }
+        return t >= 0.2f;
+    }
+
+    // heldhand=left|right: the active item goes to that physical hand
+    // (ambidextrous item hands, as if that hand had taken it).
+    if (step.rfind("heldhand=", 0) == 0)
+    {
+        if (at(0, 0.0f))
+        {
+            const bool left = step.substr(9) == "left";
+            RequestItemHand(left, l4d2vr_item_hand::Reason::HandOff);
+            Game::logMsg("[VR][SelfTest] held item to the %s hand", left ? "left" : "right");
+        }
+        if (t < 1.0f)
+            return false;
+        const bool physicalLeft = ItemHandIsPhysicalLeft();
+        std::snprintf(detail, sizeof(detail), "item hand is physical %s", physicalLeft ? "left" : "right");
+        SelfTestReport(step.c_str(), physicalLeft == (step.substr(9) == "left"), detail);
+        return true;
+    }
+
+    // bodyyaw=<min>:<max>: PASS when the head-to-torso yaw lag (degrees,
+    // absolute) of the first-person body is within [min, max].
+    if (step.rfind("bodyyaw=", 0) == 0)
+    {
+        float lo = 0.0f, hi = 0.0f;
+        if (std::sscanf(step.c_str() + 8, "%f:%f", &lo, &hi) != 2)
+        {
+            SelfTestReport(step.c_str(), false, "expected bodyyaw=<min>:<max>");
+            return true;
+        }
+        const float lag = m_SelfTestBodyYawLagDeg.load(std::memory_order_relaxed);
+        std::snprintf(detail, sizeof(detail), "head-to-torso lag %.1f deg (want %.1f..%.1f, head yaw %.1f)",
+            lag, lo, hi, m_SelfTestLookYaw);
+        SelfTestReport(step.c_str(), std::fabs(lag) >= lo && std::fabs(lag) <= hi, detail);
+        return true;
+    }
+
+    // bodyik=<maxWristCm>:<maxElbowCm>: PASS when both first-person body arms
+    // are solved by IK and each drawn VR wrist / viewmodel elbow is within
+    // these distances of the body arm's (one hand per side, no detached arm).
+    if (step.rfind("bodyik=", 0) == 0)
+    {
+        float wristCm = 0.0f, elbowCm = 0.0f;
+        if (std::sscanf(step.c_str() + 7, "%f:%f", &wristCm, &elbowCm) != 2)
+        {
+            SelfTestReport(step.c_str(), false, "expected bodyik=<maxWristCm>:<maxElbowCm>");
+            return true;
+        }
+        const int mask = m_SelfTestBodyArmSolvedMask.load(std::memory_order_relaxed);
+        bool ok = mask == 3;
+        float gaps[4]{};
+        for (int i = 0; i < 2; ++i)
+        {
+            gaps[i * 2] = m_SelfTestBodyArmWristGapMeters[i].load(std::memory_order_relaxed);
+            gaps[i * 2 + 1] = m_SelfTestBodyArmElbowGapMeters[i].load(std::memory_order_relaxed);
+            ok = ok && gaps[i * 2] >= 0.0f && gaps[i * 2] * 100.0f <= wristCm &&
+                gaps[i * 2 + 1] >= 0.0f && gaps[i * 2 + 1] * 100.0f <= elbowCm;
+        }
+        std::snprintf(detail, sizeof(detail),
+            "solved mask %d; left wrist %.1f cm elbow %.1f cm; right wrist %.1f cm elbow %.1f cm (limits %.1f / %.1f)",
+            mask, gaps[0] * 100.0f, gaps[1] * 100.0f, gaps[2] * 100.0f, gaps[3] * 100.0f, wristCm, elbowCm);
+        SelfTestReport(step.c_str(), ok, detail);
+        return true;
     }
 
     // lefthand=x,y,z / righthand=x,y,z: hold a hand at a point of the holster

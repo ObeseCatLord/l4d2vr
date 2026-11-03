@@ -117,13 +117,19 @@ namespace l4d2vr_left_hand
         std::vector<int> counterpart;   // b -> b' (b itself for centre / unpaired bones)
         std::vector<Mat34> flip;        // F_b
         Mat34 restMirror{};             // Mrest
+        // A left- or right-side bone with no counterpart (a helper such as
+        // hlp_ulna02_L): it follows its parent's remapped pose with its bind
+        // offset instead of staying on its own reflected pose (which belongs to
+        // the other arm and would stretch the mesh across).
+        std::vector<int> followParent;  // parent index, or -1
+        std::vector<Mat34> restLocal;   // bind pose relative to that parent
     };
 
     // Builds the remap from the bone names and model-space bind poses. Needs
     // at least `minPairs` left/right pairs whose bind positions are mirror
     // images across one plane (within `toleranceUnits`).
     inline bool BuildRemap(const std::vector<std::string>& names, const std::vector<Mat34>& restModel, Remap& out,
-        int minPairs = 3, float toleranceUnits = 0.75f)
+        int minPairs = 3, float toleranceUnits = 0.75f, const std::vector<int>* parents = nullptr)
     {
         out = Remap{};
         const size_t n = names.size();
@@ -205,6 +211,20 @@ namespace l4d2vr_left_hand
             out.flip[b] = l4d2vr_hand_mirror::Mul(InverseOrthonormal(mirroredRest),
                 restModel[static_cast<size_t>(out.counterpart[b])]);
         }
+        out.followParent.assign(n, -1);
+        out.restLocal.assign(n, l4d2vr_hand_mirror::Identity());
+        if (parents && parents->size() >= n)
+        {
+            for (size_t b = 0; b < n; ++b)
+            {
+                const int p = (*parents)[b];
+                if (SideOfName(names[b]) == 0 || out.counterpart[b] != static_cast<int>(b) || p < 0 ||
+                    static_cast<size_t>(p) >= b)
+                    continue;
+                out.followParent[b] = p;
+                out.restLocal[b] = l4d2vr_hand_mirror::Mul(InverseOrthonormal(restModel[static_cast<size_t>(p)]), restModel[b]);
+            }
+        }
         out.pairs = pairs;
         out.valid = true;
         return true;
@@ -224,5 +244,13 @@ namespace l4d2vr_left_hand
                 continue;
             out[cp] = l4d2vr_hand_mirror::Mul(mirrored[b], remap.flip[static_cast<size_t>(b)]);
         }
+        // Unpaired side bones follow their (remapped) parent; parents come first.
+        if (remap.followParent.size() >= static_cast<size_t>(numBones))
+            for (int b = 0; b < numBones; ++b)
+            {
+                const int p = remap.followParent[static_cast<size_t>(b)];
+                if (p >= 0 && p < b)
+                    out[b] = l4d2vr_hand_mirror::Mul(out[p], remap.restLocal[static_cast<size_t>(b)]);
+            }
     }
 }

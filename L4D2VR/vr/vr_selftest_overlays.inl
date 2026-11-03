@@ -21,7 +21,7 @@
 //                                laser=<target|off> layers>=<n>
 //                                cfgmode=options|config|calib cfgsection=<id> cfgdialog=none|confirm|message
 //                                cfgfile=<option>=<value> (vr/config.txt on disk) live=<option>=<value> (the mod's value)
-//                                cfgbackup>=<n> (vr/config.txt.bak-* files)
+//                                cfgbackup>=<n> (vr/config.txt.bak-* files) cfgoptscroll>=<n>
 //   uiwait=<seconds>             wait (also in menus)
 //   cfg=<option>=<value>         in-memory config override (never written to config.txt), reparsed now
 //   killind=<n>                  spawn n kill indicators in front of the head (needs KillIndicatorEnabled)
@@ -225,10 +225,12 @@ bool VR::SelfTestCheckUi(const std::string& predicate, char* detail, size_t deta
         return so::Lower(got) == so::Lower(value) || (got[0] != '?' && std::isdigit(static_cast<unsigned char>(got[0])) &&
             std::fabs(static_cast<float>(std::atof(got)) - wantF) < 0.006f);
     }
-    if (what == "cfgsection" || what == "cfgdialog")
+    if (what == "cfgsection" || what == "cfgdialog" || what == "cfgoptscroll")
     {
         const std::string state = L4D2VRConfigOverlay_TestState("");
         std::snprintf(detail, detailSize, "%s", state.c_str());
+        if (what == "cfgoptscroll")
+            return std::atoi(so::Field(state, "optscroll").c_str()) >= std::atoi(want.c_str());
         return so::Field(state, what == "cfgsection" ? "section" : "dialog") == want;
     }
     if (what == "config" || what == "cfgvalue" || what == "cfgvalue!" || what == "cfgscroll" || what == "cfgscrolled" ||

@@ -109,6 +109,9 @@ the instance (runtime name and version, extensions), the session states and fram
   dashboard laser is not involved.
 * **Text fields** in the config panel open the mod's own VR keyboard below the view. SteamVR's
   keyboard is not used.
+* **VR Options** (2.0.5): hold the pause button (left B on Index, Y on Touch, menu on Vive/WMR) or
+  point at the *VR Options* button above the main or pause menu to open the mod's options menu
+  (docs/physical-overhaul.md, "VR Options menu").
 * **Hands** look the same: the survivor's own hands (the separate SteamVR glove models are retired;
   `VrHandsGlovesEnabled` is ignored).
 * **ReShade**: the exact stereo depth bridge (`ReShadeVRCompat`) needs ReShade's OpenVR runtime. It is

@@ -352,6 +352,7 @@ namespace
         { "MeleeGripReachMeters", CfgOptionType::Float, "Hands / Melee", "Melee grip reach (m)", 0.0f, 0.4f, "0.12" },
         { "MotionOnlyMeleeAndShove", CfgOptionType::Bool, "Hands / Melee", "Motion-only melee and shove", 0.0f, 0.0f, "true" },
         { "MenuLaserPointerEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Menu laser pointer", 0.0f, 0.0f, "true" },
+        { "VrOptionsMenuHoldSeconds", CfgOptionType::Float, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Hold pause to open VR Options (s)", 0.0f, 5.0f, "0.8" },
         { "HolsterReleaseDrop", CfgOptionType::Bool, "Hands / Holsters", "Drop held items on grip release", 0.0f, 0.0f, "true" },
         { "GripToggle", CfgOptionType::Bool, "Hands / Holsters", "Toggle grips", 0.0f, 0.0f, "true" },
         { "GrenadeThrowMode", CfgOptionType::String, "Weapons / Throwables", "Grenade throw mode (arc | physics)", 0.0f, 0.0f, "arc" },
@@ -359,6 +360,8 @@ namespace
         { "ManualThrowHandVelocityScale", CfgOptionType::Float, "Weapons / Throwables", "Hand throw boost", 0.0f, 10.0f, "2.5" },
         { "ThrowableHoldAngleOffsetDeg", CfgOptionType::Vec3, "Weapons / Throwables", "Grenade hold turn (deg)", -90.0f, 90.0f, "0,0,20" },
         { "ManualThrowVelocityWindowMs", CfgOptionType::Int, "Weapons / Throwables", "Hand throw velocity window (ms)", 20.0f, 250.0f, "80" },
+        { "GrenadeThrowAssist", CfgOptionType::Bool, "Weapons / Throwables", "Physics throw assistance", 0.0f, 0.0f, "true" },
+        { "GrenadeThrowAssistStrength", CfgOptionType::Float, "Weapons / Throwables", "Throw assistance strength", 0.0f, 1.0f, "0.5" },
         { "ReloadPavlovTuning", CfgOptionType::Bool, "Hands / Manual Reload", "Pavlov reload tuning", 0.0f, 0.0f, "true" },
         { "MagazineSlapEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Magazine slap", 0.0f, 0.0f, "true" },
         { "MagazineInteractionTriggerInteractions", CfgOptionType::Bool, "Hands / Manual Reload", "Reload with the off-hand trigger", 0.0f, 0.0f, "true" },
@@ -1176,9 +1179,12 @@ namespace
         { "ManualThrowHandVelocityScale", "Weapons / Throwables", "Hand Throw Velocity Scale", "The grenade leaves with your hand's release speed times this boost (when you host the game, and for aiming the throw on plain servers; dedicated servers use their own ThrowHandVelocityScale). Your own walking or running speed is added unscaled.", "2.5 (default) sends a natural throw about as far as the game's own; 1.0 is literal, higher throws further." },
         { "ThrowableHoldAngleOffsetDeg", "Weapons / Throwables", "Grenade Hold Turn", "Turns a held grenade, molotov or bile jar in your hand (pitch, yaw, roll in degrees). The game's own hold leans it in toward your body; the default roll stands it up.", "Mirrored automatically when the grenade is in your left hand." },
         { "ManualThrowVelocityWindowMs", "Weapons / Throwables", "Hand Throw Velocity Window", "How many milliseconds of hand motion before the release a hand throw looks at: the grenade leaves at the hand's peak speed in that window, along the direction it was moving.", "Shorter follows the last flick; longer is steadier." },
+        { "GrenadeThrowAssist", "Weapons / Throwables", "Physics Throw Assistance", "GrenadeThrowMode=physics only: gently steers a hand throw onto the spot your hand points at, but only when the throw is already heading there (about 25 degrees sideways, a similar arc, at most 35% faster or slower). Throws elsewhere, drops and tosses at your feet stay your own.", "Also on the VR Options Grenades page." },
+        { "GrenadeThrowAssistStrength", "Weapons / Throwables", "Throw Assistance Strength", "How much an eligible physics throw is steered: 0 keeps it as thrown, 1 lands it on the spot your hand points at.", "0.5 by default." },
         { "GripToggle", "Hands / Holsters", "Toggle Grips", "One firm squeeze takes an item and your hand keeps it; the next squeeze lets it go: inside its own holster it is put away, anywhere else it is dropped. Turn off to hold the grip instead.", "The off-hand trigger holds magazines, slides and bolts while pulled; the front of a two-handed gun is its own grip toggle." },
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). SteamVR and the OpenXR backend bring their own laser, which then works on every panel." },
+        { "VrOptionsMenuHoldSeconds", "HUD (Main)", "Hold Pause To Open VR Options", "Holding the pause button (left B on Index, Y on Quest/Touch, menu on Vive/WMR) this many seconds opens or closes the VR Options menu. 0 turns it off.", "A short press still opens the pause menu." },
         { "HolsterInstantDraw", "Hands / Holsters", "Instant Weapon Switches", "Every weapon switch (holster draws, pickups, slot keys, after a throw or a medkit) puts the item straight into your hand: the draw animation never plays.", "On servers without the L4D2VR plugin the server's own deploy delay before firing remains." },
         { "ChestSlingEnabled", "Hands / Holsters", "Chest Sling", "Letting go of a rifle, SMG, shotgun, sniper rifle, M60 or grenade launcher near your body hangs it on a sling in front of your chest instead of dropping it: both hands are free (doors, pickups) and it cannot fire. Squeeze the grip at its handle or foregrip with either hand to take it; that hand becomes the trigger hand, so switching hands is: let go, grab the handle with the other hand. Letting go over a holster still stows it there.", "Off: letting go of a long gun drops it (or stows it over a holster). To drop a gun with the sling on, let go with your arm stretched away from your body." },
         { "ChestSlingDropDistanceMeters", "Hands / Holsters", "Sling Drop Distance", "Letting go of a long gun with your hand farther than this from the sling (arm stretched out) drops it to the floor instead of slinging it.", "Default 0.6 m: a normal hold slings, a deliberate arm's-length release drops." },
@@ -2757,6 +2763,8 @@ GrenadeThrowMode=arc
 ManualThrowPinRequired=true
 ManualThrowHandVelocityScale=2.5
 ManualThrowVelocityWindowMs=80
+GrenadeThrowAssist=true
+GrenadeThrowAssistStrength=0.5
 
 # Object pull uses the existing weapon-hand Grip binding; there is no separate SteamVR Object Pull action.
 # Merely point anywhere on a supported item's collision bounds to select it and show its native outline.

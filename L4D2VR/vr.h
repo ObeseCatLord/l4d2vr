@@ -1758,6 +1758,16 @@ public:
 	// degrees) in the hand: the game's own hold leans it in toward the body.
 	QAngle m_ThrowableHoldAngleOffset = { 0.0f, 0.0f, 20.0f };
 	int m_ManualThrowVelocityWindowMs = 80;
+	// Physics throw assistance (GrenadeThrowAssist, GrenadeThrowAssistStrength;
+	// vr_hand_throw.h AssistThrow): in GrenadeThrowMode=physics a release is
+	// bent toward the arc landing where the hand points, when already heading there.
+	bool m_GrenadeThrowAssist = true;
+	float m_GrenadeThrowAssistStrength = 0.5f;
+	// Applies the assistance to a release (hand velocity relative to the body,
+	// unscaled, as sent on the wire); returns the weight used (0 = unchanged).
+	float ApplyGrenadeThrowAssist(C_BasePlayer* localPlayer, const Vector& releasePos, const QAngle& handAngles,
+		const Vector& bodyVelocity, float boost, Vector& handVelocity);
+	std::atomic<uint32_t> m_GrenadeThrowAssistCount{ 0u };    // self-test: releases bent by the assistance
 	struct HandThrowUsercmd
 	{
 		int command = 0;
@@ -4528,6 +4538,8 @@ public:
 		float textureAspect = 0.0f; // texture height / width
 	};
 	bool m_MenuLaserPointerEnabled = true;
+	// VR Options menu: hold the pause button this long to open it (0 = off).
+	float m_VrOptionsMenuHoldSeconds = 0.8f;
 	std::mutex m_MenuPointerGeometryMutex;
 	MenuPointerPanelGeometry m_MenuPointerMenuGeometry{};
 	MenuPointerPanelGeometry m_MenuPointerHudGeometry{};

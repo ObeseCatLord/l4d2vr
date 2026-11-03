@@ -3289,7 +3289,7 @@ void VR::ParseConfigFile()
     }
     m_ScopePictureInPictureLens = getBool("ScopePictureInPictureLens", true);
     m_ScopeParallaxStrength = std::clamp(getFloat("ScopeParallaxStrength", 1.0f), 0.0f, 4.0f);
-    m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 8.0f), 1.0f, 45.0f);
+    m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 15.0f), 1.0f, 45.0f);
     m_ScopeVignetteExponent = std::clamp(getFloat("ScopeVignetteExponent", 0.25f), 0.05f, 4.0f);
     m_IntermissionHudEnabled = getBool("IntermissionHudEnabled", true);
     m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 150.0f), 100.0f, 1000.0f);
@@ -3343,7 +3343,8 @@ void VR::ParseConfigFile()
     m_ManualPumpChamberFraction = std::clamp(getFloat("ManualPumpChamberFraction", 0.35f),
         0.0f, m_ManualPumpCockFraction - l4d2vr_physical::kPumpCockChamberGap);
     m_ManualPumpGrabPaddingMeters = std::clamp(getFloat("ManualPumpGrabPaddingMeters", 0.15f), 0.0f, 0.25f);
-    m_ManualPumpForegripRacks = getBool("ManualPumpForegripRacks", true);
+    m_ManualPumpForegripRacks = getBool("ManualPumpForegripRacks", false);
+    m_ManualPumpEveryShot = getBool("ManualPumpEveryShot", false);
     m_DualPistolsIndependentHandsEnabled = getBool("DualPistolsIndependentHandsEnabled", true);
     m_DualPistolsAkimboOnAnyServer = getBool("DualPistolsAkimboOnAnyServer", true);
     m_DualPistolsNativeReloadFallbackEnabled = getBool("DualPistolsNativeReloadFallbackEnabled", true);
@@ -3363,6 +3364,11 @@ void VR::ParseConfigFile()
     m_ManualThrowPeakVelocityBlend = std::clamp(getFloat("ManualThrowPeakVelocityBlend", m_ManualThrowPeakVelocityBlend), 0.0f, 1.0f);
     m_ManualThrowMaxVelocity = std::clamp(getFloat("ManualThrowMaxVelocity", m_ManualThrowMaxVelocity), 0.0f, 5000.0f);
     m_ManualThrowPinRequired = getBool("ManualThrowPinRequired", m_ManualThrowPinRequired);
+    {
+        std::string mode = getString("GrenadeThrowMode", m_GrenadeThrowArc ? "arc" : "physics");
+        std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        m_GrenadeThrowArc = mode != "physics";
+    }
     m_ManualThrowHandVelocityScale = std::clamp(getFloat("ManualThrowHandVelocityScale", m_ManualThrowHandVelocityScale), 0.0f, 10.0f);
     m_ManualThrowVelocityWindowMs = std::clamp(getInt("ManualThrowVelocityWindowMs", m_ManualThrowVelocityWindowMs), 20, 250);
     {

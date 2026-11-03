@@ -45,12 +45,30 @@ int main()
     for (int id = 0; id < 50; ++id)
         CHECK(HasOptic(id) == (id == 6 || id == 10 || id == 34 || id == 35 || id == 36));
     const Vector lens(10.0f, 0.0f, 0.0f), axis(1.0f, 0.0f, 0.0f);
+    // Eyebox (2.0.4): full within 8 deg of the axis, none past 16 deg, the eye
+    // 2-50 cm behind the lens (units: 100 per metre here).
     CHECK(EvaluateEye(Vector(0,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);
-    CHECK(EvaluateEye(Vector(0,1,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);
-    CHECK(EvaluateEye(Vector(11,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);
-    CHECK(EvaluateEye(Vector(9,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);
-    CHECK(EvaluateEye(Vector(-20,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);
+    CHECK(EvaluateEye(Vector(0,1,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);   // 5.7 deg off: full
+    // An 8 degree eyebox (the old default): fading past 8, none past 16.
+    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha > 0.2f);  // 12.4 deg: fading
+    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha < 0.8f);
+    CHECK(EvaluateEye(Vector(0,3.0f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha == 0.0f); // 16.7 deg: none
+    // The default 15 degrees: full at 12.4, none past 30.
+    volatile float defaultEyebox = kDefaultEyeboxDeg;
+    CHECK(defaultEyebox == 15.0f);
+    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);
+    CHECK(EvaluateEye(Vector(0,6.0f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);       // 31 deg
+    CHECK(EvaluateEye(Vector(4,6.4f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f); // the other eye at the face
+    CHECK(EvaluateEye(Vector(11,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);   // in front of the lens
+    CHECK(EvaluateEye(Vector(9,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);    // 1 cm: inside the tube
+    CHECK(EvaluateEye(Vector(-30,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);  // 40 cm behind: still sees it
+    CHECK(EvaluateEye(Vector(-45,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);  // 55 cm: too far
     CHECK(EvaluateEye(Vector(0,0,0), lens, Vector(0,0,0), 1.0f, 100.0f, 4.0f).alpha == 0.0f);
+    // A headset eye a few millimetres off the axis (the old exit-pupil gate
+    // was 0.66 / 2 = 0.33 units = 7.6 mm at 43.2 units/m) still sees it.
+    CHECK(EvaluateEye(Vector(0,0.5f,0.3f), Vector(4.32f,0,0), axis, 0.66f, 43.2f, 2.0f).alpha == 1.0f);
+    CHECK(EvaluateEye(Vector(0,0,0), lens, axis, 1.0f, 100.0f, 4.0f, 4.0f).alpha == 1.0f);
+    CHECK(EvaluateEye(Vector(0,1,0), lens, axis, 1.0f, 100.0f, 4.0f, 4.0f).alpha < 0.75f); // a tighter eyebox
     const float nan = std::numeric_limits<float>::quiet_NaN();
     const float infinity = std::numeric_limits<float>::infinity();
     CHECK(ResolveNearPlane(nan, 2.0f) == 2.0f);

@@ -306,6 +306,54 @@ namespace l4d2vr_hand_throw
             return out.Finite();
         }
 
+        // Pavlov-style release velocity (m/s) at `now`: the hand's peak over
+        // the last `window` seconds, along the direction it was moving then.
+        // People let go of the trigger while the hand already slows down (the
+        // release is noticed a frame or two late as well), so the speed at the
+        // moment of release, or an average over the window, turns a real throw
+        // into a lob at the feet. The peak is the fastest 3-frame fit; the
+        // direction is a 5-frame fit centred on it (steadier than 3 frames).
+        // A deliberate slow release has no fast part in the window and stays slow.
+        bool EstimateRelease(double now, float window, V3& out) const
+        {
+            out = {};
+            window = std::clamp(std::isfinite(window) ? window : 0.08f, 0.02f, 0.25f);
+            int last = m_Count - 1;
+            while (last >= 0 && At(last).t > now + 0.001)
+                --last;
+            if (last < 1)
+                return false;
+            int first = last;
+            while (first > 0 && now - At(first - 1).t <= window)
+                --first;
+            if (last - first + 1 < 3)
+            {
+                // Fewer than three frames inside the window: the newest ones.
+                first = (std::max)(0, last - 2);
+                return Fit(first, last, out);
+            }
+            V3 peak{};
+            float peakSpeed = -1.0f;
+            int peakEnd = last;
+            for (int end = first + 2; end <= last; ++end)
+            {
+                V3 segment{};
+                if (Fit(end - 2, end, segment) && segment.Length() > peakSpeed)
+                {
+                    peakSpeed = segment.Length();
+                    peak = segment;
+                    peakEnd = end;
+                }
+            }
+            if (peakSpeed < 0.0f)
+                return false;
+            const int a = (std::max)(first, peakEnd - 3), b = (std::min)(last, peakEnd + 1);
+            V3 around{};
+            const float aroundSpeed = Fit(a, b, around) ? around.Length() : 0.0f;
+            out = aroundSpeed > 0.0001f ? around * (peakSpeed / aroundSpeed) : peak;
+            return out.Finite();
+        }
+
     private:
         struct Sample { double t = 0.0; V3 p{}; };
 
@@ -449,7 +497,11 @@ namespace l4d2vr_hand_throw
     };
 
     // The throw boost: the projectile leaves with the hand's release velocity
-    // times this (a modest boost over the literal arm speed), plus the body's
-    // own motion. ManualThrowHandVelocityScale / the plugin's ThrowHandVelocityScale.
-    constexpr float kDefaultThrowBoost = 1.5f;
+    // (its peak, EstimateRelease) times this, plus the body's own motion.
+    // ManualThrowHandVelocityScale / the plugin's ThrowHandVelocityScale.
+    // 2.0.4: 2.5 (was 1.5 on a half-peak blend: a 3.5 m/s throw left at
+    // 227 units/s, 5 m/s, and landed a couple of metres away). A natural
+    // overhand (peak 5-6 m/s at the hand) now leaves at 12-15 m/s; a slow
+    // deliberate release (under 1 m/s) still only drops the grenade.
+    constexpr float kDefaultThrowBoost = 2.5f;
 }

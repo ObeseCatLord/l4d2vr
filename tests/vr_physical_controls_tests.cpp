@@ -155,6 +155,34 @@ int main()
     pumps.Reset();
     Check(!pumps.Observe(10u, 3, 0));
 
+    // ManualPumpEveryShot off (the 2.0.4 default): shell after shell like a
+    // semi-auto; only the shot that empties the tube owes a pump, which then
+    // chambers the next shell loaded (and an empty stroke chambers nothing).
+    PumpCycles semi;
+    semi.SetEveryShot(false);
+    Check(!semi.EveryShot() && PumpCycles::ShotNeedsCycle(true, 5) && !PumpCycles::ShotNeedsCycle(false, 5) &&
+        PumpCycles::ShotNeedsCycle(false, 0));
+    Check(!semi.Observe(10u, 3, 8));
+    semi.NotifyShot(10u, 3, 7);
+    Check(!semi.Observe(10u, 3, 7));    // no pump after a normal shot
+    semi.NotifyShot(10u, 3, 1);
+    Check(!semi.Observe(10u, 3, 1));
+    semi.NotifyShot(10u, 3, 0);         // the last shell
+    Check(semi.Observe(10u, 3, 0));
+    Check(!semi.Complete(10u));         // an empty stroke chambers nothing
+    Check(semi.Observe(10u, 3, 0));
+    Check(semi.Observe(10u, 3, 1));     // a shell loaded: still needs the pump to chamber it
+    Check(semi.Complete(10u));
+    Check(!semi.Observe(10u, 3, 1));
+    // The predicted last shot the host never fired comes back: no pump.
+    PumpCycles semiOverturn;
+    semiOverturn.SetEveryShot(false);
+    semiOverturn.NotifyShot(10u, 3, 0, 0u, 72, 1000u);
+    Check(semiOverturn.Observe(10u, 3, 0, 0u, 72, 1100u));
+    Check(semiOverturn.Observe(10u, 3, 1, 0u, 72, 1200u));
+    Check(!semiOverturn.Observe(10u, 3, 1, 0u, 72, 1600u));
+    Check(semiOverturn.TakeOverturned());
+
     // A predicted shot the host never fires: the shells come back with the
     // reserve untouched, so no pump is needed.
     PumpCycles overturn;

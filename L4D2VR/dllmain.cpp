@@ -3099,6 +3099,22 @@ namespace
             l4d2vr_offhand_pose::kDefaultRotationText, true },
         { "2026-11-02_offhand_pose_offset", "NativeViewmodelLeftHandPoseOffsetMeters",
             l4d2vr_offhand_pose::kDefaultOffsetText, true },
+        // Headset session 6: the pump needs the free hand's trigger; the
+        // foregrip's grip alone no longer racks it.
+        { "2026-11-02_pump_trigger_required", "ManualPumpForegripRacks", "false" },
+        // Pump shotguns fire shell after shell; the pump only chambers a shell
+        // loaded into a gun that ran dry (ManualPumpEveryShot=true: every shot).
+        { "2026-11-02_pump_semi_auto", "ManualPumpEveryShot", "false" },
+        // Headset session 6: grenades landed at the feet. Hand throws use the
+        // hand's peak speed (EstimateRelease) with a 2.5x boost (was 1.5).
+        { "2026-11-02_hand_throw_peak_boost", "ManualThrowHandVelocityScale", "2.5" },
+        // Headset session 6: scopes showed no picture. A wider eyebox (was 8).
+        { "2026-11-02_scope_eyebox", "ScopeEyeboxDeg", "15" },
+        // Configs carried over from before the physical overhaul (and the
+        // config panel's old default) kept ScopeEnabled=false, so the scopes
+        // never rendered at all for upgraded installs.
+        { "2026-11-02_scopes_on", "ScopeEnabled", "true" },
+        { "2026-11-02_scopes_physical_lens_on", "ScopePhysicalLensEnabled", "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3235,6 +3251,7 @@ namespace
         sampleKeys.insert("ManualPumpChamberFraction");
         sampleKeys.insert("ManualPumpGrabPaddingMeters");
         sampleKeys.insert("ManualPumpForegripRacks");
+        sampleKeys.insert("ManualPumpEveryShot");
         sampleKeys.insert("DualPistolsIndependentHandsEnabled");
         sampleKeys.insert("DualPistolsNativeReloadFallbackEnabled");
         sampleKeys.insert("DualPistolsPhysicalReloadEnabled");
@@ -3321,6 +3338,7 @@ namespace
         sampleKeys.insert("MeleeGripReachMeters");
         sampleKeys.insert("ConsumableGiveEnabled");
         sampleKeys.insert("ManualThrowPinRequired");
+        sampleKeys.insert("GrenadeThrowMode");
         sampleKeys.insert("ManualThrowHandVelocityScale");
         sampleKeys.insert("ThrowableHoldAngleOffsetDeg");
         sampleKeys.insert("ManualThrowVelocityWindowMs");

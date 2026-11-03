@@ -273,8 +273,11 @@ bool VR::ResolvePavlovTwoHandedAimBasis(
     Vector& outRight,
     Vector& outUp) const
 {
-    if (!IsVrHandsTwoHandedGripPoseActive() || m_MouseModeEnabled ||
-        (m_ManualPumpEnabled && m_ManualPumpBlockingFire.load(std::memory_order_acquire)))
+    // A pump waiting to be cycled keeps the two-handed aim: the support hand
+    // holds the fore-end through the shot and while it pumps (Pavlov). Turning
+    // the aim over to the gun hand alone after every pump-shotgun shot swung
+    // the gun off the support hand (headset session 6).
+    if (!IsVrHandsTwoHandedGripPoseActive() || m_MouseModeEnabled)
         return false;
     // A short gun (pistol, magnum, SMG) is aimed by the trigger hand alone; the
     // support hand on it still steadies the recoil (vr_two_hand_aim.h).
@@ -1909,6 +1912,7 @@ void VR::UpdateTracking()
             pavlovAimUp))
     {
         ApplyPavlovTwoHandedAimSmoothing(pavlovAimForward, pavlovAimRight, pavlovAimUp);
+        m_VrHandsTwoHandedAimApplied = true;
         m_RightControllerForward = pavlovAimForward;
         m_RightControllerRight = pavlovAimRight;
         m_RightControllerUp = pavlovAimUp;
@@ -1918,6 +1922,7 @@ void VR::UpdateTracking()
     }
     else
     {
+        m_VrHandsTwoHandedAimApplied = false;
         ResetPavlovTwoHandedAimSmoothing();
     }
 

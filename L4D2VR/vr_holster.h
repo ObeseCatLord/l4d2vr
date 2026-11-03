@@ -109,14 +109,20 @@ namespace l4d2vr_holster
         // share Pavlov's back socket (slot2), the long gun moved toward the
         // dominant shoulder and the kit onto the off shoulder blade. A chest
         // item is taken by reaching for it in its pocket.
+        // 2.0.4: the chest pockets sit 10 cm further forward and 4 cm lower
+        // than Pavlov's sockets (which hang from Pavlov's body, behind the
+        // headset): at 2 cm in front of the eyes, pulled back further when
+        // looking down, a grenade or the pills were under the chin, outside
+        // the view at any natural glance down ("no obvious way to throw
+        // grenades"). Now a 45-60 degree look down shows them on the chest.
         Vector socket[kZoneCount] = {
             Vector(-0.30f, 0.06f, 0.3043f),     // back, dominant shoulder
             Vector(-0.0615f, 0.25f, 0.2271f),   // dominant hip
-            Vector(0.0225f, -0.1646f, 0.4396f), // chest, off-hand side (upper)
+            Vector(0.12f, -0.15f, 0.40f),       // chest, off-hand side (upper)
             Vector(-0.25f, -0.13f, 0.36f),      // back, off shoulder blade
-            Vector(0.0242f, 0.1461f, 0.4413f),  // chest, dominant side (upper)
+            Vector(0.12f, 0.15f, 0.40f),        // chest, dominant side (upper)
         };
-        float pocketReachMeters = 0.16f;        // hand to a pocketed item
+        float pocketReachMeters = 0.18f;        // hand to a pocketed item (2.0.4: was 0.16)
         // The magazine pouch on the off-hand hip (Pavlov's ammo-pouch mesh,
         // root offset toward the off side) and the magazine logic's default
         // reach to it (MagazineInteractionFreshMagazineGrabRangeMeters 0.20 +

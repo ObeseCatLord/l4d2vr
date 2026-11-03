@@ -16480,6 +16480,13 @@ namespace
         std::uint64_t tickMs[2]{};
         int frameGameplaySide[2]{};          // controller the wrist follows
         Vector wristInController[2]{};
+        // The viewmodel arm's own segment lengths (game units): the body solves
+        // with them so both elbows land on the same point.
+        float upperLength[2]{};
+        float lowerLength[2]{};
+        // Cropped hands (NativeViewmodelArmCroppingEnabled): only the hand is
+        // drawn, so the body keeps its own forearm down to the wrist.
+        bool bodyForearm[2]{};
     };
 
     inline std::mutex& HooksBodyArmHandCacheMutex()
@@ -16501,7 +16508,10 @@ namespace
         VR* vr,
         int gameplaySide,
         int frameGameplaySide,
-        const Vector& wristWorld)
+        const Vector& wristWorld,
+        float upperLength,
+        float lowerLength,
+        bool bodyForearm = false)
     {
         vr_vm_stabilize::Mat3x4 frame{};
         vr_vm_stabilize::Mat3x4 inverse{};
@@ -16522,10 +16532,14 @@ namespace
         cache.tickMs[slot] = static_cast<std::uint64_t>(GetTickCount64());
         cache.frameGameplaySide[slot] = frameGameplaySide;
         cache.wristInController[slot] = local;
+        cache.upperLength[slot] = std::isfinite(upperLength) ? upperLength : 0.0f;
+        cache.lowerLength[slot] = std::isfinite(lowerLength) ? lowerLength : 0.0f;
+        cache.bodyForearm[slot] = bodyForearm;
     }
 
     // Body side: where the drawn wrist of the physical side is this frame.
-    inline bool HooksBodyArmReadWristTarget(VR* vr, int physicalSide, Vector& outWrist)
+    inline bool HooksBodyArmReadWristTarget(VR* vr, int physicalSide, Vector& outWrist,
+        float* outUpperLength = nullptr, float* outLowerLength = nullptr, bool* outBodyForearm = nullptr)
     {
         HooksBodyArmHandCache cache{};
         {
@@ -16541,6 +16555,12 @@ namespace
         if (!HooksBodyArmControllerFrame(vr, cache.frameGameplaySide[slot], frame))
             return false;
         outWrist = HooksTransformPoint(frame, cache.wristInController[slot]);
+        if (outUpperLength)
+            *outUpperLength = cache.upperLength[slot];
+        if (outLowerLength)
+            *outLowerLength = cache.lowerLength[slot];
+        if (outBodyForearm)
+            *outBodyForearm = cache.bodyForearm[slot];
         return HooksNativeViewmodelHandsOnlyVectorFinite(outWrist);
     }
 
@@ -20730,7 +20750,9 @@ namespace
                     vr,
                     gameplaySide,
                     frameSide,
-                    vr_vm_stabilize::GetOrigin(solvedBones[hand]));
+                    vr_vm_stabilize::GetOrigin(solvedBones[hand]),
+                    armGeometryValid[slot] ? armUpperLength[slot] : 0.0f,
+                    armGeometryValid[slot] ? armLowerLength[slot] : 0.0f);
             }
             // Self-test read-back: how far the drawn wrist and elbow are from
             // the body arm's (both world space, this eye).
@@ -20977,6 +20999,23 @@ namespace
 
                 if (set.planeCount <= 0)
                     return false;
+                // Where this cropped hand is drawn, for the first-person body's
+                // arm (which then keeps its own forearm down to the wrist).
+                if (vr->m_FirstPersonBodyArmIK && set.isolatedBones &&
+                    keepSide.hand >= 0 && keepSide.hand < numBones &&
+                    (keepSide.side == -1 || keepSide.side == 1))
+                {
+                    const bool weaponPosed = keepSide.side == 1 ||
+                        vr->IsVrHandsTwoHandedGripPoseActive();
+                    HooksBodyArmPublishDrawnWrist(
+                        vr,
+                        keepSide.side,
+                        weaponPosed ? 1 : keepSide.side,
+                        vr_vm_stabilize::GetOrigin(set.isolatedBones[keepSide.hand]),
+                        0.0f,
+                        0.0f,
+                        true);
+                }
                 outClipSets.push_back(set);
                 return true;
             };
@@ -23624,7 +23663,8 @@ namespace
     inline void HooksBodyIkScaleAlongLimb(vr_vm_stabilize::Mat3x4& bone, const Vector& limbDirection, float scale)
     {
         Vector dir = limbDirection;
-        if (!(scale > 1.0001f) || VectorNormalize(dir) <= 0.0f)
+        if (!std::isfinite(scale) || std::fabs(scale - 1.0f) < 0.0001f || scale < 0.5f || scale > 2.5f ||
+            VectorNormalize(dir) <= 0.0f)
             return;
         int limbAxis = -1;
         float best = -1.0f;
@@ -23659,9 +23699,11 @@ namespace
         float unitsPerMeter,
         vr_vm_stabilize::Mat3x4* bones,
         bool (&outSolved)[2],
+        bool (&outKeptForearm)[2],
         HooksBodyArmSolution& outSolution)
     {
         outSolved[0] = outSolved[1] = false;
+        outKeptForearm[0] = outKeptForearm[1] = false;
         if (!vr || !bones || !vr->m_FirstPersonBodyArmIK)
             return;
         l4d2vr_body_ik::BodyFrame frame{};
@@ -23681,7 +23723,9 @@ namespace
                 upper >= layout.numBones || fore >= layout.numBones || hand >= layout.numBones)
                 continue;
             Vector target{};
-            if (!HooksBodyArmReadWristTarget(vr, side, target))
+            float viewmodelUpper = 0.0f, viewmodelLower = 0.0f;
+            bool keepForearm = false;
+            if (!HooksBodyArmReadWristTarget(vr, side, target, &viewmodelUpper, &viewmodelLower, &keepForearm))
                 continue;
 
             std::vector<vr_vm_stabilize::Mat3x4> backup(bones, bones + layout.numBones);
@@ -23690,12 +23734,20 @@ namespace
             const Vector shoulder = vr_vm_stabilize::GetOrigin(bones[upper]);
             const Vector elbow0 = vr_vm_stabilize::GetOrigin(bones[fore]);
             const Vector wrist0 = vr_vm_stabilize::GetOrigin(bones[hand]);
-            const float upperLength = (elbow0 - shoulder).Length();
-            const float lowerLength = (wrist0 - elbow0).Length();
-            if (!std::isfinite(upperLength) || !std::isfinite(lowerLength) ||
-                upperLength < 0.05f * unitsPerMeter || lowerLength < 0.05f * unitsPerMeter ||
-                upperLength > 0.8f * unitsPerMeter || lowerLength > 0.8f * unitsPerMeter)
+            const float bodyUpper = (elbow0 - shoulder).Length();
+            const float bodyLower = (wrist0 - elbow0).Length();
+            if (!std::isfinite(bodyUpper) || !std::isfinite(bodyLower) ||
+                bodyUpper < 0.05f * unitsPerMeter || bodyLower < 0.05f * unitsPerMeter ||
+                bodyUpper > 0.8f * unitsPerMeter || bodyLower > 0.8f * unitsPerMeter)
                 continue;
+            // Solve with the drawn (viewmodel) arm's segment lengths when they
+            // are plausible for this body, so its elbow and the body's coincide:
+            // the body draws shoulder -> elbow, the VR hand's arm elbow -> hand.
+            const bool viewmodelLengthsUsable = !keepForearm &&
+                viewmodelUpper > bodyUpper * 0.6f && viewmodelUpper < bodyUpper * 1.6f &&
+                viewmodelLower > bodyLower * 0.6f && viewmodelLower < bodyLower * 1.6f;
+            const float upperLength = viewmodelLengthsUsable ? viewmodelUpper : bodyUpper;
+            const float lowerLength = viewmodelLengthsUsable ? viewmodelLower : bodyLower;
 
             const l4d2vr_body_ik::Vec3 pole = l4d2vr_body_ik::ArmElbowPole(
                 frame, side, HooksBodyIkVec(shoulder), HooksBodyIkVec(target), unitsPerMeter);
@@ -23715,42 +23767,53 @@ namespace
             if (solve.shoulderShift > 0.0f)
                 ok = ok && HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
                     upper, HooksBodyIkTranslation(solvedShoulder - shoulder), bones);
-            // Upper arm: swing onto the solved elbow, then stretch along it.
+            // Upper arm: swing onto the solved elbow, then fit its length
+            // (stretch, or the drawn arm's proportions) along the limb.
             ok = ok && HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
                 upper, HooksBodyIkRotationAbout(solvedShoulder, elbow0 - shoulder, solvedElbow - solvedShoulder), bones);
-            if (ok && solve.stretch > 1.0001f)
+            if (ok)
             {
-                HooksBodyIkScaleAlongLimb(bones[upper], solvedElbow - solvedShoulder, solve.stretch);
+                const float solvedUpper = (solvedElbow - solvedShoulder).Length();
+                HooksBodyIkScaleAlongLimb(bones[upper], solvedElbow - solvedShoulder, solvedUpper / bodyUpper);
                 ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
                     fore, HooksBodyIkTranslation(solvedElbow - vr_vm_stabilize::GetOrigin(bones[fore])), bones);
             }
-            // Forearm: swing onto the wrist, then stretch.
-            if (ok)
+            // Cropped VR hands: the body's own forearm reaches the wrist and
+            // only its hand disappears there.
+            if (ok && keepForearm)
             {
                 const Vector elbowNow = vr_vm_stabilize::GetOrigin(bones[fore]);
                 const Vector wristNow = vr_vm_stabilize::GetOrigin(bones[hand]);
                 ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
                     fore, HooksBodyIkRotationAbout(elbowNow, wristNow - elbowNow, solvedWrist - elbowNow), bones);
+                if (ok)
+                {
+                    HooksBodyIkScaleAlongLimb(bones[fore], solvedWrist - solvedElbow,
+                        (solvedWrist - solvedElbow).Length() / bodyLower);
+                    const vr_vm_stabilize::Mat3x4 collapsedHand =
+                        HooksNativeViewmodelHandsOnlyCollapsedBoneAt(solvedWrist);
+                    for (int bone = 0; bone < layout.numBones; ++bone)
+                    {
+                        if (HooksNativeViewmodelHandsOnlyIsAncestor(layout.boneParents, bone, hand, layout.numBones))
+                            bones[bone] = collapsedHand;
+                    }
+                    ok = (solvedWrist - target).Length() < 0.02f * unitsPerMeter;
+                }
             }
-            if (ok && solve.stretch > 1.0001f)
-            {
-                HooksBodyIkScaleAlongLimb(bones[fore], solvedWrist - solvedElbow, solve.stretch);
-                ok = HooksNativeViewmodelArmIkApplyDeltaToBranch(layout.boneParents, layout.numBones,
-                    hand, HooksBodyIkTranslation(solvedWrist - vr_vm_stabilize::GetOrigin(bones[hand])), bones);
-            }
-            // The body's hand (and fingers) disappear into the VR hand's wrist.
-            if (ok)
+            // Below the elbow the VR hand's own arm is drawn (with the hand
+            // pose and forearm twist): the body's forearm and hand disappear
+            // into the elbow, so there is one forearm and one hand per side.
+            else if (ok)
             {
                 const vr_vm_stabilize::Mat3x4 collapsed =
-                    HooksNativeViewmodelHandsOnlyCollapsedBoneAt(solvedWrist);
+                    HooksNativeViewmodelHandsOnlyCollapsedBoneAt(solvedElbow);
                 for (int bone = 0; bone < layout.numBones; ++bone)
                 {
-                    if (HooksNativeViewmodelHandsOnlyIsAncestor(layout.boneParents, bone, hand, layout.numBones))
+                    if (HooksNativeViewmodelHandsOnlyIsAncestor(layout.boneParents, bone, fore, layout.numBones))
                         bones[bone] = collapsed;
                 }
-                const float wristError = (vr_vm_stabilize::GetOrigin(bones[fore]) - solvedElbow).Length() +
-                    ((solvedWrist - target).Length());
-                ok = std::isfinite(wristError) && wristError < 0.02f * unitsPerMeter;
+                const float error = (solvedWrist - target).Length();
+                ok = std::isfinite(error) && error < 0.02f * unitsPerMeter;
             }
             if (!ok)
             {
@@ -23758,6 +23821,7 @@ namespace
                 continue;
             }
             outSolved[slot] = true;
+            outKeptForearm[slot] = keepForearm;
             outSolution.valid[slot] = true;
             outSolution.shoulder[slot] = solvedShoulder;
             outSolution.elbow[slot] = solvedElbow;
@@ -24353,6 +24417,7 @@ namespace
         // before the skeleton is published, so the viewmodel arm roots at the
         // same (possibly slid) shoulders and bends its elbows in the same plane.
         bool bodyArmSolved[2]{};
+        bool bodyArmKeptForearm[2]{};
         HooksBodyArmSolution bodyArmSolution{};
         HooksFirstPersonBodySolveArms(
             vr,
@@ -24363,6 +24428,7 @@ namespace
             unitsPerMeter,
             anchoredBones,
             bodyArmSolved,
+            bodyArmKeptForearm,
             bodyArmSolution);
         {
             const int eyeSlot = HooksFirstPersonBodyEyeSlot(bodyState->eyeIndex);
@@ -24542,13 +24608,7 @@ namespace
                 s_layout.rightUpperArmBone,
                 s_layout.rightForearmBone,
                 s_layout.hideRightArmMask);
-        auto bodyHandSubtree = [&](int side, int bone) -> bool
-            {
-                const int handBone = side < 0 ? s_layout.leftHandBone : s_layout.rightHandBone;
-                return handBone >= 0 &&
-                    HooksNativeViewmodelHandsOnlyIsAncestor(
-                        s_layout.boneParents, bone, handBone, s_layout.numBones);
-            };
+
 
         // Fail closed if a replacement model supplies a transform that our
         // frozen-branch reconstruction amplifies. Rigid anchoring preserves
@@ -24574,14 +24634,21 @@ namespace
                 return false;
             }
 
-            // A solved arm keeps its upper arm and forearm; only its hand
-            // subtree is collapsed (under the VR hand).
-            const bool leftArmCollapsed = bodyArmSolved[0]
-                ? bodyHandSubtree(-1, bone)
-                : (vr->m_FirstPersonBodyHideArms && s_layout.hideLeftArmMask[index] != 0u);
-            const bool rightArmCollapsed = bodyArmSolved[1]
-                ? bodyHandSubtree(1, bone)
-                : (vr->m_FirstPersonBodyHideArms && s_layout.hideRightArmMask[index] != 0u);
+            // A solved arm keeps its upper arm; its forearm and hand are
+            // collapsed into the elbow (the VR hand's arm continues there).
+            auto handSubtree = [&](int handBone) -> bool
+                {
+                    return handBone >= 0 && HooksNativeViewmodelHandsOnlyIsAncestor(
+                        s_layout.boneParents, bone, handBone, s_layout.numBones);
+                };
+            const bool leftArmCollapsed = bodyArmKeptForearm[0]
+                ? handSubtree(s_layout.leftHandBone)
+                : ((bodyArmSolved[0] || vr->m_FirstPersonBodyHideArms) &&
+                    s_layout.hideLeftArmMask[index] != 0u);
+            const bool rightArmCollapsed = bodyArmKeptForearm[1]
+                ? handSubtree(s_layout.rightHandBone)
+                : ((bodyArmSolved[1] || vr->m_FirstPersonBodyHideArms) &&
+                    s_layout.hideRightArmMask[index] != 0u);
             const bool intentionallyCollapsed =
                 (vr->m_FirstPersonBodyHideHead &&
                     s_layout.hideHeadMask[index] != 0u) ||

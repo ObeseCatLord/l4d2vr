@@ -739,8 +739,9 @@ namespace l4d2vr_voice
                 m_SentFlags = -1;
                 return -1;
             }
-            if (static_cast<int>(flags) != m_SentFlags)
+            if (static_cast<int>(flags) != m_SentFlags || m_Refresh)
             {
+                m_Refresh = false;
                 m_SentFlags = static_cast<int>(flags);
                 m_Attempts = 1;
                 m_LastHelloMs = in.nowMs;
@@ -757,6 +758,9 @@ namespace l4d2vr_voice
 
         // A new server feature ack (map change, reconnect): handshake again.
         void Restart() { m_SentFlags = -1; m_Acked = false; m_Attempts = 0; m_Peers = 0u; }
+        // The same server repeated its capability bundle: say hello again (the
+        // relay may have been reset) but keep the session running meanwhile.
+        void Refresh() { if (m_SentFlags > 0) m_Refresh = true; }
 
         void OnAck(std::uint32_t version) { if (version >= kProtocolVersion && m_SentFlags > 0) m_Acked = true; }
         void OnPeers(std::uint32_t lo, std::uint32_t hi) { if (m_Acked) m_Peers = (std::uint64_t{ hi } << 32) | lo; }
@@ -770,6 +774,7 @@ namespace l4d2vr_voice
 
     private:
         int m_SentFlags = -1;
+        bool m_Refresh = false;
         int m_Attempts = 0;
         double m_LastHelloMs = 0.0;
         bool m_Acked = false;

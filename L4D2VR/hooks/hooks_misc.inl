@@ -19719,10 +19719,18 @@ namespace
                     attachedUpperArmValid[slot] = true;
 
                     // Sleeve vertices near the seam may still carry clavicle or
-                    // chest weights. Copy every matching ancestor as well, so
-                    // those weights use the same body matrices as the torso mesh.
+                    // chest weights. Give those ancestors the body's orientation,
+                    // so they move with the torso mesh. The side's own bones
+                    // (clavicle) keep the VIEWMODEL's proportions, placed back from
+                    // the body shoulder: the third-person model can be smaller
+                    // (Zoey), and copying its clavicle matrix onto the arm
+                    // stretched the sleeve into ribbons. Shared spine bones are
+                    // copied from the body as before.
                     int current = boneParents[
                         static_cast<size_t>(chain.upperArm)];
+                    int rebuiltChild = chain.upperArm;
+                    Vector rebuiltChildOrigin = attachedUpperArmOrigin[slot];
+                    bool rebuildChain = true;
                     for (int guard = 0;
                         guard < numBones && current >= 0 && current < numBones;
                         ++guard)
@@ -19734,11 +19742,59 @@ namespace
                             HooksNativeViewmodelHandsOnlyMatrixFinite(
                                 bodyBones[static_cast<size_t>(bodyBone)]))
                         {
+                            vr_vm_stabilize::Mat3x4 placed =
+                                bodyBones[static_cast<size_t>(bodyBone)];
+                            const int namedSide = HooksNativeViewmodelHandsOnlyBoneSide(
+                                vr_vm_stabilize::ToLowerAscii(
+                                    boneNames[static_cast<size_t>(current)]));
+                            vr_vm_stabilize::Mat3x4 sourceAncestor{};
+                            vr_vm_stabilize::Mat3x4 sourceChild{};
+                            vr_vm_stabilize::Mat3x4 rigidBody{};
+                            vr_vm_stabilize::Mat3x4 rigidSource{};
+                            vr_vm_stabilize::Mat3x4 inverseSource{};
+                            if (rebuildChain && namedSide == chain.side &&
+                                vr_vm_stabilize::SafeRead(sourceBones + current, sourceAncestor) &&
+                                vr_vm_stabilize::SafeRead(sourceBones + rebuiltChild, sourceChild) &&
+                                HooksViewmodelAutoGripNormalizeRigidMatrix(placed, rigidBody) &&
+                                HooksViewmodelAutoGripNormalizeRigidMatrix(sourceAncestor, rigidSource))
+                            {
+                                // The child's offset in this bone's frame, from the
+                                // viewmodel's own pose (bone lengths do not animate).
+                                vr_vm_stabilize::InvertTR(rigidSource, inverseSource);
+                                const Vector local = HooksTransformPoint(
+                                    inverseSource, vr_vm_stabilize::GetOrigin(sourceChild));
+                                rigidBody.m[0][3] = 0.0f;
+                                rigidBody.m[1][3] = 0.0f;
+                                rigidBody.m[2][3] = 0.0f;
+                                const Vector rotatedLocal = HooksTransformPoint(rigidBody, local);
+                                const Vector origin = rebuiltChildOrigin - rotatedLocal;
+                                if (HooksNativeViewmodelHandsOnlyVectorFinite(origin) &&
+                                    local.Length() < 0.5f * sourceUnitsPerMeter)
+                                {
+                                    rigidBody.m[0][3] = origin.x;
+                                    rigidBody.m[1][3] = origin.y;
+                                    rigidBody.m[2][3] = origin.z;
+                                    placed = rigidBody;
+                                    rebuiltChild = current;
+                                    rebuiltChildOrigin = origin;
+                                }
+                                else
+                                {
+                                    rebuildChain = false;
+                                }
+                            }
+                            else
+                            {
+                                rebuildChain = false;
+                            }
                             attachedAncestorMask[
                                 static_cast<size_t>(current)] = 1u;
                             attachedAncestorBones[
-                                static_cast<size_t>(current)] =
-                                bodyBones[static_cast<size_t>(bodyBone)];
+                                static_cast<size_t>(current)] = placed;
+                        }
+                        else
+                        {
+                            rebuildChain = false;
                         }
 
                         const int parent = boneParents[

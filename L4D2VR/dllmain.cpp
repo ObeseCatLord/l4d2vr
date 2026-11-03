@@ -3107,6 +3107,12 @@ namespace
         { "2026-11-03_inventory_anchor_boxes_off", "ShowInventoryAnchors", "false" },
         // Pavlov-sized foregrip catch (an 11.5 cm hand sphere on the handguard): the
         // 5 cm target box made two-handing awkward. Only the old default changes.
+        // Headset session 6: the wrist HUDs were gone in 2.0.x. Everything that can
+        // hide them is switched back on once (the draw bug itself is fixed in code).
+        { "2026-11-03_wrist_hud_left_on", "LeftWristHudEnabled", "true" },
+        { "2026-11-03_wrist_hud_right_on", "RightAmmoHudEnabled", "true" },
+        { "2026-11-03_wrist_hud_world_quads_on", "HandHudWorldQuadEnabled", "true" },
+        { "2026-11-03_wrist_hud_attach_on", "HandHudWorldQuadAttachToControllers", "true" },
         { "2026-11-03_pavlov_foregrip_box", "VrHandsTwoHandedGripTargetBoxScale", "1.5", false, "1.0" },
     };
 

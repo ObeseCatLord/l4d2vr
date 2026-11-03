@@ -606,6 +606,14 @@ void VR::RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job)
                 std::lock_guard<std::mutex> lock(m_NativeWristTrimMutex);
                 m_NativeWristTrim[0] = u0; m_NativeWristTrim[1] = v0;
                 m_NativeWristTrim[2] = u1; m_NativeWristTrim[3] = v1;
+                m_NativeWristTrimEmptyReads = 0;
+            }
+            else if (++m_NativeWristTrimEmptyReads >= 4 && !m_NativeWristHudRightBlank.load(std::memory_order_acquire))
+            {
+                // Nothing painted where the weapon panel is: the right wrist would
+                // stay blank, so it uses the custom ammo panel (vr_lifecycle_pose_hud).
+                m_NativeWristHudRightBlank.store(true, std::memory_order_release);
+                NoteNativeWristHudGate("the weapon panel crop is empty: right wrist uses the custom ammo panel");
             }
             refs.trimSys->UnlockRect();
         }

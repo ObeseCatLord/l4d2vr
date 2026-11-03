@@ -2131,6 +2131,15 @@ void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
         m_HasAimConvergePoint = false;
         UpdateAimTeammateHudTarget(localPlayer, Vector{}, Vector{}, false);
 
+        // GrenadeThrowMode=arc: L4D2's own throw along the hand's aim
+        // (vr_grenade_arc.h), drawn from the hand; the trigger throws it there.
+        if (GrenadeArcMode() && !frontViewEyeAim && !useMouse)
+        {
+            if (!DrawNativeThrowArc(localPlayer, origin, direction))
+                m_HasThrowArc = false;
+            return;
+        }
+
         // Legacy preview for the original game throw. Manual throw returns above because
         // its trajectory depends on release velocity rather than controller pitch.
         Vector pitchSource = direction;
@@ -3564,6 +3573,9 @@ bool VR::ShouldShowAimLine(C_WeaponCSBase* weapon) const
     // remain enabled while connected to a server that does not consume our VR
     // usercmd payload, though; in that fallback the game performs its original
     // throw and must keep the original arc visible.
+    // GrenadeThrowMode=arc: the held grenade always shows the native throw arc.
+    if (GrenadeArcMode() && IsThrowableWeapon(weapon))
+        return true;
     if (m_ManualThrowEnabled && IsThrowableWeapon(weapon))
     {
         const bool serverSupportsManualThrow =
@@ -4203,6 +4215,99 @@ void VR::DrawThrowArc(const Vector& origin, const Vector& forward, const Vector&
     const int throwArcQueueMode = m_Game ? m_Game->GetMatQueueMode() : 0;
     if (!((throwArcQueueMode == 0) && m_DesktopMirrorHidePluginOverlays && m_DesktopMirrorEnabled && !m_ScopeRenderingPass))
         DrawThrowArcFromCache(duration);
+}
+
+static bool VR_GrenadeArcTraceSegment(Game* game, C_BasePlayer* localPlayer, const Vector& from, const Vector& to,
+    float& fraction, Vector& end)
+{
+    __try
+    {
+        CGameTrace trace;
+        Ray_t ray;
+        CTraceFilterSkipSelf filter(reinterpret_cast<IHandleEntity*>(localPlayer), 0);
+        ray.Init(from, to);
+        game->m_EngineTrace->TraceRay(ray, STANDARD_TRACE_MASK, &filter, &trace);
+        fraction = trace.fraction;
+        end = trace.endpos;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+// GrenadeThrowMode=arc: the arc L4D2's own throw flies (vr_grenade_arc.h:
+// 750 u/s along the aim from 16 units ahead of the eye, plus the body's
+// velocity, gravity 0.4 x sv_gravity), traced against the world until it hits
+// something, and drawn from the hand that holds the grenade. The aim goes to
+// the server as the view angles (and the encoded pose, which the plugin's
+// throw eye override uses), so the grenade lands where the arc shows.
+bool VR::DrawNativeThrowArc(C_BasePlayer* localPlayer, const Vector& hand, const Vector& direction)
+{
+    if (!m_Game || !localPlayer || direction.IsZero())
+        return false;
+    const Vector eyeV = localPlayer->EyePosition();
+    const Vector body = localPlayer->m_vecVelocity;
+    const float svGravity = m_Game->GetConVarFloat("sv_gravity", l4d2vr_grenade_arc::kDefaultSvGravity);
+    const l4d2vr_grenade_arc::Launch launch = l4d2vr_grenade_arc::NativeLaunch(
+        l4d2vr_grenade_arc::V3(eyeV.x, eyeV.y, eyeV.z), l4d2vr_grenade_arc::V3(direction.x, direction.y, direction.z),
+        l4d2vr_grenade_arc::V3(body.x, body.y, body.z), svGravity);
+    if (!launch.valid)
+        return false;
+    const l4d2vr_grenade_arc::V3 handV(hand.x, hand.y, hand.z);
+    auto toVector = [](const l4d2vr_grenade_arc::V3& v) { return Vector(v.x, v.y, v.z); };
+    // March the true trajectory in short steps until it hits the world (or 4 s).
+    constexpr float kStep = 1.0f / 30.0f;
+    constexpr int kMaxSteps = 120;
+    Vector previous = toVector(launch.origin);
+    float landingTime = kStep * kMaxSteps;
+    Vector landing = toVector(l4d2vr_grenade_arc::PositionAt(launch, landingTime));
+    bool hit = false;
+    for (int i = 1; i <= kMaxSteps && m_Game->m_EngineTrace; ++i)
+    {
+        const float t = kStep * static_cast<float>(i);
+        const Vector next = toVector(l4d2vr_grenade_arc::PositionAt(launch, t));
+        float fraction = 1.0f;
+        Vector end = next;
+        if (!VR_GrenadeArcTraceSegment(m_Game, localPlayer, previous, next, fraction, end))
+            break;
+        if (fraction < 1.0f)
+        {
+            landingTime = t - kStep + kStep * fraction;
+            landing = end;
+            hit = true;
+            break;
+        }
+        previous = next;
+    }
+    // Spread the drawn points over the flight to the hit, from the hand.
+    const float blend = std::min(0.15f, landingTime * 0.35f);
+    for (int i = 0; i <= THROW_ARC_SEGMENTS; ++i)
+    {
+        const float t = landingTime * static_cast<float>(i) / static_cast<float>(THROW_ARC_SEGMENTS);
+        m_LastThrowArcPoints[i] = i == THROW_ARC_SEGMENTS && hit
+            ? landing : toVector(l4d2vr_grenade_arc::DrawnPointAt(launch, handV, t, blend));
+    }
+    m_NativeThrowArcLanding = landing;
+    m_NativeThrowArcLandingValid = hit;
+    m_NativeThrowArcLaunch = launch;
+    m_NativeThrowArcLandingTime = landingTime;
+    {
+        std::lock_guard<std::mutex> lock(m_NativeThrowArcMutex);
+        for (int i = 0; i <= THROW_ARC_SEGMENTS && i < static_cast<int>(m_NativeThrowArcSnapshot.points.size()); ++i)
+            m_NativeThrowArcSnapshot.points[static_cast<size_t>(i)] = m_LastThrowArcPoints[i];
+        m_NativeThrowArcSnapshot.valid = true;
+        m_NativeThrowArcSnapshot.publishedAt = GetTickCount64();
+    }
+    m_LastAimDirection = direction;
+    m_HasThrowArc = true;
+    m_HasAimLine = false;
+    const float duration = std::max(m_AimLinePersistence, m_LastFrameDuration * m_AimLineFrameDurationMultiplier);
+    const int queueMode = m_Game->GetMatQueueMode();
+    if (!((queueMode == 0) && m_DesktopMirrorHidePluginOverlays && m_DesktopMirrorEnabled && !m_ScopeRenderingPass))
+        DrawThrowArcFromCache(duration);
+    return true;
 }
 
 void VR::DrawThrowArcFromCache(float duration)

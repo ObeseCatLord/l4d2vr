@@ -323,7 +323,8 @@ namespace
         { "ManualPumpCockFraction", CfgOptionType::Float, "Hands / Manual Reload", "Pump pull to cock", 0.30f, 1.0f, "0.70" },
         { "ManualPumpChamberFraction", CfgOptionType::Float, "Hands / Manual Reload", "Pump forward to chamber", 0.0f, 0.90f, "0.35" },
         { "ManualPumpGrabPaddingMeters", CfgOptionType::Float, "Hands / Manual Reload", "Pump grab range", 0.0f, 0.25f, "0.15" },
-        { "ManualPumpForegripRacks", CfgOptionType::Bool, "Hands / Manual Reload", "Rack the pump from the foregrip", 0.0f, 0.0f, "true" },
+        { "ManualPumpForegripRacks", CfgOptionType::Bool, "Hands / Manual Reload", "Rack the pump from the foregrip", 0.0f, 0.0f, "false" },
+        { "ManualPumpEveryShot", CfgOptionType::Bool, "Hands / Manual Reload", "Pump after every shot", 0.0f, 0.0f, "false" },
         { "DualPistolsNativeReloadFallbackEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol button reload", 0.0f, 0.0f, "true" },
         { "DualPistolsPhysicalReloadEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Dual pistol stacking reload", 0.0f, 0.0f, "true" },
         { "DualPistolsStackDistanceMeters", CfgOptionType::Float, "Hands / Manual Reload", "Dual pistol stack reach (m)", 0.04f, 0.4f, "0.12" },
@@ -341,8 +342,9 @@ namespace
         { "MenuLaserPointerEnabled", CfgOptionType::Bool, "HUD\xEF\xBC\x88\xE4\xB8\xBB\xE7\x95\x8C\xE9\x9D\xA2\xEF\xBC\x89", "Menu laser pointer", 0.0f, 0.0f, "true" },
         { "HolsterReleaseDrop", CfgOptionType::Bool, "Hands / Holsters", "Drop held items on grip release", 0.0f, 0.0f, "true" },
         { "GripToggle", CfgOptionType::Bool, "Hands / Holsters", "Toggle grips", 0.0f, 0.0f, "true" },
+        { "GrenadeThrowMode", CfgOptionType::String, "Weapons / Throwables", "Grenade throw mode (arc | physics)", 0.0f, 0.0f, "arc" },
         { "ManualThrowPinRequired", CfgOptionType::Bool, "Weapons / Throwables", "Pull the pin before a grip throw", 0.0f, 0.0f, "true" },
-        { "ManualThrowHandVelocityScale", CfgOptionType::Float, "Weapons / Throwables", "Hand throw boost", 0.0f, 10.0f, "1.5" },
+        { "ManualThrowHandVelocityScale", CfgOptionType::Float, "Weapons / Throwables", "Hand throw boost", 0.0f, 10.0f, "2.5" },
         { "ThrowableHoldAngleOffsetDeg", CfgOptionType::Vec3, "Weapons / Throwables", "Grenade hold turn (deg)", -90.0f, 90.0f, "0,0,20" },
         { "ManualThrowVelocityWindowMs", CfgOptionType::Int, "Weapons / Throwables", "Hand throw velocity window (ms)", 20.0f, 250.0f, "80" },
         { "ReloadPavlovTuning", CfgOptionType::Bool, "Hands / Manual Reload", "Pavlov reload tuning", 0.0f, 0.0f, "true" },
@@ -390,7 +392,7 @@ namespace
         { "SpreadDisabled", CfgOptionType::Bool, "Weapons / Aim", "No bullet spread", 0.0f, 0.0f, "true" },
         { "ShotgunPavlovPattern", CfgOptionType::Bool, "Weapons / Aim", "Fixed shotgun pellets", 0.0f, 0.0f, "true" },
         { "ScopePictureInPictureLens", CfgOptionType::Bool, "Weapons / Aim", "Picture-in-picture scope lens", 0.0f, 0.0f, "true" },
-        { "ScopeEyeboxDeg", CfgOptionType::Float, "Weapons / Aim", "Scope eyebox", 1.0f, 45.0f, "8" },
+        { "ScopeEyeboxDeg", CfgOptionType::Float, "Weapons / Aim", "Scope eyebox", 1.0f, 45.0f, "15" },
         { "LoadingFramePumpEnabled", CfgOptionType::Bool, "Display", "Keep loading screens live", 0.0f, 0.0f, "true" },
         { "IntermissionHudEnabled", CfgOptionType::Bool, "Display", "Show HUD at intermissions", 0.0f, 0.0f, "true" },
         { "BackgroundAudio", CfgOptionType::Bool, "Display", "Audio when unfocused", 0.0f, 0.0f, "true" },
@@ -410,7 +412,7 @@ namespace
         { "InventoryGestureRange", CfgOptionType::Float, "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F / \xE9\x94\x9A\xE7\x82\xB9", "\xE9\x81\x93\xE5\x85\xB7\xE9\x94\x9A\xE7\x82\xB9\xE6\x8A\x93\xE5\x8F\x96\xE7\x9A\x84\xE6\x9C\x89\xE6\x95\x88\xE8\x8C\x83\xE5\x9B\xB4", 0.1f, 0.5f, "0.16" },
         { "ShowInventoryAnchors", CfgOptionType::Bool, "\xE7\x89\xA9\xE5\x93\x81\xE6\xA0\x8F / \xE9\x94\x9A\xE7\x82\xB9", "\xE6\x98\xBE\xE7\xA4\xBA\xE9\x81\x93\xE5\x85\xB7\xE6\xA0\x8F\xE6\x8A\x93\xE5\x8F\x96\xE5\x8C\xBA\xE5\x9F\x9F\xEF\xBC\x88\xE4\xB8\x8D\xE7\x86\x9F\xE6\x82\x89\xE4\xBD\x8D\xE7\xBD\xAE\xE6\x97\xB6\xE5\xBB\xBA\xE8\xAE\xAE\xE5\xBC\x80\xE5\x90\xAF\xEF\xBC\x89", 0.0f, 0.0f, "true" },
         
-        { "ScopeEnabled", CfgOptionType::Bool, "\xE5\x85\x89\xE5\xAD\xA6", "\xE5\x90\xAF\xE7\x94\xA8\xE6\x9E\xAA\xE6\xA2\xB0\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C", 0.0f, 0.0f, "false" },
+        { "ScopeEnabled", CfgOptionType::Bool, "\xE5\x85\x89\xE5\xAD\xA6", "\xE5\x90\xAF\xE7\x94\xA8\xE6\x9E\xAA\xE6\xA2\xB0\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C", 0.0f, 0.0f, "true" },
         { "ScopeRTTSize", CfgOptionType::Int, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE6\xB8\xB2\xE6\x9F\x93\xE5\x88\x86\xE8\xBE\xA8\xE7\x8E\x87", 128.0f, 1024.0f, "512" },
         { "ScopeReticleAlpha", CfgOptionType::Float, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE5\x87\x86\xE6\x98\x9F\xE9\x80\x8F\xE6\x98\x8E\xE5\xBA\xA6", 0.0f, 1.0f, "1.0" },
         { "ScopeDefaultFov", CfgOptionType::Float, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE9\xBB\x98\xE8\xAE\xA4" "FOV", 1.0f, 45.0f, "20" },
@@ -760,7 +762,7 @@ namespace
         { "InventoryGestureRange", "Inventory / Anchors", "\347\211\251\345\223\201\346\240\217 / \351\224\232\347\202\271", "Inventory Gesture Activation Range", "\351\201\223\345\205\267\351\224\232\347\202\271\346\212\223\345\217\226\347\232\204\346\234\211\346\225\210\350\214\203\345\233\264", "Distance from the inventory anchor within which grabbing is allowed (meters).", "\346\211\213\351\203\250\351\235\240\350\277\221\351\201\223\345\205\267\346\240\217\345\244\232\350\277\221\346\227\266\357\274\214\345\205\201\350\256\270\350\247\246\345\217\221\347\211\251\345\223\201\346\212\223\345\217\226\357\274\210\347\261\263\357\274\211\343\200\202", "Grab is triggered by pressing the grip when the hand is inside this range.", "\346\211\213\350\277\233\345\205\245\350\214\203\345\233\264\345\220\216\346\214\211\344\270\213\346\217\241\351\224\256\345\215\263\345\217\257\346\212\223\345\217\226\351\201\223\345\205\267\343\200\202" },
         { "ShowInventoryAnchors", "Inventory / Anchors", "\347\211\251\345\223\201\346\240\217 / \351\224\232\347\202\271", "Show Inventory Grab Zones", "\346\230\276\347\244\272\351\201\223\345\205\267\346\240\217\346\212\223\345\217\226\345\214\272\345\237\237\357\274\210\344\270\215\347\206\237\346\202\211\344\275\215\347\275\256\346\227\266\345\273\272\350\256\256\345\274\200\345\220\257\357\274\211", "Draws visible grab zones for inventory anchors.", "\345\234\250\344\270\226\347\225\214\344\270\255\347\273\230\345\210\266\345\217\257\350\247\206\345\214\226\347\232\204\351\201\223\345\205\267\346\240\217\346\212\223\345\217\226\345\214\272\345\237\237\343\200\202", "Recommended for learning anchor positions; can be disabled once familiar.", "\347\206\237\346\202\211\345\220\204\351\224\232\347\202\271\344\275\215\347\275\256\345\220\216\345\217\257\345\205\263\351\227\255\344\273\245\345\207\217\345\260\221\350\247\206\350\247\211\345\271\262\346\211\260\343\200\202" },
         
-        { "ScopeEnabled", "Optics", "\345\205\211\345\255\246", "Enable Gun Scope", "\345\220\257\347\224\250\346\236\252\346\242\260\347\236\204\345\207\206\351\225\234", "Renders a gun-mounted scope view to an overlay.", "\345\260\206\346\236\252\346\242\260\347\236\204\345\207\206\351\225\234\347\224\273\351\235\242\346\270\262\346\237\223\345\210\260\344\270\200\344\270\252\350\246\206\347\233\226\345\261\202\344\270\212\343\200\202", "If disabled, scope rendering and overlay are skipped.", "\345\205\263\351\227\255\345\220\216\345\260\206\344\270\215\345\206\215\346\270\262\346\237\223\347\236\204\345\207\206\351\225\234\345\217\212\345\205\266\350\246\206\347\233\226\345\261\202\343\200\202" },
+        { "ScopeEnabled", "Optics", "\345\205\211\345\255\246", "Enable Gun Scope", "\345\220\257\347\224\250\346\236\252\346\242\260\347\236\204\345\207\206\351\225\234", "Shows the zoomed picture in the scope lens of the hunting rifle, snipers and SG552 (on by default; older configs had it off).", "\345\260\206\346\236\252\346\242\260\347\236\204\345\207\206\351\225\234\347\224\273\351\235\242\346\270\262\346\237\223\345\210\260\344\270\200\344\270\252\350\246\206\347\233\226\345\261\202\344\270\212\343\200\202", "If disabled, scope rendering and overlay are skipped.", "\345\205\263\351\227\255\345\220\216\345\260\206\344\270\215\345\206\215\346\270\262\346\237\223\347\236\204\345\207\206\351\225\234\345\217\212\345\205\266\350\246\206\347\233\226\345\261\202\343\200\202" },
         { "ScopeRTTSize", "Optics", "\345\205\211\345\255\246", "Scope Render Texture Size", "\347\236\204\345\207\206\351\225\234\346\270\262\346\237\223\345\210\206\350\276\250\347\216\207", "Render target size (pixels) for the scope view.", "\347\236\204\345\207\206\351\225\234\347\224\273\351\235\242\346\270\262\346\237\223\347\233\256\346\240\207\345\260\272\345\257\270\357\274\210\345\203\217\347\264\240\357\274\211\343\200\202", "Higher is sharper but costs more GPU time.", "\350\266\212\351\253\230\350\266\212\346\270\205\346\231\260\357\274\214\344\275\206GPU\345\274\200\351\224\200\346\233\264\345\244\247\343\200\202" },
         { "ScopeReticleAlpha", "Optics", "\345\205\211\345\255\246", "Scope Reticle Alpha", "\347\236\204\345\207\206\351\225\234\345\207\206\346\230\237\351\200\217\346\230\216\345\272\246", "Opacity scale for the reticle drawn inside the scope RTT.", "\350\260\203\346\225\264\347\236\204\345\207\206\351\225\234 RTT \345\206\205\351\203\250\345\207\206\346\230\237\347\232\204\344\270\215\351\200\217\346\230\216\345\272\246\343\200\202", "0 hides the reticle; 1 keeps the default opacity.", "0 \351\232\220\350\227\217\345\207\206\346\230\237\357\274\2331 \344\277\235\346\214\201\351\273\230\350\256\244\344\270\215\351\200\217\346\230\216\345\272\246\343\200\202" },
         { "ScopeDefaultFov", "Optics", "\xE5\x85\x89\xE5\xAD\xA6", "Default Scope FOV", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE9\xBB\x98\xE8\xAE\xA4" "FOV", "Default magnification FOV for weapons without a saved scope profile.", "\xE6\xB2\xA1\xE6\x9C\x89\xE5\x8D\x95\xE7\x8B\xAC\xE4\xBF\x9D\xE5\xAD\x98\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE9\x85\x8D\xE7\xBD\xAE\xE7\x9A\x84\xE6\xAD\xA6\xE5\x99\xA8\xE4\xBC\x9A\xE4\xBD\xBF\xE7\x94\xA8\xE8\xBF\x99\xE4\xB8\xAA\xE9\xBB\x98\xE8\xAE\xA4" "FOV\xE3\x80\x82", "Smaller FOV means higher magnification. Per-weapon values are saved to scope_adjustments.txt.", "FOV\xE8\xB6\x8A\xE5\xB0\x8F\xE5\x80\x8D\xE7\x8E\x87\xE8\xB6\x8A\xE9\xAB\x98\xEF\xBC\x9B\xE6\xAF\x8F\xE6\x8A\x8A\xE6\xAD\xA6\xE5\x99\xA8\xE7\x9A\x84\xE5\xAE\x9E\xE9\x99\x85\xE5\x80\xBC\xE4\xBC\x9A\xE5\x86\x99\xE5\x85\xA5 scope_adjustments.txt\xE3\x80\x82" },
@@ -1124,7 +1126,8 @@ namespace
         { "ManualPumpCockFraction", "Hands / Manual Reload", "Pump Pull To Cock", "How much of the travel you pull the pump back to eject the shell. Lower is more forgiving.", "0.70 (7 cm of 10) by default." },
         { "ManualPumpChamberFraction", "Hands / Manual Reload", "Pump Forward To Chamber", "After the pull, the next shell chambers once the pump is back within this fraction of the travel from closed. Higher is more forgiving.", "0.35 (within 3.5 cm) by default." },
         { "ManualPumpGrabPaddingMeters", "Hands / Manual Reload", "Pump Grab Range", "How far from the pump the free hand can catch it. Once caught it stays caught until you let go.", "0.15 m by default." },
-        { "ManualPumpForegripRacks", "Hands / Manual Reload", "Rack The Pump From The Foregrip", "Holding the shotgun's foregrip with the other hand's grip also works the pump, as in Pavlov; the free hand's trigger still works it too.", "Needs the grip/trigger split (trigger interactions)." },
+        { "ManualPumpEveryShot", "Hands / Manual Reload", "Pump After Every Shot", "Off (default): the pump and Chrome shotguns fire shell after shell; the pump is only needed to chamber a shell loaded after the gun ran dry, as a slide or bolt chambers the first round. On: every shot needs a pump.", "Needs ManualPumpEnabled." },
+        { "ManualPumpForegripRacks", "Hands / Manual Reload", "Rack The Pump From The Foregrip", "Off (default): working the pump needs the other hand's trigger. On: holding the foregrip with that hand's grip alone also works it.", "Needs the grip/trigger split (trigger interactions)." },
         { "HolsterPavlovLayoutEnabled", "Hands / Holsters", "Pavlov Holster Layout", "Long gun behind the dominant shoulder, medkit/defib behind the other, pistol or melee on the hip, grenade and pills/adrenaline on the chest.", "Reach to a holster and hold the weapon-hand grip to draw the item; release a held item in its own holster to put it away. Requires Body Grip Inventory." },
         { "HolsterItemsVisible", "Hands / Holsters", "Show Holstered Items", "Draws the items you carry at their holsters; the hovered one glows.", "Requires the first-person body." },
         { "MeleeGripReachMeters", "Hands / Melee", "Melee Grip Reach", "Holds melee weapons at the end of the handle: the weapon sits this far forward of your hand, and hits reach that much further on servers with the L4D2VR plugin or a modded host.", "0 keeps the stock grip." },
@@ -1135,10 +1138,11 @@ namespace
         { "MagazineSlapEnabled", "Hands / Manual Reload", "Magazine Slap", "On the AK-47, SG552 and military sniper you can take a fresh magazine from your off-hand waist while the old one is still in. Strike the old magazine out with it (Pavlov VR's mag slap), then insert the fresh one; let go of the trigger (the grip with trigger interactions off) to put it back.", "The magazines collide: the strike must push the old one out of the well or toward the muzzle at 0.43 m/s (AK-47) or 0.55 m/s (others); slow pushes, glancing touches and pushes into the well never knock it out. With a release button you can also press it while holding the fresh magazine." },
         { "ReloadPavlovTuning", "Hands / Manual Reload", "Pavlov Reload Tuning", "Each gun uses Pavlov VR's numbers for how far you pull the slide, bolt or pump, where the round chambers on the way back, and how deep a magazine must go in.", "Your own per-weapon MagazineInteraction...Overrides still take priority." },
         { "ManualReloadMagazineHandRotationOffsetDeg", "Hands / Manual Reload", "Spare Magazine Turn In Hand", "A spare magazine or shell from your waist is held the way it sits in the gun: with your off hand turned like your gun hand and raised a little nose-up (Pavlov VR's lean, 15 degrees, 5 for pistols, Uzi and MAC-10) it lines up with the well. This turns it further in your hand.", "Degrees about the controller's x (right), y (up) and z (back) axes; 0,0,0 keeps the natural hold." },
+        { "GrenadeThrowMode", "Weapons / Throwables", "Grenade Throw Mode", "arc (default): holding a grenade, molotov or bile jar shows where the game's own throw lands, aimed with your hand; pull and let go of the trigger to throw it along that arc (the original L4D2VR way, on any server). physics: the grenade leaves your hand at your hand's own speed when you let go of the trigger (Pavlov style; needs a server with the HandThrow feature).", "Type arc or physics." },
         { "ManualThrowPinRequired", "Weapons / Throwables", "Pin Before Grip Throw", "Grenades (on servers with hand throws): hold the trigger of the hand holding the grenade to pull the pin, swing, and let go of the trigger to throw. Letting go of the grip with the trigger held throws too; without the pin, letting go of the grip drops the grenade as an item.", "Turn off to throw live grenades on every grip release, without pulling the pin first." },
-        { "ManualThrowHandVelocityScale", "Weapons / Throwables", "Hand Throw Velocity Scale", "The grenade leaves with your hand's release speed times this boost (when you host the game, and for aiming the throw on plain servers; dedicated servers use their own ThrowHandVelocityScale). Your own walking or running speed is added unscaled.", "1.5 is a bit more than your arm; 1.0 is literal, higher throws further." },
+        { "ManualThrowHandVelocityScale", "Weapons / Throwables", "Hand Throw Velocity Scale", "The grenade leaves with your hand's release speed times this boost (when you host the game, and for aiming the throw on plain servers; dedicated servers use their own ThrowHandVelocityScale). Your own walking or running speed is added unscaled.", "2.5 (default) sends a natural throw about as far as the game's own; 1.0 is literal, higher throws further." },
         { "ThrowableHoldAngleOffsetDeg", "Weapons / Throwables", "Grenade Hold Turn", "Turns a held grenade, molotov or bile jar in your hand (pitch, yaw, roll in degrees). The game's own hold leans it in toward your body; the default roll stands it up.", "Mirrored automatically when the grenade is in your left hand." },
-        { "ManualThrowVelocityWindowMs", "Weapons / Throwables", "Hand Throw Velocity Window", "How many milliseconds of hand motion before the release set a hand throw's velocity (blended toward the fastest part by Peak Velocity Blend).", "Shorter follows the last flick; longer is steadier." },
+        { "ManualThrowVelocityWindowMs", "Weapons / Throwables", "Hand Throw Velocity Window", "How many milliseconds of hand motion before the release a hand throw looks at: the grenade leaves at the hand's peak speed in that window, along the direction it was moving.", "Shorter follows the last flick; longer is steadier." },
         { "GripToggle", "Hands / Holsters", "Toggle Grips", "One firm squeeze takes an item and your hand keeps it; the next squeeze lets it go: inside its own holster it is put away, anywhere else it is dropped. Turn off to hold the grip instead.", "The off-hand trigger holds magazines, slides and bolts while pulled; the front of a two-handed gun is its own grip toggle." },
         { "HolsterReleaseDrop", "Hands / Holsters", "Drop On Grip Release", "An item drawn from a holster stays in your hand while you hold the grip; letting go drops it (Pavlov style). Letting go inside its own holster puts it away.", "Needs a server running the L4D2VR plugin or a modded host; plain servers cannot drop items." },
         { "MenuLaserPointerEnabled", "HUD (Main)", "Menu Laser Pointer", "Point either controller at a menu, MOTD or other cursor panel to move the cursor there; the trigger clicks and can drag.", "Used when the VR runtime has no built-in overlay laser (for example XRizer). SteamVR and the OpenXR backend bring their own laser, which then works on every panel." },
@@ -2019,7 +2023,7 @@ namespace
             std::strcmp(key, "MouseModeScopeOverlayAngleOffset") == 0)
         {
             return CfgIsEnabled(s, "MouseModeEnabled", false) &&
-                CfgIsEnabled(s, "ScopeEnabled", false);
+                CfgIsEnabled(s, "ScopeEnabled", true);
         }
         if (CfgStartsWith(key, "MouseMode") && std::strcmp(key, "MouseModeEnabled") != 0)
             return CfgIsEnabled(s, "MouseModeEnabled", false);
@@ -2178,7 +2182,7 @@ namespace
         // --- Optics ---
         if (CfgStartsWith(key, "Scope") && std::strcmp(key, "ScopeEnabled") != 0)
         {
-            if (!CfgIsEnabled(s, "ScopeEnabled", false))
+            if (!CfgIsEnabled(s, "ScopeEnabled", true))
                 return false;
             if ((std::strcmp(key, "ScopeLookThroughDistanceMeters") == 0 ||
                 std::strcmp(key, "ScopeLookThroughAngleDeg") == 0) &&
@@ -2695,7 +2699,8 @@ ManualPumpTravelMeters=0.10
 ManualPumpCockFraction=0.70
 ManualPumpChamberFraction=0.35
 ManualPumpGrabPaddingMeters=0.15
-ManualPumpForegripRacks=true
+ManualPumpForegripRacks=false
+ManualPumpEveryShot=false
 DualPistolsIndependentHandsEnabled=true
 DualPistolsNativeReloadFallbackEnabled=true
 DualPistolsPhysicalReloadEnabled=true
@@ -2709,8 +2714,9 @@ ManualThrowArcLiftRatio=0.0
 ManualThrowVelocityWindowTicks=5
 ManualThrowPeakVelocityBlend=0.5
 ManualThrowMaxVelocity=1400.0
+GrenadeThrowMode=arc
 ManualThrowPinRequired=true
-ManualThrowHandVelocityScale=1.5
+ManualThrowHandVelocityScale=2.5
 ManualThrowVelocityWindowMs=80
 
 # Object pull uses the existing weapon-hand Grip binding; there is no separate SteamVR Object Pull action.
@@ -2766,7 +2772,7 @@ CustomAction4Command=
 CustomAction5Command=
 
 
-ScopeEnabled=false
+ScopeEnabled=true
 ScopePhysicalLensEnabled=true
 ScopeBaseMagnification=2
 ScopeRTTSize=512

@@ -29,18 +29,30 @@ void VR::PublishPhysicalScopeLens(const PhysicalScopeLensSnapshot& sample)
 {
     const int eye = m_VrHandsActiveEyeIndex;
     const CViewSetup* view = m_VrHandsActiveEyeView;
-    if (!IsPhysicalScopeMode() || !m_ScopeEnabled || !HasFreshPhysicalScopeTracking() || !view || eye < 0 || eye > 1 ||
-        !m_FirstPersonControlReady.load(std::memory_order_acquire) ||
+    // Why a captured lens was not published ([VR][Scope], once per reason).
+    auto refuse = [&](const char* why)
+    {
+        static std::mutex s_mutex;
+        static std::unordered_set<std::string> s_logged;
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (s_logged.insert(why).second)
+            Game::logMsg("[VR][Scope] lens not published: %s (weapon %d, lens weapon %d, eye %d)", why,
+                m_PhysicalScopeWeaponId.load(std::memory_order_acquire), sample.weaponId, eye);
+    };
+    if (!IsPhysicalScopeMode() || !m_ScopeEnabled) return refuse("scopes off");
+    if (!HasFreshPhysicalScopeTracking()) return refuse("no fresh tracking");
+    if (!view || eye < 0 || eye > 1) return refuse("no eye view (outside the VR hands eye render)");
+    if (!m_FirstPersonControlReady.load(std::memory_order_acquire) ||
         m_RenderPlayerIncap.load(std::memory_order_acquire) || m_RenderTpObserver.load(std::memory_order_acquire) ||
         m_RenderPlayerControlledBySI.load(std::memory_order_acquire) ||
-        sample.weaponId != m_PhysicalScopeWeaponId.load(std::memory_order_acquire) ||
-        m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
-        !l4d2vr_optics::Finite(sample.center) || !l4d2vr_optics::Finite(sample.forward) ||
+        m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire)) return refuse("player state");
+    if (sample.weaponId != m_PhysicalScopeWeaponId.load(std::memory_order_acquire)) return refuse("lens of another weapon");
+    if (!l4d2vr_optics::Finite(sample.center) || !l4d2vr_optics::Finite(sample.forward) ||
         !l4d2vr_optics::Finite(sample.right) || !l4d2vr_optics::Finite(sample.up) ||
-        !std::isfinite(sample.radius) || sample.radius <= 0.01f || sample.radius > 8.0f ||
-        view->width <= 0 || view->height <= 0 || !std::isfinite(view->fov) ||
+        !std::isfinite(sample.radius) || sample.radius <= 0.01f || sample.radius > 8.0f) return refuse("lens geometry");
+    if (view->width <= 0 || view->height <= 0 || !std::isfinite(view->fov) ||
         view->fov < 1.0f || view->fov >= 179.0f || !std::isfinite(view->fovViewmodel) ||
-        view->fovViewmodel < 1.0f || view->fovViewmodel >= 179.0f) return;
+        view->fovViewmodel < 1.0f || view->fovViewmodel >= 179.0f) return refuse("eye view fov");
     PhysicalScopeLensSnapshot lens = sample;
     lens.sceneCenter = ScopeViewmodelPointToScene(*view, lens.center);
     lens.sceneForward = ScopeViewmodelPointToScene(*view, lens.center + lens.forward) - lens.sceneCenter;
@@ -48,14 +60,15 @@ void VR::PublishPhysicalScopeLens(const PhysicalScopeLensSnapshot& sample)
     const Vector sceneEdge = ScopeViewmodelPointToScene(*view, lens.center + lens.right * lens.radius);
     lens.sceneRadius = (sceneEdge - lens.sceneCenter).Length();
     if (!l4d2vr_optics::Finite(lens.sceneCenter) || !l4d2vr_optics::Normalize(lens.sceneForward) ||
-        !l4d2vr_optics::Normalize(lens.sceneUp)) return;
+        !l4d2vr_optics::Normalize(lens.sceneUp)) return refuse("scene mapping");
     lens.magnification = m_PhysicalScopeMagnification.load(std::memory_order_acquire);
     lens.trackingPose.origin = GetRightControllerAbsPos();
     QAngle::AngleVectors(GetRightControllerAbsAngle(),&lens.trackingPose.forward,&lens.trackingPose.right,&lens.trackingPose.up);
-    if (!l4d2vr_optics::Valid(lens.trackingPose)) return;
+    if (!l4d2vr_optics::Valid(lens.trackingPose)) return refuse("controller pose");
     lens.publishedAt = GetTickCount64();
     std::lock_guard<std::mutex> lock(m_PhysicalScopeLensMutex);
-    if (!m_PhysicalScopeWeapons.Current().Valid() || m_PhysicalScopeWeapons.Current().id != lens.weaponId) return;
+    if (!m_PhysicalScopeWeapons.Current().Valid() || m_PhysicalScopeWeapons.Current().id != lens.weaponId)
+        return refuse("weapon identity (owner/handle) not tracked");
     lens.weapon = m_PhysicalScopeWeapons.Current();
     m_PhysicalScopeLenses[eye] = lens;
 }
@@ -132,17 +145,118 @@ void VR::PublishPhysicalScopeProcessedImage(const l4d2vr_optics::ImageStamp& sou
     else m_PhysicalScopeProcessedImage = {};
 }
 
+// Stages of the picture-in-picture scope, for the [VR][Scope] log.
+namespace
+{
+    enum PhysicalScopeStage : int
+    {
+        kScopeStageOff = 0,          // scopes off, mouse mode or third person
+        kScopeStageNoOptic = 1,      // the held gun has no optic
+        kScopeStagePlayerState = 2,  // not in control (incapped, pinned, empty hands)
+        kScopeStageTracking = 3,     // no fresh headset/hand pose
+        kScopeStageNoLens = 4,       // the viewmodel draw published no lens (model checksum, stale)
+        kScopeStageRebase = 5,
+        kScopeStageNotLooking = 6,   // no eye behind the lens within the eyebox
+        kScopeStageFov = 7,
+        kScopeStageActive = 8,       // the scope camera renders this frame
+    };
+    const char* PhysicalScopeStageName(int stage)
+    {
+        switch (stage)
+        {
+        case kScopeStageOff: return "off";
+        case kScopeStageNoOptic: return "no-optic";
+        case kScopeStagePlayerState: return "player-state";
+        case kScopeStageTracking: return "no-tracking";
+        case kScopeStageNoLens: return "no-lens";
+        case kScopeStageRebase: return "rebase";
+        case kScopeStageNotLooking: return "not-looking-through";
+        case kScopeStageFov: return "bad-fov";
+        case kScopeStageActive: return "active";
+        default: return "?";
+        }
+    }
+    // What an eye's lens draw showed (m_PhysicalScopeDiagDraw).
+    const char* PhysicalScopeDrawName(int code)
+    {
+        switch (code)
+        {
+        case 0: return "none";
+        case 1: return "black(eye-out-of-eyebox)";
+        case 2: return "black(no-texture)";
+        case 3: return "black(stale-image)";
+        case 4: return "image";
+        default: return "?";
+        }
+    }
+}
+
+void VR::LogPhysicalScopeState(const char* label, bool force)
+{
+    const int stage = m_PhysicalScopeDiagStage.load(std::memory_order_acquire);
+    const int draw = m_PhysicalScopeDiagDraw[0].load(std::memory_order_acquire) |
+        (m_PhysicalScopeDiagDraw[1].load(std::memory_order_acquire) << 4);
+    const uint64_t now = GetTickCount64();
+    const int weaponId = m_PhysicalScopeWeaponId.load(std::memory_order_acquire);
+    if (!force)
+    {
+        // Only while an optic is held, on a change, at most twice a second.
+        if (!l4d2vr_optics::HasOptic(weaponId) && m_PhysicalScopeDiagLoggedStage <= kScopeStageNoOptic)
+            return;
+        if (stage == m_PhysicalScopeDiagLoggedStage && draw == m_PhysicalScopeDiagLoggedDraw)
+            return;
+        if (now - m_PhysicalScopeDiagLoggedAt < 500u)
+            return;
+    }
+    m_PhysicalScopeDiagLoggedStage = stage;
+    m_PhysicalScopeDiagLoggedDraw = draw;
+    m_PhysicalScopeDiagLoggedAt = now;
+    const l4d2vr_optics::ImageStamp image = ReadPhysicalScopeImage();
+    PhysicalScopeLensSnapshot lens{};
+    uint64_t lensAt[2] = { 0u, 0u };
+    {
+        std::lock_guard<std::mutex> lock(m_PhysicalScopeLensMutex);
+        lens = m_PhysicalScopeLenses[0].publishedAt ? m_PhysicalScopeLenses[0] : m_PhysicalScopeLenses[1];
+        lensAt[0] = m_PhysicalScopeLenses[0].publishedAt;
+        lensAt[1] = m_PhysicalScopeLenses[1].publishedAt;
+    }
+    const uint32_t epoch = m_SourceRenderQueueMarkerEpoch.load(std::memory_order_acquire);
+    Game::logMsg("[VR][Scope] %s: weapon=%d stage=%s lens L/R age %lld/%lld ms radius %.2f (scene %.2f) mag %.2f | "
+        "eye L alpha %.2f relief %.1f cm off-axis %.1f deg, R alpha %.2f relief %.1f cm off-axis %.1f deg | "
+        "render fov %.2f active=%d texture=%d surface=%d | image age %lld ms epoch %u/%u mag %.2f | draw L=%s R=%s",
+        label ? label : "state", weaponId, PhysicalScopeStageName(stage),
+        lensAt[0] ? static_cast<long long>(now - lensAt[0]) : -1LL, lensAt[1] ? static_cast<long long>(now - lensAt[1]) : -1LL,
+        lens.radius, lens.sceneRadius, m_PhysicalScopeMagnification.load(std::memory_order_acquire),
+        m_PhysicalScopeDiagAlpha[0], m_PhysicalScopeDiagRelief[0] / std::max(0.001f, m_VRScale) * 100.0f, m_PhysicalScopeDiagOffAxisDeg[0],
+        m_PhysicalScopeDiagAlpha[1], m_PhysicalScopeDiagRelief[1] / std::max(0.001f, m_VRScale) * 100.0f, m_PhysicalScopeDiagOffAxisDeg[1],
+        m_PhysicalScopeRenderFov, m_ScopeActive ? 1 : 0, m_ScopeTexture ? 1 : 0, m_D9ScopeSurface ? 1 : 0,
+        image.completedAt ? static_cast<long long>(now - image.completedAt) : -1LL, image.renderEpoch, epoch, image.magnification,
+        PhysicalScopeDrawName(draw & 15), PhysicalScopeDrawName(draw >> 4));
+}
+
 void VR::UpdatePhysicalScope()
 {
     m_ScopeActive = false;
+    struct StageLog
+    {
+        VR* vr; int stage = kScopeStageOff;
+        ~StageLog() { vr->m_PhysicalScopeDiagStage.store(stage, std::memory_order_release); vr->LogPhysicalScopeState("change", false); }
+    } stageLog{ this };
     const float magnification = l4d2vr_optics::Magnification(m_ScopeFov, m_ScopeFovMax, m_ScopeBaseMagnification);
     m_PhysicalScopeMagnification.store(magnification, std::memory_order_release);
-    if (!m_ScopeEnabled || !ScopeWeaponEligible() || !m_FirstPersonControlReady.load(std::memory_order_acquire) ||
+    if (!m_ScopeEnabled || !IsPhysicalScopeMode()) return;
+    stageLog.stage = kScopeStageNoOptic;
+    if (!ScopeWeaponEligible()) return;
+    stageLog.stage = kScopeStagePlayerState;
+    if (!m_FirstPersonControlReady.load(std::memory_order_acquire) ||
         m_RenderPlayerIncap.load(std::memory_order_acquire) || m_RenderPlayerControlledBySI.load(std::memory_order_acquire) ||
         m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire)) return;
+    stageLog.stage = kScopeStageTracking;
     if (!HasFreshPhysicalScopeTracking()) return;
+    stageLog.stage = kScopeStageNoLens;
     PhysicalScopeLensSnapshot lens{};
     if (!ReadPhysicalScopeLens(0, lens) && !ReadPhysicalScopeLens(1, lens)) return;
+    stageLog.stage = kScopeStageRebase;
     l4d2vr_optics::Pose current{};
     current.origin = GetRightControllerAbsPos();
     QAngle::AngleVectors(GetRightControllerAbsAngle(),&current.forward,&current.right,&current.up);
@@ -151,10 +265,14 @@ void VR::UpdatePhysicalScope()
         !l4d2vr_optics::RebaseVector(lens.sceneForward,lens.trackingPose,current,forward) ||
         !l4d2vr_optics::RebaseVector(lens.sceneUp,lens.trackingPose,current,up)) return;
     lens.sceneCenter = center; lens.sceneForward = forward; lens.sceneUp = up;
-    auto left = l4d2vr_optics::EvaluateEye(GetViewOriginLeft(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius, m_VRScale, magnification);
-    auto right = l4d2vr_optics::EvaluateEye(GetViewOriginRight(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius, m_VRScale, magnification);
+    auto left = l4d2vr_optics::EvaluateEye(GetViewOriginLeft(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius, m_VRScale, magnification, m_ScopeEyeboxDeg);
+    auto right = l4d2vr_optics::EvaluateEye(GetViewOriginRight(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius, m_VRScale, magnification, m_ScopeEyeboxDeg);
+    m_PhysicalScopeDiagAlpha[0] = left.alpha; m_PhysicalScopeDiagRelief[0] = left.relief; m_PhysicalScopeDiagOffAxisDeg[0] = left.offAxisDeg;
+    m_PhysicalScopeDiagAlpha[1] = right.alpha; m_PhysicalScopeDiagRelief[1] = right.relief; m_PhysicalScopeDiagOffAxisDeg[1] = right.offAxisDeg;
     const auto eye = left.alpha >= right.alpha ? left : right;
+    stageLog.stage = kScopeStageNotLooking;
     if (eye.alpha <= 0.0f) return;
+    stageLog.stage = kScopeStageFov;
     m_PhysicalScopeRenderFov = l4d2vr_optics::RenderFov(lens.sceneRadius, eye.relief, magnification);
     if (m_PhysicalScopeRenderFov <= 0.0f) return;
     m_ScopeCameraPosAbs = lens.sceneCenter;
@@ -166,6 +284,150 @@ void VR::UpdatePhysicalScope()
             m_PhysicalScopeRenderFov, magnification, GetTickCount64()};
     }
     m_ScopeActive = true;
+    stageLog.stage = kScopeStageActive;
+}
+
+bool VR::ReadNativeThrowArc(NativeThrowArcSnapshot& out) const
+{
+    std::lock_guard<std::mutex> lock(m_NativeThrowArcMutex);
+    out = m_NativeThrowArcSnapshot;
+    const uint64_t now = GetTickCount64();
+    return out.valid && out.publishedAt != 0u && now >= out.publishedAt && now - out.publishedAt <= 150u &&
+        GrenadeArcMode();
+}
+
+// The grenade arc into an eye (after the viewmodel, like the scope lens): a
+// camera-facing ribbon through the arc's points, drawn over the scene so it
+// stays readable, fading toward the landing point, with a ring where it lands.
+bool VR::DrawNativeThrowArcForEye(const CViewSetup& view, int eyeIndex, const NativeThrowArcSnapshot& arc)
+{
+    if (!arc.valid || !g_D3DVR9 || eyeIndex < 0 || eyeIndex > 1 || view.width <= 0 || view.height <= 0 ||
+        !std::isfinite(view.fov) || view.fov < 1.0f || view.fov >= 179.0f ||
+        !l4d2vr_optics::Finite(view.origin) || !l4d2vr_optics::Finite(view.angles))
+        return false;
+    struct DeviceLock
+    {
+        bool locked = false;
+        explicit DeviceLock(bool required)
+        { if (required && g_D3DVR9) locked = SUCCEEDED(g_D3DVR9->LockDevice()); }
+        ~DeviceLock() { if (locked && g_D3DVR9) g_D3DVR9->UnlockDevice(); }
+    } deviceLock(m_Game && m_Game->GetMatQueueMode() != 0);
+    if (m_Game && m_Game->GetMatQueueMode() != 0 && !deviceLock.locked) return false;
+    std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+    IDirect3DSurface9* surface = eyeIndex == 0 ? m_D9LeftEyeSurface : m_D9RightEyeSurface;
+    if (m_CreatingTextureID != Texture_None || !surface) return false;
+    IDirect3DDevice9* device = nullptr;
+    if (FAILED(surface->GetDevice(&device)) || !device) return false;
+    struct Restore
+    {
+        IDirect3DDevice9* device;
+        IDirect3DStateBlock9* state = nullptr;
+        IDirect3DSurface9* target = nullptr;
+        D3DVIEWPORT9 viewport{};
+        bool haveViewport = false;
+        bool captured = false;
+        ~Restore()
+        {
+            if (target) device->SetRenderTarget(0, target);
+            if (state && captured) state->Apply();
+            if (haveViewport) device->SetViewport(&viewport);
+            if (state) state->Release();
+            if (target) target->Release();
+            device->Release();
+        }
+    } restore{device};
+    if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &restore.state)) || !restore.state ||
+        !(restore.captured = SUCCEEDED(restore.state->Capture())) || FAILED(device->GetRenderTarget(0, &restore.target)))
+        return false;
+    restore.haveViewport = SUCCEEDED(device->GetViewport(&restore.viewport));
+    if (!restore.haveViewport || FAILED(device->SetRenderTarget(0, surface))) return false;
+    D3DVIEWPORT9 viewport{0,0,static_cast<DWORD>(view.width),static_cast<DWORD>(view.height),0.0f,1.0f};
+    if (FAILED(device->SetViewport(&viewport))) return false;
+    const float zNear = std::isfinite(view.zNear) && view.zNear > 0.1f ? view.zNear : 3.0f;
+    const float zFar = std::isfinite(view.zFar) && view.zFar > zNear ? view.zFar : 30000.0f;
+    const D3DMATRIX world = ScopeD3DMatrix(VrHandMath::Identity());
+    const D3DMATRIX camera = ScopeD3DMatrix(VrHandMath::BuildSourceView(view.origin, view.angles));
+    const D3DMATRIX projection = ScopeD3DMatrix(VrHandMath::BuildPerspective(view.fov,
+        static_cast<float>(view.width) / view.height, zNear, zFar));
+    struct Vertex { Vector position; D3DCOLOR color; };
+    std::vector<Vertex> mesh;
+    const size_t count = arc.points.size();
+    mesh.reserve(count * 6 + 64 * 6);
+    const float halfWidth = 0.006f * std::max(1.0f, m_VRScale);   // a 1.2 cm ribbon
+    auto side = [&](const Vector& a, const Vector& b) -> Vector
+    {
+        Vector along = b - a;
+        Vector toEye = view.origin - a;
+        Vector s = CrossProduct(along, toEye);
+        const float length = s.Length();
+        return length > 1e-4f ? s * (halfWidth / length) : Vector(0.0f, 0.0f, halfWidth);
+    };
+    for (size_t i = 0; i + 1 < count; ++i)
+    {
+        const Vector& a = arc.points[i];
+        const Vector& b = arc.points[i + 1];
+        if (!l4d2vr_optics::Finite(a) || !l4d2vr_optics::Finite(b) || (b - a).Length() < 0.01f) continue;
+        const Vector s = side(a, b);
+        const float u0 = static_cast<float>(i) / static_cast<float>(count - 1);
+        const float u1 = static_cast<float>(i + 1) / static_cast<float>(count - 1);
+        const auto alpha = [](float u) { return static_cast<unsigned>(std::clamp(230.0f - 90.0f * u, 0.0f, 255.0f)); };
+        const D3DCOLOR c0 = D3DCOLOR_ARGB(alpha(u0), 255, 225, 120), c1 = D3DCOLOR_ARGB(alpha(u1), 255, 225, 120);
+        mesh.push_back({a - s, c0}); mesh.push_back({a + s, c0}); mesh.push_back({b + s, c1});
+        mesh.push_back({a - s, c0}); mesh.push_back({b + s, c1}); mesh.push_back({b - s, c1});
+    }
+    // The landing ring, flat on the ground.
+    {
+        const Vector& end = arc.points[count - 1];
+        const float r0 = 0.14f * std::max(1.0f, m_VRScale), r1 = r0 + 2.0f * halfWidth;
+        const D3DCOLOR ring = D3DCOLOR_ARGB(200, 255, 140, 60);
+        constexpr int kRing = 32;
+        for (int i = 0; i < kRing && l4d2vr_optics::Finite(end); ++i)
+        {
+            const float a0 = i * (6.2831853f / kRing), a1 = (i + 1) * (6.2831853f / kRing);
+            const Vector p00 = end + Vector(std::cos(a0) * r0, std::sin(a0) * r0, 1.0f);
+            const Vector p01 = end + Vector(std::cos(a1) * r0, std::sin(a1) * r0, 1.0f);
+            const Vector p10 = end + Vector(std::cos(a0) * r1, std::sin(a0) * r1, 1.0f);
+            const Vector p11 = end + Vector(std::cos(a1) * r1, std::sin(a1) * r1, 1.0f);
+            mesh.push_back({p00, ring}); mesh.push_back({p10, ring}); mesh.push_back({p11, ring});
+            mesh.push_back({p00, ring}); mesh.push_back({p11, ring}); mesh.push_back({p01, ring});
+        }
+    }
+    if (mesh.empty()) return false;
+    bool ok = SUCCEEDED(device->SetVertexShader(nullptr)) && SUCCEEDED(device->SetPixelShader(nullptr)) &&
+        SUCCEEDED(device->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE)) &&
+        SUCCEEDED(device->SetTransform(D3DTS_WORLD,&world)) && SUCCEEDED(device->SetTransform(D3DTS_VIEW,&camera)) &&
+        SUCCEEDED(device->SetTransform(D3DTS_PROJECTION,&projection));
+    ok = ok && SUCCEEDED(device->SetRenderState(D3DRS_ZENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_ZWRITEENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_CLIPPING,TRUE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_SCISSORTESTENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_CLIPPLANEENABLE,0u)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_FILLMODE,D3DFILL_SOLID)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_VERTEXBLEND,D3DVBF_DISABLE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_INDEXEDVERTEXBLENDENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_CULLMODE,D3DCULL_NONE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_LIGHTING,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_FOGENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_STENCILENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_ALPHATESTENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_BLENDOP,D3DBLENDOP_ADD)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_SEPARATEALPHABLENDENABLE,FALSE)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_SRCBLEND,D3DBLEND_SRCALPHA)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_DESTBLEND,D3DBLEND_INVSRCALPHA)) &&
+        SUCCEEDED(device->SetRenderState(D3DRS_COLORWRITEENABLE,15u)) &&
+        SUCCEEDED(device->SetTexture(0,nullptr)) &&
+        SUCCEEDED(device->SetTextureStageState(0,D3DTSS_TEXTURETRANSFORMFLAGS,D3DTTFF_DISABLE)) &&
+        SUCCEEDED(device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1)) &&
+        SUCCEEDED(device->SetTextureStageState(0,D3DTSS_COLORARG1,D3DTA_DIFFUSE)) &&
+        SUCCEEDED(device->SetTextureStageState(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1)) &&
+        SUCCEEDED(device->SetTextureStageState(0,D3DTSS_ALPHAARG1,D3DTA_DIFFUSE)) &&
+        SUCCEEDED(device->SetTextureStageState(1,D3DTSS_COLOROP,D3DTOP_DISABLE)) &&
+        SUCCEEDED(device->SetTextureStageState(1,D3DTSS_ALPHAOP,D3DTOP_DISABLE));
+    if (ok) ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, static_cast<unsigned>(mesh.size() / 3),
+        mesh.data(), sizeof(Vertex)));
+    if (ok) m_NativeThrowArcEyeDraws.fetch_add(1u, std::memory_order_relaxed);
+    return ok;
 }
 
 bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const PhysicalScopeLensSnapshot& lens)
@@ -287,7 +549,7 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
         SUCCEEDED(device->SetTextureStageState(1,D3DTSS_ALPHAOP,D3DTOP_DISABLE));
     if (ok) ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN,64,vertices.data(),sizeof(Vertex)));
     const auto eye = l4d2vr_optics::EvaluateEye(view.origin, lens.sceneCenter, lens.sceneForward,
-        lens.sceneRadius, m_VRScale, lens.magnification);
+        lens.sceneRadius, m_VRScale, lens.magnification, m_ScopeEyeboxDeg);
     IDirect3DTexture9* rawTexture = nullptr;
     if (m_D9ScopeSurface)
         m_D9ScopeSurface->GetContainer(__uuidof(IDirect3DTexture9), reinterpret_cast<void**>(&rawTexture));
@@ -297,9 +559,11 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
         texture = m_D9ScopeLensTexture;
         scopeImage = processedImage;
     }
-    if (ok && eye.alpha > 0.0f && texture &&
-        l4d2vr_optics::ImageMatches(scopeImage, lens.weapon, lens.magnification,
-            m_SourceRenderQueueMarkerEpoch.load(std::memory_order_acquire), GetTickCount64()))
+    const bool imageMatches = l4d2vr_optics::ImageMatches(scopeImage, lens.weapon, lens.magnification,
+        m_SourceRenderQueueMarkerEpoch.load(std::memory_order_acquire), GetTickCount64());
+    m_PhysicalScopeDiagDraw[eyeIndex].store(!ok ? 0 : eye.alpha <= 0.0f ? 1 : !texture ? 2 : !imageMatches ? 3 : 4,
+        std::memory_order_release);
+    if (ok && eye.alpha > 0.0f && texture && imageMatches)
     {
         const auto brightness = static_cast<unsigned char>(eye.alpha * 255.0f);
         for (auto& vertex : vertices) vertex.color = D3DCOLOR_ARGB(255,brightness,brightness,brightness);

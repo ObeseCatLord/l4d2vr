@@ -85,6 +85,14 @@ CHANGES = [
     "2.0.0: survivor hand poses follow Pavlov's hand poses for holding guns, magazines, slides, grenades and items. The separate SteamVR glove models are retired.",
     "2.0.2: easier shotgun pumping: the pump cocks at 7 of its 10 cm and chambers anywhere in the last 3.5 cm, a fast rack is never missed at any frame rate, the pump is caught from further away and stays caught through a tracking blip, and holding the foregrip racks it too (ManualPump... settings).",
     "2.0.2: stance recoil: guns kick less crouched, much more while jumping, and more the faster you move, following each gun's own L4D2 accuracy values (RecoilStanceEnabled and per-part scales).",
+    "2.0.4: the shotgun pump needs the off hand's trigger: hold the foregrip, squeeze that hand's trigger and pump. The foregrip's grip alone no longer racks it (ManualPumpForegripRacks, now off).",
+    "2.0.4: pump shotguns fire shell after shell; the pump is only needed to chamber a shell loaded after the gun ran dry (ManualPumpEveryShot=true brings back a pump after every shot).",
+    "2.0.4: the support hand stays on the pump shotgun's foregrip through each shot and while it pumps; the gun keeps aiming from both hands while the pump waits.",
+    "2.0.4: scopes work: configs from before the physical overhaul kept ScopeEnabled=false, so scopes never rendered; it is switched on once. The lens shows the zoomed picture whenever your eye is behind the scope within ScopeEyeboxDeg (now 15 degrees, was 8) of its axis; before, the eye had to sit within a few millimetres of the axis.",
+    "2.0.4: grenades are thrown like in the original L4D2VR mod by default (GrenadeThrowMode=arc): holding one shows the arc from your hand, aim with the hand, pull and let go of the trigger and the game's own throw lands where the arc shows, on any server. The Pavlov-style hand throw is GrenadeThrowMode=physics, and now takes your hand's peak speed in the last 80 ms with a 2.5x boost (was 1.5x; a dedicated server needs the new plugin for that boost).",
+    "2.0.4: the SCAR's 3-round burst kicks like Pavlov's burst rifle (the M16) instead of a semi-auto marksman rifle, about 5x less; two-handed it barely climbs.",
+    "2.0.4: reloads closer to Pavlov: the pistol, magnum, M16, SCAR and hunting rifle lock open when empty (take the slide or bolt and let go to chamber); pistol, magnum, hunting rifle and scout magazines and shotgun shells go in as soon as they are lined up in the well; magazines seat at 95% of their depth; the longest bolts pull 11.4 cm.",
+    "2.0.4: grenades and pills sit visibly on your chest: the chest pockets moved 10 cm forward and 4 cm down (they were under your chin, out of view) and take a slightly wider reach.",
 ]
 
 

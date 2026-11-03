@@ -466,10 +466,11 @@ BackgroundAudio=true
 // -l4d2vr_openvr launch options override it there. Restart to apply.
 VrRuntime=auto
 // Picture-in-picture scope lens: the scope image shifts with your eye (parallax) and darkens toward the
-// edge as your eye leaves the eyebox, like a real optic.
+// edge as your eye leaves the eyebox, like a real optic. The picture shows to an eye 2-50 cm behind the
+// lens within ScopeEyeboxDeg of its axis and fades out by twice that (the other eye sees it black).
 ScopePictureInPictureLens=true
 ScopeParallaxStrength=1.0
-ScopeEyeboxDeg=8
+ScopeEyeboxDeg=15
 ScopeVignetteExponent=0.25
 PhysicalShoveEnabled=true
 # A fast, level, sideways swing of the gun in front of the body also bashes (shoves toward the gun).
@@ -519,13 +520,16 @@ ManualPumpEnabled=true
 // Pump and chrome shotgun pump: the fore-end follows your hand along the gun for ManualPumpTravelMeters;
 // pulling it back ManualPumpCockFraction of that ejects the shell, and once it is back within
 // ManualPumpChamberFraction of closed the next shell chambers. The free hand catches the pump within
-// ManualPumpGrabPaddingMeters and keeps it until it lets go. ManualPumpForegripRacks: the support
-// hand holding the foregrip (grip) works the pump too, without the trigger.
+// ManualPumpGrabPaddingMeters and keeps it until it lets go; working the pump always needs the free
+// hand's trigger. ManualPumpForegripRacks (off): the foregrip's grip alone works the pump too.
 ManualPumpTravelMeters=0.10
 ManualPumpCockFraction=0.70
 ManualPumpChamberFraction=0.35
 ManualPumpGrabPaddingMeters=0.15
-ManualPumpForegripRacks=true
+ManualPumpForegripRacks=false
+// ManualPumpEveryShot=false (default): the pump shotgun fires shell after shell; the pump is only needed to
+// chamber a shell loaded after it ran dry (like a slide or bolt). true: pump after every shot.
+ManualPumpEveryShot=false
 DualPistolsIndependentHandsEnabled=true
 // True akimbo everywhere: each trigger fires its own pistol, aimed by its own hand (on servers
 // without the physical protocol the shot's view angles carry that hand's aim).
@@ -562,8 +566,12 @@ ManualThrowMaxVelocity=1400.0
 // pin, letting go of the grip throws it from your hand at your hand's speed (no throw animation, no
 // delay). Without the pin, letting go drops the grenade. Holding the trigger through the swing and
 // letting go of it also throws. HandVelocityScale multiplies the hand speed when you host the game.
+// GrenadeThrowMode: arc (default) shows the game's own throw arc from the hand holding a grenade;
+// the trigger throws it along that arc (native throw, any server). physics: Pavlov-style hand throws
+// at the hand's speed (HandThrow servers), with the ManualThrow... settings below.
+GrenadeThrowMode=arc
 ManualThrowPinRequired=true
-ManualThrowHandVelocityScale=1.5
+ManualThrowHandVelocityScale=2.5
 ThrowableHoldAngleOffsetDeg=0,0,20
 ManualThrowVelocityWindowMs=80
 

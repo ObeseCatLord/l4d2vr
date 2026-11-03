@@ -457,7 +457,11 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         // Dedicated plugin: every bit (an older plugin: all but HandThrow).
         // Modded listen host: its own set, with HandThrow when its fields resolved.
         // ShotgunPattern (0x800) is optional on both: it needs SharedRandomFloat.
-        const uint32_t core = mask & ~l4d2vr_features::ShotgunPattern;
+        // GrenadeThrowMode=arc opts out of the plugin's throw velocity bits
+        // (ThrowVelocity, HandThrow): compare the rest.
+        const uint32_t throwBits = GrenadeArcMode() && m_GrenadeFeatureRequestSent == 1
+            ? (l4d2vr_features::ThrowVelocity | l4d2vr_features::HandThrow) : 0u;
+        const uint32_t core = (mask | throwBits) & ~l4d2vr_features::ShotgunPattern;
         SelfTestReport("server capabilities", Hooks::s_ServerUnderstandsVR &&
             (core == (l4d2vr_features::kKnownMask & ~l4d2vr_features::ShotgunPattern) ||
                 core == (l4d2vr_features::kPreDualMagTxnMask & ~l4d2vr_features::ShotgunPattern) ||
@@ -1269,6 +1273,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 
     if (step.rfind("handthrow=", 0) == 0)
         return RunHandThrowStep(step, t, player);
+    if (step.rfind("arcthrow=", 0) == 0)
+        return RunArcThrowStep(step, t, player);
     if (step == "flashlight" || step == "flashlight=xr")
     {
         // The flashlight action (right stick click in every default binding)
@@ -1864,8 +1870,14 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 
     if (step == "quit")
     {
-        if (at(0, 0.0f)) cmd("disconnect");
-        if (at(1, 2.0f)) { cmd("quit"); return true; }
+        // "quit" disconnects first by itself. The self-test stops running once
+        // disconnected, so a separate "disconnect" left the game in the menu
+        // until the runner's timeout killed it.
+        if (at(0, 0.0f))
+        {
+            Game::logMsg("[VR][SelfTest] quitting: %d passed, %d failed", m_SelfTestPass, m_SelfTestFail);
+            cmd("quit");
+        }
         return false;
     }
 
@@ -2520,7 +2532,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     // pistol and back with the pump still waiting; the drawn gun must stay in
     // the hand with its pump where it was, the pump must cycle and it must fire.
     const bool redraw = step.rfind("pumpredrawe2e=", 0) == 0;
-    const bool shells = step.rfind("shellse2e=", 0) == 0 || redraw;
+    const bool shells = step.rfind("shellse2e=", 0) == 0 || redraw || step.rfind("pumpdrye2e=", 0) == 0;
     // emptywatche2e=<gun>: run dry, then leave the gun alone and watch for a
     // refill nobody made (the host's stock auto reload).
     const bool watch = step.rfind("emptywatche2e=", 0) == 0;
@@ -2543,7 +2555,17 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     // cantalong (canted, along the magazine) and fast slap the old magazine
     // out; slowinsert, slowdown, up and wide must not.
     const bool slapMotion = step.rfind("slapmotione2e=", 0) == 0;
-    if (!shells && !magazine && !slap && !hold && !pullStep && !freeTrigger && !slapMotion)
+    // pumpgripe2e=<pumpshotgun|shotgun_chrome>: the support hand takes the
+    // foregrip with its grip (and keeps the grip held, as players do), the gun
+    // fires: the hand must stay on the foregrip with the pump waiting. The
+    // grip alone moving the hand along the gun must not work the pump; the
+    // trigger squeezed on the foregrip must, and the hand stays on it.
+    const bool pumpGrip = step.rfind("pumpgripe2e=", 0) == 0;
+    // pumpdrye2e=<pumpshotgun|shotgun_chrome>: ManualPumpEveryShot off: fire
+    // shell after shell (no pump), run it dry, load a shell: the pump must
+    // chamber it (the shell waits), then it fires.
+    const bool dry = step.rfind("pumpdrye2e=", 0) == 0;
+    if (!shells && !magazine && !slap && !hold && !pullStep && !freeTrigger && !slapMotion && !pumpGrip)
     {
         SelfTestReport(step.c_str(), false, "unknown step");
         return true;
@@ -2573,7 +2595,8 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
     }
     const bool pump = expectedId == 3 || expectedId == 8;
     const bool shellGun = pump || expectedId == 4 || expectedId == 11;
-    const bool semiAuto = expectedId == 1 || expectedId == 32;
+    // Semi-automatics need a trigger press per round (the pistols, the hunting rifle and military sniper).
+    const bool semiAuto = expectedId == 1 || expectedId == 32 || expectedId == 6 || expectedId == 10;
 
     ReloadSelfTestGeometry g{};
     GetReloadSelfTestGeometry(g);
@@ -2696,7 +2719,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         m_SelfTestValueD = 0;
         Game::logMsg("[VR][SelfTest] %s: clip=%d reserve=%d box age=%.3fs model=%s", step.c_str(), g.clip, g.reserve,
             g.magazineBoxAge, g.modelName.c_str());
-        go(hold ? 300 : pullStep ? 400 : freeTrigger ? 500 : slapMotion ? 600 : magazine ? 10 : redraw ? 400 : shells ? 100 : 200);
+        go(pumpGrip ? 700 : step.rfind("pumpdrye2e=", 0) == 0 ? 800 : hold ? 300 : pullStep ? 400 : freeTrigger ? 500 : slapMotion ? 600 : magazine ? 10 : redraw ? 400 : shells ? 100 : 200);
         return false;
     }
 
@@ -4031,6 +4054,240 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         }
     }
 
+    // ---- Pump shotgun held on the foregrip --------------------------------------
+    if (pumpGrip)
+    {
+        if (!pump)
+            return fail("pump grip", "pumpgripe2e needs pumpshotgun or shotgun_chrome");
+        // How far the support hand is from the foregrip it holds (metres).
+        auto handToForegrip = [&]() -> float
+        {
+            Vector target{};
+            return GetTwoHandedGripTargetPoint(target) ? meters(g.supportHand, target) : -1.0f;
+        };
+        const int waitingPumpState = static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab);
+        const int holdingPumpState = static_cast<int>(MagazineInteractionManualState::HoldingBolt);
+        switch (m_SelfTestPhase)
+        {
+        case 700: // the support hand onto the foregrip
+        {
+            if (inPhase < 1.0f) return false;
+            Vector target{};
+            if (!GetTwoHandedGripTargetPoint(target))
+            {
+                if (inPhase < 3.0f) return false;
+                return fail("pump grip", "no foregrip target");
+            }
+            glide(target, 0.3f);
+            m_SelfTestValueC = 0;
+            go(701);
+            return false;
+        }
+        case 701: // squeeze the grip and keep holding it
+        {
+            if (!glideDone(0.15f)) return false;
+            // After a missed squeeze: 0.25 s let go before squeezing again.
+            if (m_SelfTestValueC > 0 && inPhase < 0.25f)
+            {
+                button(m_ActionOffHandGrip, false);
+                return false;
+            }
+            Vector target{};
+            if (!m_VrHandsTwoHandedGripActive && GetTwoHandedGripTargetPoint(target) && meters(g.supportHand, target) > 0.02f)
+            {
+                m_SelfTestLeftWorld = target;
+                m_SelfTestLeftWorldValid = true;
+            }
+            button(m_ActionOffHandGrip, true);
+            if (!m_VrHandsTwoHandedGripActive)
+            {
+                // A missed press: let go and squeeze again (twice at most).
+                if (inPhase > 1.0f && m_SelfTestValueC < 2)
+                {
+                    button(m_ActionOffHandGrip, false);
+                    ++m_SelfTestValueC;
+                    go(701);
+                    return false;
+                }
+                if (inPhase < 2.0f) return false;
+                std::snprintf(detail, sizeof(detail), "hand %.3f m from the foregrip target", handToForegrip());
+                return fail("two-handed grip", detail);
+            }
+            if (inPhase < 1.25f) return false;  // the two-hand aim settles
+            m_SelfTestMeasure = handToForegrip();
+            m_SelfTestForegripRef = m_SelfTestMeasure;
+            m_SelfTestClip0 = g.clip;
+            m_SelfTestReserve0 = g.reserve;
+            button(m_ActionPrimaryAttack, true);
+            go(702);
+            return false;
+        }
+        case 702:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            m_SelfTestMeasureB = 0.0f;
+            go(703);
+            return false;
+        case 703: // through the shot: the hand stays on the foregrip
+        {
+            const float d = handToForegrip();
+            if (d > m_SelfTestMeasureB) m_SelfTestMeasureB = d;
+            if (inPhase < 1.2f) return false;
+            if (g.clip == m_SelfTestClip0 && m_SelfTestValueD < 2)
+            {
+                ++m_SelfTestValueD;
+                Game::logMsg("[VR][SelfTest] %s: the host did not fire the shot (clip %d); firing again", gun.c_str(), g.clip);
+                m_SelfTestClip0 = g.clip;
+                button(m_ActionPrimaryAttack, true);
+                go(702);
+                return false;
+            }
+            const bool waits = g.state == waitingPumpState && g.fireBlocked;
+            // The hand-to-foregrip distance is measured from the controller to
+            // the foregrip target (a fixed offset); what matters is that it
+            // does not change: the gun keeps aiming at the support hand.
+            std::snprintf(detail, sizeof(detail),
+                "clip %d -> %d, state %s, fire blocked=%d, two-handed grip=%d aim from both hands=%d, hand to foregrip %.3f m before, %.3f m after (moved %.3f m)",
+                m_SelfTestClip0, g.clip, state(), g.fireBlocked ? 1 : 0, m_VrHandsTwoHandedGripActive ? 1 : 0,
+                m_VrHandsTwoHandedAimApplied ? 1 : 0, m_SelfTestMeasure, d, std::fabs(d - m_SelfTestMeasure));
+            SelfTestReport(label("fire one on the foregrip: the pump waits"), g.clip == m_SelfTestClip0 - 1 && waits, detail);
+            SelfTestReport(label("the support hand stays on the foregrip after the shot"),
+                m_VrHandsTwoHandedGripActive && m_VrHandsTwoHandedAimApplied && d >= 0.0f &&
+                std::fabs(d - m_SelfTestMeasure) < 0.025f, detail);
+            SelfTestRequestShot(gun + "_foregrip_after_shot", 1);
+            if (!waits)
+                return finish();
+            // The grip alone (no trigger): back and forward along the gun.
+            m_SelfTestPoint = leftNow();
+            m_SelfTestMeasure = 0.0f;
+            glide(pullBack(g.boltRequiredPull + 0.04f), 0.3f);
+            go(704);
+            return false;
+        }
+        case 704:
+            m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
+            if (!glideDone(0.1f)) return false;
+            glide(m_SelfTestPoint + g.gunForward * (0.02f * scale), 0.3f);
+            go(705);
+            return false;
+        case 705:
+        {
+            m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
+            if (!glideDone(0.4f)) return false;
+            const bool stillWaits = g.state == waitingPumpState && g.fireBlocked;
+            std::snprintf(detail, sizeof(detail), "grip held, no trigger, hand moved back and forward: state %s, fire blocked=%d, pump moved %.3f m, two-handed=%d",
+                state(), g.fireBlocked ? 1 : 0, m_SelfTestMeasure, m_VrHandsTwoHandedGripActive ? 1 : 0);
+            SelfTestReport(label("the grip alone does not work the pump"), stillWaits && m_SelfTestMeasure < 0.01f, detail);
+            if (!stillWaits)
+                return finish();
+            // Now the trigger on the foregrip, then the stroke.
+            Vector target{};
+            if (GetTwoHandedGripTargetPoint(target))
+                glide(target, 0.2f);
+            go(706);
+            return false;
+        }
+        case 706:
+            if (!glideDone(0.15f)) return false;
+            button(reloadHand, true);
+            go(707);
+            return false;
+        case 707:
+            if (g.state != holdingPumpState)
+            {
+                if (inPhase < 0.6f) return false;
+                std::snprintf(detail, sizeof(detail), "hand %.3f m from the pump (range %.2f m), state %s",
+                    meters(g.supportHand, g.boltGrabCenter), g.boltRange, state());
+                return fail("trigger takes the pump", detail);
+            }
+            m_SelfTestPoint = leftNow();
+            m_SelfTestMeasureB = g.boltRequiredPull;
+            m_SelfTestMeasure = 0.0f;
+            m_SelfTestValueC = 1;  // two-handed throughout the stroke
+            m_SelfTestValueB = 1;  // aimed from both hands throughout the stroke
+            glide(pullBack(g.boltRequiredPull + 0.05f), 0.3f);
+            go(708);
+            return false;
+        case 708:
+            m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
+            if (!m_VrHandsTwoHandedGripActive) m_SelfTestValueC = 0;
+            if (!m_VrHandsTwoHandedAimApplied) m_SelfTestValueB = 0;
+            if (!glideDone(0.1f)) return false;
+            if (m_SelfTestMeasure < m_SelfTestMeasureB && inPhase < 1.5f && g.state == holdingPumpState)
+            {
+                glide(pullBack(m_SelfTestMeasureB - g.boltPull + 0.03f), 0.15f);
+                return false;
+            }
+            if (m_SelfTestHandPosePhotos)
+                SelfTestRequestShot(gun + "_foregrip_pump_back", 1);
+            glide(leftNow() + g.gunForward * (((std::max)(g.boltPull, m_SelfTestMeasureB) + 0.05f + 0.06f) * scale), 0.3f);
+            go(709);
+            return false;
+        case 709:
+            m_SelfTestMeasure = (std::max)(m_SelfTestMeasure, g.boltPull);
+            if (!m_VrHandsTwoHandedGripActive) m_SelfTestValueC = 0;
+            if (!m_VrHandsTwoHandedAimApplied) m_SelfTestValueB = 0;
+            if (!glideDone(0.2f)) return false;
+            if (g.boltPull > 0.01f && inPhase < 1.5f && g.state == holdingPumpState)
+            {
+                glide(leftNow() + g.gunForward * ((g.boltPull + 0.04f) * scale), 0.15f);
+                return false;
+            }
+            button(reloadHand, false);
+            go(710);
+            return false;
+        case 710:
+        {
+            if (inPhase < 0.3f) return false;
+            // Back onto the foregrip (the stroke ended past it) as a player's hand would be.
+            Vector target{};
+            if (GetTwoHandedGripTargetPoint(target) && inPhase < 0.35f)
+                glide(target, 0.2f);
+            if (inPhase < 0.8f) return false;
+            const bool cycled = !g.fireBlocked && g.state != waitingPumpState && g.state != holdingPumpState;
+            const float d = handToForegrip();
+            std::snprintf(detail, sizeof(detail),
+                "trigger + stroke: pulled %.3f m (needs %.3f m), state %s, fire blocked=%d, two-handed throughout=%d now=%d, aim from both hands throughout=%d, hand to foregrip %.3f m (before the shot %.3f m)",
+                m_SelfTestMeasure, m_SelfTestMeasureB, state(), g.fireBlocked ? 1 : 0, m_SelfTestValueC, m_VrHandsTwoHandedGripActive ? 1 : 0,
+                m_SelfTestValueB, d, m_SelfTestForegripRef);
+            SelfTestReport(label("the trigger on the foregrip works the pump"), cycled, detail);
+            SelfTestReport(label("the support hand keeps the foregrip while it pumps"),
+                m_SelfTestValueC == 1 && m_SelfTestValueB == 1 && m_VrHandsTwoHandedGripActive && d >= 0.0f &&
+                std::fabs(d - m_SelfTestForegripRef) < 0.025f, detail);
+            if (!cycled)
+                return finish();
+            m_SelfTestClip0 = g.clip;
+            button(m_ActionPrimaryAttack, true);
+            go(711);
+            return false;
+        }
+        case 711:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(712);
+            return false;
+        case 712:
+            if (inPhase < 1.0f) return false;
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d, state %s, two-handed=%d", m_SelfTestClip0, g.clip, state(),
+                m_VrHandsTwoHandedGripActive ? 1 : 0);
+            SelfTestReport(label("fires after the foregrip pump"), g.clip == m_SelfTestClip0 - 1, detail);
+            // Let go of the foregrip (toggle grips: one more squeeze).
+            button(m_ActionOffHandGrip, false);
+            go(713);
+            return false;
+        case 713:
+            if (inPhase < 0.2f) return false;
+            if (m_VrHandsTwoHandedGripActive && inPhase < 0.35f) { button(m_ActionOffHandGrip, true); return false; }
+            button(m_ActionOffHandGrip, false);
+            if (inPhase < 0.8f) return false;
+            m_SelfTestLeftWorldValid = false;
+            stopGlide();
+            return finish();
+        default:
+            return fail("phase", "lost");
+        }
+    }
+
     // ---- Shotguns -----------------------------------------------------------------
     if (shells)
     {
@@ -4062,18 +4319,76 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
                 return false;
             }
             const bool pumpWaits = g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab);
-            std::snprintf(detail, sizeof(detail), "cycle %d: clip %d -> %d, state %s, fire blocked=%d, waist shell shown=%d",
+            // ManualPumpEveryShot off (default): a shot leaves the next shell
+            // chambered (no pump), unless it was the last one.
+            const bool pumpOwed = pump && (m_ManualPumpEveryShot || g.clip == 0);
+            std::snprintf(detail, sizeof(detail), "cycle %d: clip %d -> %d, state %s, fire blocked=%d, waist shell shown=%d, pump every shot=%d",
                 m_SelfTestCycle + 1, m_SelfTestClip0, g.clip, state(), g.fireBlocked ? 1 : 0,
-                ShouldDrawMagazineInteractionDetachedMagazine() ? 1 : 0);
-            SelfTestReport(label("fire one"), g.clip == m_SelfTestClip0 - 1 && (!pump || (pumpWaits && g.fireBlocked)), detail);
-            if (pump)
+                ShouldDrawMagazineInteractionDetachedMagazine() ? 1 : 0, m_ManualPumpEveryShot ? 1 : 0);
+            SelfTestReport(label(pump && !pumpOwed ? "fire one: no pump needed, the next shell is chambered" : "fire one"),
+                g.clip == m_SelfTestClip0 - 1 &&
+                (!pump || (pumpOwed ? (pumpWaits && g.fireBlocked) : (!pumpWaits && !g.fireBlocked))), detail);
+            if (pumpOwed)
                 SelfTestReport(label("shell stays at the waist while the pump waits"),
                     ShouldDrawMagazineInteractionDetachedMagazine(), detail);
             if (g.clip != m_SelfTestClip0 - 1)
                 return finish();
             // The second time the shell goes in before the pump is cycled.
-            m_SelfTestValueD = pump && m_SelfTestCycle == 1 ? 1 : 0;
-            go(pump && m_SelfTestCycle != 1 ? 110 : 120);
+            m_SelfTestValueD = pumpOwed && m_SelfTestCycle == 1 ? 1 : 0;
+            go(pumpOwed && m_SelfTestCycle != 1 ? 110 : 120);
+            return false;
+        }
+        // ---- pumpdrye2e: semi-auto until the tube is empty ----
+        case 803: // pumped: the chambered shell fires
+            if (inPhase < 0.4f) return false;
+            m_SelfTestClip0 = g.clip;
+            button(m_ActionPrimaryAttack, true);
+            go(804);
+            return false;
+        case 804:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(805);
+            return false;
+        case 805:
+            if (inPhase < 0.8f) return false;
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d, state %s", m_SelfTestClip0, g.clip, state());
+            SelfTestReport(label("fires after pumping the loaded shell"), g.clip == m_SelfTestClip0 - 1, detail);
+            return finish();
+        case 800: // fire one every second until the last shell has gone
+            if (inPhase < (m_SelfTestValueC == 0 ? 1.0f : 0.9f)) return false;
+            if (m_SelfTestValueC == 0)
+                m_SelfTestValueA = 0;   // shots that wrongly asked for a pump
+            m_SelfTestClip0 = g.clip;
+            button(m_ActionPrimaryAttack, true);
+            go(801);
+            return false;
+        case 801:
+            if (inPhase < 0.12f) return false;
+            button(m_ActionPrimaryAttack, false);
+            go(802);
+            return false;
+        case 802:
+        {
+            if (inPhase < 0.6f) return false;
+            ++m_SelfTestValueC;
+            const bool pumpWaits = g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab) ||
+                g.state == static_cast<int>(MagazineInteractionManualState::HoldingBolt);
+            if (g.clip > 0)
+            {
+                if (pumpWaits || g.fireBlocked) ++m_SelfTestValueA;
+                if (m_SelfTestValueC < 14) { go(800); return false; }
+            }
+            std::snprintf(detail, sizeof(detail), "%d shot(s), clip now %d, %d shot(s) asked for a pump, state %s",
+                m_SelfTestValueC, g.clip, m_SelfTestValueA, state());
+            SelfTestReport(label("fires shell after shell without a pump"), g.clip == 0 && m_SelfTestValueA == 0, detail);
+            if (g.clip != 0)
+                return finish();
+            // Empty: load one shell; the pump must then chamber it.
+            m_SelfTestCycle = 1;
+            m_SelfTestValueD = 1;
+            m_SelfTestValueC = 0;
+            go(120);
             return false;
         }
         case 110: // pump: back the Pavlov distance, then forward
@@ -4156,7 +4471,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
             SelfTestReport(label("pump cycled"), cycled, detail);
             if (!cycled)
                 return finish();
-            go(redraw ? 410 : m_SelfTestValueD && m_SelfTestCycle == 1 ? 140 : 120);
+            go(redraw ? 410 : dry ? 803 : m_SelfTestValueD && m_SelfTestCycle == 1 ? 140 : 120);
             return false;
         }
         // ---- pumpredrawe2e ----
@@ -4347,7 +4662,7 @@ bool VR::RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player
         case 125: // the pump still waits after the early shell
             if (inPhase < 0.5f) return false;
             std::snprintf(detail, sizeof(detail), "state %s, fire blocked=%d", state(), g.fireBlocked ? 1 : 0);
-            SelfTestReport(label("pump still waits after the early shell"),
+            SelfTestReport(label(dry ? "a shell into the empty gun waits for the pump" : "pump still waits after the early shell"),
                 g.state == static_cast<int>(MagazineInteractionManualState::WaitingForBoltGrab) && g.fireBlocked, detail);
             go(110);
             return false;
@@ -4953,6 +5268,172 @@ bool VR::RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player
         m_GripToggleEnabled = s_savedToggle;
         s_stage = -1;
         return true;
+    }
+    return false;
+}
+
+// ---- Arc throws: arcthrow=molotov|pipe|bile[:<pitch up deg>] ------------------
+// GrenadeThrowMode=arc: draws the grenade from the chest with the grip, holds
+// the hand out aimed <pitch> degrees up (20 by default), photographs the arc
+// (arc_<item>), pulls and lets go of the trigger and follows the projectile.
+// PASS when the arc was shown, the grenade left the hand, and it came down
+// within 1 m + 8 % of the range of the arc's predicted landing (a molotov or
+// bile jar breaks where it lands; a pipe bomb's first bounce is used).
+bool VR::RunArcThrowStep(const std::string& step, float t, C_BasePlayer* player)
+{
+    auto cmd = [&](const char* text) { if (m_Game) m_Game->ClientCmd_Unrestricted(text); };
+    auto button = [&](vr::VRActionHandle_t action, bool down) { l4d2vr_selftest::SetButton(action, down); };
+    std::string item = step.substr(9);
+    float pitchUp = 20.0f;
+    const size_t colon = item.find(':');
+    if (colon != std::string::npos)
+    {
+        pitchUp = std::clamp(static_cast<float>(std::atof(item.c_str() + colon + 1)), -30.0f, 60.0f);
+        item = item.substr(0, colon);
+    }
+    const bool pipe = item == "pipe", molotov = item == "molotov", bile = item == "bile";
+    if (!pipe && !molotov && !bile)
+    {
+        SelfTestReport("arc throw", false, "unknown item (use molotov, pipe or bile)");
+        return true;
+    }
+    const int expectedId = pipe ? C_WeaponCSBase::PIPE_BOMB : molotov ? C_WeaponCSBase::MOLOTOV : C_WeaponCSBase::VOMITJAR;
+    struct ArcState
+    {
+        std::unordered_set<int> before;
+        int projectile = -1;
+        std::vector<std::pair<uint64_t, Vector>> path;
+        Vector predicted{};
+        bool predictedValid = false;
+        l4d2vr_grenade_arc::Launch launch{};
+        float landingTime = 0.0f;
+        Vector arcStart{};
+        uint64_t releaseMs = 0u;
+        bool arcShown = false;
+    };
+    static ArcState s{};
+    char detail[320];
+    const uint64_t nowMs = GetTickCount64();
+    bool fired = false;
+    auto at = [&](int stage, float when) { if (fired || m_SelfTestStage != stage || t < when) return false; m_SelfTestStage = stage + 1; fired = true; return true; };
+
+    if (at(0, 0.0f))
+    {
+        s = ArcState{};
+        button(m_ActionWeaponGrip, false);
+        button(m_ActionPrimaryAttack, false);
+        cmd(pipe ? "give pipe_bomb" : molotov ? "give molotov" : "give vomitjar");
+    }
+    if (m_SelfTestStage >= 1 && m_SelfTestStage <= 3)
+        SelfTestReachHolster(2);
+    if (at(1, 1.0f)) button(m_ActionWeaponGrip, true);    // held through the throw (toggle or hold grips)
+    if (at(2, 1.3f)) {}
+    if (at(3, 2.0f))
+    {
+        const int id = SelfTestActiveWeaponId(player);
+        std::snprintf(detail, sizeof(detail), "active weapon id=%d (grip draw from the chest)", id);
+        SelfTestReport("arc throw: the grip draws the grenade from the chest", id == expectedId, detail);
+        if (id != expectedId)
+            cmd(pipe ? "use weapon_pipe_bomb" : molotov ? "use weapon_molotov" : "use weapon_vomitjar");
+        // Hand out in front at chest height, aimed pitchUp degrees up.
+        SelfTestHoldRight(SelfTestVec(0.40f, 0.18f, -0.30f), QAngle(-pitchUp, 0.0f, 0.0f));
+    }
+    if (at(4, 3.5f))
+    {
+        s.arcShown = m_HasThrowArc && GrenadeArcMode();
+        s.predicted = m_NativeThrowArcLanding;
+        s.predictedValid = m_NativeThrowArcLandingValid;
+        s.launch = m_NativeThrowArcLaunch;
+        s.landingTime = m_NativeThrowArcLandingTime;
+        s.arcStart = m_LastThrowArcPoints[0];
+        const float range = s.predictedValid ? (s.predicted - player->EyePosition()).Length2D() / std::max(1.0f, m_VRScale) : -1.0f;
+        std::snprintf(detail, sizeof(detail), "arc shown=%d, starts %.2f m from the hand, predicted landing %s %.1f m away (%.0f %.0f %.0f)",
+            s.arcShown ? 1 : 0, (s.arcStart - GetRightControllerViewmodelAbsPos()).Length() / std::max(1.0f, m_VRScale),
+            s.predictedValid ? "on a surface" : "none", range, s.predicted.x, s.predicted.y, s.predicted.z);
+        SelfTestReport("arc throw: the arc shows from the hand", s.arcShown && s.predictedValid &&
+            (s.arcStart - GetRightControllerViewmodelAbsPos()).Length() < 0.1f * m_VRScale, detail);
+        SelfTestRequestShot(std::string("arc_") + item, 1);
+        std::vector<std::pair<int, Vector>> now;
+        SelfTestListProjectiles(now);
+        for (const auto& p : now) s.before.insert(p.first);
+    }
+    if (at(5, 4.5f)) button(m_ActionPrimaryAttack, true);   // the pin
+    if (at(6, 5.5f)) { button(m_ActionPrimaryAttack, false); s.releaseMs = nowMs; }
+    if (m_SelfTestStage >= 7 && m_SelfTestStage <= 8)
+    {
+        std::vector<std::pair<int, Vector>> now;
+        SelfTestListProjectiles(now);
+        bool seen = false;
+        for (const auto& p : now)
+        {
+            if (s.before.count(p.first)) continue;
+            if (s.projectile < 0) s.projectile = p.first;
+            if (p.first == s.projectile)
+            {
+                seen = true;
+                if (s.path.empty() || (p.second - s.path.back().second).Length() > 0.5f)
+                    s.path.push_back({ nowMs, p.second });
+            }
+        }
+        if (m_SelfTestStage == 7 && s.projectile >= 0 && nowMs - s.releaseMs > 700u)
+        {
+            m_SelfTestStage = 8;
+            SelfTestRequestShot(std::string("arc_") + item + "_flight", 1);
+        }
+        const bool gone = s.projectile >= 0 && !seen;
+        if (gone || t > 11.5f)
+        {
+            m_SelfTestStage = 9;
+            // Where it came down: the last point before it broke (molotov, bile),
+            // or the first bounce (the vertical motion turns up again).
+            Vector landed{};
+            bool landedValid = false;
+            for (size_t i = 2; i < s.path.size() && pipe; ++i)
+            {
+                const float dz0 = s.path[i - 1].second.z - s.path[i - 2].second.z;
+                const float dz1 = s.path[i].second.z - s.path[i - 1].second.z;
+                if (dz0 < -0.5f && dz1 > 0.5f) { landed = s.path[i - 1].second; landedValid = true; break; }
+            }
+            if (!landedValid && !s.path.empty()) { landed = s.path.back().second; landedValid = true; }
+            const float range = s.predictedValid ? (s.predicted - player->EyePosition()).Length2D() : 0.0f;
+            const float miss = landedValid && s.predictedValid ? (landed - s.predicted).Length2D() : -1.0f;
+            std::snprintf(detail, sizeof(detail), "projectile seen %d sample(s), came down at (%.0f %.0f %.0f), %.2f m from the predicted (%.0f %.0f %.0f), range %.1f m",
+                static_cast<int>(s.path.size()), landed.x, landed.y, landed.z, miss / std::max(1.0f, m_VRScale),
+                s.predicted.x, s.predicted.y, s.predicted.z, range / std::max(1.0f, m_VRScale));
+            // The flight itself against the arc: every sample before the
+            // predicted impact must lie on the predicted path (the throw left
+            // along the arc at the arc's speed). Bounces after an impact the
+            // arc does not model (ceilings, props) are not judged.
+            float worstOff = -1.0f;
+            int judged = 0;
+            for (const auto& sample : s.path)
+            {
+                float best = 1e9f;
+                for (int k = 0; k <= 200; ++k)
+                {
+                    const float tt = s.landingTime * static_cast<float>(k) / 200.0f;
+                    const l4d2vr_grenade_arc::V3 q = l4d2vr_grenade_arc::PositionAt(s.launch, tt);
+                    best = std::min(best, (sample.second - Vector(q.x, q.y, q.z)).Length());
+                }
+                if ((sample.second - s.predicted).Length() < 0.5f * m_VRScale) continue;  // at the impact
+                if (best > 0.25f * range + 2.0f * m_VRScale) break;                       // after a bounce
+                worstOff = std::max(worstOff, best);
+                ++judged;
+            }
+            std::snprintf(detail, sizeof(detail), "%d of %d flight sample(s) on the arc, worst %.2f m off the predicted path; came down %.2f m from the predicted landing (range %.1f m)",
+                judged, static_cast<int>(s.path.size()), worstOff / std::max(1.0f, m_VRScale), miss / std::max(1.0f, m_VRScale),
+                range / std::max(1.0f, m_VRScale));
+            SelfTestReport(("arc throw: " + item + " flies along the arc").c_str(), s.launch.valid && judged >= 2 &&
+                worstOff >= 0.0f && worstOff <= 0.35f * m_VRScale, detail);
+            std::snprintf(detail, sizeof(detail), "came down at (%.0f %.0f %.0f), %.2f m from the predicted (%.0f %.0f %.0f), range %.1f m",
+                landed.x, landed.y, landed.z, miss / std::max(1.0f, m_VRScale), s.predicted.x, s.predicted.y, s.predicted.z,
+                range / std::max(1.0f, m_VRScale));
+            SelfTestReport(("arc throw: " + item + " lands where the arc shows").c_str(), landedValid && s.predictedValid &&
+                miss >= 0.0f && miss <= 1.0f * m_VRScale + 0.08f * range, detail);
+            s = ArcState{};
+            button(m_ActionWeaponGrip, false);
+            return true;
+        }
     }
     return false;
 }

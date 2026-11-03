@@ -81,15 +81,16 @@ static void Compose()
     Require(ComposeVelocity(V3(std::nanf(""), 0.0f, 0.0f), V3(), 3.0f, 1400.0f).Length() == 0.0f, "NaN is rejected");
     Require(ComposeVelocity(V3(10.0f, 0.0f, 0.0f), V3(), 3.0f, 0.0f).Length() == 0.0f, "max 0 disables");
 
-    // The default boost is modest: an 8 m/s overhand throw (39.37 units/m)
-    // leaves at 12 m/s along the swing; a slow 0.3 m/s release only drops.
-    Require(kDefaultThrowBoost >= 1.3f && kDefaultThrowBoost <= 1.6f, "modest boost");
+    // The default boost (2.0.4: 2.5 on the hand's peak): a 5 m/s overhand
+    // throw (39.37 units/m) leaves at 12.5 m/s along the swing; a slow
+    // 0.3 m/s release only drops.
+    Require(kDefaultThrowBoost >= 2.0f && kDefaultThrowBoost <= 3.0f, "Pavlov-like boost");
     const float upm = 39.3701f;
-    const V3 overhand = ComposeVelocity(V3(8.0f * upm * 0.8f, 0.0f, 8.0f * upm * 0.6f), V3(), kDefaultThrowBoost, 1400.0f);
-    Require(Near(overhand.Length(), 12.0f * upm, 0.5f), "8 m/s hand -> 12 m/s grenade");
+    const V3 overhand = ComposeVelocity(V3(5.0f * upm * 0.8f, 0.0f, 5.0f * upm * 0.6f), V3(), kDefaultThrowBoost, 1400.0f);
+    Require(Near(overhand.Length(), 5.0f * kDefaultThrowBoost * upm, 0.5f), "5 m/s hand -> 12.5 m/s grenade");
     Require(Near(overhand.z / overhand.x, 0.75f, 0.001f), "direction is the hand's");
     const V3 slow = ComposeVelocity(V3(0.3f * upm, 0.0f, 0.0f), V3(), kDefaultThrowBoost, 1400.0f);
-    Require(slow.Length() < 0.5f * upm, "a slow release is a gentle drop");
+    Require(slow.Length() < 1.0f * upm, "a slow release is a gentle drop");
 
     std::array<float, 4> t{ 0.0f, 1.0f / 30.0f, 2.0f / 30.0f, 3.0f / 30.0f };
     std::array<V3, 4> o{ V3(0, 0, 0), V3(7, 0, 0), V3(14, 0, 0), V3(21, 0, 0) };
@@ -150,6 +151,122 @@ static void Tracker()
 
     const V3 w = TrackingToWorld(V3(1.0f, 0.0f, 1.0f), 90.0f, 43.2f);
     Require(Near(w.x, 0.0f, 0.01f) && Near(w.y, 43.2f, 0.01f) && Near(w.z, 43.2f, 0.01f), "tracking to world");
+}
+
+// Recorded-style hand motion (90 Hz, tracking space, metres; Source axes x
+// forward, z up) with tracking jitter: the hand winds up, accelerates through
+// the swing, peaks and decelerates; the trigger is let go near the peak and
+// noticed a frame or two later. Returns the release time.
+struct SwingSpec
+{
+    float peakSpeed;        // m/s at the fastest point
+    float upFraction;       // share of the swing's direction that is up (overhand 0.5, underhand 0.7)
+    float accelSeconds;     // wind-up to peak
+    float releaseAfterPeak; // trigger let go this long after the peak (+ detection lag)
+};
+static double RecordSwing(VelocityTracker& tr, const SwingSpec& s, V3& peakDirection)
+{
+    const double dt = 1.0 / 90.0;
+    const float fz = s.upFraction, fx = std::sqrt(1.0f - fz * fz);
+    peakDirection = V3(fx, 0.0f, fz);
+    V3 p(-0.25f, 0.20f, -0.10f);
+    double t = 100.0;
+    unsigned seed = 12345u;
+    auto jitter = [&]() { seed = seed * 1103515245u + 12345u; return (static_cast<float>((seed >> 16) & 0x7FFF) / 32767.0f - 0.5f) * 0.0016f; };
+    // A still moment, then the swing (smooth-step speed up to the peak), then a
+    // fast stop (the arm's follow-through brakes in ~0.12 s).
+    const int still = 20, up = static_cast<int>(s.accelSeconds * 90.0f), down = 14;
+    double release = 0.0;
+    for (int i = 0; i < still + up + down; ++i, t += dt)
+    {
+        float speed = 0.0f;
+        if (i >= still && i < still + up)
+        {
+            const float u = static_cast<float>(i - still + 1) / static_cast<float>(up);
+            speed = s.peakSpeed * u * u * (3.0f - 2.0f * u);
+        }
+        else if (i >= still + up)
+        {
+            const float u = static_cast<float>(i - still - up + 1) / static_cast<float>(down);
+            speed = s.peakSpeed * std::max(0.0f, 1.0f - u);
+        }
+        // The swing arcs: the direction turns 20 degrees through it.
+        const float bend = (i >= still) ? 0.35f * (static_cast<float>(i - still) / static_cast<float>(up + down) - 0.5f) : 0.0f;
+        const V3 dir(fx * std::cos(bend) - fz * std::sin(bend), 0.0f, fx * std::sin(bend) + fz * std::cos(bend));
+        p = p + dir * (speed * static_cast<float>(dt));
+        tr.Add(t, V3(p.x + jitter(), p.y + jitter(), p.z + jitter()));
+        if (i == still + up - 1)
+            release = t + s.releaseAfterPeak;
+    }
+    return release;
+}
+
+static float LaunchUnitsPerSecond(const V3& handMps)
+{
+    // What the server spawns: hand velocity in world units x the boost.
+    const float upm = 43.2f; // the plugin's UnitsPerMeter
+    return ComposeVelocity(handMps * upm, V3(), kDefaultThrowBoost, 1400.0f).Length();
+}
+
+static void RecordedThrows()
+{
+    // A natural overhand throw: 5.5 m/s at the peak, let go 45 ms after it
+    // (the hand is at ~3 m/s by then).
+    {
+        VelocityTracker tr;
+        V3 dir{};
+        const double release = RecordSwing(tr, { 5.5f, 0.5f, 0.22f, 0.045f }, dir);
+        V3 v{}, avg{};
+        Require(tr.EstimateRelease(release, 0.08f, v), "overhand release estimate");
+        Require(tr.Estimate(release, 0.08f, 0.5f, avg), "old estimate");
+        const float launch = LaunchUnitsPerSecond(v);
+        std::printf("overhand: peak 5.5 m/s -> estimate %.2f m/s (old blend %.2f m/s x1.5 = %.0f u/s), launch %.0f u/s\n",
+            v.Length(), avg.Length(), avg.Length() * 43.2f * 1.5f, launch);
+        Require(v.Length() > 4.8f && v.Length() < 6.2f, "the release speed is the hand's peak");
+        Require(launch > 500.0f && launch < 750.0f, "a natural overhand leaves at about the game's own throw speed");
+        Require(avg.Length() * 43.2f * 1.5f < 0.6f * launch, "the old half-blend x1.5 lobbed it (the reported bug)");
+        const float cosAngle = (v.x * dir.x + v.y * dir.y + v.z * dir.z) / v.Length();
+        Require(cosAngle > std::cos(15.0f * 3.14159265f / 180.0f), "it flies along the swing");
+    }
+    // Let go late (90 ms after the peak, the hand nearly stopped): still a throw.
+    {
+        VelocityTracker tr;
+        V3 dir{};
+        const double release = RecordSwing(tr, { 5.5f, 0.5f, 0.22f, 0.09f }, dir);
+        V3 v{};
+        Require(tr.EstimateRelease(release, 0.08f, v), "late release estimate");
+        Require(LaunchUnitsPerSecond(v) > 400.0f, "a late release still throws");
+    }
+    // An underhand toss: 3 m/s, mostly up.
+    {
+        VelocityTracker tr;
+        V3 dir{};
+        const double release = RecordSwing(tr, { 3.0f, 0.7f, 0.30f, 0.03f }, dir);
+        V3 v{};
+        Require(tr.EstimateRelease(release, 0.08f, v), "underhand estimate");
+        const float launch = LaunchUnitsPerSecond(v);
+        Require(launch > 250.0f && launch < 400.0f, "an underhand toss lobs a few metres");
+        Require(v.z > 0.5f * v.Length(), "upward");
+    }
+    // A deliberate slow release: the hand drifts at 0.4 m/s and lets go.
+    {
+        VelocityTracker tr;
+        V3 dir{};
+        const double release = RecordSwing(tr, { 0.4f, 0.0f, 0.5f, 0.0f }, dir);
+        V3 v{};
+        Require(tr.EstimateRelease(release, 0.08f, v), "slow release estimate");
+        Require(LaunchUnitsPerSecond(v) < 60.0f, "a slow release only drops it");
+    }
+    // Holding still: nothing.
+    {
+        VelocityTracker still;
+        for (int i = 0; i < 20; ++i)
+            still.Add(1.0 + i / 90.0, V3(0.3f, 0.2f, -0.3f));
+        V3 v{};
+        Require(still.EstimateRelease(1.0 + 19.0 / 90.0, 0.08f, v) && v.Length() < 1e-3f, "a still hand gives no velocity");
+        VelocityTracker none;
+        Require(!none.EstimateRelease(0.0, 0.08f, v), "no samples");
+    }
 }
 
 static void Fsm()
@@ -263,6 +380,7 @@ int main()
     WireRoundTrip();
     Compose();
     Tracker();
+    RecordedThrows();
     Fsm();
     std::printf("vr_hand_throw_tests: %d checks passed\n", checks);
     return 0;

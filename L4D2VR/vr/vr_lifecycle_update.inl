@@ -297,6 +297,7 @@ namespace
             m_DrawPass(drawPass)
         {
             m_HaveScopeLens = vr && vr->ReadPhysicalScopeLens(eyeIndex, m_ScopeLens);
+            m_HaveThrowArc = vr && vr->ReadNativeThrowArc(m_ThrowArc);
         }
 
         int AddRef() override
@@ -329,6 +330,7 @@ namespace
 
             vr->DrawVrHandsForEyeImmediate(m_View, m_EyeIndex, m_DrawPass, true);
             if (m_HaveScopeLens) vr->DrawPhysicalScopeLensForEye(m_View, m_EyeIndex, m_ScopeLens);
+            if (m_HaveThrowArc) vr->DrawNativeThrowArcForEye(m_View, m_EyeIndex, m_ThrowArc);
         }
 
     private:
@@ -340,6 +342,8 @@ namespace
         VrHandDrawPass m_DrawPass = VrHandDrawPass::WorldDepth;
         PhysicalScopeLensSnapshot m_ScopeLens{};
         bool m_HaveScopeLens = false;
+        NativeThrowArcSnapshot m_ThrowArc{};
+        bool m_HaveThrowArc = false;
     };
 
     class PhysicalScopeImageFunctor final : public CFunctor

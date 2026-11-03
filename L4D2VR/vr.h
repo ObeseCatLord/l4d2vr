@@ -42,6 +42,7 @@
 #include "vr_grip_toggle.h"
 #include "vr_gesture.h"
 #include "vr_throw_ballistics.h"
+#include "vr_grenade_arc.h"
 #include "vr_hand_throw.h"
 #include "vr_scope_lens.h"
 #include "vr_sight_correction.h"
@@ -123,6 +124,15 @@ struct PhysicalScopeLensSnapshot
     l4d2vr_optics::WeaponIdentity weapon{};
     uint64_t publishedAt = 0u;
     l4d2vr_optics::Pose trackingPose{};
+};
+
+// The grenade arc (GrenadeThrowMode=arc) handed to the eye render, which
+// draws it into each eye like the scope lens (vr_physical_scope.inl).
+struct NativeThrowArcSnapshot
+{
+    std::array<Vector, 17> points{};
+    bool valid = false;
+    uint64_t publishedAt = 0u;
 };
 
 struct PhysicalScopeRenderSnapshot
@@ -772,7 +782,7 @@ public:
 	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
 	bool m_ScopePictureInPictureLens = true;
 	float m_ScopeParallaxStrength = 1.0f;
-	float m_ScopeEyeboxDeg = 8.0f;
+	float m_ScopeEyeboxDeg = 15.0f;  // 2.0.4: was 8 (the picture closed before a held scope lined up)
 	float m_ScopeVignetteExponent = 0.25f;
 	float m_LoadingFramePumpStallMs = 150.0f;
 	std::mutex m_CompositorFrameMutex;
@@ -1457,7 +1467,8 @@ public:
     float m_ManualPumpCockFraction = 0.70f;
     float m_ManualPumpChamberFraction = 0.35f;
     float m_ManualPumpGrabPaddingMeters = 0.15f;
-    bool m_ManualPumpForegripRacks = true;
+    bool m_ManualPumpEveryShot = false;  // 2.0.4: off = semi-auto, the pump only chambers after the tube ran dry
+    bool m_ManualPumpForegripRacks = false;  // the foregrip grip alone works the pump (default: trigger required)
     std::atomic<bool> m_ManualPumpBlockingFire{ false };
     std::atomic<bool> m_BodyAmmoAvailable{ false };
     bool m_DualPistolsIndependentHandsEnabled = true;
@@ -1706,6 +1717,23 @@ public:
 	// hand holding the grenade (pin), swing, let go of the trigger: it leaves the
 	// hand with the hand's measured release velocity times a modest boost.
 	bool m_ManualThrowPinRequired = true;
+	// GrenadeThrowMode: arc (default, the original L4D2VR way: the held grenade
+	// shows L4D2's own throw arc from the hand, the trigger throws it natively
+	// along it) or physics (the 2.0.x hand throw at the hand's speed).
+	bool m_GrenadeThrowArc = true;
+	bool GrenadeArcMode() const { return m_GrenadeThrowArc && m_IsVREnabled && !m_MouseModeEnabled; }
+	int m_GrenadeFeatureRequestSent = -1;   // 1: throw velocity features opted out (arc), 0: all, -1: not sent
+	void SendGrenadeThrowFeatureRequest();
+	bool DrawNativeThrowArc(C_BasePlayer* localPlayer, const Vector& hand, const Vector& direction);
+	Vector m_NativeThrowArcLanding{ 0.0f, 0.0f, 0.0f };
+	bool m_NativeThrowArcLandingValid = false;
+	l4d2vr_grenade_arc::Launch m_NativeThrowArcLaunch{};
+	float m_NativeThrowArcLandingTime = 0.0f;
+	mutable std::mutex m_NativeThrowArcMutex;
+	NativeThrowArcSnapshot m_NativeThrowArcSnapshot{};
+	bool ReadNativeThrowArc(NativeThrowArcSnapshot& out) const;
+	bool DrawNativeThrowArcForEye(const CViewSetup& view, int eyeIndex, const NativeThrowArcSnapshot& arc);
+	std::atomic<uint32_t> m_NativeThrowArcEyeDraws{ 0u };  // self-test: arcs drawn into an eye
 	float m_ManualThrowHandVelocityScale = l4d2vr_hand_throw::kDefaultThrowBoost;   // listen host + plain-server aim: the throw boost
 	// A held grenade, molotov or bile jar is turned by this (pitch, yaw, roll
 	// degrees) in the hand: the game's own hold leans it in toward the body.
@@ -2516,6 +2544,7 @@ public:
 	Vector m_VrHandsTwoHandedAimForwardSmoothed = { 1.0f, 0.0f, 0.0f };
 	Vector m_VrHandsTwoHandedAimUpSmoothed = { 0.0f, 0.0f, 1.0f };
 	bool m_VrHandsTwoHandedGripActive = false;
+	bool m_VrHandsTwoHandedAimApplied = false;  // this frame's gun aim came from both hands (self-test)
 	int m_VrHandsTwoHandedGripWeaponId = 0;
 	uintptr_t m_VrHandsTwoHandedGripWeaponTag = 0;
 	std::chrono::steady_clock::time_point m_VrHandsTwoHandedMountFriendlyGripEnteredAt{};
@@ -3423,6 +3452,7 @@ public:
 	Vector m_SelfTestPumpInGun{ 0.0f, 0.0f, 0.0f }; // pumpredrawe2e: the pump in the gun hand's frame, metres
 	bool RunReloadE2EStep(const std::string& step, float t, C_BasePlayer* player);
 	bool RunHandThrowStep(const std::string& step, float t, C_BasePlayer* player);
+	bool RunArcThrowStep(const std::string& step, float t, C_BasePlayer* player);
 	void SelfTestListProjectiles(std::vector<std::pair<int, Vector>>& out);
 	bool m_SelfTestParsed = false;
 	bool m_SelfTestEnabled = false;
@@ -3439,6 +3469,7 @@ public:
 	int m_SelfTestValueB = 0;
 	int m_SelfTestValueC = 0;
 	int m_SelfTestValueD = 0;
+	float m_SelfTestForegripRef = 0.0f;  // pumpgripe2e: hand-to-foregrip distance before the shot
 	uint32_t m_SelfTestSerialB = 0;
 	uint32_t m_SelfTestSerial = 0;
 	bool m_SelfTestPoseActive = false;
@@ -4856,6 +4887,18 @@ public:
 	l4d2vr_optics::ImageStamp m_PhysicalScopeProcessedImage{};
 	PhysicalScopeRenderSnapshot m_PhysicalScopeRender{};
 	PhysicalScopeLensSnapshot m_PhysicalScopeLenses[2]{};
+	// Scope diagnostics (vr_physical_scope.inl): where the picture-in-picture
+	// pipeline stopped this frame, the eyes' view through the lens, and what
+	// each eye's lens draw showed. Logged when it changes ([VR][Scope]).
+	std::atomic<int> m_PhysicalScopeDiagStage{ 0 };
+	float m_PhysicalScopeDiagAlpha[2] = { 0.0f, 0.0f };
+	float m_PhysicalScopeDiagRelief[2] = { 0.0f, 0.0f };
+	float m_PhysicalScopeDiagOffAxisDeg[2] = { 0.0f, 0.0f };
+	std::atomic<int> m_PhysicalScopeDiagDraw[2] = { 0, 0 };
+	int m_PhysicalScopeDiagLoggedStage = -1;
+	int m_PhysicalScopeDiagLoggedDraw = -1;
+	uint64_t m_PhysicalScopeDiagLoggedAt = 0u;
+	void LogPhysicalScopeState(const char* label, bool force);
 	int   m_ScopeRTTSize = 512;               // square RTT size in pixels
 	std::chrono::steady_clock::time_point m_LastScopeRTTRenderTime{};
 	float m_ScopeFov = 20.0f;                  // active per-weapon FOV; smaller = more zoom

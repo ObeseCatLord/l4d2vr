@@ -3135,6 +3135,11 @@ namespace
         // The full first-person body is off by default (user, 2026-11-03);
         // players can turn it back on (its arms now reach the VR hands).
         { "2026-11-03_first_person_body_off", "FirstPersonBodyEnabled", "false" },
+        // 2.0.5 Forefront holsters: the equipment takes the head yaw every frame
+        // (was Pavlov's interpolation at speed 20). Only the old default changes.
+        { "2026-11-03_forefront_holster_yaw", "HolsterYawFollowSpeed", "0", false, "20" },
+        // 2.0.5 empty hands: putting an item away leaves the hand empty.
+        { "2026-11-03_forefront_empty_hands", "HolsterEmptyHands", "true", false, "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3298,6 +3303,7 @@ namespace
         sampleKeys.insert("HolsterInstantDraw");
         sampleKeys.insert("AmbidextrousItemHands");
         sampleKeys.insert("ChestSlingEnabled");
+        sampleKeys.insert("HolsterEmptyHands");
         sampleKeys.insert("ChestSlingDropDistanceMeters");
         sampleKeys.insert("ChestSlingGrabRadiusMeters");
         sampleKeys.insert("ItemHandOffRadiusMeters");

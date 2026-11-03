@@ -3344,13 +3344,19 @@ void VR::ParseConfigFile()
     m_ChestSlingEnabled = getBool("ChestSlingEnabled", true);
     m_ChestSlingDropDistanceMeters = std::clamp(getFloat("ChestSlingDropDistanceMeters", 0.6f), 0.3f, 2.0f);
     m_ChestSlingGrabRadiusMeters = std::clamp(getFloat("ChestSlingGrabRadiusMeters", 0.15f), 0.05f, 0.35f);
+    // The sling's grab reach is the slot1 holster's too (the rifle hangs there).
+    m_HolsterLayout.slingReachMeters = m_ChestSlingGrabRadiusMeters;
+    // Forefront / Pavlov empty hands: putting an item away (or letting go of a
+    // sidearm near the body) leaves the hand empty.
+    m_HolsterEmptyHands = getBool("HolsterEmptyHands", true);
     m_ItemHandOffRadiusMeters = std::clamp(getFloat("ItemHandOffRadiusMeters", 0.14f), 0.05f, 0.3f);
     // ItemHandMirror is retired (headset session 6): an item in the left hand is
     // always held by a mirrored left hand; the right hand never moves over.
     m_ItemHandMirror = true;
     m_MenuLaserPointerEnabled = getBool("MenuLaserPointerEnabled", true);
-    // Pavlov's inventory follows the head yaw at interpolation speed 20.
-    m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 20.0f), 1.0f, 60.0f);
+    // Forefront's equipment takes the head yaw every frame (0); Pavlov's
+    // inventory interpolates toward it at speed 20.
+    m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 0.0f), 0.0f, 60.0f);
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
     m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
     m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);

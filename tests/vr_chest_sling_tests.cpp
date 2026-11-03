@@ -40,6 +40,37 @@ static void TestRelease()
     CHECK(OnRelease(in) == ReleaseAction::Drop);
 }
 
+static void TestSidearmRelease()
+{
+    using namespace l4d2vr_chest_sling;
+    // Forefront: a sidearm let go near the body returns to the hip holster.
+    CHECK(IsSidearm(1) && IsSidearm(32) && IsSidearm(19) && IsSidearm(20));
+    CHECK(!IsSidearm(5) && !IsSidearm(12) && !IsSidearm(14) && !IsSidearm(15));
+    ReleaseInput in{};
+    in.dropRequested = true;
+    in.weaponId = 1;
+    in.handToSlingMeters = 0.30f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Sling);       // near the hip: holstered
+    in.handToSlingMeters = 0.75f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Drop);        // arm stretched out: dropped
+    in.handToSlingMeters = -1.0f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Sling);       // no body frame: keep it
+    in.handToSlingMeters = 0.20f;
+    in.weaponId = 19;
+    in.handSpeedMetersPerSecond = 4.0f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Drop);        // a melee throw stays a throw
+    in.handSpeedMetersPerSecond = 1.0f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Sling);
+    in.weaponId = 14;                                          // a pipe bomb: not a sidearm
+    CHECK(OnSidearmRelease(in) == ReleaseAction::None);
+    in.weaponId = 1;
+    in.enabled = false;                                        // HolsterEmptyHands=false: the old rules
+    CHECK(OnSidearmRelease(in) == ReleaseAction::None);
+    in.enabled = true;
+    in.dropRequested = false;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::None);
+}
+
 static void TestGrab()
 {
     GrabInput in{};
@@ -100,6 +131,7 @@ int main()
 {
     TestLongGuns();
     TestRelease();
+    TestSidearmRelease();
     TestGrab();
     TestSlingState();
     TestButtons();

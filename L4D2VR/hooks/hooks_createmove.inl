@@ -2087,7 +2087,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             // lets a pistol go while it runs (the grips take nothing either).
             const bool dualReloadHoldsGuns = m_VR->DualReloadActive();
             if (dualReloadHoldsGuns) s_pistolOwnership.CancelInteractions();
-            const l4d2vr_dual::Hand pistolDropHand = pistolGripMode && gripDropEligible && !dualReloadHoldsGuns
+            l4d2vr_dual::Hand pistolDropHand = pistolGripMode && gripDropEligible && !dualReloadHoldsGuns
                 ? s_pistolOwnership.Release(weaponGripActionActive, weaponGripDown,
                     (leftGrip & 1u) != 0u, (leftGrip & 2u) != 0u, gripNowMs,
                     l4d2vr_input::GripSample::Generation(weaponGripInputState),
@@ -2100,11 +2100,23 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				weaponGripDown,
 				activeWeaponTag, l4d2vr_input::GripSample::Generation(weaponGripInputState), gripDropHere) ||
                 pistolDropHand != l4d2vr_dual::Hand::None;
+            // Empty hands (HolsterEmptyHands): an item already put away stays
+            // where it is; a release processed late must not drop it.
+            const bool alreadyStowed = gripReleaseRequested && m_VR->ChestSlingActive();
+            // Forefront: a single pistol (or the magnum, a melee weapon, the
+            // chainsaw) let go near the body goes back to the hip holster.
+            const bool sidearmCaught = gripReleaseRequested && !alreadyStowed &&
+                pistolDropHand == l4d2vr_dual::Hand::Right && !nativeDual &&
+                m_VR->HolsterCatchRelease(activeWeaponTag, activeWeaponId);
+            if (sidearmCaught)
+                pistolDropHand = l4d2vr_dual::Hand::None;
             // Chest sling: a long gun let go near the body hangs on the chest
             // instead of dropping (vr_chest_sling.h); nothing goes to the server.
-            const bool slingCaught = gripReleaseRequested && pistolDropHand == l4d2vr_dual::Hand::None &&
-                !carriedProp && l4d2vr_chest_sling::IsLongGun(activeWeaponId) &&
-                m_VR->ChestSlingCatchRelease(activeWeaponTag, activeWeaponId);
+            const bool slingCaught = alreadyStowed || sidearmCaught || (gripReleaseRequested &&
+                pistolDropHand == l4d2vr_dual::Hand::None && !carriedProp &&
+                (l4d2vr_chest_sling::IsLongGun(activeWeaponId)
+                    ? m_VR->ChestSlingCatchRelease(activeWeaponTag, activeWeaponId)
+                    : m_VR->HolsterCatchRelease(activeWeaponTag, activeWeaponId)));
             const bool gripDropRequested = gripReleaseRequested && !slingCaught;
 			// Hand throw: tap the trigger (pin), let go of the grip to throw; or
 			// hold the trigger through the swing and let go of it.

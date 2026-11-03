@@ -858,9 +858,9 @@ namespace
         return offset;
     }
 
-    // Pavlov's magazine pouch on the off-hand hip (Pavlov Shack layout):
-    // relative to the holster root (head - 0.75 m), toward the off side.
-    const Vector kPavlovPouchRootMeters(-0.0233f, -0.187f, 0.19f);
+    // The magazine pouch of the body layout (vr_holster.h Layout::magPouch:
+    // Forefront's ammo pouch on the off-hand upper chest since 2.0.5; Pavlov's
+    // off-hand hip before), relative to the equipment root.
     constexpr float kPavlovHandRadiusMeters = 0.115f;
 
     bool MagazineInteractionResolvePavlovPouch(const VR* vr, Vector& point, Vector& forward, Vector& right)
@@ -872,7 +872,7 @@ namespace
             return false;
         // The pouch hangs on the free hand's hip: it changes sides when the
         // configured off hand holds the gun (vr_item_hand.h).
-        Vector pouchLocal = kPavlovPouchRootMeters;
+        Vector pouchLocal = vr->m_HolsterLayout.magPouch;
         if (vr->m_ItemHandSwapped.load(std::memory_order_acquire))
             pouchLocal.y = -pouchLocal.y;
         point = l4d2vr_holster::RootToWorld(frame, pouchLocal);
@@ -881,14 +881,17 @@ namespace
         return l4d2vr_interaction::Finite(point) && right.Length() > 0.5f;
     }
 
-    // Hand reach to the pouch: Pavlov counts the hand's own radius.
+    // Hand reach to the pouch: the grab range plus the hand's own radius, at
+    // most the layout's pouch reach (on the chest the pouch sits 20 cm from
+    // the grenade: a reach past it would take a magazine instead).
     float MagazineInteractionPouchReachMeters(const VR* vr)
     {
         if (!vr)
             return 0.0f;
         Vector point{}, forward{}, right{};
         const float range = std::max(0.0f, vr->m_MagazineInteractionFreshMagazineGrabRangeMeters);
-        return MagazineInteractionResolvePavlovPouch(vr, point, forward, right) ? range + kPavlovHandRadiusMeters : range;
+        return MagazineInteractionResolvePavlovPouch(vr, point, forward, right)
+            ? std::min(range + kPavlovHandRadiusMeters, vr->m_HolsterLayout.magPouchReachMeters) : range;
     }
 
     bool MagazineInteractionBuildFreshMagazinePickupBox(

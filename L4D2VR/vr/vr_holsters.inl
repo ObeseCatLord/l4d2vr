@@ -1,4 +1,4 @@
-// Pavlov-style holsters: render snapshot of the carried items and their world
+// Forefront-style holsters: render snapshot of the carried items and their world
 // placement. Input handling lives in ProcessInput (vr_process_input.inl).
 
 namespace
@@ -65,7 +65,8 @@ void VR::UpdateHolsterRenderSnapshot(C_BasePlayer* localPlayer, int activeSlot)
         const bool slung = ChestSlingActive();
         for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
         {
-            // The active item is in the hand, unless it hangs on the chest sling.
+            // The active item is in the hand, unless it is stowed (both hands
+            // empty: it hangs on the sling or in its holster).
             if (slot == activeSlot && !slung)
                 continue;
             void* const weapon = localPlayer->Weapon_GetSlot(slot);
@@ -115,8 +116,8 @@ bool VR::BuildHolsterItemWorld(const HolsterRenderItem& item, l4d2vr_holster::It
     l4d2vr_holster::BodyFrame frame{};
     if (!GetHolsterBodyFrame(frame))
         return false;
-    if (item.sling)
-        return BuildChestSlingPose(frame, pose);
+    // A stowed active weapon (item.sling) hangs in its own holster like the
+    // others: slot1 is the chest sling.
     pose = l4d2vr_holster::BuildItemPose(frame, m_HolsterLayout,
         static_cast<l4d2vr_holster::Zone>(item.slot), item.shape);
     if (m_SelfTestEnabled && m_SelfTestBackPreviewMeters > 0.0f &&

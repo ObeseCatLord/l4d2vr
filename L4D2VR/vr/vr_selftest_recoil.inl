@@ -186,7 +186,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
         {
             m_SelfTestStage = 4;
             m_RecoilTestAligning = false;
-            m_SelfTestRightAngLocal.y += 75.0f;
+            m_SelfTestRightAngLocal.y += 120.0f;
         }
         if (atS(4, 7.5f) || (m_SelfTestStage == 4 && t > 11.0f))
         {
@@ -202,7 +202,7 @@ bool VR::RunRecoilSelfTestStep(const std::string& step, float t, C_BasePlayer* p
             m_RecoilEnabled = m_RecoilTestSavedEnabled;
             m_RecoilTestEyeRelief = m_SelfTestValueC > 0 ? m_SelfTestValueC / 1000.0f : 0.10f;
             m_SelfTestRightWorldValid = false;
-            m_SelfTestRightAngLocal.y -= 75.0f;
+            m_SelfTestRightAngLocal.y -= 120.0f;
         }
         return m_SelfTestStage >= 5 && t > 8.5f;
     }

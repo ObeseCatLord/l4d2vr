@@ -183,6 +183,18 @@ int main()
         CHECK(header.find("m_NativeViewmodelLeftHandPoseRotationOffsetDeg = { -90.0f, 90.0f, 0.0f };") != std::string::npos);
         CHECK(header.find("m_NativeViewmodelLeftHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };") != std::string::npos);
     }
+    // The right hand mirrors the left (2.0.6): same offset, x = 0 so the mirror keeps it.
+    {
+        const std::string off = std::string("NativeViewmodelRightHandPoseOffsetMeters=") + op::kDefaultRightOffsetText + "\n";
+        const std::string config = ReadFile(L4D2VR_SOURCE_DIR "/config.txt");
+        const std::string sample = ReadFile(L4D2VR_SOURCE_DIR "/vr_config_overlay_embedded.inl");
+        const std::string header = ReadFile(L4D2VR_SOURCE_DIR "/vr.h");
+        CHECK(config.find(off) != std::string::npos && sample.find(off) != std::string::npos);
+        CHECK(header.find("m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };") != std::string::npos);
+        CHECK(op::kDefaultRightOffsetMeters[0] == -op::kDefaultOffsetMeters[0] &&
+            op::kDefaultRightOffsetMeters[1] == op::kDefaultOffsetMeters[1] &&
+            op::kDefaultRightOffsetMeters[2] == op::kDefaultOffsetMeters[2]);
+    }
 
     if (g_failures)
         return 1;

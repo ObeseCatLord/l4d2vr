@@ -40,6 +40,7 @@ KNOWN_SHIPPED_CHANGES = {
     'ManualPumpForegripRacks': ['true'],
     'ManualThrowHandVelocityScale': ['3.0', '1.5'],
     'NativeViewmodelLeftHandPoseOffsetMeters': ['0,0,0'],
+    'NativeViewmodelRightHandPoseOffsetMeters': ['0,0,0'],
     'NativeViewmodelLeftHandPoseRotationOffsetDeg': ['0,0,0'],
     'RightAmmoHudWidthMeters': ['0.8'],
     'ScopeEyeboxDeg': ['8'],

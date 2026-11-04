@@ -3778,6 +3778,32 @@ namespace
         VR* vr,
         vr_vm_stabilize::Mat3x4& outAnchor);
 
+
+    inline bool HooksNativeViewmodelHandsOnlyVectorFinite(const Vector& value);
+
+    // Where the gun hand's wrist goes (GunHandOnController): where the empty
+    // hand's wrist sits, i.e. the item controller plus the hand pose offset in
+    // the hand code's controller frame (x right, y up, z back). An item in the
+    // physical left hand is held by the mirrored hold: before the mirror
+    // (drawnLeft false) the right-handed hand goes to the mirror image of the
+    // left hand's anchor; on the drawn (mirrored / left) hand, the anchor itself.
+    inline bool HooksGunHandTarget(VR* vr, bool drawnHand, Vector& out)
+    {
+        vr_vm_stabilize::Mat3x4 controllerAnchor{};
+        if (!vr || !HooksNativeViewmodelHandsOnlyBuildRightControllerWorldAnchor(vr, controllerAnchor))
+            return false;
+        Vector cf{}, cr{}, cu{};
+        QAngle::AngleVectors(vr->GetRightControllerAbsAngle(), &cf, &cr, &cu);
+        const bool leftHeld = vr->ItemHandIsPhysicalLeft() && vr->ItemHandMirrorWanted();
+        Vector offset = leftHeld ? vr->m_NativeViewmodelLeftHandPoseOffsetMeters : vr->m_NativeViewmodelRightHandPoseOffsetMeters;
+        if (leftHeld && !drawnHand)
+            offset.x = -offset.x;
+        const l4d2vr_gun_hand_anchor::Vec3 local =
+            l4d2vr_gun_hand_anchor::HandOffsetToForwardRightUp(l4d2vr_gun_hand_anchor::Vec3{ offset.x, offset.y, offset.z });
+        out = vr_vm_stabilize::GetOrigin(controllerAnchor) + (cf * local.x + cr * local.y + cu * local.z) * vr->m_VRScale;
+        return HooksNativeViewmodelHandsOnlyVectorFinite(out);
+    }
+
     // gunhand self-test: where the right hand bone of a viewmodel / arms draw
     // sits relative to the right controller at each stage of the draw hook.
     inline void HooksGunHandStageTrace(VR* vr, void* drawState, const std::string& modelName,
@@ -3863,13 +3889,9 @@ namespace
             const Vector axis(hm.m[0][a], hm.m[1][a], hm.m[2][a]);
             probe.axes[a][0] = DotProduct(axis, cf); probe.axes[a][1] = DotProduct(axis, cr); probe.axes[a][2] = DotProduct(axis, cu);
         }
-        vr_vm_stabilize::Mat3x4 anchor{};
-        if (HooksNativeViewmodelHandsOnlyBuildRightControllerWorldAnchor(vr, anchor))
-        {
-            const Vector& off = vr->m_NativeViewmodelRightHandPoseOffsetMeters;
-            const Vector target = vr_vm_stabilize::GetOrigin(anchor) + (cf * off.x + cr * off.y + cu * off.z) * vr->m_VRScale;
+        Vector target{};
+        if (HooksGunHandTarget(vr, true, target))
             probe.anchorGapCm = (vr_vm_stabilize::GetOrigin(hm) - target).Length() * s;
-        }
         probe.leftBone = useLeft;
         probe.path = std::strcmp(stage, "armik") == 0 ? "armik" : (std::strcmp(stage, "clipset") == 0 ? "clipset" : "classic");
         std::lock_guard<std::mutex> lock(vr->m_GunHandProbeMutex);
@@ -19341,7 +19363,10 @@ namespace
     // offset table, so each gun's idle animation put the hand somewhere else.
     // The whole viewmodel (gun and bone-merged arms) is moved so the gun hand's
     // wrist bone lands where the empty hand's does: on the item controller
-    // (plus NativeViewmodelRightHandPoseOffsetMeters). The translation is
+    // (plus the hand pose offset, HooksGunHandTarget). Since 2.0.6 the move is
+    // made on the viewmodel origin (VR::GunHandAnchorShiftWorld), not on the
+    // drawn bones, so every box, attachment and capture sees it; this hook
+    // only measures and corrects it (vr_gun_hand_anchor.h). The translation is
     // measured while the gun rests (idle, not firing, no recoil kick, no
     // reload) and kept per gun model in controller coordinates, so reloads,
     // pumps and the recoil kick still move hand and gun together as before.
@@ -19378,15 +19403,17 @@ namespace
         if (!armsModel && pose.currentModel != lowerModel)
             return;
         const std::string weaponModel = pose.currentModel;
+        // The arms are bone-merged to the moved viewmodel: nothing to do.
+        if (armsModel)
+            return;
 
         int numBones = 0;
         if (!vr_vm_stabilize::TryGetNumBonesFromDrawState(drawState, numBones) || numBones <= 0 || numBones > 512)
             return;
 
-        struct Anchor { bool valid = false; float local[3]{}; };
         static std::mutex s_Mutex;
         static std::unordered_map<std::string, int> s_HandBone;
-        static std::unordered_map<std::string, Anchor> s_Anchors;
+        static std::unordered_map<std::string, l4d2vr_gun_hand_anchor::Anchor> s_Anchors;
         int hand = -1;
         {
             std::lock_guard<std::mutex> lock(s_Mutex);
@@ -19419,16 +19446,17 @@ namespace
         if (hand >= numBones)
             return;
 
-        vr_vm_stabilize::Mat3x4 controllerAnchor{};
-        if (!HooksNativeViewmodelHandsOnlyBuildRightControllerWorldAnchor(vr, controllerAnchor))
+        Vector target{};
+        if (!HooksGunHandTarget(vr, false, target))
             return;
         Vector cf{}, cr{}, cu{};
         QAngle::AngleVectors(vr->GetRightControllerAbsAngle(), &cf, &cr, &cu);
-        const Vector& offset = vr->m_NativeViewmodelRightHandPoseOffsetMeters;
-        const Vector target = vr_vm_stabilize::GetOrigin(controllerAnchor) +
-            (cf * offset.x + cr * offset.y + cu * offset.z) * vr->m_VRScale;
 
-        Anchor anchor{};
+        // The translation itself moves the viewmodel origin
+        // (VR::GunHandAnchorShiftWorld), so these bones already carry it; this
+        // only corrects it from a resting frame and publishes the gun's stored
+        // translation for the main thread.
+        l4d2vr_gun_hand_anchor::Anchor anchor{};
         {
             std::lock_guard<std::mutex> lock(s_Mutex);
             anchor = s_Anchors[weaponModel];
@@ -19451,37 +19479,15 @@ namespace
                 HooksNativeViewmodelHandsOnlyMatrixFinite(handWorld))
             {
                 const Vector d = target - vr_vm_stabilize::GetOrigin(handWorld);
-                const float maxUnits = 0.5f * vr->m_VRScale;   // never drag a gun half a metre
-                if (d.Length() < maxUnits)
+                const l4d2vr_gun_hand_anchor::Vec3 residual{ DotProduct(d, cf), DotProduct(d, cr), DotProduct(d, cu) };
+                if (l4d2vr_gun_hand_anchor::Correct(anchor, residual, 0.5f, 0.5f * vr->m_VRScale))
                 {
-                    anchor.valid = true;
-                    anchor.local[0] = DotProduct(d, cf);
-                    anchor.local[1] = DotProduct(d, cr);
-                    anchor.local[2] = DotProduct(d, cu);
                     std::lock_guard<std::mutex> lock(s_Mutex);
                     s_Anchors[weaponModel] = anchor;
                 }
             }
+            vr->SetGunHandAnchor(weaponId, anchor);
         }
-        if (!anchor.valid)
-            return;
-        const Vector shift = cf * anchor.local[0] + cr * anchor.local[1] + cu * anchor.local[2];
-        if (!HooksNativeViewmodelHandsOnlyVectorFinite(shift))
-            return;
-        uint32_t seqEven = vr->m_RenderFrameSeq.load(std::memory_order_acquire) & ~1u;
-        if (seqEven == 0)
-            seqEven = 2;
-        vr_vm_stabilize::Mat3x4* moved = vr_vm_stabilize::AllocStableBones(numBones, seqEven);
-        if (!moved)
-            return;
-        std::memcpy(moved, pBones, static_cast<size_t>(numBones) * sizeof(vr_vm_stabilize::Mat3x4));
-        for (int b = 0; b < numBones; ++b)
-        {
-            moved[b].m[0][3] += shift.x;
-            moved[b].m[1][3] += shift.y;
-            moved[b].m[2][3] += shift.z;
-        }
-        pBones = moved;
     }
 
     // The model's own LEFT arm for an item in the physical left hand

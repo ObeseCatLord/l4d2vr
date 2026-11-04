@@ -1509,8 +1509,44 @@ Vector VR::GetRecommendedViewmodelAbsPos()
     viewmodelPos -= m_ViewmodelRight * m_ViewmodelPosOffset.y;
     viewmodelPos -= m_ViewmodelUp * m_ViewmodelPosOffset.z;
     viewmodelPos += m_MeleeInertiaPosOffsetWorld;
+    viewmodelPos += GunHandAnchorShiftWorld(GetRightControllerAbsAngle());
 
     return viewmodelPos;
+}
+
+void VR::SetGunHandAnchor(int weaponId, const l4d2vr_gun_hand_anchor::Anchor& anchor)
+{
+    std::lock_guard<std::mutex> lock(m_GunHandAnchorMutex);
+    m_GunHandAnchorWeaponId = weaponId;
+    m_GunHandAnchor = anchor;
+}
+
+Vector VR::GunHandAnchorShiftWorld(const QAngle& itemControllerAngles)
+{
+    const int weaponId = m_ActiveGunWeaponId.load(std::memory_order_acquire);
+    l4d2vr_gun_hand_anchor::Gate gate{};
+    gate.enabled = m_GunHandOnController;
+    gate.vrEnabled = m_IsVREnabled;
+    gate.mouseMode = m_MouseModeEnabled;
+    gate.thirdPerson = m_IsThirdPersonCamera;
+    gate.isGun = l4d2vr_handpose::IsGun(weaponId);
+    gate.chestSling = ChestSlingActive();
+    gate.emptyHands = m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
+    if (!l4d2vr_gun_hand_anchor::Applies(gate))
+        return Vector(0.0f, 0.0f, 0.0f);
+    l4d2vr_gun_hand_anchor::Vec3 local{};
+    {
+        std::lock_guard<std::mutex> lock(m_GunHandAnchorMutex);
+        if (!m_GunHandAnchor.valid || m_GunHandAnchorWeaponId != weaponId)
+            return Vector(0.0f, 0.0f, 0.0f);
+        local = m_GunHandAnchor.local;
+    }
+    Vector f{}, r{}, u{};
+    QAngle::AngleVectors(itemControllerAngles, &f, &r, &u);
+    const Vector shift = f * local.x + r * local.y + u * local.z;
+    if (!std::isfinite(shift.x) || !std::isfinite(shift.y) || !std::isfinite(shift.z))
+        return Vector(0.0f, 0.0f, 0.0f);
+    return shift;
 }
 
 

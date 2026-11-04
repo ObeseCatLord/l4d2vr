@@ -167,9 +167,12 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
     grab.pressEdge[1] = itemPress;
     // Another holster under the hand takes the squeeze (a draw); the stowed
     // item's own holster does not count.
+    // (Nearest grab wins: another holster only claims it when it is nearer
+    // than the stowed item.)
+    const l4d2vr_holster::Zone supportZone =
+        l4d2vr_holster::FindZone(*frame, m_HolsterLayout, m_LeftControllerPosAbs, occupiedMask | stowedBit);
     grab.claimed[0] = MagazineInteractionOwnsGrip(true) || IsMagazineInteractionManualActive() ||
-        l4d2vr_holster::FindZone(*frame, m_HolsterLayout, m_LeftControllerPosAbs, occupiedMask) !=
-            l4d2vr_holster::Zone::None;
+        (supportZone != l4d2vr_holster::Zone::None && supportZone != stowedZone);
     grab.claimed[1] = itemHandClaimed;
     const char* what = "sling";
     if (onSling)

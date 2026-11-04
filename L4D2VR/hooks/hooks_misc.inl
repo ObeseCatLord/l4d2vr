@@ -17879,25 +17879,30 @@ namespace
         Vector& outBodyRight,
         Vector& outBodyUp)
     {
-        Vector ignoredViewForward{};
-        Vector ignoredViewRight{};
-        Vector ignoredViewUp{};
+        Vector viewForward{};
+        Vector viewRight{};
+        Vector viewUp{};
         if (!HooksNativeViewmodelHandsOnlyResolveViewFrame(
             vr,
             outViewOrigin,
-            ignoredViewForward,
-            ignoredViewRight,
-            ignoredViewUp) ||
+            viewForward,
+            viewRight,
+            viewUp) ||
             !vr)
         {
             return false;
         }
 
-        // ViewOrigin still supplies the tracked head position for the no-body
-        // fallback, but horizontal arm orientation must never consume HMD yaw.
-        // Use only the artificial body-turn frame here. When the first-person
-        // survivor body is active, its published shoulder line replaces this
-        // fallback before the analytic solve.
+        // ViewOrigin supplies the tracked head position for the no-body
+        // fallback. The shoulder line follows the visual torso yaw (the head's
+        // yaw through the body-yaw comfort cone, HooksTrackedBodyResolveVisualYaw),
+        // not the artificial turn alone: 2.0.6 and earlier used only the turn
+        // yaw, so with the player physically turned away from the play-space
+        // forward the shoulders stayed put and each arm rooted on the other
+        // shoulder (session 8: "left and right arm attachments are flipped").
+        // Head turns inside the cone still leave the shoulders (and the upper
+        // arms) where they are. When the first-person survivor body is active,
+        // its published shoulder line replaces this fallback before the solve.
         float bodyYawDeg =
             vr->m_RenderRotationOffset.load(std::memory_order_acquire);
         if (!std::isfinite(bodyYawDeg))
@@ -17905,6 +17910,18 @@ namespace
         if (!std::isfinite(bodyYawDeg))
             return false;
         bodyYawDeg = HooksTrackedBodyWrapYaw(bodyYawDeg);
+        {
+            // Head yaw from the view's right axis (stable looking straight
+            // down, where the forward axis has no horizontal part).
+            const float rightLen2 = viewRight.x * viewRight.x + viewRight.y * viewRight.y;
+            if (std::isfinite(rightLen2) && rightLen2 > 0.01f)
+            {
+                const float headYaw = std::atan2(viewRight.y, viewRight.x) * (180.0f / 3.14159265f) + 90.0f;
+                const float visualYaw = HooksTrackedBodyResolveVisualYaw(vr, headYaw);
+                if (std::isfinite(visualYaw))
+                    bodyYawDeg = HooksTrackedBodyWrapYaw(visualYaw);
+            }
+        }
 
         Vector turnForward{};
         Vector turnRight{};
@@ -19537,6 +19554,129 @@ namespace
         }
     }
 
+    // Melee handle grip (2.0.7). The melee viewmodels animate the weapon on
+    // ValveBiped.weapon_bone with the right hand at that bone's origin, and the
+    // weapon's long axis is the bone's +Y. For most weapons the origin is at
+    // the handle (bat 0..31.6, katana handle -10..5 with the guard at 5), but
+    // the crowbar's origin is at its middle (-11.8..13.2, the claw at +Y) and
+    // the fire axe's 12 inches up its handle (-12..30, the head at +21), so
+    // the hand held them by the middle ("the crowbar is still held from the
+    // front"). Slide only the weapon's bones (weapon_bone and its children)
+    // along their own +Y so the hand sits at the handle end; the hand and the
+    // arm (bone-merged, separate bones) stay on the controller and the melee
+    // lag, already in these bones, still pivots at the hand. Units are the
+    // model's (inches), measured from the models' meshes in the weapon bone's
+    // bind frame.
+    inline float HooksMeleeHandleSlideUnits(const std::string& lowerModel)
+    {
+        struct Entry { const char* model; float units; };
+        static const Entry kEntries[] = {
+            { "models/weapons/melee/v_crowbar.mdl", 9.0f },   // hand ~2.8 in from the flat end
+            { "models/weapons/melee/v_fireaxe.mdl", 8.0f },   // hand ~4 in above the knob
+        };
+        for (const Entry& e : kEntries)
+            if (lowerModel == e.model)
+                return e.units;
+        return 0.0f;
+    }
+
+    inline void HooksApplyMeleeHandleGrip(
+        VR* vr,
+        void* drawState,
+        const std::string& modelName,
+        bool drawEntityIsViewmodelClass,
+        const ModelRenderInfo_t& info,
+        void*& pBones)
+    {
+        if (!vr || !vr->m_IsVREnabled || vr->m_MouseModeEnabled || vr->m_IsThirdPersonCamera || !drawState || !pBones ||
+            modelName.empty())
+            return;
+        if (vr->m_ActiveGunWeaponId.load(std::memory_order_acquire) != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE))
+            return;
+        const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        const float slide = HooksMeleeHandleSlideUnits(lowerModel);
+        if (slide == 0.0f)
+            return;
+        if (!drawEntityIsViewmodelClass && !HooksModelNameIsViewmodel(lowerModel))
+            return;
+        if (HooksDrawIsHolsteredItem(vr, info))
+            return;
+        int numBones = 0;
+        if (!vr_vm_stabilize::TryGetNumBonesFromDrawState(drawState, numBones) || numBones <= 0 || numBones > 512)
+            return;
+
+        // Per model: the weapon bone and its subtree.
+        struct Entry { bool built = false; int numBones = 0; int weaponBone = -1; std::vector<uint8_t> moved; };
+        static std::mutex s_Mutex;
+        static std::unordered_map<std::string, Entry> s_Entries;
+        Entry entry{};
+        {
+            std::lock_guard<std::mutex> lock(s_Mutex);
+            Entry& e = s_Entries[lowerModel];
+            if (!e.built || e.numBones != numBones)
+            {
+                e = Entry{};
+                e.built = true;
+                e.numBones = numBones;
+                std::vector<std::string> names;
+                std::vector<int> parents;
+                int count = 0, boneIndex = 0, stride = 0, numBonesOffset = 0;
+                if (vr_vm_stabilize::TryCollectBoneNamesFromDrawState(drawState, names, parents, count, boneIndex, stride,
+                        numBonesOffset) && count == numBones && static_cast<int>(names.size()) >= numBones &&
+                    static_cast<int>(parents.size()) >= numBones)
+                {
+                    for (int b = 0; b < numBones; ++b)
+                        if (vr_vm_stabilize::ToLowerAscii(names[static_cast<size_t>(b)]) == "valvebiped.weapon_bone")
+                            e.weaponBone = b;
+                    if (e.weaponBone >= 0)
+                    {
+                        e.moved.assign(static_cast<size_t>(numBones), 0u);
+                        for (int b = 0; b < numBones; ++b)
+                        {
+                            int a = b;
+                            for (int guard = 0; a >= 0 && guard < 64; ++guard)
+                            {
+                                if (a == e.weaponBone) { e.moved[static_cast<size_t>(b)] = 1u; break; }
+                                a = parents[static_cast<size_t>(a)];
+                            }
+                        }
+                    }
+                }
+                Game::logMsg("[VR][Melee] handle grip %s: weapon_bone=%d slide=%.1f", lowerModel.c_str(), e.weaponBone, slide);
+            }
+            entry = e;
+        }
+        if (entry.weaponBone < 0 || entry.weaponBone >= numBones || static_cast<int>(entry.moved.size()) != numBones)
+            return;
+
+        const auto* src = reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBones);
+        vr_vm_stabilize::Mat3x4 weaponBone{};
+        if (!vr_vm_stabilize::SafeRead(src + entry.weaponBone, weaponBone) || !HooksNativeViewmodelHandsOnlyMatrixFinite(weaponBone))
+            return;
+        // The bone's +Y axis (column 1) in world units.
+        Vector axis(weaponBone.m[0][1], weaponBone.m[1][1], weaponBone.m[2][1]);
+        if (VectorNormalize(axis) <= 0.0f)
+            return;
+        const Vector shift = axis * slide;
+        if (!HooksNativeViewmodelHandsOnlyVectorFinite(shift))
+            return;
+        uint32_t seqEven = vr->m_RenderFrameSeq.load(std::memory_order_acquire) & ~1u;
+        if (seqEven == 0)
+            seqEven = 2;
+        vr_vm_stabilize::Mat3x4* moved = vr_vm_stabilize::AllocStableBones(numBones, seqEven);
+        if (!moved || !vr_vm_stabilize::SafeReadBytes(pBones, moved, static_cast<size_t>(numBones) * sizeof(vr_vm_stabilize::Mat3x4)))
+            return;
+        for (int b = 0; b < numBones; ++b)
+        {
+            if (!entry.moved[static_cast<size_t>(b)])
+                continue;
+            moved[b].m[0][3] += shift.x;
+            moved[b].m[1][3] += shift.y;
+            moved[b].m[2][3] += shift.z;
+        }
+        pBones = moved;
+    }
+
     // The model's own LEFT arm for an item in the physical left hand
     // (vr_left_hand_remap.h): the mirrored bones (det -1, which would show the
     // right arm's mesh reflected onto the left controller) are moved onto each
@@ -19920,6 +20060,11 @@ namespace
         // first-person survivor body is active, replace that frame with the
         // deadzone-resolved torso yaw. Raw physical HMD yaw is never consumed
         // directly by the arm IK.
+        // The no-body arm frame is the same torso-yaw frame as the shoulders
+        // (see HooksNativeViewmodelArmIkResolveBodyFrame).
+        turnForward = bodyForward;
+        turnRight = bodyRight;
+        turnUp = bodyUp;
         Vector armFrameForward = turnForward;
         Vector armFrameRight = turnRight;
         Vector armFrameUp = turnUp;
@@ -28303,6 +28448,13 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             *pDrawInfo,
             pBonesToWorldFinal);
         HooksGunHandStageTrace(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal, "anchored");
+        HooksApplyMeleeHandleGrip(
+            m_VR,
+            state,
+            modelName,
+            drawEntityIsViewmodelClass,
+            *pDrawInfo,
+            pBonesToWorldFinal);
         // Contact publication and visual capture must see the same moved gun.
         MagazineInteractionRenderSnapshotScope pistolContactSnapshot(queueMode != 0);
         VR::t_MagazineContactHand = ApplyIndependentDualPistolBones(m_VR, state, modelName, pBonesToWorldFinal);

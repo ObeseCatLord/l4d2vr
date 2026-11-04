@@ -466,7 +466,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
 
-    if (step == "slinge2e" || step == "emptyhands" || step == "stow")
+    if (step == "slinge2e" || step == "emptyhands" || step == "stow" || step == "handswitch")
         return RunChestSlingSelfTestStep(step, t, player);
 
     // gunhand: logs where the drawn gun hand (the animated hand bone the arm IK
@@ -1197,7 +1197,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             void* const primary = player->Weapon_GetSlot(0);
             const int slot = SelfTestActiveSlot(player);
             std::snprintf(detail, sizeof(detail), "primary %s, active slot %d", primary ? "kept" : "dropped", slot + 1);
-            SelfTestReport("toggle grip squeeze inside the holster puts it away", primary != nullptr && slot != 0, detail);
+            SelfTestReport("toggle grip squeeze inside the holster puts it away", primary != nullptr &&
+                (m_HolsterEmptyHands ? (slot == 0 && StowedSlot() == 0) : slot != 0), detail);
             m_GripToggleEnabled = s_savedToggle;
             return true;
         }
@@ -1224,7 +1225,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(2, 1.6f)) {}
         if (at(3, 2.4f)) squeeze(true);
         if (at(4, 2.6f)) squeeze(false);
-        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.22f, 0.12f, -0.38f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.40f, 0.15f, -0.35f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(6, 4.5f))
         {
             const int slot = SelfTestActiveSlot(player);

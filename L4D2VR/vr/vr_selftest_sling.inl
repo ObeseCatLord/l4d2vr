@@ -1,9 +1,14 @@
 // Chest sling self-test (slinge2e, docs/physical-overhaul.md). Included by vr.cpp.
-//   slinge2e  draw the rifle from the chest sling with the right hand, let go in front
-//             of the body (slung, still the active weapon, the trigger does not
-//             fire), take it by the handle with the LEFT hand (left trigger
-//             fires), let go (slung again), take it with the right hand, then
-//             let go with the arm stretched out (dropped). Screenshots
+//   slinge2e  (toggle grips) draw the rifle from the chest sling with the right
+//             hand, squeeze with the hand at the sling (slung, still the active
+//             weapon, the trigger does not fire), take it by the handle with the
+//             LEFT hand (left trigger fires), squeeze at the sling (slung again),
+//             take it with the right hand, then squeeze with the arm stretched
+//             out (dropped).
+//   handswitch (toggle grips) no hand switch from a held gun: the other hand on
+//             its handle (nothing) and foregrip (support only), the sling as the
+//             only way to the other hand, left-arm model and triggers, the
+//             owner's squeeze away from the sling drops, the pistol at the hip. Screenshots
 //             sling_held, sling_hung, sling_taken_left, sling_hung_again.
 bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
 {
@@ -69,10 +74,229 @@ bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlaye
     }
     if (step == "emptyhands")
         return RunEmptyHandsSelfTestStep(t, player);
+    if (step == "handswitch")
+    {
+        // handswitch (2.0.6): toggle grips (the default). A held gun never
+        // changes hands: the other hand's squeeze on its handle does nothing,
+        // on its foregrip it is the support grip. The only way to move it to
+        // the other hand is from the body: put it on the sling, take it with
+        // that hand. Letting go of the grip never drops; the owner's squeeze
+        // away from the sling drops it, at the hip it holsters the pistol.
+        auto holdAt = [&](bool left, const Vector& world)
+        {
+            if (left)
+            {
+                m_SelfTestLeftPathActive = false;
+                m_SelfTestLeftWorld = world;
+                m_SelfTestLeftWorldValid = true;
+            }
+            else
+            {
+                m_SelfTestPathActive = false;
+                m_SelfTestRightWorld = world;
+                m_SelfTestRightWorldValid = true;
+            }
+        };
+        // The free hand on the held gun's handle: 2 cm beside the item hand.
+        auto onHandle = [&](bool left)
+        {
+            holdAt(left, m_RightControllerPosAbs + m_HmdRight * (0.02f * (std::max)(1.0f, m_VRScale)));
+        };
+        static bool s_SavedToggle = true;
+        static uint32_t s_SwapBase = 0u, s_RemapBase = 0u;
+        const uint32_t swaps = m_ItemHandSwapSerial.load(std::memory_order_acquire) - s_SwapBase;
+        void* const primary = player ? player->Weapon_GetSlot(0) : nullptr;
+        if (at(0, 0.0f))
+        {
+            s_SavedToggle = m_GripToggleEnabled;
+            m_GripToggleEnabled = true;
+            cmd("give rifle");
+            button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false);
+            button(m_ActionPrimaryAttack, false); button(m_ActionSecondaryAttack, false);
+            SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));
+            m_SelfTestLeftPathActive = false;
+            m_SelfTestLeftWorldValid = false;
+            m_SelfTestSceneLeftValid = false;
+            m_SelfTestLeftAngWorldValid = false;
+            m_SelfTestLeftLocal = body::LeftReady();
+            m_SelfTestLeftAngLocal = QAngle(0.0f, 0.0f, 0.0f);
+            RequestItemHand(false, l4d2vr_item_hand::Reason::SelfTest); // start in the right hand
+        }
+        if (at(1, 1.0f)) cmd("use weapon_pistol");
+        if (at(2, 2.0f)) SelfTestReachRight(body::SlungRifleGrip(), SelfTestVec(30.0f, 0.0f, 0.0f), 1.0f);
+        if (at(3, 3.4f)) button(m_ActionWeaponGrip, true);
+        if (at(4, 3.6f)) button(m_ActionWeaponGrip, false);
+        if (at(5, 4.4f))
+        {
+            std::snprintf(detail, sizeof(detail), "active slot %d, slung %d, item hand %s", slot + 1, slung ? 1 : 0, hand);
+            SelfTestReport("handswitch: the right hand draws the rifle from the sling", slot == 0 && !slung && !ItemHandIsPhysicalLeft(), detail);
+            SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+        }
+        if (at(6, 6.0f))
+        {
+            std::snprintf(detail, sizeof(detail), "2.4 s after letting go of the grip: active slot %d, slung %d, rifle %s, toggle %s",
+                slot + 1, slung ? 1 : 0, primary ? "kept" : "gone", m_GripToggle.Held() ? "held" : "released");
+            SelfTestReport("handswitch: letting go of the grip keeps the rifle (toggle grip)",
+                slot == 0 && !slung && primary != nullptr && m_GripToggle.Held(), detail);
+            s_SwapBase = m_ItemHandSwapSerial.load(std::memory_order_acquire);
+            onHandle(true);
+        }
+        // The left hand squeezes the held rifle's handle.
+        if (at(7, 6.8f)) button(m_ActionOffHandGrip, true);
+        if (at(8, 7.0f)) button(m_ActionOffHandGrip, false);
+        if (at(9, 7.8f))
+        {
+            std::snprintf(detail, sizeof(detail), "item hand %s, active slot %d, slung %d, hand changes %u, two-hand %d",
+                hand, slot + 1, slung ? 1 : 0, swaps, m_VrHandsTwoHandedGripActive ? 1 : 0);
+            SelfTestReport("handswitch: the left hand's squeeze on the held rifle's handle does not take it",
+                !ItemHandIsPhysicalLeft() && slot == 0 && !slung && primary != nullptr && swaps == 0u, detail);
+            SelfTestRequestShot("hs_left_on_handle", 1);
+            Vector target{};
+            if (GetTwoHandedGripTargetPoint(target))
+                holdAt(true, target);
+        }
+        // ... and its foregrip: the support grip only.
+        if (at(10, 8.8f)) button(m_ActionOffHandGrip, true);
+        if (at(11, 9.0f)) button(m_ActionOffHandGrip, false);
+        if (at(12, 9.8f))
+        {
+            std::snprintf(detail, sizeof(detail), "two-hand grip %d, item hand %s, hand changes %u",
+                m_VrHandsTwoHandedGripActive ? 1 : 0, hand, swaps);
+            SelfTestReport("handswitch: the left hand on the foregrip is the support grip, no switch",
+                m_VrHandsTwoHandedGripActive && !ItemHandIsPhysicalLeft() && swaps == 0u, detail);
+            SelfTestRequestShot("hs_foregrip", 1);
+        }
+        if (at(13, 10.2f)) button(m_ActionOffHandGrip, true);   // foregrip toggle: let go again
+        if (at(14, 10.4f)) button(m_ActionOffHandGrip, false);
+        if (at(15, 11.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "two-hand grip %d, active slot %d, slung %d, rifle %s",
+                m_VrHandsTwoHandedGripActive ? 1 : 0, slot + 1, slung ? 1 : 0, primary ? "kept" : "gone");
+            SelfTestReport("handswitch: the support hand letting go never drops or holsters the rifle",
+                !m_VrHandsTwoHandedGripActive && slot == 0 && !slung && primary != nullptr, detail);
+            SelfTestReachLeft(body::LeftReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+            holdHandAtHandle(false);
+        }
+        // The right hand puts it on the sling.
+        if (at(16, 12.2f)) button(m_ActionWeaponGrip, true);
+        if (at(17, 12.4f)) button(m_ActionWeaponGrip, false);
+        if (at(18, 13.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "slung %d, active slot %d", slung ? 1 : 0, slot + 1);
+            SelfTestReport("handswitch: squeezing at the sling puts the rifle away", slung && slot == 0, detail);
+            SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+            holdHandAtHandle(true);
+        }
+        // The left hand takes it from the sling: now it is the left hand's.
+        if (at(19, 14.2f)) button(m_ActionOffHandGrip, true);
+        if (at(20, 14.4f)) button(m_ActionOffHandGrip, false);
+        if (at(21, 15.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "slung %d, item hand %s, active slot %d, hand changes %u",
+                slung ? 1 : 0, hand, slot + 1, swaps);
+            SelfTestReport("handswitch: the left hand takes the rifle from the sling", !slung && ItemHandIsPhysicalLeft() &&
+                slot == 0 && swaps == 1u, detail);
+            SelfTestReachLeft(SelfTestVec(0.42f, -0.12f, -0.32f), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
+            s_RemapBase = m_LeftHandRemapDraws.load(std::memory_order_acquire);
+        }
+        if (at(22, 16.4f)) { SelfTestRequestShot("hs_left_rifle", 1); m_SelfTestValueA = clip(); button(m_ActionSecondaryAttack, true); }
+        if (at(23, 16.7f)) button(m_ActionSecondaryAttack, false);
+        if (at(24, 17.4f))
+        {
+            const uint32_t remaps = m_LeftHandRemapDraws.load(std::memory_order_acquire) - s_RemapBase;
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d; left-arm model draws %u (ItemHandLeftArmModel %d)",
+                m_SelfTestValueA, clip(), remaps, m_ItemHandLeftArmModel ? 1 : 0);
+            SelfTestReport("handswitch: the left trigger fires the left-held rifle", clip() >= 0 && clip() < m_SelfTestValueA, detail);
+            SelfTestReport("handswitch: the left-held rifle is drawn on the survivor's left arm",
+                !m_ItemHandLeftArmModel || remaps > 0u, detail);
+            onHandle(false);
+        }
+        // The right hand squeezes the left-held rifle's handle: still the left's.
+        if (at(25, 18.2f)) button(m_ActionWeaponGrip, true);
+        if (at(26, 18.4f)) button(m_ActionWeaponGrip, false);
+        if (at(27, 19.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "item hand %s, active slot %d, slung %d, hand changes %u",
+                hand, slot + 1, slung ? 1 : 0, swaps);
+            SelfTestReport("handswitch: the right hand's squeeze on the left-held rifle does not take it",
+                ItemHandIsPhysicalLeft() && slot == 0 && !slung && primary != nullptr && swaps == 1u, detail);
+            SelfTestRequestShot("hs_right_on_handle", 1);
+            m_SelfTestValueB = clip();
+            button(m_ActionPrimaryAttack, true);
+        }
+        if (at(28, 19.5f)) button(m_ActionPrimaryAttack, false);
+        if (at(29, 20.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d", m_SelfTestValueB, clip());
+            SelfTestReport("handswitch: the free right trigger does not fire the left-held rifle", clip() == m_SelfTestValueB, detail);
+            SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+            holdHandAtHandle(true);
+        }
+        // Back: the left hand puts it on the sling, the right hand takes it.
+        if (at(30, 21.2f)) button(m_ActionOffHandGrip, true);
+        if (at(31, 21.4f)) button(m_ActionOffHandGrip, false);
+        if (at(32, 22.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "slung %d, active slot %d", slung ? 1 : 0, slot + 1);
+            SelfTestReport("handswitch: the left hand puts it on the sling", slung && slot == 0, detail);
+            SelfTestReachLeft(body::LeftReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+            holdHandAtHandle(false);
+        }
+        if (at(33, 23.2f)) button(m_ActionWeaponGrip, true);
+        if (at(34, 23.4f)) button(m_ActionWeaponGrip, false);
+        if (at(35, 24.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "slung %d, item hand %s, active slot %d, hand changes %u",
+                slung ? 1 : 0, hand, slot + 1, swaps);
+            SelfTestReport("handswitch: the right hand takes it back from the sling", !slung && !ItemHandIsPhysicalLeft() &&
+                slot == 0 && swaps == 2u, detail);
+            SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+        }
+        if (at(36, 25.4f)) { SelfTestRequestShot("hs_right_again", 1); m_SelfTestValueA = clip(); button(m_ActionPrimaryAttack, true); }
+        if (at(37, 25.7f)) button(m_ActionPrimaryAttack, false);
+        if (at(38, 26.4f))
+        {
+            std::snprintf(detail, sizeof(detail), "clip %d -> %d", m_SelfTestValueA, clip());
+            SelfTestReport("handswitch: the right trigger fires it again", clip() >= 0 && clip() < m_SelfTestValueA, detail);
+        }
+        // The owner's squeeze in front of the body (away from the sling) drops it.
+        if (at(39, 26.8f)) button(m_ActionWeaponGrip, true);
+        if (at(40, 27.0f)) button(m_ActionWeaponGrip, false);
+        if (at(41, 28.6f))
+        {
+            std::snprintf(detail, sizeof(detail), "rifle %s, slung %d, active slot %d", primary ? "still held" : "dropped",
+                slung ? 1 : 0, slot + 1);
+            SelfTestReport("handswitch: the owner's squeeze away from the sling drops the rifle", primary == nullptr && !slung, detail);
+            SelfTestRequestShot("hs_dropped", 1);
+            SelfTestReachRight(body::RightBelt(), SelfTestVec(60.0f, 0.0f, 0.0f), 1.0f);
+        }
+        // The pistol (now in hand) goes into the hip holster with a squeeze there.
+        if (at(42, 30.2f)) button(m_ActionWeaponGrip, true);
+        if (at(43, 30.4f)) button(m_ActionWeaponGrip, false);
+        if (at(44, 31.2f))
+        {
+            std::snprintf(detail, sizeof(detail), "stowed slot %d, active slot %d", StowedSlot() + 1, slot + 1);
+            SelfTestReport("handswitch: squeezing the pistol at the hip holsters it", slung && StowedSlot() == 1 && slot == 1, detail);
+        }
+        if (at(45, 32.0f)) button(m_ActionWeaponGrip, true);
+        if (at(46, 32.2f)) button(m_ActionWeaponGrip, false);
+        if (at(47, 33.0f))
+        {
+            std::snprintf(detail, sizeof(detail), "stowed %d, active slot %d, item hand %s", slung ? 1 : 0, slot + 1, hand);
+            SelfTestReport("handswitch: the right hand draws the pistol again", !slung && slot == 1 && !ItemHandIsPhysicalLeft(), detail);
+            SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
+            m_GripToggleEnabled = s_SavedToggle;
+            return true;
+        }
+        return false;
+    }
     if (step != "slinge2e")
         return true;
+    static bool s_SlingSavedToggle = true;
     if (at(0, 0.0f))
     {
+        s_SlingSavedToggle = m_GripToggleEnabled;
+        m_GripToggleEnabled = true;
         cmd("give rifle"); // survivors spawn with a pistol (a second one would be akimbo)
         button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false);
         button(m_ActionPrimaryAttack, false); button(m_ActionSecondaryAttack, false);
@@ -96,15 +320,15 @@ bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlaye
         SelfTestReport("sling: right hand draws the rifle", slot == 0 && !slung, detail);
         SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, 0.0f, 0.0f), 0.8f);
     }
-    if (at(6, 5.6f)) SelfTestRequestShot("sling_held", 1);
-    // Let go in front of the body (toggle grip: the next squeeze lets go).
+    if (at(6, 5.6f)) { SelfTestRequestShot("sling_held", 1); holdHandAtHandle(false); }
+    // Put it away: the owner's squeeze with the hand at the sling (toggle grip).
     if (at(7, 6.0f)) button(m_ActionWeaponGrip, true);
     if (at(8, 6.2f)) button(m_ActionWeaponGrip, false);
     if (at(9, 7.0f))
     {
         std::snprintf(detail, sizeof(detail), "slung=%d, active slot %d (rifle is 1), hangs %u", slung ? 1 : 0, slot + 1,
             m_ChestSlingHangCount.load(std::memory_order_acquire) - static_cast<uint32_t>(m_SelfTestValueA));
-        SelfTestReport("sling: letting go near the body hangs the rifle on the chest", slung && slot == 0, detail);
+        SelfTestReport("sling: squeezing at the sling hangs the rifle on the chest", slung && slot == 0, detail);
         SelfTestRequestShot("sling_hung", 1);
         m_SelfTestValueB = clip();
     }
@@ -134,14 +358,15 @@ bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlaye
     {
         std::snprintf(detail, sizeof(detail), "clip %d -> %d", m_SelfTestValueB, clip());
         SelfTestReport("sling: the left trigger fires it", clip() >= 0 && clip() < m_SelfTestValueB, detail);
+        holdHandAtHandle(true);
     }
-    // The left hand lets go: slung again.
+    // The left hand squeezes at the sling: slung again.
     if (at(20, 13.4f)) button(m_ActionOffHandGrip, true);
     if (at(21, 13.6f)) button(m_ActionOffHandGrip, false);
     if (at(22, 14.4f))
     {
         std::snprintf(detail, sizeof(detail), "slung=%d active slot %d", slung ? 1 : 0, slot + 1);
-        SelfTestReport("sling: the left hand lets go: slung again", slung && slot == 0, detail);
+        SelfTestReport("sling: the left hand puts it back on the sling", slung && slot == 0, detail);
         SelfTestRequestShot("sling_hung_again", 1);
         holdHandAtHandle(false);
     }
@@ -162,9 +387,10 @@ bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlaye
         void* const primary = player ? player->Weapon_GetSlot(0) : nullptr;
         std::snprintf(detail, sizeof(detail), "slung=%d primary slot %s, active slot %d", slung ? 1 : 0,
             primary ? "still held" : "empty", slot + 1);
-        SelfTestReport("sling: letting go at arm's length drops it", !slung && primary == nullptr, detail);
+        SelfTestReport("sling: squeezing at arm's length drops it", !slung && primary == nullptr, detail);
         SelfTestHoldRight(body::RightReady(), QAngle(0.0f, 0.0f, 0.0f));
         m_SelfTestLeftWorldValid = false;
+        m_GripToggleEnabled = s_SlingSavedToggle;
         return true;
     }
     return false;

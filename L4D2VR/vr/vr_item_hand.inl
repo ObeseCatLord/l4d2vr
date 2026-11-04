@@ -9,6 +9,8 @@ void VR::RequestItemHand(bool physicalLeft, l4d2vr_item_hand::Reason reason)
         return;
     if (!m_AmbidextrousItemHands && reason != l4d2vr_item_hand::Reason::Reset)
         return;
+    if (reason == l4d2vr_item_hand::Reason::SelfTest)
+        m_ItemHandAdoptHeld = m_GripToggle.Held(); // the held state moves with the item
     m_ItemHandSwitch.Request(l4d2vr_item_hand::SwappedForPhysicalHand(m_LeftHanded, physicalLeft), reason);
 }
 
@@ -97,7 +99,7 @@ void VR::UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserve
 }
 
 // Self-test steps (see docs/physical-overhaul.md):
-//   ambie2e     left-hand draw, left trigger fire and aim, hand-off, left grenade
+//   ambie2e     left-hand draw, left trigger fire and aim, no hand-off, left grenade
 //               throw, left pills, right-hand draw back; pouch side; no bashes.
 //   switchanim  every kind of weapon switch with the viewmodel trace and
 //               screenshots: no frame may show the draw animation.
@@ -258,8 +260,12 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
         {
             std::snprintf(detail, sizeof(detail), "item hand %s, active slot %d, clip %d -> %d", hand,
                 SelfTestActiveSlot(player) + 1, m_SelfTestValueA, clip());
-            SelfTestReport("ambidextrous: squeezing the rifle with the free hand hands it over",
-                !ItemHandIsPhysicalLeft() && SelfTestActiveSlot(player) == 0 && clip() == m_SelfTestValueA, detail);
+            // 2.0.6: a held item never changes hands (handswitch covers the
+            // sling path that does it); the rest of this step needs the
+            // rifle in the right hand, so the self-test puts it there.
+            SelfTestReport("ambidextrous: squeezing the rifle with the free hand does not take it",
+                ItemHandIsPhysicalLeft() && SelfTestActiveSlot(player) == 0 && clip() == m_SelfTestValueA, detail);
+            RequestItemHand(false, l4d2vr_item_hand::Reason::SelfTest);
             SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, -25.0f, 0.0f), 0.8f);
             SelfTestReachLeft(body::LeftReady(), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
         }
@@ -269,7 +275,7 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
         {
             const float yaw = aimYawFromHead();
             std::snprintf(detail, sizeof(detail), "clip %d -> %d; aim %.1f deg from the head", m_SelfTestValueA, clip(), yaw);
-            SelfTestReport("ambidextrous: the right hand fires after the hand-off",
+            SelfTestReport("ambidextrous: the right hand fires the rifle in the right hand",
                 clip() >= 0 && clip() < m_SelfTestValueA && std::fabs(yaw + 25.0f) < 8.0f, detail);
             // The grenade is on the dominant (right) upper chest: the left hand reaches across.
             SelfTestReachLeft(body::RightUpperChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);

@@ -64,6 +64,27 @@ namespace l4d2vr_gun_hand_anchor
         Vec3 local{};   // (forward, right, up), game units, item controller frame
     };
 
+    // Update from a resting frame: `estimate` is the translation that puts the
+    // hand on its target, measured as target - (drawn hand - the translation
+    // the viewmodel was actually placed with), so it does not depend on the
+    // stored value (no feedback loop). The first estimate is taken whole; later
+    // ones are blended in by `gain` (noise from controller motion between the
+    // placement and the draw). Never more than maxLength; a bad estimate is
+    // ignored.
+    inline bool Blend(Anchor& anchor, const Vec3& estimate, float gain, float maxLength)
+    {
+        if (!Finite(estimate) || !(maxLength > 0.0f) || Length(estimate) >= maxLength)
+            return false;
+        if (!anchor.valid)
+        {
+            anchor.local = estimate;
+            anchor.valid = true;
+            return true;
+        }
+        anchor.local = Add(anchor.local, Scale(Add(estimate, Scale(anchor.local, -1.0f)), gain));
+        return true;
+    }
+
     // Correction step from a resting frame: `residual` is target - drawn hand
     // in the controller frame (the stored translation already applied). The
     // first measurement of a gun takes the whole residual (the gun has no

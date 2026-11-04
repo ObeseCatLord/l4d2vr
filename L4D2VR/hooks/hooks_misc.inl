@@ -19491,16 +19491,22 @@ namespace
             const auto& kick = vr->m_RecoilHands[0].offset;
             const bool kicking = std::fabs(kick.backCm) > 0.05f || std::fabs(kick.pitchDeg) > 0.05f ||
                 std::fabs(kick.yawDeg) > 0.05f;
-            const bool resting = kindFresh && !acting && !kicking && !vr->m_PrimaryAttackCmdOwned &&
+            const bool meleeStill = weaponId != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE) ||
+                vr->m_MeleeLagDeg.load(std::memory_order_acquire) < 1.0f;
+            const bool resting = kindFresh && meleeStill && !acting && !kicking && !vr->m_PrimaryAttackCmdOwned &&
                 !vr->IsMagazineInteractionManualActive() && !pose.weaponStrikeHidden && !pose.weaponSwitchCollapsed &&
                 (pose.weaponKind == l4d2vr_vm_anim::Kind::Idle || pose.weaponSwitchHidden);
             vr_vm_stabilize::Mat3x4 handWorld{};
             if (resting && vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBones) + hand, handWorld) &&
                 HooksNativeViewmodelHandsOnlyMatrixFinite(handWorld))
             {
-                const Vector d = target - vr_vm_stabilize::GetOrigin(handWorld);
-                const l4d2vr_gun_hand_anchor::Vec3 residual{ DotProduct(d, cf), DotProduct(d, cr), DotProduct(d, cu) };
-                if (l4d2vr_gun_hand_anchor::Correct(anchor, residual, 0.5f, 0.5f * vr->m_VRScale))
+                // The hand without the translation the viewmodel was placed with.
+                const Vector applied(vr->m_GunHandShiftAtCalcView[0].load(std::memory_order_relaxed),
+                    vr->m_GunHandShiftAtCalcView[1].load(std::memory_order_relaxed),
+                    vr->m_GunHandShiftAtCalcView[2].load(std::memory_order_relaxed));
+                const Vector d = target - (vr_vm_stabilize::GetOrigin(handWorld) - applied);
+                const l4d2vr_gun_hand_anchor::Vec3 estimate{ DotProduct(d, cf), DotProduct(d, cr), DotProduct(d, cu) };
+                if (l4d2vr_gun_hand_anchor::Blend(anchor, estimate, 0.25f, 0.5f * vr->m_VRScale))
                 {
                     std::lock_guard<std::mutex> lock(s_Mutex);
                     s_Anchors[weaponModel] = anchor;

@@ -4267,7 +4267,11 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 						- (vmUp * vp.viewmodelPosOffset.z);
 					// Gun hand on the controller: the same translation as GetRecommendedViewmodelAbsPos
 					// (before the melee lag, which pivots the moved weapon at the hand).
-					vmPosAbs += m_VR->GunHandAnchorShiftWorld(rightCtrlAngAbs);
+					const Vector gunHandShift = m_VR->GunHandAnchorShiftWorld(rightCtrlAngAbs);
+					vmPosAbs += gunHandShift;
+					m_VR->m_RenderGunHandShift[0].store(gunHandShift.x, std::memory_order_relaxed);
+					m_VR->m_RenderGunHandShift[1].store(gunHandShift.y, std::memory_order_relaxed);
+					m_VR->m_RenderGunHandShift[2].store(gunHandShift.z, std::memory_order_relaxed);
 					// Melee inertia: re-apply the update thread's lag to this fresher pose.
 					m_VR->ApplyMeleeInertiaToViewmodel(vmForward, vmRight, vmUp, vmPosAbs, rightCtrlViewmodelPosAbs, rightCtrlAngAbs);
 					QAngle::VectorAngles(vmForward, vmUp, vmAngAbs);

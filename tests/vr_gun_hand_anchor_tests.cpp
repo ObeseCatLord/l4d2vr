@@ -52,6 +52,19 @@ int main()
     CHECK(Correct(b, Vec3{ 20, 0, 0 }, 0.5f, 25.0f));
     CHECK(!Correct(b, Vec3{ 20, 0, 0 }, 0.5f, 25.0f) && Near(b.local, Vec3{ 20, 0, 0 }));
 
+    // Blend: estimates of a fixed translation (independent of the stored one)
+    // converge whatever the latency; the first is taken whole; noise averages.
+    {
+        Anchor e{};
+        CHECK(Blend(e, Vec3{ 6, -3, 2 }, 0.25f, 25.0f) && Near(e.local, Vec3{ 6, -3, 2 }));
+        for (int i = 0; i < 200; ++i)
+            Blend(e, Vec3{ 4.0f + ((i & 1) ? 0.5f : -0.5f), 1, -1 }, 0.25f, 25.0f);
+        CHECK(Near(e.local, Vec3{ 4, 1, -1 }, 0.4f));
+        const Vec3 before = e.local;
+        CHECK(!Blend(e, Vec3{ 30, 0, 0 }, 0.25f, 25.0f) && Near(e.local, before));
+        CHECK(!Blend(e, Vec3{ 0, NAN, 0 }, 0.25f, 25.0f) && Near(e.local, before));
+    }
+
     // Only guns in a hand, in first person VR, with the option on.
     Gate g{};
     CHECK(Applies(g));

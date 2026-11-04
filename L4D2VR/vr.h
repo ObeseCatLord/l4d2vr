@@ -1072,7 +1072,14 @@ public:
 	// Self-test (flashprobe): the last local flashlight origin the engine drew.
 	std::atomic<float> m_SelfTestFlashlightPos[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
 	std::atomic<uint32_t> m_SelfTestFlashlightSerial{ 0u };
-	std::atomic<float> m_GunHandDrawnGapMaxCm{ -1.0f };  // self-test: worst drawn item hand gap while recording
+	std::atomic<float> m_GunHandDrawnGapMaxCm{ -1.0f };
+	// The translation the viewmodel was placed with (CalcViewModelView), so the
+	// draw can measure the hand without it; render = the render snapshot's.
+	std::atomic<float> m_GunHandShiftAtCalcView[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
+	std::atomic<float> m_RenderGunHandShift[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
+	Vector m_MeleeShiftApplied{ 0.0f, 0.0f, 0.0f };   // carried by the lagged melee pose
+	Vector GunHandShiftForViewmodel();                 // what GetRecommendedViewmodelAbsPos adds (main thread)
+	void RecordGunHandShiftAtCalcView(bool renderSnapshot);  // self-test: worst drawn item hand gap while recording
 	// Melee lag as a world rotation about the hand (2.0.6): the arm IK draws
 	// the hand un-lagged, on the controller, while the weapon trails in it
 	// (Ancient Dungeon: the hand follows the controller, the weapon is on a

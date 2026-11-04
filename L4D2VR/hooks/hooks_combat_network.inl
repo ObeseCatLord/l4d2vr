@@ -111,6 +111,7 @@ void __fastcall Hooks::dCalcViewModelView(void* ecx, void* edx, void* owner, con
 		{
 			vecNewOrigin = m_VR->GetRecommendedViewmodelAbsPos();
 			vecNewAngles = m_VR->GetRecommendedViewmodelAbsAngle();
+			m_VR->RecordGunHandShiftAtCalcView(VR::t_UseRenderFrameSnapshot);
 			if (!forceDisableMoveBob && !forceControllerHardLock)
 			{
 				hkCalcViewModelView.fOriginal(ecx, owner, vecNewOrigin, vecNewAngles);
@@ -165,6 +166,7 @@ void __fastcall Hooks::dCalcViewModelView(void* ecx, void* edx, void* owner, con
 
 		const Vector targetOrigin = m_VR->GetRecommendedViewmodelAbsPos();
 		const QAngle targetAngles = m_VR->GetRecommendedViewmodelAbsAngle();
+		m_VR->RecordGunHandShiftAtCalcView(true);
 
 		// Call engine viewmodel logic around the same controller/render-frame basis
 		// that DrawModelExecute will later use.

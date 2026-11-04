@@ -1534,6 +1534,26 @@ Vector VR::ItemHandTargetWorld(const Vector& controllerPos, const QAngle& contro
     return controllerPos + (f * local.x + r * local.y + u * local.z) * m_VRScale;
 }
 
+Vector VR::GunHandShiftForViewmodel()
+{
+    if (m_MeleeLaggedPoseValid)
+        return m_MeleeShiftApplied;
+    return GunHandAnchorShiftWorld(GetRightControllerAbsAngle());
+}
+
+void VR::RecordGunHandShiftAtCalcView(bool renderSnapshot)
+{
+    Vector s{};
+    if (renderSnapshot)
+        s = Vector(m_RenderGunHandShift[0].load(std::memory_order_relaxed), m_RenderGunHandShift[1].load(std::memory_order_relaxed),
+            m_RenderGunHandShift[2].load(std::memory_order_relaxed));
+    else
+        s = GunHandShiftForViewmodel();
+    m_GunHandShiftAtCalcView[0].store(s.x, std::memory_order_relaxed);
+    m_GunHandShiftAtCalcView[1].store(s.y, std::memory_order_relaxed);
+    m_GunHandShiftAtCalcView[2].store(s.z, std::memory_order_relaxed);
+}
+
 void VR::SetGunHandAnchor(int weaponId, const l4d2vr_gun_hand_anchor::Anchor& anchor)
 {
     std::lock_guard<std::mutex> lock(m_GunHandAnchorMutex);

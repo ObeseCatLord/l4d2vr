@@ -171,6 +171,7 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
                 m_ViewmodelRight = toWorldD(laggedRight);
                 m_ViewmodelUp = toWorldD(laggedUp);
                 SetMeleeUnlag(0, true, pivotWorld, f0, r0, u0, m_ViewmodelForward, m_ViewmodelRight, m_ViewmodelUp);
+                m_MeleeShiftApplied = meleeShift;
                 // The viewmodel origin hangs off the grip along the lagged axes
                 // (GetRecommendedViewmodelAbsPos); this is what remains (0 when welded).
                 m_MeleeInertiaPosOffsetWorld = toWorldP(laggedViewmodel.position) - (gripWorld -

@@ -3449,6 +3449,9 @@ public:
 	l4d2vr_gesture::SessionClock m_GestureSessionClock;
 	float m_GestureLastYawDeg = 0.0f;
 	uint64_t m_GunBashNearMissLogMs = 0u;
+	float m_GunBashNearMissPeak = 0.0f; // fastest hand speed of the current unfired swing
+	l4d2vr_gesture::GunBashEvent m_GunBashNearMiss{};
+	bool m_GunBashNearMissAllowed = false;
 	// Melee swing gates (Ancient Dungeon VR style; see l4d2vr_gesture::SwingParams).
 	float m_MeleeSwingMinTipSpeed = 4.5f;          // MeleeSwingMinTipSpeed
 	float m_MeleeSwingMinHandleSpeedLong = 2.5f;   // MeleeSwingMinHandSpeedLong
@@ -3487,7 +3490,7 @@ public:
 	mutable std::atomic<float> m_MeleeDrawnGripDriftMax{ 0.0f };
 	mutable std::atomic<float> m_MeleeDrawnServerMismatchMaxDeg{ 0.0f };
 	mutable std::atomic<uint32_t> m_MeleeDrawnFrames{ 0u };
-	bool m_GunBashSweepEnabled = true; // GunBashSweepEnabled: a fast sideways swing of the gun also bashes
+	bool m_GunBashSweepEnabled = true; // GunBashSweepEnabled: any fast swing of the gun bashes (false: forward pushes only)
 	std::chrono::steady_clock::time_point m_MeleeMotionLastUpdate{};
 	std::chrono::steady_clock::time_point m_PhysicalShoveHoldUntil{};
 	QAngle m_PhysicalShoveAngles{ 0.0f, 0.0f, 0.0f };

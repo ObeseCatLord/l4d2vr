@@ -1069,6 +1069,9 @@ public:
 	// pose offset (x right, y up, z back). drawnHand=false: for the right-handed
 	// hold before an item in the left hand is mirrored.
 	Vector ItemHandTargetWorld(const Vector& controllerPos, const QAngle& controllerAngles, bool drawnHand) const;
+	// Self-test (flashprobe): the last local flashlight origin the engine drew.
+	std::atomic<float> m_SelfTestFlashlightPos[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
+	std::atomic<uint32_t> m_SelfTestFlashlightSerial{ 0u };
 	std::atomic<float> m_GunHandDrawnGapMaxCm{ -1.0f };  // self-test: worst drawn item hand gap while recording
 	// Melee lag as a world rotation about the hand (2.0.6): the arm IK draws
 	// the hand un-lagged, on the controller, while the weapon trails in it

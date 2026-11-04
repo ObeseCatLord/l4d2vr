@@ -1373,6 +1373,49 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return RunHandThrowStep(step, t, player);
     if (step.rfind("arcthrow=", 0) == 0)
         return RunArcThrowStep(step, t, player);
+    // light=on|off: presses the flashlight action until the light is in that state.
+    if (step == "light=on" || step == "light=off")
+    {
+        const bool want = step == "light=on";
+        bool on = false;
+        const bool known = QueryFlashlightState(player, on);
+        if (at(0, 0.0f) && known && on != want)
+            button(m_ActionFlashlight, true);
+        if (at(1, 0.15f))
+            button(m_ActionFlashlight, false);
+        if (t < 1.2f)
+            return false;
+        std::snprintf(detail, sizeof(detail), "light %s", known ? (on ? "on" : "off") : "unknown");
+        SelfTestReport(step.c_str(), known && on == want, detail);
+        return true;
+    }
+    // flashprobe: where the engine draws the local flashlight and where the
+    // drawn gun's muzzle is, both in the item controller's frame (cm). With
+    // GunHandOnController the two must keep their distance when the gun is
+    // moved (A/B with cfg=GunHandOnController=false).
+    if (step == "flashprobe")
+    {
+        if (m_SelfTestStage == 0)
+        {
+            m_SelfTestStage = 1;
+            m_SelfTestValueA = static_cast<int>(m_SelfTestFlashlightSerial.load(std::memory_order_acquire));
+        }
+        if (static_cast<int>(m_SelfTestFlashlightSerial.load(std::memory_order_acquire)) == m_SelfTestValueA && t < 1.5f)
+            return false;
+        const bool seen = static_cast<int>(m_SelfTestFlashlightSerial.load(std::memory_order_acquire)) != m_SelfTestValueA;
+        const Vector light(m_SelfTestFlashlightPos[0].load(), m_SelfTestFlashlightPos[1].load(), m_SelfTestFlashlightPos[2].load());
+        const Vector muzzle(m_ViewmodelMuzzleSmokePosX.load(), m_ViewmodelMuzzleSmokePosY.load(), m_ViewmodelMuzzleSmokePosZ.load());
+        Vector f{}, r{}, u{};
+        QAngle::AngleVectors(GetRightControllerAbsAngle(), &f, &r, &u);
+        const Vector c = GetRightControllerAbsPos();
+        const float s = 100.0f / std::max(0.001f, m_VRScale);
+        auto rel = [&](const Vector& p) { const Vector d = p - c; return Vector(DotProduct(d, f) * s, DotProduct(d, r) * s, DotProduct(d, u) * s); };
+        const Vector l = rel(light), m = rel(muzzle), lm = l - m;
+        std::snprintf(detail, sizeof(detail), "weapon=%d light(cm)=(%.1f %.1f %.1f) muzzle(cm)=(%.1f %.1f %.1f) light-muzzle=(%.1f %.1f %.1f) GunHandOnController=%d",
+            m_ActiveGunWeaponId.load(), l.x, l.y, l.z, m.x, m.y, m.z, lm.x, lm.y, lm.z, m_GunHandOnController ? 1 : 0);
+        SelfTestReport("flashprobe", seen, detail);
+        return true;
+    }
     if (step == "flashlight" || step == "flashlight=xr")
     {
         // The flashlight action (right stick click in every default binding)

@@ -229,7 +229,7 @@ bool VR::RunEmptyHandsSelfTestStep(float t, C_BasePlayer* player)
         // The right hand holds the pistol (an earlier step may have left the
         // item in the left hand: the free hand cannot put the other hand's
         // item away).
-        RequestItemHand(false, l4d2vr_item_hand::Reason::HandOff);
+        RequestItemHand(false, l4d2vr_item_hand::Reason::SelfTest);
     }
     if (at(1, 1.0f))
     {

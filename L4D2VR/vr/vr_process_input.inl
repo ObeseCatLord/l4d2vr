@@ -1189,9 +1189,8 @@ void VR::ProcessInput()
         dualButtons.grab[1] = m_MagazineInteractionTriggerInteractions ? offHandTriggerDown : leftGripRaw;
         UpdateDualPistolReload(localPlayer, dualPhysicalReload && nativeDualPistols && !isObserverOrIdle, dualButtons);
     }
-    // Ambidextrous hand-off: whatever the magazine/foregrip logic took first wins.
-    UpdateItemHandOff(localPlayer, isObserverOrIdle, leftHeldPistol || dualPistolsActive,
-        offHandGripValid && offHandGripJustPressed);
+    // No hand-off (2.0.6): the free hand's squeeze on the held item is the
+    // foregrip / support grip only (vr_item_hand.h Ownership).
     if (MagazineInteractionOwnsGrip(true))
         m_PistolUseLeft.store(false, std::memory_order_release);
     const bool nativeAmmoReloadPulse = m_NativeAmmoReloadFallbackPulse.Update(

@@ -12,20 +12,29 @@
 // way: it stays L4D2's active weapon but hangs on the body, and both hands are
 // empty (see vr.h m_ChestSlungWeapon / m_StowedSlot).
 //
-// Letting go of a held long gun (rifles, SMGs, shotguns, snipers, the M60 and
-// the grenade launcher) no longer drops it: it hangs on a sling in front of the
-// chest, still the active weapon (no weapon switch, nothing sent to the
-// server), and both hands are free. Either hand takes it back by squeezing its
-// grip at the slung gun's handle or foregrip, and that hand becomes the
-// trigger hand. Switching hands is the same thing: let go, grab the handle with
-// the other hand. While it is slung the gun cannot fire, reload or bash.
+// A long gun (rifles, SMGs, shotguns, snipers, the M60 and the grenade
+// launcher) put away on the sling hangs in front of the chest, still the
+// active weapon (no weapon switch, nothing sent to the server), and both hands
+// are free. Either hand takes it back by squeezing its grip at the slung gun's
+// handle or foregrip, and that hand becomes the trigger hand: the only way to
+// use it in the other hand is to put it away and take it with that hand.
+// While it is slung the gun cannot fire, reload or bash.
 //
-// Unchanged: letting go over a holster stows it there (the back for a long
-// gun), letting go while the other hand holds the foregrip passes it to that
-// hand, and pistols, melee weapons, grenades and kits keep their holsters.
-// Dropping a long gun on purpose: let go with the arm stretched away from the
-// body, the hand more than ChestSlingDropDistanceMeters (0.6 m) from the sling
-// point, and it falls to the floor as before.
+// Letting go over a holster stows it there (the back for a long gun), and
+// pistols, melee weapons, grenades and kits keep their holsters. Since 2.0.6
+// nothing passes a held gun to the other hand (no release transfer).
+//
+// Where "letting go" puts the gun (ReleaseInput.toggleGrip):
+// - Toggle grip (GripToggle, the default since 2.0.6, Pavlov's Click mode): the
+//   owner's second squeeze. It is put away only at its own holster: the hand
+//   within putAwayReachMeters of the sling (ChestSlingGrabRadiusMeters, the
+//   same reach that takes it back) or the hip holster (its grab reach);
+//   anywhere else it is dropped at the hand. A squeeze during a swing drops
+//   a melee weapon with the hand's motion (that is the melee throw).
+// - Hold grip (GripToggle=false, the 2.0.5 rule): letting go of the grip. Near
+//   the body (within ChestSlingDropDistanceMeters, 0.6 m, of the sling point or
+//   hip holster) it is put away; with the arm stretched away it drops; a fast
+//   swing that lets go of a melee weapon throws it.
 //
 // std-only so the rules are unit-tested offline (tests/vr_chest_sling_tests.cpp).
 namespace l4d2vr_chest_sling
@@ -67,9 +76,20 @@ namespace l4d2vr_chest_sling
         int weaponId = 0;
         float handToSlingMeters = 0.0f; // the releasing hand to the sling point
         float dropDistanceMeters = 0.6f;// ChestSlingDropDistanceMeters
-        float handSpeedMetersPerSecond = 0.0f; // sidearms: a hand this fast throws (melee throw)
+        float handSpeedMetersPerSecond = 0.0f; // sidearms: a hand this fast throws (melee throw, hold grip)
         float throwSpeedMetersPerSecond = 2.5f;
+        bool toggleGrip = false;        // the owner's squeeze let go (GripToggle): put away only at the holster
+        float putAwayReachMeters = 0.15f; // toggle grip: the holster's (sling's) own grab reach
     };
+
+    // Toggle grip: put away within the holster's reach, dropped elsewhere. An
+    // unknown distance (no body frame) never drops by accident.
+    inline ReleaseAction PutAwayWithinReach(const ReleaseInput& in)
+    {
+        if (!std::isfinite(in.handToSlingMeters) || in.handToSlingMeters < 0.0f)
+            return ReleaseAction::Sling;
+        return in.handToSlingMeters > in.putAwayReachMeters ? ReleaseAction::Drop : ReleaseAction::Sling;
+    }
 
     // What letting go does: hang the gun on the sling, or drop it (anything
     // that is not a long gun, the sling off, or an arm stretched away).
@@ -79,6 +99,8 @@ namespace l4d2vr_chest_sling
             return ReleaseAction::None;
         if (!in.enabled || !IsLongGun(in.weaponId))
             return ReleaseAction::Drop;
+        if (in.toggleGrip)
+            return PutAwayWithinReach(in);
         if (!std::isfinite(in.handToSlingMeters) || in.handToSlingMeters < 0.0f)
             return ReleaseAction::Sling;
         return in.handToSlingMeters > in.dropDistanceMeters ? ReleaseAction::Drop : ReleaseAction::Sling;
@@ -100,6 +122,8 @@ namespace l4d2vr_chest_sling
     {
         if (!in.dropRequested || !in.enabled || !IsSidearm(in.weaponId))
             return ReleaseAction::None;
+        if (in.toggleGrip)
+            return PutAwayWithinReach(in);
         // A swing that lets go is a throw (melee weapons fly), not a holster.
         if (std::isfinite(in.handSpeedMetersPerSecond) && in.handSpeedMetersPerSecond > in.throwSpeedMetersPerSecond)
             return ReleaseAction::Drop;

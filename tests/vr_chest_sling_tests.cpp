@@ -71,6 +71,35 @@ static void TestSidearmRelease()
     CHECK(OnSidearmRelease(in) == ReleaseAction::None);
 }
 
+static void TestToggleGripPutAway()
+{
+    // 2.0.6 toggle grip: the owner's squeeze puts it away only at its holster.
+    ReleaseInput in{};
+    in.dropRequested = true;
+    in.toggleGrip = true;
+    in.putAwayReachMeters = 0.15f;
+    in.weaponId = 5;                                       // M16 at the sling
+    in.handToSlingMeters = 0.10f;
+    CHECK(OnRelease(in) == ReleaseAction::Sling);
+    in.handToSlingMeters = 0.15f;
+    CHECK(OnRelease(in) == ReleaseAction::Sling);          // the reach itself still puts it away
+    in.handToSlingMeters = 0.28f;                          // in front of the body: dropped
+    CHECK(OnRelease(in) == ReleaseAction::Drop);
+    in.handToSlingMeters = -1.0f;
+    CHECK(OnRelease(in) == ReleaseAction::Sling);          // no body frame: never drop by accident
+    in.weaponId = 19;                                      // melee at the hip
+    in.putAwayReachMeters = 0.17f;
+    in.handToSlingMeters = 0.12f;
+    in.handSpeedMetersPerSecond = 4.0f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Sling);   // a squeeze in the holster always holsters
+    in.handToSlingMeters = 0.40f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Drop);    // mid-swing elsewhere: dropped with the hand's motion (thrown)
+    in.handSpeedMetersPerSecond = 0.2f;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::Drop);    // and slowly too: away from the holster drops
+    in.weaponId = 14;
+    CHECK(OnSidearmRelease(in) == ReleaseAction::None);    // grenades keep their own rules
+}
+
 static void TestGrab()
 {
     GrabInput in{};
@@ -132,6 +161,7 @@ int main()
     TestLongGuns();
     TestRelease();
     TestSidearmRelease();
+    TestToggleGripPutAway();
     TestGrab();
     TestSlingState();
     TestButtons();

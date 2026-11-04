@@ -1509,9 +1509,29 @@ Vector VR::GetRecommendedViewmodelAbsPos()
     viewmodelPos -= m_ViewmodelRight * m_ViewmodelPosOffset.y;
     viewmodelPos -= m_ViewmodelUp * m_ViewmodelPosOffset.z;
     viewmodelPos += m_MeleeInertiaPosOffsetWorld;
-    viewmodelPos += GunHandAnchorShiftWorld(GetRightControllerAbsAngle());
+    // (The lagged melee pose already carries the translation.)
+    if (!m_MeleeLaggedPoseValid)
+        viewmodelPos += GunHandAnchorShiftWorld(GetRightControllerAbsAngle());
 
     return viewmodelPos;
+}
+
+bool VR::GunHandAnchorWeapon(int weaponId)
+{
+    return l4d2vr_handpose::IsGun(weaponId) || weaponId == static_cast<int>(C_WeaponCSBase::WeaponID::MELEE);
+}
+
+Vector VR::ItemHandTargetWorld(const Vector& controllerPos, const QAngle& controllerAngles, bool drawnHand) const
+{
+    Vector f{}, r{}, u{};
+    QAngle::AngleVectors(controllerAngles, &f, &r, &u);
+    const bool leftHeld = ItemHandIsPhysicalLeft() && ItemHandMirrorWanted();
+    Vector offset = leftHeld ? m_NativeViewmodelLeftHandPoseOffsetMeters : m_NativeViewmodelRightHandPoseOffsetMeters;
+    if (leftHeld && !drawnHand)
+        offset.x = -offset.x;
+    const l4d2vr_gun_hand_anchor::Vec3 local =
+        l4d2vr_gun_hand_anchor::HandOffsetToForwardRightUp(l4d2vr_gun_hand_anchor::Vec3{ offset.x, offset.y, offset.z });
+    return controllerPos + (f * local.x + r * local.y + u * local.z) * m_VRScale;
 }
 
 void VR::SetGunHandAnchor(int weaponId, const l4d2vr_gun_hand_anchor::Anchor& anchor)
@@ -1529,7 +1549,7 @@ Vector VR::GunHandAnchorShiftWorld(const QAngle& itemControllerAngles)
     gate.vrEnabled = m_IsVREnabled;
     gate.mouseMode = m_MouseModeEnabled;
     gate.thirdPerson = m_IsThirdPersonCamera;
-    gate.isGun = l4d2vr_handpose::IsGun(weaponId);
+    gate.isGun = GunHandAnchorWeapon(weaponId);
     gate.chestSling = ChestSlingActive();
     gate.emptyHands = m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire);
     if (!l4d2vr_gun_hand_anchor::Applies(gate))

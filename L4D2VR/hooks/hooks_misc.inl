@@ -3792,15 +3792,7 @@ namespace
         vr_vm_stabilize::Mat3x4 controllerAnchor{};
         if (!vr || !HooksNativeViewmodelHandsOnlyBuildRightControllerWorldAnchor(vr, controllerAnchor))
             return false;
-        Vector cf{}, cr{}, cu{};
-        QAngle::AngleVectors(vr->GetRightControllerAbsAngle(), &cf, &cr, &cu);
-        const bool leftHeld = vr->ItemHandIsPhysicalLeft() && vr->ItemHandMirrorWanted();
-        Vector offset = leftHeld ? vr->m_NativeViewmodelLeftHandPoseOffsetMeters : vr->m_NativeViewmodelRightHandPoseOffsetMeters;
-        if (leftHeld && !drawnHand)
-            offset.x = -offset.x;
-        const l4d2vr_gun_hand_anchor::Vec3 local =
-            l4d2vr_gun_hand_anchor::HandOffsetToForwardRightUp(l4d2vr_gun_hand_anchor::Vec3{ offset.x, offset.y, offset.z });
-        out = vr_vm_stabilize::GetOrigin(controllerAnchor) + (cf * local.x + cr * local.y + cu * local.z) * vr->m_VRScale;
+        out = vr->ItemHandTargetWorld(vr_vm_stabilize::GetOrigin(controllerAnchor), vr->GetRightControllerAbsAngle(), drawnHand);
         return HooksNativeViewmodelHandsOnlyVectorFinite(out);
     }
 
@@ -3891,7 +3883,12 @@ namespace
         }
         Vector target{};
         if (HooksGunHandTarget(vr, true, target))
+        {
             probe.anchorGapCm = (vr_vm_stabilize::GetOrigin(hm) - target).Length() * s;
+            float seen = vr->m_GunHandDrawnGapMaxCm.load(std::memory_order_relaxed);
+            while (seen >= 0.0f && probe.anchorGapCm > seen &&
+                !vr->m_GunHandDrawnGapMaxCm.compare_exchange_weak(seen, probe.anchorGapCm)) {}
+        }
         probe.leftBone = useLeft;
         probe.path = std::strcmp(stage, "armik") == 0 ? "armik" : (std::strcmp(stage, "clipset") == 0 ? "clipset" : "classic");
         std::lock_guard<std::mutex> lock(vr->m_GunHandProbeMutex);
@@ -18012,10 +18009,33 @@ namespace
             !vr->ChestSlingActive();
         if (leftUsesWeaponPose || rightUsesWeaponPose)
         {
-            const bool ok = vr_vm_stabilize::SafeRead(
+            bool ok = vr_vm_stabilize::SafeRead(
                 sourceBones + sideInfo.hand,
                 outTarget) &&
                 HooksNativeViewmodelHandsOnlyMatrixFinite(outTarget);
+            // Melee (2.0.6): the hand follows the controller and the weapon
+            // trails in it (Ancient Dungeon's joint at the grip): undo the
+            // lag rotation on the hand about the hand pivot. Not for an item
+            // in the left hand (its target is mirrored afterwards).
+            VR::MeleeUnlag unlag{};
+            if (ok && rightUsesWeaponPose && vr->m_MeleeInertiaEnabled && vr->m_MeleeLaggedPoseValid &&
+                vr->m_ActiveGunWeaponId.load(std::memory_order_acquire) == static_cast<int>(C_WeaponCSBase::WeaponID::MELEE) &&
+                !(vr->ItemHandIsPhysicalLeft() && vr->ItemHandMirrorWanted()) &&
+                vr->GetMeleeUnlag(VR::t_UseRenderFrameSnapshot ? 1 : 0, unlag))
+            {
+                vr_vm_stabilize::Mat3x4 unlagged = outTarget;
+                const Vector d = vr_vm_stabilize::GetOrigin(outTarget) - unlag.pivot;
+                for (int i = 0; i < 3; ++i)
+                {
+                    // R^T (p - pivot) + pivot; axes: R^T * column.
+                    unlagged.m[i][3] = unlag.pivot[i] + unlag.r[0][i] * d.x + unlag.r[1][i] * d.y + unlag.r[2][i] * d.z;
+                    for (int c = 0; c < 3; ++c)
+                        unlagged.m[i][c] = unlag.r[0][i] * outTarget.m[0][c] + unlag.r[1][i] * outTarget.m[1][c] +
+                            unlag.r[2][i] * outTarget.m[2][c];
+                }
+                if (HooksNativeViewmodelHandsOnlyMatrixFinite(unlagged))
+                    outTarget = unlagged;
+            }
             if (ok && rightUsesWeaponPose && vr->m_SelfTestEnabled)
             {
                 // gunhand self-test probe: the gun hand in the controller's frame.
@@ -19386,7 +19406,7 @@ namespace
         const int weaponId = vr->m_ActiveGunWeaponId.load(std::memory_order_acquire);
         // (Akimbo pistols too: the left gun is retargeted to the left controller
         // from the right gun's hold afterwards, ApplyIndependentDualPistolBones.)
-        if (!l4d2vr_handpose::IsGun(weaponId) || vr->ChestSlingActive() ||
+        if (!VR::GunHandAnchorWeapon(weaponId) || vr->ChestSlingActive() ||
             vr->m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire))
             return;
         const std::string lowerModel = vr_vm_stabilize::ToLowerAscii(modelName);

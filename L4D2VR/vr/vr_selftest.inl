@@ -1290,7 +1290,11 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(4, 2.9f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(5, 3.6f))
             SelfTestStartPath({ Key{ 0.0f, SelfTestVec(0.30f, 0.25f, -0.15f) }, Key{ 0.2f, SelfTestVec(0.70f, 0.15f, 0.05f), false } }, {});
-        if (at(6, 3.8f)) button(m_ActionWeaponGrip, false);
+        // Let go at the end of the swing (the hand at arm's length), also when
+        // an earlier stage ran late.
+        if (m_SelfTestStage == 6 && m_SelfTestPathActive &&
+            (GetTickCount64() - m_SelfTestPathStartMs) < 300u) {}
+        else if (at(6, 3.9f)) button(m_ActionWeaponGrip, false);
         if (at(7, 5.5f))
         {
             void* const primary = player->Weapon_GetSlot(0);

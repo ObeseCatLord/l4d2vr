@@ -4254,10 +4254,14 @@ namespace
 
         const Vector& targetOffset = vr->m_ViewmodelAutoGripTargetOffsetMeters;
         const Vector& manualOffset = vr->m_ViewmodelPosAdjust;
+        // GunHandOnController (2.0.6): the gun is aligned where the viewmodel
+        // was placed, translation included (2.0.5 added it after this stage;
+        // aligning to the bare controller here threw it away).
         const Vector desiredGripOrigin = vr->GetRightControllerAbsPos()
             + targetForward * (targetOffset.x * vr->m_VRScale - manualOffset.x)
             + targetRight * (targetOffset.y * vr->m_VRScale - manualOffset.y)
-            + targetUp * (targetOffset.z * vr->m_VRScale - manualOffset.z);
+            + targetUp * (targetOffset.z * vr->m_VRScale - manualOffset.z)
+            + vr->GunHandShiftAtCalcView();
 
         vr_vm_stabilize::Mat3x4 solvedEntity = baseEntity;
         if (fullRotationAlignment)
@@ -19501,9 +19505,7 @@ namespace
                 HooksNativeViewmodelHandsOnlyMatrixFinite(handWorld))
             {
                 // The hand without the translation the viewmodel was placed with.
-                const Vector applied(vr->m_GunHandShiftAtCalcView[0].load(std::memory_order_relaxed),
-                    vr->m_GunHandShiftAtCalcView[1].load(std::memory_order_relaxed),
-                    vr->m_GunHandShiftAtCalcView[2].load(std::memory_order_relaxed));
+                const Vector applied = vr->GunHandShiftAtCalcView();
                 const Vector d = target - (vr_vm_stabilize::GetOrigin(handWorld) - applied);
                 const l4d2vr_gun_hand_anchor::Vec3 estimate{ DotProduct(d, cf), DotProduct(d, cr), DotProduct(d, cu) };
                 if (l4d2vr_gun_hand_anchor::Blend(anchor, estimate, 0.25f, 0.5f * vr->m_VRScale))

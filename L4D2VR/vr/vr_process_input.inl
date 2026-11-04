@@ -784,9 +784,15 @@ void VR::ProcessInput()
                 // Empty hands: the active item is the other hand's (it puts it
                 // away itself) or stowed (UpdateChestSling lets this hand take
                 // it back), so its holster is not this hand's to draw from.
+                // A stowed item nearer to this hand than any other holster is
+                // taken back there (nearest grab wins), not passed over.
+                const bool stowedNearest = m_HolsterEmptyHands && activeSlot >= 0 && ChestSlingActive() &&
+                    StowedSlot() == activeSlot &&
+                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied) ==
+                        static_cast<l4d2vr_holster::Zone>(activeSlot);
                 if (m_HolsterEmptyHands && activeSlot >= 0)
                     occupied &= ~(1u << activeSlot);
-                const l4d2vr_holster::Zone zone =
+                const l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
                     l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied);
                 LogHolsterGripPress(true, &frame, m_LeftControllerPosAbs, true, static_cast<int>(zone), activeSlot);
                 if (zone != l4d2vr_holster::Zone::None && m_AmbidextrousItemHands &&
@@ -1813,6 +1819,13 @@ void VR::ProcessInput()
             {
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
                     m_RightControllerPosAbs, drawableMask);
+                // Nearest grab wins (Forefront / Pavlov): a stowed item nearer to
+                // the hand than an overlapping holster (the sling handle sits by
+                // the hip) is taken back by UpdateChestSling, not passed over.
+                if (activeStowed && grabInput.handZone != l4d2vr_holster::Zone::None &&
+                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, occupiedMask) ==
+                        static_cast<l4d2vr_holster::Zone>(activeSlot))
+                    grabInput.handZone = l4d2vr_holster::Zone::None;
                 // The held item's own holster takes it back when the hand is in
                 // its grab volume (Forefront: the item returns to its slot).
                 const bool inOwnVolume = heldSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,

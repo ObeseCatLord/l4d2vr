@@ -309,6 +309,15 @@ namespace l4d2vr_selftest
                  head.z + local.z };
     }
 
+    // The inverse of HeadLocalToTracking (the yaw matrix is its own inverse).
+    inline Vec3 TrackingToHeadLocal(const Vec3& head, float headYawDeg, const Vec3& tracking)
+    {
+        const float yaw = headYawDeg * 3.14159265358979f / 180.0f;
+        const float c = std::cos(yaw), s = std::sin(yaw);
+        const float dx = tracking.x - head.x, dy = tracking.y - head.y;
+        return { dx * c + dy * s, dx * s - dy * c, tracking.z - head.z };
+    }
+
     // World offset from the head (game units) back to tracking metres, undoing
     // the stick-turn rotation offset applied around the head.
     inline Vec3 WorldOffsetToTracking(const Vec3& headTracking, const Vec3& worldOffset,

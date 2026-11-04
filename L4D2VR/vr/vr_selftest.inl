@@ -208,6 +208,10 @@ void VR::ApplySelfTestPoses()
     {
         const Vector offset = m_SelfTestRightWorld - m_HmdPosAbs;
         right = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        // A reach that starts later starts here, not where the last path ended
+        // (a jump there reads as a bash).
+        if (!m_SelfTestPathActive)
+            m_SelfTestRightNow = TrackingToHeadLocal(h, yaw, right);
     }
     else
     {
@@ -222,6 +226,8 @@ void VR::ApplySelfTestPoses()
     {
         const Vector offset = m_SelfTestLeftWorld - m_HmdPosAbs;
         left = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        if (!m_SelfTestLeftPathActive)
+            m_SelfTestLeftNow = TrackingToHeadLocal(h, yaw, left);
     }
     else
     {

@@ -56,12 +56,13 @@ bool VR::ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId)
     in.dropRequested = true;
     in.weaponId = weaponId;
     in.dropDistanceMeters = m_ChestSlingDropDistanceMeters;
+    // The chest sling keeps its 2.0.5 rule in both grip modes.
     in.handToSlingMeters = GetChestSlingPoint(handle, foregrip)
         ? (m_RightControllerPosAbs - handle).Length() / (std::max)(1.0f, m_VRScale)
         : -1.0f;
     const l4d2vr_chest_sling::ReleaseAction action = l4d2vr_chest_sling::OnRelease(in);
-    Game::logMsg("[VR][ChestSling] release weaponId=%d hand %.2f m from the sling (drop beyond %.2f): %s",
-        weaponId, in.handToSlingMeters, in.dropDistanceMeters,
+    Game::logMsg("[VR][ChestSling] %s weaponId=%d hand %.2f m from the sling (drop beyond %.2f): %s",
+        m_GripToggleEnabled ? "owner squeeze" : "release", weaponId, in.handToSlingMeters, in.dropDistanceMeters,
         action == l4d2vr_chest_sling::ReleaseAction::Sling ? "slung" : "dropped");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
@@ -89,20 +90,43 @@ bool VR::HolsterCatchRelease(uintptr_t weaponTag, int weaponId)
     in.weaponId = weaponId;
     in.handToSlingMeters = handToHolster;
     in.dropDistanceMeters = m_ChestSlingDropDistanceMeters;
+    // Toggle grip (2.0.6): back on the hip only with the hand in the hip
+    // holster's own grab reach; anywhere else (also mid-swing: a melee throw)
+    // it drops at the hand with the hand's motion.
+    in.toggleGrip = m_GripToggleEnabled;
+    in.putAwayReachMeters = l4d2vr_holster::ZoneReachMeters(m_HolsterLayout, l4d2vr_holster::Zone::Secondary);
     Vector velocity{};
     if (EstimateHandThrowVelocity(false, velocity))
         in.handSpeedMetersPerSecond = velocity.Length() / (std::max)(1.0f, m_VRScale);
     const l4d2vr_chest_sling::ReleaseAction action = l4d2vr_chest_sling::OnSidearmRelease(in);
     if (action == l4d2vr_chest_sling::ReleaseAction::None)
         return false;
-    Game::logMsg("[VR][EmptyHands] release weaponId=%d hand %.2f m from the hip holster (drop beyond %.2f) at %.1f m/s: %s",
-        weaponId, handToHolster, in.dropDistanceMeters, in.handSpeedMetersPerSecond,
+    Game::logMsg("[VR][EmptyHands] %s weaponId=%d hand %.2f m from the hip holster (%s %.2f) at %.1f m/s: %s",
+        in.toggleGrip ? "owner squeeze" : "release", weaponId, handToHolster,
+        in.toggleGrip ? "put away within" : "drop beyond",
+        in.toggleGrip ? in.putAwayReachMeters : in.dropDistanceMeters, in.handSpeedMetersPerSecond,
         action == l4d2vr_chest_sling::ReleaseAction::Sling ? "holstered" : "dropped");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
     StowActiveWeapon(weaponTag, l4d2vr_holster::SlotIndex(l4d2vr_holster::Zone::Secondary),
         "let go of the sidearm: back in the hip holster");
     return true;
+}
+
+bool VR::HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& hand, std::uint32_t occupiedMask) const
+{
+    const int slot = StowedSlot();
+    if (slot < 0 || slot >= l4d2vr_holster::kZoneCount || !frame.valid)
+        return false;
+    if (slot == 0)
+    {
+        Vector handle{}, foregrip{};
+        l4d2vr_holster::SlingHandle(frame, m_HolsterLayout, handle, foregrip);
+        return l4d2vr_holster::DistanceToSegment(hand, handle, foregrip) / (std::max)(1.0f, m_VRScale) <=
+            m_ChestSlingGrabRadiusMeters;
+    }
+    return l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand, occupiedMask | (1u << slot)) ==
+        static_cast<l4d2vr_holster::Zone>(slot);
 }
 
 // Every frame from the holster block (ProcessInput): forget the stowed weapon
@@ -152,9 +176,12 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
     grab.pressEdge[1] = itemPress;
     // Another holster under the hand takes the squeeze (a draw); the stowed
     // item's own holster does not count.
+    // (Nearest grab wins: another holster only claims it when it is nearer
+    // than the stowed item.)
     grab.claimed[0] = MagazineInteractionOwnsGrip(true) || IsMagazineInteractionManualActive() ||
-        l4d2vr_holster::FindZone(*frame, m_HolsterLayout, m_LeftControllerPosAbs, occupiedMask) !=
-            l4d2vr_holster::Zone::None;
+        (!HandAtStowedItem(*frame, m_LeftControllerPosAbs, occupiedMask) &&
+            l4d2vr_holster::FindZone(*frame, m_HolsterLayout, m_LeftControllerPosAbs, occupiedMask) !=
+                l4d2vr_holster::Zone::None);
     grab.claimed[1] = itemHandClaimed;
     const char* what = "sling";
     if (onSling)
@@ -204,10 +231,10 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
     const bool physicalLeft = IsGameplayHandLeftPhysical(hand == 0);
     if (hand == 0)
     {
-        // The other hand takes it: it becomes the trigger hand (and its grip owns
-        // the gun, as after a hand-off; a toggle grip holds it).
+        // The other hand takes it from the body: it becomes the trigger hand
+        // (and its grip owns the gun; a toggle grip holds it).
         m_ItemHandAdoptHeld = true;
-        RequestItemHand(physicalLeft, l4d2vr_item_hand::Reason::HandOff);
+        RequestItemHand(physicalLeft, l4d2vr_item_hand::Reason::SlingTake);
         // The grip owns it again once the hands have traded (CreateMove), so
         // letting go stows it again. Without ambidextrous items the support
         // hand puts it back in the item hand.

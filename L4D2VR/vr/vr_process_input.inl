@@ -784,9 +784,14 @@ void VR::ProcessInput()
                 // Empty hands: the active item is the other hand's (it puts it
                 // away itself) or stowed (UpdateChestSling lets this hand take
                 // it back), so its holster is not this hand's to draw from.
+                // A stowed item nearer to this hand than any other holster is
+                // taken back there (nearest grab wins), not passed over.
+                const bool stowedNearest = m_HolsterEmptyHands && activeSlot >= 0 && ChestSlingActive() &&
+                    StowedSlot() == activeSlot &&
+                    HandAtStowedItem(frame, m_LeftControllerPosAbs, occupied & ~(1u << activeSlot));
                 if (m_HolsterEmptyHands && activeSlot >= 0)
                     occupied &= ~(1u << activeSlot);
-                const l4d2vr_holster::Zone zone =
+                const l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
                     l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied);
                 LogHolsterGripPress(true, &frame, m_LeftControllerPosAbs, true, static_cast<int>(zone), activeSlot);
                 if (zone != l4d2vr_holster::Zone::None && m_AmbidextrousItemHands &&
@@ -1189,9 +1194,8 @@ void VR::ProcessInput()
         dualButtons.grab[1] = m_MagazineInteractionTriggerInteractions ? offHandTriggerDown : leftGripRaw;
         UpdateDualPistolReload(localPlayer, dualPhysicalReload && nativeDualPistols && !isObserverOrIdle, dualButtons);
     }
-    // Ambidextrous hand-off: whatever the magazine/foregrip logic took first wins.
-    UpdateItemHandOff(localPlayer, isObserverOrIdle, leftHeldPistol || dualPistolsActive,
-        offHandGripValid && offHandGripJustPressed);
+    // No hand-off (2.0.6): the free hand's squeeze on the held item is the
+    // foregrip / support grip only (vr_item_hand.h Ownership).
     if (MagazineInteractionOwnsGrip(true))
         m_PistolUseLeft.store(false, std::memory_order_release);
     const bool nativeAmmoReloadPulse = m_NativeAmmoReloadFallbackPulse.Update(
@@ -1814,6 +1818,12 @@ void VR::ProcessInput()
             {
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
                     m_RightControllerPosAbs, drawableMask);
+                // Nearest grab wins (Forefront / Pavlov): a stowed item nearer to
+                // the hand than an overlapping holster (the sling handle sits by
+                // the hip) is taken back by UpdateChestSling, not passed over.
+                if (activeStowed && grabInput.handZone != l4d2vr_holster::Zone::None &&
+                    HandAtStowedItem(frame, m_RightControllerPosAbs, drawableMask))
+                    grabInput.handZone = l4d2vr_holster::Zone::None;
                 // The held item's own holster takes it back when the hand is in
                 // its grab volume (Forefront: the item returns to its slot).
                 const bool inOwnVolume = heldSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,

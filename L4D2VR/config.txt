@@ -430,7 +430,7 @@ BodyGripInventoryEnabled=true
 // Forefront-style holsters: long gun on a sling across the chest, pistol or melee on the dominant hip,
 // grenade on the dominant upper chest, pills/adrenaline on the other hip, magazines on the off-hand upper
 // chest, medkit/defib/upgrade on the back over the off shoulder.
-// Reach to a holster and squeeze the grip to draw it instantly; let go of a held item inside its own
+// Reach to a holster and squeeze the grip to draw it instantly; squeeze again with the item at its own
 // holster to put it away (your hand is then empty). Offsets are metres from the head: forward, toward the dominant side, up.
 // Dynamic spread crosshair at the aim point (X or plus); the gap grows with the weapon's current
 // inaccuracy like the desktop crosshair. Works with or without the aim line. Off by default: with
@@ -512,9 +512,11 @@ PhysicalShoveEnabled=true
 # A fast, level, sideways swing of the gun in front of the body also bashes (shoves toward the gun).
 GunBashSweepEnabled=true
 HolsterReleaseDrop=true
-# Toggle grips (Pavlov style): one firm squeeze takes an item and the hand keeps it;
-# the next squeeze lets it go (puts it away inside its holster, drops it elsewhere).
-# Off: hold the grip to keep the item.
+# Toggle grips (Pavlov's toggle grip mode): a squeeze takes an item from a holster or the
+# sling and the hand keeps it without holding the grip; that hand's next squeeze lets it go:
+# at its own holster it is put away (a long gun anywhere near your body hangs on the sling), elsewhere it drops
+# at your hand. Letting go of the grip never drops anything. The other hand's grip on the
+# gun is only the foregrip. Off: hold the grip to keep the item (letting go puts away/drops).
 GripToggle=true
 # Pavlov VR reload feel: per-weapon slide/bolt pull, chamber return and magazine
 # insert depth taken from Pavlov (your own per-weapon overrides still win).
@@ -540,15 +542,15 @@ HolsterPavlovLayoutEnabled=true
 HolsterItemsVisible=true
 // No weapon switch plays the draw animation: the item is simply in your hand.
 HolsterInstantDraw=true
-// The hand that takes an item holds and uses it (left draw = left aim and trigger); squeeze the item with the free hand to hand it over.
+// The hand that takes an item from a holster or the sling holds and uses it (left draw = left aim and trigger).
+// A held item never changes hands: put it away and take it with the other hand.
 AmbidextrousItemHands=true
 ItemHandLeftArmModel=true
-ItemHandOffRadiusMeters=0.14
-// Chest sling (Forefront): your long gun hangs across your chest, grip on the dominant side; letting go of it near your body hangs it there (both hands free); grab it with either hand to take it.
+// Chest sling (Forefront): your long gun hangs across your chest, grip on the dominant side; let go of it (the second squeeze) near your body to hang it there (both hands free); grab it with either hand to take it.
 ChestSlingEnabled=true
-// Empty hands (Forefront / Pavlov): putting an item away in its holster, or letting go of a pistol or melee weapon near your body, leaves your hand empty; it stays on your body until a hand takes it back.
+// Empty hands (Forefront / Pavlov): putting an item away in its holster leaves your hand empty; it stays on your body until a hand takes it back.
 HolsterEmptyHands=true
-// Letting go of a long gun or sidearm with the hand farther than this from its sling or holster (arm stretched out) drops it instead.
+// Letting go of a long gun with the hand farther than this from its sling (arm stretched out) drops it instead (with GripToggle=false also sidearms and the hip).
 ChestSlingDropDistanceMeters=0.6
 // How close a squeezing hand must be to the slung gun's handle or foregrip to take it.
 ChestSlingGrabRadiusMeters=0.15

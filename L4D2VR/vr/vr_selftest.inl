@@ -208,6 +208,10 @@ void VR::ApplySelfTestPoses()
     {
         const Vector offset = m_SelfTestRightWorld - m_HmdPosAbs;
         right = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        // A reach that starts later starts here, not where the last path ended
+        // (a jump there reads as a bash).
+        if (!m_SelfTestPathActive)
+            m_SelfTestRightNow = TrackingToHeadLocal(h, yaw, right);
     }
     else
     {
@@ -222,6 +226,8 @@ void VR::ApplySelfTestPoses()
     {
         const Vector offset = m_SelfTestLeftWorld - m_HmdPosAbs;
         left = WorldOffsetToTracking(h, SelfTestVec(offset.x, offset.y, offset.z), m_RotationOffset, m_VRScale);
+        if (!m_SelfTestLeftPathActive)
+            m_SelfTestLeftNow = TrackingToHeadLocal(h, yaw, left);
     }
     else
     {
@@ -466,7 +472,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step == "ambie2e" || step == "ambimelee" || step == "ambimedkit" || step == "switchanim" || step == "switchtotal" || step.rfind("lfire=", 0) == 0)
         return RunItemHandSelfTestStep(step, t, player);
 
-    if (step == "slinge2e" || step == "emptyhands" || step == "stow")
+    if (step == "slinge2e" || step == "emptyhands" || step == "stow" || step == "handswitch")
         return RunChestSlingSelfTestStep(step, t, player);
 
     // gunhand: logs where the drawn gun hand (the animated hand bone the arm IK
@@ -528,7 +534,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (m_SelfTestStage == 0)
         {
             m_SelfTestStage = 1;
-            RequestItemHand(step.substr(9) == "left", l4d2vr_item_hand::Reason::HandOff);
+            RequestItemHand(step.substr(9) == "left", l4d2vr_item_hand::Reason::SelfTest);
         }
         if (t < 0.6f)
             return false;
@@ -1165,7 +1171,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(2, 1.6f)) {}
         if (at(3, 2.4f)) squeeze(true);
         if (at(4, 2.6f)) squeeze(false);
-        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.80f, 0.35f, -0.10f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(6, 4.5f))
         {
             const int slot = SelfTestActiveSlot(player);
@@ -1197,7 +1203,8 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
             void* const primary = player->Weapon_GetSlot(0);
             const int slot = SelfTestActiveSlot(player);
             std::snprintf(detail, sizeof(detail), "primary %s, active slot %d", primary ? "kept" : "dropped", slot + 1);
-            SelfTestReport("toggle grip squeeze inside the holster puts it away", primary != nullptr && slot != 0, detail);
+            SelfTestReport("toggle grip squeeze inside the holster puts it away", primary != nullptr &&
+                (m_HolsterEmptyHands ? (slot == 0 && StowedSlot() == 0) : slot != 0), detail);
             m_GripToggleEnabled = s_savedToggle;
             return true;
         }
@@ -1224,7 +1231,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(2, 1.6f)) {}
         if (at(3, 2.4f)) squeeze(true);
         if (at(4, 2.6f)) squeeze(false);
-        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.22f, 0.12f, -0.38f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.80f, 0.35f, -0.10f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(6, 4.5f))
         {
             const int slot = SelfTestActiveSlot(player);
@@ -1283,7 +1290,11 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(4, 2.9f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(5, 3.6f))
             SelfTestStartPath({ Key{ 0.0f, SelfTestVec(0.30f, 0.25f, -0.15f) }, Key{ 0.2f, SelfTestVec(0.70f, 0.15f, 0.05f), false } }, {});
-        if (at(6, 3.8f)) button(m_ActionWeaponGrip, false);
+        // Let go at the end of the swing (the hand at arm's length), also when
+        // an earlier stage ran late.
+        if (m_SelfTestStage == 6 && m_SelfTestPathActive &&
+            (GetTickCount64() - m_SelfTestPathStartMs) < 300u) {}
+        else if (at(6, 3.9f)) button(m_ActionWeaponGrip, false);
         if (at(7, 5.5f))
         {
             void* const primary = player->Weapon_GetSlot(0);
@@ -1681,7 +1692,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(0, 0.0f))
         {
             const bool left = step.substr(9) == "left";
-            RequestItemHand(left, l4d2vr_item_hand::Reason::HandOff);
+            RequestItemHand(left, l4d2vr_item_hand::Reason::SelfTest);
             Game::logMsg("[VR][SelfTest] held item to the %s hand", left ? "left" : "right");
         }
         if (t < 1.0f)

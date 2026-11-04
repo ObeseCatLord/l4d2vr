@@ -788,8 +788,7 @@ void VR::ProcessInput()
                 // taken back there (nearest grab wins), not passed over.
                 const bool stowedNearest = m_HolsterEmptyHands && activeSlot >= 0 && ChestSlingActive() &&
                     StowedSlot() == activeSlot &&
-                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied) ==
-                        static_cast<l4d2vr_holster::Zone>(activeSlot);
+                    HandAtStowedItem(frame, m_LeftControllerPosAbs, occupied & ~(1u << activeSlot));
                 if (m_HolsterEmptyHands && activeSlot >= 0)
                     occupied &= ~(1u << activeSlot);
                 const l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
@@ -1823,8 +1822,7 @@ void VR::ProcessInput()
                 // the hand than an overlapping holster (the sling handle sits by
                 // the hip) is taken back by UpdateChestSling, not passed over.
                 if (activeStowed && grabInput.handZone != l4d2vr_holster::Zone::None &&
-                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_RightControllerPosAbs, occupiedMask) ==
-                        static_cast<l4d2vr_holster::Zone>(activeSlot))
+                    HandAtStowedItem(frame, m_RightControllerPosAbs, drawableMask))
                     grabInput.handZone = l4d2vr_holster::Zone::None;
                 // The held item's own holster takes it back when the hand is in
                 // its grab volume (Forefront: the item returns to its slot).

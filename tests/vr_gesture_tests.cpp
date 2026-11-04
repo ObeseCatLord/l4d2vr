@@ -319,32 +319,47 @@ static void TestThrust()
     }
 }
 
+// The gun at the ready: 0.40 m ahead of the eyes and 0.35 m below them.
+static const Vector kGunReady(0.40f, -0.15f, 1.35f);
+
 static void TestGunBash()
 {
     auto still = [](Rig& r) { r.Still(); };
-    auto run = [&](const Vector& velocity, int frames) {
+    auto run = [&](const Vector& velocity, int frames, const Vector& barrel = Vector(1.0f, 0.0f, 0.0f),
+                   const Vector& angular = Vector(0.0f, 0.0f, 0.0f), float startHeight = 0.0f) {
         GunBashDetector detector;
         Rig rig;
-        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        rig.s.handPosition = kGunReady + Vector(0.0f, 0.0f, startHeight);
+        rig.s.handForward = barrel;
         CountFires(detector, rig, 5, still);
-        return CountFires(detector, rig, frames, [&](Rig& r) { r.Move(velocity, kZero, kZero, true); });
+        return CountFires(detector, rig, frames, [&](Rig& r) { r.Move(velocity, angular, kZero, true); });
     };
-    Check(run(Vector(3.0f, 0.0f, 0.0f), 10) == 1);   // forward shove fires once
-    Check(run(Vector(2.5f, 0.0f, -1.5f), 10) == 1);  // 31 degrees down is still a bash
-    Check(run(Vector(0.0f, 3.0f, 0.0f), 10) == 1);   // a fast sideways sweep in front of the body
+    // A fast swing in any direction in front of the body bashes once.
+    Check(run(Vector(3.0f, 0.0f, 0.0f), 10) == 1);   // forward push
+    Check(run(Vector(2.5f, 0.0f, -1.5f), 10) == 1);  // forward and down
+    Check(run(Vector(0.0f, 3.0f, 0.0f), 10) == 1);   // sideways sweep
     Check(run(Vector(0.0f, -3.0f, 0.0f), 10) == 1);  // ... either way
-    Check(run(Vector(0.0f, 2.0f, 0.0f), 10) == 0);   // a slower sideways move is aiming, not a sweep
-    Check(run(Vector(0.0f, 2.6f, -2.6f), 10) == 0);  // 45 degrees down is not level (a reload or hip reach)
-    Check(run(Vector(-1.5f, 3.0f, 0.0f), 10) == 0);  // swinging in toward the body (a chest reach)
-    Check(run(Vector(0.5f, 0.0f, -3.0f), 10) == 0);  // downward reload motion (80 degrees down)
-    Check(run(Vector(0.0f, 0.0f, -3.0f), 10) == 0);  // straight down
-    Check(run(Vector(0.8f, 0.0f, 3.0f), 10) == 0);   // up (toward the shoulder)
-    Check(run(Vector(-3.0f, 0.0f, 0.0f), 10) == 0);  // pulling the gun back toward the face
+    // Chops start high (the hand at the eyes' height).
+    Check(run(Vector(0.0f, 2.6f, -2.6f), 10, Vector(1.0f, 0.0f, 0.0f), kZero, 0.3f) == 1); // diagonal chop
+    Check(run(Vector(0.0f, 0.0f, -3.0f), 10, Vector(1.0f, 0.0f, 0.0f), kZero, 0.3f) == 1); // straight down
+    Check(run(Vector(0.8f, 0.0f, 3.0f), 10) == 1);   // up (a butt stroke)
+    Check(run(Vector(-1.2f, 3.0f, 0.0f), 10) == 1);  // a sweep curving in a little
+    Check(run(Vector(3.0f, 0.0f, 0.0f), 10, Vector(0.0f, 1.0f, 0.0f)) == 1);         // barrel sideways
+    Check(run(Vector(0.0f, 2.4f, 0.0f), 10, Vector(1.0f, 0.0f, 0.0f),
+              Vector(0.0f, 0.0f, 900.0f)) == 1);                                       // wrist rolling hard with the swing
+    // Not a bash.
+    Check(run(Vector(0.0f, 2.0f, 0.0f), 10) == 0);   // a sideways move at 2 m/s, gun not swinging (aiming)
     Check(run(Vector(1.4f, 0.0f, 0.0f), 10) == 0);   // too slow
+    Check(run(Vector(-3.0f, 0.0f, 0.0f), 10) == 0);  // pulling the gun back toward the face
+    Check(run(Vector(-2.5f, 0.0f, -2.5f), 10) == 0); // back and down (a hip reach)
+    Check(run(Vector(-2.5f, 0.0f, 1.5f), 10) == 0);  // back and up (over the shoulder)
+    Check(run(Vector(-2.5f, 2.5f, 0.0f), 10) == 0);  // in toward the chest
     {
-        // The sweep is reported as one and shoves toward the gun, level.
+        // The swing is reported as one and shoves from the head toward the muzzle,
+        // no steeper than 45 degrees.
         GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         CountFires(detector, rig, 5, still);
         GunBashEvent fired{};
@@ -354,43 +369,50 @@ static void TestGunBash()
             fired = detector.Update(rig.s);
         }
         Check(fired.fired && fired.sweep);
-        Check(std::fabs(fired.direction.z) < 1e-5f && fired.direction.x > 0.5f);
+        Check(fired.direction.x > 0.5f && fired.direction.z < 0.0f && fired.direction.z >= -0.7072f);
+        Check(fired.tipSpeed >= 2.2f && fired.speed >= 2.0f);
     }
     {
-        // Sweeping low at the hip or above the head is not a sweep.
-        for (const float z : { 0.85f, 1.9f })
-        {
-            GunBashDetector detector;
-            Rig rig;
-            rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
-            rig.s.handPosition.z = z;
-            CountFires(detector, rig, 5, still);
-            Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(0.0f, 3.0f, 0.0f), kZero, kZero, true); }) == 0);
-        }
-    }
-    {
-        // Sweeps can be turned off.
-        GunBashParams params{};
-        params.sweepEnabled = false;
-        GunBashDetector detector(params);
+        // Swinging low at the hip is not a bash.
+        GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        rig.s.handPosition.z = 0.85f;
         CountFires(detector, rig, 5, still);
         Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(0.0f, 3.0f, 0.0f), kZero, kZero, true); }) == 0);
     }
     {
-        // Pushing forward with the barrel pointing sideways is not a bash.
+        // Behind the eyes (the hand by the shoulder) is not a bash.
         GunBashDetector detector;
         Rig rig;
-        rig.s.handForward = Vector(0.0f, 1.0f, 0.0f);
+        rig.s.handPosition = kGunReady;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        rig.s.handPosition.x = 0.05f;
         CountFires(detector, rig, 5, still);
-        Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true); }) == 0);
+        Check(CountFires(detector, rig, 4, [&](Rig& r) { r.Move(Vector(0.0f, 3.0f, 0.0f), kZero, kZero, true); }) == 0);
+    }
+    {
+        // Sweeps can be turned off; pushes still bash.
+        GunBashParams params{};
+        params.sweepEnabled = false;
+        for (const bool forward : { false, true })
+        {
+            GunBashDetector detector(params);
+            Rig rig;
+            rig.s.handPosition = kGunReady;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+            CountFires(detector, rig, 5, still);
+            const Vector v = forward ? Vector(3.0f, 0.0f, 0.0f) : Vector(0.0f, 3.0f, 0.0f);
+            Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(v, kZero, kZero, true); }) == (forward ? 1 : 0));
+        }
     }
     {
         // A fast wrist flick swings the muzzle at > 3 m/s but moves the hand
         // little: not a bash.
         GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         CountFires(detector, rig, 5, still);
         Check(CountFires(detector, rig, 10, [&](Rig& r) { r.Move(Vector(0.3f, 0.0f, 0.0f), Vector(0.0f, 600.0f, 0.0f), kZero, true); }) == 0);
@@ -399,6 +421,7 @@ static void TestGunBash()
         // Not while the hand is at a holster (allowed=false).
         GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         CountFires(detector, rig, 5, still);
         int fired = 0;
@@ -413,6 +436,7 @@ static void TestGunBash()
         // Walking with the gun raised does not bash.
         GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         CountFires(detector, rig, 5, still);
         const Vector walk(3.5f, 0.0f, 0.0f);
@@ -422,21 +446,42 @@ static void TestGunBash()
         // A gun adopted mid-motion (e.g. just drawn) waits for the hand to settle.
         GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         Check(CountFires(detector, rig, 10, [](Rig& r) { r.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true); }) == 0);
     }
     {
-        // Re-arms only after slowing down and the cooldown.
+        // Re-arms only after slowing down and the 0.7 s cooldown.
         GunBashDetector detector;
         Rig rig;
+        rig.s.handPosition = kGunReady;
         rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
         auto shove = [](Rig& r) { r.Move(Vector(3.0f, 0.0f, 0.0f), kZero, kZero, true); };
         CountFires(detector, rig, 5, still);
         Check(CountFires(detector, rig, 5, shove) == 1);
         Check(CountFires(detector, rig, 5, still) == 0);
-        Check(CountFires(detector, rig, 5, shove) == 0); // within 0.5 s cooldown
-        Check(CountFires(detector, rig, 50, still) == 0);
+        Check(CountFires(detector, rig, 5, shove) == 0); // within the cooldown
+        Check(CountFires(detector, rig, 60, still) == 0);
         Check(CountFires(detector, rig, 5, shove) == 1);
+    }
+    {
+        // Swinging back and forth without pausing: the reversed swing re-arms
+        // once the cooldown is over, one bash per 0.7 s at most.
+        GunBashDetector detector;
+        Rig rig;
+        rig.s.handPosition = kGunReady;
+        rig.s.handForward = Vector(1.0f, 0.0f, 0.0f);
+        CountFires(detector, rig, 5, still);
+        int fired = 0;
+        for (int swing = 0; swing < 6; ++swing)
+        {
+            const float sign = (swing % 2 == 0) ? 1.0f : -1.0f;
+            fired += CountFires(detector, rig, 36, [&](Rig& r) { r.Move(Vector(0.0f, 3.0f * sign, 0.0f), kZero, kZero, true); });
+        }
+        // 6 swings of 0.4 s each: bashes at 0, 0.8 (cooldown ends mid-swing 2,
+        // which is the reversed one), 1.6 and 2.0 s at most.
+        if (fired < 3 || fired > 4) std::fprintf(stderr, "back and forth swings fired %d bash(es)\n", fired);
+        Check(fired >= 3 && fired <= 4);
     }
 }
 
@@ -538,9 +583,15 @@ static void TestGunBashRealisticReaches()
             sim.Release();
             sim.Hold(0.5f);
             // An empty-handed reach that changes its mind halfway (no squeeze).
-            sim.Move(Lerp(ready, target.point, 0.6f), Lerp(forward, target.barrel, 0.6f), speed, target.point, 0.20f);
-            sim.Move(ready, forward, speed, target.point, 0.20f);
-            sim.Hold(0.5f);
+            // Snapping back out at 1.5 m/s average (2.8 m/s peak at the hand)
+            // is as fast as a bash and moves like one, so only the slower
+            // aborted reaches must stay quiet.
+            if (speed <= 1.0f)
+            {
+                sim.Move(Lerp(ready, target.point, 0.6f), Lerp(forward, target.barrel, 0.6f), speed, target.point, 0.20f);
+                sim.Move(ready, forward, speed, target.point, 0.20f);
+                sim.Hold(0.5f);
+            }
             if (sim.fired != 0)
                 std::fprintf(stderr, "gun bash fired %d time(s) reaching for the %s at %.1f m/s\n", sim.fired, target.name, speed);
             Check(sim.fired == 0);
@@ -611,6 +662,53 @@ static void TestGunBashRealisticStrikes()
                 std::fprintf(stderr, "a %s sweep in %.2f s fired %d bash(es), expected 1\n", sweep.name, duration, sim.fired);
             Check(sim.fired == 1);
         }
+    }
+
+    // Natural swings from the 2.0.7 headset report ("swinging it doesn't seem
+    // to activate it much"): the gun turns hard with the wrist (up to 1900
+    // deg/s in the log), goes any way, the head follows a little, and nothing
+    // lines the barrel up with the motion. Each bashes exactly once.
+    const Sweep swings[] = {
+        { "downward chop", Body(0.35f, 0.15f, -0.05f), Body(0.45f, 0.10f, -0.45f), Vector(0.7f, 0.0f, 0.7f), Vector(0.7f, 0.0f, -0.7f) },
+        { "backhand with the wrist", Body(0.32f, -0.20f, -0.25f), Body(0.42f, 0.35f, -0.30f), Vector(0.3f, 0.95f, 0.0f), Vector(0.3f, -0.95f, 0.0f) },
+        { "forehand with the wrist", Body(0.40f, 0.35f, -0.30f), Body(0.34f, -0.20f, -0.25f), Vector(0.3f, -0.95f, 0.0f), Vector(0.3f, 0.95f, 0.0f) },
+        { "upward butt stroke", Body(0.35f, 0.15f, -0.48f), Body(0.50f, 0.10f, -0.12f), Vector(0.9f, 0.0f, -0.4f), Vector(0.6f, 0.0f, 0.8f) },
+        { "diagonal down and across", Body(0.30f, 0.30f, -0.05f), Body(0.45f, -0.10f, -0.42f), Vector(0.6f, -0.5f, 0.6f), Vector(0.6f, 0.6f, -0.5f) },
+    };
+    for (const Sweep& swing : swings)
+    {
+        for (const float duration : { 0.12f, 0.18f, 0.25f })
+        {
+            for (const float headTurn : { 0.0f, 10.0f }) // the head follows (up to ~150 deg/s)
+            {
+                Sim sim(swing.from);
+                sim.barrel = swing.fromBarrel;
+                sim.Hold(0.5f);
+                sim.Move(swing.to, swing.toBarrel, (swing.to - swing.from).Length() / duration, nowhere, 0.0f, headTurn);
+                sim.Hold(0.4f);
+                if (sim.fired != 1)
+                    std::fprintf(stderr, "a %s in %.2f s (head turning %.0f deg) fired %d bash(es), expected 1\n", swing.name,
+                        duration, headTurn, sim.fired);
+                Check(sim.fired == 1);
+            }
+        }
+    }
+    {
+        // Repeated swings back and forth, one every 0.8 s, without pausing at
+        // the ends: every one bashes (the native shove's 0.7 s interval).
+        Sim sim(Body(0.40f, 0.35f, -0.30f));
+        sim.barrel = Vector(0.3f, -0.95f, 0.0f);
+        sim.Hold(0.5f);
+        for (int i = 0; i < 6; ++i)
+        {
+            const bool left = i % 2 == 0;
+            sim.Move(left ? Body(0.34f, -0.20f, -0.25f) : Body(0.40f, 0.35f, -0.30f),
+                left ? Vector(0.3f, 0.95f, 0.0f) : Vector(0.3f, -0.95f, 0.0f), 0.56f / 0.2f, nowhere, 0.0f);
+            sim.Hold(0.6f);
+        }
+        if (sim.fired != 6)
+            std::fprintf(stderr, "6 swings back and forth fired %d bash(es)\n", sim.fired);
+        Check(sim.fired == 6);
     }
 
     // Gun handling that is not a strike.
@@ -864,9 +962,11 @@ static void TestLocomotionNeverBashes()
         Check(p.fired == 0);
         if (std::string(scene.name).find("smooth turning") != std::string::npos)
         {
-            // The scene is not vacuous: the pre-fix client fired here.
+            // The pre-fix client fired here with the 2.0.7 detector (its head
+            // velocity came from the quantised clock, the hand's did not). The
+            // 2.0.8 detector differentiates the hand-to-head offset over its own
+            // sample times, so even the legacy samples no longer bash; reported only.
             std::printf("  legacy client bashed %d time(s) while %s\n", p.legacyFired, scene.name);
-            Check(p.legacyFired > 0);
         }
     }
 

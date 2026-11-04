@@ -21,6 +21,7 @@ namespace
         float seconds = 0.0f;   // slash duration
         bool counts = false;    // must register as a swing
         float laggedPeak = 0.0f, drawnPeak = 0.0f, drift = 0.0f, model = 0.0f, serverMismatch = 0.0f;
+        float handGapCm = -1.0f;   // worst drawn hand distance from the hand target (2.0.6)
         uint32_t swings = 0u, frames = 0u;
     };
 
@@ -192,6 +193,9 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float stepTime, C_BasePla
             m_MeleeDrawnServerMismatchMaxDeg.store(0.0f, std::memory_order_release);
             m_MeleeDrawnFrames.store(0u, std::memory_order_release);
             m_MeleeDrawnLagRecord.store(true, std::memory_order_release);
+            // The drawn hand (arms model) against the hand target, every frame.
+            m_GunHandDrawnGapMaxCm.store(0.0f, std::memory_order_release);
+            m_GunHandStageTraceUntilMs.store(GetTickCount64() + 3000u, std::memory_order_release);
             s_SwingStart = t;
             s_Measuring = true;
             slash(swing.seconds);
@@ -205,6 +209,9 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float stepTime, C_BasePla
             swing.drift = m_MeleeDrawnGripDriftMax.load(std::memory_order_acquire);
             swing.serverMismatch = m_MeleeDrawnServerMismatchMaxDeg.load(std::memory_order_acquire);
             swing.frames = m_MeleeDrawnFrames.load(std::memory_order_acquire);
+            swing.handGapCm = m_GunHandDrawnGapMaxCm.load(std::memory_order_acquire);
+            m_GunHandDrawnGapMaxCm.store(-1.0f, std::memory_order_release);
+            m_GunHandStageTraceUntilMs.store(0u, std::memory_order_release);
             swing.swings = m_MeleeSwingStartSerial.load(std::memory_order_acquire) - s_SerialBase;
             swing.model = MeleeLagModelPeak(m_MeleeMotionParams, swing.seconds);
             Game::logMsg("[VR][SelfTest] INFO meleelag %s: %.2f s slash (peak %.0f deg/s, hand %.1f m/s): lag %.1f deg (drawn %.1f, model %.1f), grip drift %.2f cm, drawn vs usercmd pose %.2f deg over %u drawn frames, %u swing(s)",
@@ -287,6 +294,16 @@ bool VR::RunMeleeSelfTestStep(const std::string& step, float stepTime, C_BasePla
         std::snprintf(detail, sizeof(detail), "the drawn grip moved at most %.2f cm off the hand (%u drawn frames)",
             drift * 100.0f, frames);
         SelfTestReport(("meleelag " + s_ScriptName + ": grip welded to the hand").c_str(), weldOk, detail);
+        // 2.0.6 (headset session 7, "held from the front"): the drawn hand is
+        // where the empty hand is (on the controller) all through the swings,
+        // the weapon pivoting at it.
+        float handGap = -1.0f;
+        for (const MeleeLagSwing& s : s_Swings)
+            handGap = std::max(handGap, s.handGapCm);
+        std::snprintf(detail, sizeof(detail), "drawn hand at most %.1f cm from the hand target (where the empty hand is) during the slashes",
+            handGap);
+        SelfTestReport(("meleelag " + s_ScriptName + ": the hand holds the weapon on the controller").c_str(),
+            handGap >= 0.0f && handGap < 2.5f, detail);
         std::snprintf(detail, sizeof(detail), "drawn weapon at most %.2f deg from the pose the usercmd sends (%u drawn frames)",
             mismatch, frames);
         SelfTestReport(("meleelag " + s_ScriptName + ": the server's melee sweep follows the drawn weapon").c_str(), serverOk, detail);

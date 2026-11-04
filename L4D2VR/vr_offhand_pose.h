@@ -31,6 +31,14 @@ namespace l4d2vr_offhand_pose
     constexpr float kDefaultOffsetMeters[3] = { 0.0f, -0.08f, 0.1f };
     constexpr const char* kDefaultRotationText = "-90,90,0";
     constexpr const char* kDefaultOffsetText = "0,-0.08,0.1";
+    // The free right hand (and the gun hand, GunHandOnController) mirrors the
+    // left: the same place relative to its controller (x = 0, so the mirror
+    // leaves it unchanged). Until 2.0.6 it was 0,0,0, which put the right
+    // wrist on the controller's raw origin, 10 cm in front of and 8 cm above
+    // where the left hand's wrist sits (headset session 7: "the hands are
+    // very offset from the controllers").
+    constexpr float kDefaultRightOffsetMeters[3] = { 0.0f, -0.08f, 0.1f };
+    constexpr const char* kDefaultRightOffsetText = "0,-0.08,0.1";
 
     // Local rotation of NativeViewmodel*HandPoseRotationOffsetDeg (x, y, z in
     // degrees): R = Rz * Ry * Rx, row-major. The exact matrix

@@ -55,6 +55,7 @@
 #include "vr_item_hand.h"
 #include "vr_hand_mirror.h"
 #include "vr_left_hand_remap.h"
+#include "vr_gun_hand_anchor.h"
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
@@ -1051,7 +1052,55 @@ public:
 	bool m_GunRigidInHand = true;
 	// GunHandOnController: the drawn gun hand sits on the controller like the
 	// empty hand (each gun's idle pose put it elsewhere, up to 17 cm off).
+	// Since 2.0.6 the per-gun translation (vr_gun_hand_anchor.h) moves the
+	// viewmodel origin, so the flashlight, muzzle, magazine well, bolt and
+	// foregrip boxes and the scope move with the drawn gun.
 	bool m_GunHandOnController = true;
+	mutable std::mutex m_GunHandAnchorMutex;
+	int m_GunHandAnchorWeaponId = 0;            // the gun the translation was measured on
+	l4d2vr_gun_hand_anchor::Anchor m_GunHandAnchor{};
+	void SetGunHandAnchor(int weaponId, const l4d2vr_gun_hand_anchor::Anchor& anchor);
+	// World translation of the viewmodel this frame (0 when it does not apply).
+	Vector GunHandAnchorShiftWorld(const QAngle& itemControllerAngles);
+	// Guns and melee weapons (2.0.6: melee too, so its hand sits on the
+	// controller like the empty hand and the lag pivots at the hand).
+	static bool GunHandAnchorWeapon(int weaponId);
+	// Where the item hand's wrist is drawn: the item controller plus the hand
+	// pose offset (x right, y up, z back). drawnHand=false: for the right-handed
+	// hold before an item in the left hand is mirrored.
+	Vector ItemHandTargetWorld(const Vector& controllerPos, const QAngle& controllerAngles, bool drawnHand) const;
+	// Self-test (flashprobe): the last local flashlight origin the engine drew.
+	std::atomic<float> m_SelfTestFlashlightPos[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
+	std::atomic<uint32_t> m_SelfTestFlashlightSerial{ 0u };
+	std::atomic<float> m_GunHandDrawnGapMaxCm{ -1.0f };
+	// The translation the viewmodel was placed with (CalcViewModelView), so the
+	// draw can measure the hand without it; render = the render snapshot's.
+	std::atomic<float> m_GunHandShiftAtCalcView[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
+	std::atomic<float> m_RenderGunHandShift[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
+	Vector m_MeleeShiftApplied{ 0.0f, 0.0f, 0.0f };   // carried by the lagged melee pose
+	Vector GunHandShiftForViewmodel();                 // what GetRecommendedViewmodelAbsPos adds (main thread)
+	void RecordGunHandShiftAtCalcView(bool renderSnapshot);
+	Vector GunHandShiftAtCalcView() const
+	{
+		return Vector(m_GunHandShiftAtCalcView[0].load(std::memory_order_relaxed), m_GunHandShiftAtCalcView[1].load(std::memory_order_relaxed),
+			m_GunHandShiftAtCalcView[2].load(std::memory_order_relaxed));
+	}  // self-test: worst drawn item hand gap while recording
+	// Melee lag as a world rotation about the hand (2.0.6): the arm IK draws
+	// the hand un-lagged, on the controller, while the weapon trails in it
+	// (Ancient Dungeon: the hand follows the controller, the weapon is on a
+	// joint at the grip). main = the update thread's pose (mat_queue_mode 0),
+	// render = the render thread's re-applied one (queued rendering).
+	struct MeleeUnlag
+	{
+		bool valid = false;
+		Vector pivot{ 0.0f, 0.0f, 0.0f };
+		float r[3][3]{ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };   // unlagged -> lagged (world)
+	};
+	mutable std::mutex m_MeleeUnlagMutex;
+	mutable MeleeUnlag m_MeleeUnlag[2]{};
+	void SetMeleeUnlag(int slot, bool valid, const Vector& pivot, const Vector& f0, const Vector& r0, const Vector& u0,
+		const Vector& f1, const Vector& r1, const Vector& u1) const;
+	bool GetMeleeUnlag(int slot, MeleeUnlag& out) const;
 	std::atomic<int> m_ActiveGunWeaponId{ 0 }; // the local player's active weapon id (main thread writes)
 	std::atomic<uint64_t> m_LastLocalShotMs{ 0u };
 	Vector m_SightRearInHand{ 0.0f, 0.0f, 0.0f };
@@ -2560,7 +2609,7 @@ public:
 	// Calibrated free off-hand pose in the controller frame (vr_offhand_pose.h).
 	Vector m_NativeViewmodelLeftHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };
 	Vector m_NativeViewmodelLeftHandPoseRotationOffsetDeg = { -90.0f, 90.0f, 0.0f };
-	Vector m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, 0.0f, 0.0f };
+	Vector m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };
 	Vector m_NativeViewmodelRightHandPoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
 	bool m_NativeViewmodelLeftHandOpenVRSkeleton = true;
 	float m_NativeViewmodelLeftHandOpenVRCurlStrength = 1.0f;
@@ -3828,7 +3877,8 @@ public:
 	struct RecoilTestSample { uint64_t ms; Vector pos; Vector vel; };
 	std::vector<RecoilTestSample> m_RecoilTestProjectile;
 	int m_RecoilTestProjectileEnt = -1;
-	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position) const;
+	bool ApplyMeleeInertiaToViewmodel(Vector& forward, Vector& right, Vector& up, Vector& position,
+		const Vector& controllerPos, const QAngle& controllerAngles) const;
 	void PublishMeleeDrawnState(bool melee, const l4d2vr_melee_inertia::Quat& serverLag, float springLagDeg) const;
 	void PublishMeleeDrawnPose(const Vector& grip, const Vector& forward, const Vector& right, const Vector& up) const;
 	void RecordMeleeDrawnBones(const void* model, const float (*root)[3][4], const char* modelName, bool viewmodelClass) const;

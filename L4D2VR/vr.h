@@ -55,6 +55,7 @@
 #include "vr_item_hand.h"
 #include "vr_hand_mirror.h"
 #include "vr_left_hand_remap.h"
+#include "vr_gun_hand_anchor.h"
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
@@ -1051,7 +1052,16 @@ public:
 	bool m_GunRigidInHand = true;
 	// GunHandOnController: the drawn gun hand sits on the controller like the
 	// empty hand (each gun's idle pose put it elsewhere, up to 17 cm off).
+	// Since 2.0.6 the per-gun translation (vr_gun_hand_anchor.h) moves the
+	// viewmodel origin, so the flashlight, muzzle, magazine well, bolt and
+	// foregrip boxes and the scope move with the drawn gun.
 	bool m_GunHandOnController = true;
+	mutable std::mutex m_GunHandAnchorMutex;
+	int m_GunHandAnchorWeaponId = 0;            // the gun the translation was measured on
+	l4d2vr_gun_hand_anchor::Anchor m_GunHandAnchor{};
+	void SetGunHandAnchor(int weaponId, const l4d2vr_gun_hand_anchor::Anchor& anchor);
+	// World translation of the viewmodel this frame (0 when it does not apply).
+	Vector GunHandAnchorShiftWorld(const QAngle& itemControllerAngles);
 	std::atomic<int> m_ActiveGunWeaponId{ 0 }; // the local player's active weapon id (main thread writes)
 	std::atomic<uint64_t> m_LastLocalShotMs{ 0u };
 	Vector m_SightRearInHand{ 0.0f, 0.0f, 0.0f };
@@ -2560,7 +2570,7 @@ public:
 	// Calibrated free off-hand pose in the controller frame (vr_offhand_pose.h).
 	Vector m_NativeViewmodelLeftHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };
 	Vector m_NativeViewmodelLeftHandPoseRotationOffsetDeg = { -90.0f, 90.0f, 0.0f };
-	Vector m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, 0.0f, 0.0f };
+	Vector m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };
 	Vector m_NativeViewmodelRightHandPoseRotationOffsetDeg = { 0.0f, 0.0f, 0.0f };
 	bool m_NativeViewmodelLeftHandOpenVRSkeleton = true;
 	float m_NativeViewmodelLeftHandOpenVRCurlStrength = 1.0f;

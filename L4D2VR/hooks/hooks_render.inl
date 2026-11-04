@@ -4267,6 +4267,8 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 						- (vmUp * vp.viewmodelPosOffset.z);
 					// Melee inertia: re-apply the update thread's lag to this fresher pose.
 					m_VR->ApplyMeleeInertiaToViewmodel(vmForward, vmRight, vmUp, vmPosAbs);
+					// Gun hand on the controller: the same translation as GetRecommendedViewmodelAbsPos.
+					vmPosAbs += m_VR->GunHandAnchorShiftWorld(rightCtrlAngAbs);
 					QAngle::VectorAngles(vmForward, vmUp, vmAngAbs);
 				}
 

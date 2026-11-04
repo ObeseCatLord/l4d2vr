@@ -3102,6 +3102,10 @@ namespace
             l4d2vr_offhand_pose::kDefaultRotationText, true },
         { "2026-11-02_offhand_pose_offset", "NativeViewmodelLeftHandPoseOffsetMeters",
             l4d2vr_offhand_pose::kDefaultOffsetText, true },
+        // 2.0.6 (headset session 7): the right hand mirrors the left one; the
+        // old 0,0,0 put the right wrist 10 cm in front of the real hand.
+        { "2026-11-04_right_hand_pose_offset", "NativeViewmodelRightHandPoseOffsetMeters",
+            l4d2vr_offhand_pose::kDefaultRightOffsetText, true },
         // Headset session 6: the pump needs the free hand's trigger; the
         // foregrip's grip alone no longer racks it.
         { "2026-11-02_pump_trigger_required", "ManualPumpForegripRacks", "false" },

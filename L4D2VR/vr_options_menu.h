@@ -83,7 +83,7 @@ namespace l4d2vr_options_menu
         { "NativeViewmodelHandsOnly", RowKind::Choice, "Hand mode", "How the survivor's arms are shown in first person.", 0, 0, 0, "true", "true:Follow your hands|false:Game animation" },
         { "NativeViewmodelArmCroppingEnabled", RowKind::Toggle, "Hands only (cropped arms)", "Show only the hands, not the arms.", 0, 0, 0, "false" },
         { "AmbidextrousItemHands", RowKind::Toggle, "Either hand takes items", "The hand that draws an item holds and uses it.", 0, 0, 0, "true" },
-        { "ChestSlingEnabled", RowKind::Toggle, "Chest sling", "Squeeze a long gun's grip at your chest to hang it there; either hand takes it back.", 0, 0, 0, "true" },
+        { "ChestSlingEnabled", RowKind::Toggle, "Chest sling", "Let go of a long gun near your body to hang it on your chest.", 0, 0, 0, "true" },
         { "HolsterPavlovLayoutEnabled", RowKind::Toggle, "Pavlov holster layout", "Holsters on your hips, chest and back like Pavlov VR.", 0, 0, 0, "true" },
         { "HolsterItemsVisible", RowKind::Toggle, "Show holstered items", "Draw the items that sit in your holsters.", 0, 0, 0, "true" },
         { "HandPosesEnabled", RowKind::Toggle, "Finger poses", "Fingers wrap around what you hold.", 0, 0, 0, "true" },

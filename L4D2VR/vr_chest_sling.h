@@ -25,12 +25,14 @@
 // nothing passes a held gun to the other hand (no release transfer).
 //
 // Where "letting go" puts the gun (ReleaseInput.toggleGrip):
-// - Toggle grip (GripToggle, the default since 2.0.6, Pavlov's Click mode): the
-//   owner's second squeeze. It is put away only at its own holster: the hand
-//   within putAwayReachMeters of the sling (ChestSlingGrabRadiusMeters, the
-//   same reach that takes it back) or the hip holster (its grab reach);
-//   anywhere else it is dropped at the hand. A squeeze during a swing drops
-//   a melee weapon with the hand's motion (that is the melee throw).
+// - Long guns and the chest sling (both grip modes, unchanged from 2.0.5): near
+//   the body (within ChestSlingDropDistanceMeters, 0.6 m, of the sling point)
+//   the gun hangs on the sling; with the arm stretched away it drops.
+// - Sidearms, toggle grip (GripToggle, the default since 2.0.6, Pavlov's Click
+//   mode): the owner's second squeeze puts it back on the hip only with the
+//   hand within putAwayReachMeters (the hip holster's grab reach); anywhere
+//   else it is dropped at the hand. A squeeze during a swing drops a melee
+//   weapon with the hand's motion (that is the melee throw).
 // - Hold grip (GripToggle=false, the 2.0.5 rule): letting go of the grip. Near
 //   the body (within ChestSlingDropDistanceMeters, 0.6 m, of the sling point or
 //   hip holster) it is put away; with the arm stretched away it drops; a fast
@@ -99,8 +101,8 @@ namespace l4d2vr_chest_sling
             return ReleaseAction::None;
         if (!in.enabled || !IsLongGun(in.weaponId))
             return ReleaseAction::Drop;
-        if (in.toggleGrip)
-            return PutAwayWithinReach(in);
+        // The chest sling keeps its 2.0.5 rule in both grip modes (user, s7):
+        // near the body it hangs, at arm's length it drops.
         if (!std::isfinite(in.handToSlingMeters) || in.handToSlingMeters < 0.0f)
             return ReleaseAction::Sling;
         return in.handToSlingMeters > in.dropDistanceMeters ? ReleaseAction::Drop : ReleaseAction::Sling;

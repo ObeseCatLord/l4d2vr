@@ -1171,7 +1171,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(2, 1.6f)) {}
         if (at(3, 2.4f)) squeeze(true);
         if (at(4, 2.6f)) squeeze(false);
-        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.30f, 0.25f, -0.15f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.80f, 0.35f, -0.10f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(6, 4.5f))
         {
             const int slot = SelfTestActiveSlot(player);
@@ -1231,7 +1231,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(2, 1.6f)) {}
         if (at(3, 2.4f)) squeeze(true);
         if (at(4, 2.6f)) squeeze(false);
-        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.40f, 0.15f, -0.35f), QAngle(0.0f, 0.0f, 0.0f));
+        if (at(5, 3.0f)) SelfTestHoldRight(SelfTestVec(0.80f, 0.35f, -0.10f), QAngle(0.0f, 0.0f, 0.0f));
         if (at(6, 4.5f))
         {
             const int slot = SelfTestActiveSlot(player);

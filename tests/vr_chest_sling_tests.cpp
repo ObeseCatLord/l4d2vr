@@ -78,15 +78,11 @@ static void TestToggleGripPutAway()
     in.dropRequested = true;
     in.toggleGrip = true;
     in.putAwayReachMeters = 0.15f;
-    in.weaponId = 5;                                       // M16 at the sling
-    in.handToSlingMeters = 0.10f;
-    CHECK(OnRelease(in) == ReleaseAction::Sling);
-    in.handToSlingMeters = 0.15f;
-    CHECK(OnRelease(in) == ReleaseAction::Sling);          // the reach itself still puts it away
-    in.handToSlingMeters = 0.28f;                          // in front of the body: dropped
-    CHECK(OnRelease(in) == ReleaseAction::Drop);
-    in.handToSlingMeters = -1.0f;
-    CHECK(OnRelease(in) == ReleaseAction::Sling);          // no body frame: never drop by accident
+    in.weaponId = 5;                                       // M16: the sling keeps its 2.0.5 rule
+    in.handToSlingMeters = 0.28f;
+    CHECK(OnRelease(in) == ReleaseAction::Sling);          // in front of the body: hung on the sling
+    in.handToSlingMeters = 0.75f;
+    CHECK(OnRelease(in) == ReleaseAction::Drop);           // arm's length: dropped
     in.weaponId = 19;                                      // melee at the hip
     in.putAwayReachMeters = 0.17f;
     in.handToSlingMeters = 0.12f;

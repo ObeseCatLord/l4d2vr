@@ -258,29 +258,31 @@ bool VR::RunChestSlingSelfTestStep(const std::string& step, float t, C_BasePlaye
         {
             std::snprintf(detail, sizeof(detail), "clip %d -> %d", m_SelfTestValueA, clip());
             SelfTestReport("handswitch: the right trigger fires it again", clip() >= 0 && clip() < m_SelfTestValueA, detail);
+            // Arm stretched out, away from the body.
+            SelfTestReachRight(SelfTestVec(0.80f, 0.35f, -0.10f), SelfTestVec(0.0f, 0.0f, 0.0f), 1.0f);
         }
-        // The owner's squeeze in front of the body (away from the sling) drops it.
-        if (at(39, 26.8f)) button(m_ActionWeaponGrip, true);
-        if (at(40, 27.0f)) button(m_ActionWeaponGrip, false);
-        if (at(41, 28.6f))
+        // The owner's squeeze at arm's length drops it.
+        if (at(39, 27.8f)) button(m_ActionWeaponGrip, true);
+        if (at(40, 28.0f)) button(m_ActionWeaponGrip, false);
+        if (at(41, 29.6f))
         {
             std::snprintf(detail, sizeof(detail), "rifle %s, slung %d, active slot %d", primary ? "still held" : "dropped",
                 slung ? 1 : 0, slot + 1);
-            SelfTestReport("handswitch: the owner's squeeze away from the sling drops the rifle", primary == nullptr && !slung, detail);
+            SelfTestReport("handswitch: the owner's squeeze at arm's length drops the rifle", primary == nullptr && !slung, detail);
             SelfTestRequestShot("hs_dropped", 1);
             SelfTestReachRight(body::RightBelt(), SelfTestVec(60.0f, 0.0f, 0.0f), 1.0f);
         }
         // The pistol (now in hand) goes into the hip holster with a squeeze there.
-        if (at(42, 30.2f)) button(m_ActionWeaponGrip, true);
-        if (at(43, 30.4f)) button(m_ActionWeaponGrip, false);
-        if (at(44, 31.2f))
+        if (at(42, 31.2f)) button(m_ActionWeaponGrip, true);
+        if (at(43, 31.4f)) button(m_ActionWeaponGrip, false);
+        if (at(44, 32.2f))
         {
             std::snprintf(detail, sizeof(detail), "stowed slot %d, active slot %d", StowedSlot() + 1, slot + 1);
             SelfTestReport("handswitch: squeezing the pistol at the hip holsters it", slung && StowedSlot() == 1 && slot == 1, detail);
         }
-        if (at(45, 32.0f)) button(m_ActionWeaponGrip, true);
-        if (at(46, 32.2f)) button(m_ActionWeaponGrip, false);
-        if (at(47, 33.0f))
+        if (at(45, 33.0f)) button(m_ActionWeaponGrip, true);
+        if (at(46, 33.2f)) button(m_ActionWeaponGrip, false);
+        if (at(47, 34.0f))
         {
             std::snprintf(detail, sizeof(detail), "stowed %d, active slot %d, item hand %s", slung ? 1 : 0, slot + 1, hand);
             SelfTestReport("handswitch: the right hand draws the pistol again", !slung && slot == 1 && !ItemHandIsPhysicalLeft(), detail);
@@ -441,7 +443,6 @@ bool VR::RunEmptyHandsSelfTestStep(float t, C_BasePlayer* player)
     if (at(0, 0.0f))
     {
         s_SavedToggle = m_GripToggleEnabled;
-        m_GripToggleEnabled = false;   // hold grips: the hand keeps what the grip holds
         cmd("give rifle"); cmd("give pain_pills"); cmd("hurtme 30");
         button(m_ActionWeaponGrip, false); button(m_ActionOffHandGrip, false);
         button(m_ActionPrimaryAttack, false); button(m_ActionSecondaryAttack, false);
@@ -459,6 +460,9 @@ bool VR::RunEmptyHandsSelfTestStep(float t, C_BasePlayer* player)
     }
     if (at(1, 1.0f))
     {
+        // Hold grips from here, with the hands at rest (switching modes while
+        // a toggle grip holds the item lets it go where the hand is).
+        m_GripToggleEnabled = false;
         cmd("use weapon_pistol");
         // After the hands moved to their start poses (that jump is no bash).
         s_ShoveBaseline = m_PhysicalShoveSerial.load(std::memory_order_acquire);

@@ -514,7 +514,7 @@ GunBashSweepEnabled=true
 HolsterReleaseDrop=true
 # Toggle grips (Pavlov's toggle grip mode): a squeeze takes an item from a holster or the
 # sling and the hand keeps it without holding the grip; that hand's next squeeze lets it go:
-# at its own holster (the sling for a long gun) it is put away, anywhere else it is dropped
+# at its own holster it is put away (a long gun anywhere near your body hangs on the sling), elsewhere it drops
 # at your hand. Letting go of the grip never drops anything. The other hand's grip on the
 # gun is only the foregrip. Off: hold the grip to keep the item (letting go puts away/drops).
 GripToggle=true
@@ -546,11 +546,11 @@ HolsterInstantDraw=true
 // A held item never changes hands: put it away and take it with the other hand.
 AmbidextrousItemHands=true
 ItemHandLeftArmModel=true
-// Chest sling (Forefront): your long gun hangs across your chest, grip on the dominant side; squeeze its grip at the sling to hang it there (both hands free); grab it with either hand to take it.
+// Chest sling (Forefront): your long gun hangs across your chest, grip on the dominant side; let go of it (the second squeeze) near your body to hang it there (both hands free); grab it with either hand to take it.
 ChestSlingEnabled=true
 // Empty hands (Forefront / Pavlov): putting an item away in its holster leaves your hand empty; it stays on your body until a hand takes it back.
 HolsterEmptyHands=true
-// Hold grips only (GripToggle=false): letting go of a long gun or sidearm with the hand farther than this from its sling or holster (arm stretched out) drops it instead.
+// Letting go of a long gun with the hand farther than this from its sling (arm stretched out) drops it instead (with GripToggle=false also sidearms and the hip).
 ChestSlingDropDistanceMeters=0.6
 // How close a squeezing hand must be to the slung gun's handle or foregrip to take it.
 ChestSlingGrabRadiusMeters=0.15

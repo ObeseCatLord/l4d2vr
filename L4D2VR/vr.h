@@ -1735,6 +1735,10 @@ public:
     bool BuildChestSlingPose(const l4d2vr_holster::BodyFrame& frame, l4d2vr_holster::ItemPose& pose,
         Vector* handle = nullptr, Vector* foregrip = nullptr) const;
     bool GetChestSlingPoint(Vector& handle, Vector& foregrip) const;
+	// The hand is at the stowed item (the slung gun anywhere from its handle to
+	// its foregrip, or the stowed item's own holster): taking it back wins over
+	// an overlapping holster (the sling handle sits by the hip).
+	bool HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& hand, std::uint32_t occupiedMask) const;
     void UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_holster::BodyFrame* frame,
         std::uint32_t occupiedMask, bool itemHandGripDown, bool itemHandClaimed);
     // CreateMove: the grip let go of the held item where it would drop. True

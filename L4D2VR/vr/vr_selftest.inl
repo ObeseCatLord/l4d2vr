@@ -528,7 +528,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (m_SelfTestStage == 0)
         {
             m_SelfTestStage = 1;
-            RequestItemHand(step.substr(9) == "left", l4d2vr_item_hand::Reason::HandOff);
+            RequestItemHand(step.substr(9) == "left", l4d2vr_item_hand::Reason::SelfTest);
         }
         if (t < 0.6f)
             return false;
@@ -1614,7 +1614,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         if (at(0, 0.0f))
         {
             const bool left = step.substr(9) == "left";
-            RequestItemHand(left, l4d2vr_item_hand::Reason::HandOff);
+            RequestItemHand(left, l4d2vr_item_hand::Reason::SelfTest);
             Game::logMsg("[VR][SelfTest] held item to the %s hand", left ? "left" : "right");
         }
         if (t < 1.0f)

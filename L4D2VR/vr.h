@@ -2278,8 +2278,9 @@ public:
 	// takes an item holds and uses it. While m_ItemHandSwapped is set the
 	// configured off hand holds the active item, and every gameplay "right hand"
 	// (poses, trigger, weapon grip, haptics, viewmodel, aim) is that controller.
+	// Only a take from the body (holster, sling, stowed place) changes it; a held
+	// item never moves to the other hand (2.0.6; ItemHandOffRadiusMeters retired).
 	bool m_AmbidextrousItemHands = true;
-	float m_ItemHandOffRadiusMeters = 0.14f;
 	// ItemHandMirror (vr_hand_mirror.h): an item in the physical left hand is
 	// drawn held by a mirrored (left) survivor hand and the free right
 	// controller shows a right hand, instead of the model's hands crossing over.
@@ -2293,7 +2294,7 @@ public:
 	std::atomic<uint64_t> m_ItemHandSwapAtMs{ 0u };
 	std::atomic<uint32_t> m_ItemHandSwapSerial{ 0u };
 	l4d2vr_item_hand::Switch m_ItemHandSwitch;
-	bool m_ItemHandAdoptGrip = false;       // the new item hand keeps the item (no press edge, no drop)
+	bool m_ItemHandAdoptGrip = false;       // the new item hand (a sling take) keeps the item (no press edge, no drop)
 	bool m_ItemHandAdoptHeld = false;       // ... and the toggle grip holds it
 	bool m_ItemHandForceGripUpFrame = false; // a holster draw: the new item hand presses afresh next frame
 	// Gameplay right hand (the item hand) is the physical left controller.
@@ -2306,7 +2307,6 @@ public:
 	{
 		return ItemHandIsPhysicalLeft() ? l4d2vr_dual::Hand::Left : l4d2vr_dual::Hand::Right;
 	}
-	bool ItemHandSwappedWithinMs(uint64_t ms) const;
 	// Mirrored left-hand rendering (vr_hand_mirror.h). The decision without the
 	// render path's own arm-IK readiness, and the two local mirrors (gun plane,
 	// free-hand controller plane) from the render-frame snapshot.
@@ -2319,9 +2319,6 @@ public:
 	bool ItemHandReady(C_BasePlayer* localPlayer, bool isObserverOrIdle) const;
 	void UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserverOrIdle, bool akimbo,
 		bool toggleApplies, bool gripValid, bool& gripDown, bool& gripJustPressed, uint32_t& weaponGripInputState);
-	void UpdateItemHandOff(C_BasePlayer* localPlayer, bool isObserverOrIdle, bool akimbo, bool pressEdge);
-	bool m_ItemHandOffTwoHandPrev = false;
-	int m_ItemHandOffMagazineStatePrev = 0;
 	// If false: movement (walk axis) follows HMD yaw ("head-oriented locomotion").
 	// If true:  movement follows the right-hand controller yaw ("hand-oriented locomotion").
 	bool m_MoveDirectionFromController = false;

@@ -34,9 +34,9 @@ static void TestSwitchCommitsOnce()
     CHECK(sw.Commit(swapped, reason) && swapped && reason == Reason::HolsterDraw);
     CHECK(!sw.Pending());
     CHECK(!sw.Commit(swapped, reason) && swapped);    // once
-    sw.Request(true, Reason::HandOff);                // already there: no change, reason reported
-    CHECK(!sw.Commit(swapped, reason) && swapped && reason == Reason::HandOff);
-    sw.Request(false, Reason::HandOff);
+    sw.Request(true, Reason::SlingTake);              // already there: no change, reason reported
+    CHECK(!sw.Commit(swapped, reason) && swapped && reason == Reason::SlingTake);
+    sw.Request(false, Reason::SlingTake);
     sw.Request(true, Reason::HolsterDraw);            // the last request wins
     CHECK(!sw.Commit(swapped, reason) && swapped);
     sw.Request(false, Reason::Reset);
@@ -44,47 +44,82 @@ static void TestSwitchCommitsOnce()
     CHECK(!sw.Commit(swapped, reason) && swapped);
 }
 
-static void TestHandOff()
+static void TestOnlyTakesChangeHands()
 {
-    HandOffInput in{};
-    in.enabled = in.ready = in.pressEdge = in.itemInHand = true;
-    in.handDistanceMeters = 0.08f;
-    CHECK(HandOff(in));
-    HandOffInput far = in; far.handDistanceMeters = 0.30f;
-    CHECK(!HandOff(far));                       // a squeeze in the air is not a hand-off
-    HandOffInput edge = in; edge.handDistanceMeters = 0.14f;
-    CHECK(HandOff(edge));
-    HandOffInput claimed = in; claimed.claimed = true;
-    CHECK(!HandOff(claimed));                   // foregrip, magazine, bolt, holster win
-    HandOffInput held = in; held.pressEdge = false;
-    CHECK(!HandOff(held));                      // only a fresh squeeze
-    HandOffInput empty = in; empty.itemInHand = false;
-    CHECK(!HandOff(empty));
-    HandOffInput off = in; off.enabled = false;
-    CHECK(!HandOff(off));
-    HandOffInput dead = in; dead.ready = false;
-    CHECK(!HandOff(dead));
-    HandOffInput bad = in; bad.handDistanceMeters = std::nanf("");
-    CHECK(!HandOff(bad));
-    bad.handDistanceMeters = -1.0f;
-    CHECK(!HandOff(bad));
+    // 2.0.6: only taking an item from the body moves it to a hand.
+    CHECK(ChangesHands(Reason::HolsterDraw));
+    CHECK(ChangesHands(Reason::SlingTake));
+    CHECK(ChangesHands(Reason::Reset));
+    CHECK(ChangesHands(Reason::SelfTest));
+    CHECK(!ChangesHands(Reason::None));
+    CHECK(AdoptsGrip(Reason::SlingTake));             // the squeezing hand keeps the slung gun
+    CHECK(!AdoptsGrip(Reason::HolsterDraw));          // a draw presses afresh next frame
+    CHECK(!AdoptsGrip(Reason::Reset));
 }
 
-static void TestReleaseTransfer()
+static Under At(bool takeable, bool ownHolster, bool foregrip, bool heldItem)
 {
-    ReleaseInput in{};
-    in.enabled = in.ready = in.released = in.twoHandGrip = in.supportHolds = true;
-    CHECK(ReleaseTransfer(in));
-    ReleaseInput holster = in; holster.overHolster = true;
-    CHECK(!ReleaseTransfer(holster));           // letting go in a holster still puts it away
-    ReleaseInput noFore = in; noFore.twoHandGrip = false;
-    CHECK(!ReleaseTransfer(noFore));            // letting go in the open still drops
-    ReleaseInput still = in; still.released = false;
-    CHECK(!ReleaseTransfer(still));
-    ReleaseInput loose = in; loose.supportHolds = false;
-    CHECK(!ReleaseTransfer(loose));
-    ReleaseInput off = in; off.enabled = false;
-    CHECK(!ReleaseTransfer(off));
+    Under u{};
+    u.takeable = takeable; u.ownHolster = ownHolster; u.foregrip = foregrip; u.heldItem = heldItem;
+    return u;
+}
+
+static void TestOwnershipToggle()
+{
+    const int L = 0, R = 1;
+    const Under air = At(false, false, false, false);
+    const Under holster = At(true, false, false, false);
+    const Under own = At(false, true, false, false);
+    const Under handle = At(false, false, false, true);
+    const Under fore = At(false, false, true, false);
+    Ownership o(true, true);
+    CHECK(o.Owner() == -1);
+    CHECK(o.Press(R, air) == Action::None);           // an empty squeeze takes nothing
+    CHECK(o.Press(R, holster) == Action::Take && o.Owner() == R);
+    CHECK(o.Release(R, air) == Action::None && o.Owner() == R);   // letting go never drops
+    // The free hand grips the held gun's handle: never ownership.
+    CHECK(o.Press(L, handle) == Action::None && o.Owner() == R);
+    CHECK(o.Release(L, handle) == Action::None && o.Owner() == R);
+    // ... and its foregrip: the support grip, a toggle.
+    CHECK(o.Press(L, fore) == Action::SupportGrip && o.Support() && o.Owner() == R);
+    CHECK(o.Release(L, fore) == Action::None && o.Support());
+    CHECK(o.Press(L, fore) == Action::SupportRelease && !o.Support() && o.Owner() == R);
+    // The support hand's squeeze never drops or holsters the gun, wherever it is.
+    CHECK(o.Press(L, own) == Action::None && o.Owner() == R);
+    // The owner's squeeze in the open drops it (and the support hand lets go).
+    CHECK(o.Press(L, fore) == Action::SupportGrip);
+    CHECK(o.Press(R, air) == Action::Drop && o.Owner() == -1 && !o.Support());
+    // Taken again, the owner's squeeze at its own holster puts it away.
+    CHECK(o.Press(R, holster) == Action::Take);
+    CHECK(o.Press(R, own) == Action::PutAway && o.Owner() == -1);
+    // The only way into the other hand: from the body.
+    CHECK(o.Press(L, holster) == Action::Take && o.Owner() == L);
+    CHECK(o.Press(R, handle) == Action::None && o.Owner() == L);
+    CHECK(o.Press(L, own) == Action::PutAway);
+    CHECK(o.Press(R, holster) == Action::Take && o.Owner() == R);
+    // A different item from a holster with the free hand: that hand owns it.
+    CHECK(o.Press(L, holster) == Action::Take && o.Owner() == L && !o.Support());
+}
+
+static void TestOwnershipHold()
+{
+    const int L = 0, R = 1;
+    const Under air = At(false, false, false, false);
+    const Under holster = At(true, false, false, false);
+    const Under own = At(false, true, false, false);
+    const Under fore = At(false, false, true, false);
+    Ownership o(false, false);                        // GripToggle=false, held foregrip
+    CHECK(o.Press(R, holster) == Action::Take);
+    CHECK(o.Press(L, fore) == Action::SupportGrip);
+    CHECK(o.Release(L, fore) == Action::SupportRelease && o.Owner() == R);
+    CHECK(o.Release(R, air) == Action::Drop && o.Owner() == -1);
+    CHECK(o.Press(R, holster) == Action::Take);
+    CHECK(o.Release(R, own) == Action::PutAway);
+    // Letting go while the other hand holds the foregrip still lets it go
+    // (no transfer to the foregrip hand).
+    CHECK(o.Press(R, holster) == Action::Take);
+    CHECK(o.Press(L, fore) == Action::SupportGrip);
+    CHECK(o.Release(R, air) == Action::Drop && o.Owner() == -1 && !o.Support());
 }
 
 static void TestRoleRemap()
@@ -117,8 +152,8 @@ static void TestToggleAdopt()
     CHECK(step(true));
     CHECK(step(false));
     CHECK(toggle.Held());
-    // The other hand squeezes it: it adopts the held item with its grip down,
-    // which is not a fresh press (no release, no drop).
+    // A sling take: the taking hand adopts the item with its grip down, which
+    // is not a fresh press (no release, no drop).
     toggle.Adopt(true, true);
     CHECK(step(true));
     CHECK(step(false));                         // letting go keeps it (toggle)
@@ -130,15 +165,16 @@ static void TestToggleAdopt()
     in2.active = in2.ready = true;
     loose.Adopt(true, false);
     in2.rawDown = true; in2.nowMs = 100u;
-    CHECK(!loose.Update(in2));                  // no press edge from the hand-off squeeze
+    CHECK(!loose.Update(in2));                  // no press edge from the taking squeeze
 }
 
 int main()
 {
     TestMapping();
     TestSwitchCommitsOnce();
-    TestHandOff();
-    TestReleaseTransfer();
+    TestOnlyTakesChangeHands();
+    TestOwnershipToggle();
+    TestOwnershipHold();
     TestRoleRemap();
     TestToggleAdopt();
     if (g_failures)

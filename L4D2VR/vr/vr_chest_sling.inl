@@ -56,12 +56,20 @@ bool VR::ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId)
     in.dropRequested = true;
     in.weaponId = weaponId;
     in.dropDistanceMeters = m_ChestSlingDropDistanceMeters;
-    in.handToSlingMeters = GetChestSlingPoint(handle, foregrip)
-        ? (m_RightControllerPosAbs - handle).Length() / (std::max)(1.0f, m_VRScale)
-        : -1.0f;
+    // Toggle grip (2.0.6): the owner's squeeze puts it on the sling only with
+    // the hand at the slung gun (the reach that takes it back), else drops it.
+    in.toggleGrip = m_GripToggleEnabled;
+    in.putAwayReachMeters = m_ChestSlingGrabRadiusMeters;
+    const bool haveSling = GetChestSlingPoint(handle, foregrip);
+    const float s = (std::max)(1.0f, m_VRScale);
+    in.handToSlingMeters = !haveSling ? -1.0f : in.toggleGrip
+        ? l4d2vr_holster::DistanceToSegment(m_RightControllerPosAbs, handle, foregrip) / s
+        : (m_RightControllerPosAbs - handle).Length() / s;
     const l4d2vr_chest_sling::ReleaseAction action = l4d2vr_chest_sling::OnRelease(in);
-    Game::logMsg("[VR][ChestSling] release weaponId=%d hand %.2f m from the sling (drop beyond %.2f): %s",
-        weaponId, in.handToSlingMeters, in.dropDistanceMeters,
+    Game::logMsg("[VR][ChestSling] %s weaponId=%d hand %.2f m from the sling (%s %.2f): %s",
+        in.toggleGrip ? "owner squeeze" : "release", weaponId, in.handToSlingMeters,
+        in.toggleGrip ? "put away within" : "drop beyond",
+        in.toggleGrip ? in.putAwayReachMeters : in.dropDistanceMeters,
         action == l4d2vr_chest_sling::ReleaseAction::Sling ? "slung" : "dropped");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
@@ -89,14 +97,21 @@ bool VR::HolsterCatchRelease(uintptr_t weaponTag, int weaponId)
     in.weaponId = weaponId;
     in.handToSlingMeters = handToHolster;
     in.dropDistanceMeters = m_ChestSlingDropDistanceMeters;
+    // Toggle grip (2.0.6): back on the hip only with the hand in the hip
+    // holster's own grab reach; anywhere else (also mid-swing: a melee throw)
+    // it drops at the hand with the hand's motion.
+    in.toggleGrip = m_GripToggleEnabled;
+    in.putAwayReachMeters = l4d2vr_holster::ZoneReachMeters(m_HolsterLayout, l4d2vr_holster::Zone::Secondary);
     Vector velocity{};
     if (EstimateHandThrowVelocity(false, velocity))
         in.handSpeedMetersPerSecond = velocity.Length() / (std::max)(1.0f, m_VRScale);
     const l4d2vr_chest_sling::ReleaseAction action = l4d2vr_chest_sling::OnSidearmRelease(in);
     if (action == l4d2vr_chest_sling::ReleaseAction::None)
         return false;
-    Game::logMsg("[VR][EmptyHands] release weaponId=%d hand %.2f m from the hip holster (drop beyond %.2f) at %.1f m/s: %s",
-        weaponId, handToHolster, in.dropDistanceMeters, in.handSpeedMetersPerSecond,
+    Game::logMsg("[VR][EmptyHands] %s weaponId=%d hand %.2f m from the hip holster (%s %.2f) at %.1f m/s: %s",
+        in.toggleGrip ? "owner squeeze" : "release", weaponId, handToHolster,
+        in.toggleGrip ? "put away within" : "drop beyond",
+        in.toggleGrip ? in.putAwayReachMeters : in.dropDistanceMeters, in.handSpeedMetersPerSecond,
         action == l4d2vr_chest_sling::ReleaseAction::Sling ? "holstered" : "dropped");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
@@ -204,10 +219,10 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
     const bool physicalLeft = IsGameplayHandLeftPhysical(hand == 0);
     if (hand == 0)
     {
-        // The other hand takes it: it becomes the trigger hand (and its grip owns
-        // the gun, as after a hand-off; a toggle grip holds it).
+        // The other hand takes it from the body: it becomes the trigger hand
+        // (and its grip owns the gun; a toggle grip holds it).
         m_ItemHandAdoptHeld = true;
-        RequestItemHand(physicalLeft, l4d2vr_item_hand::Reason::HandOff);
+        RequestItemHand(physicalLeft, l4d2vr_item_hand::Reason::SlingTake);
         // The grip owns it again once the hands have traded (CreateMove), so
         // letting go stows it again. Without ambidextrous items the support
         // hand puts it back in the item hand.

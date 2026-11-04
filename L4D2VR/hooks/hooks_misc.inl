@@ -19499,13 +19499,23 @@ namespace
                 vr->m_MeleeLagDeg.load(std::memory_order_acquire) < 1.0f;
             // Only from a still controller (under 2 mm and 1 degree since the
             // last draw): a moving hand between placement and draw is noise.
-            static Vector s_LastPos{};
-            static Vector s_LastForward{};
+            // (Both eyes of a frame share the pose: compare frame to frame.)
+            static Vector s_FramePos{}, s_FrameForward{};
+            static uint64_t s_FrameMs = 0u;
+            static bool s_Still = false;
             const Vector controllerPos = vr->GetRightControllerAbsPos();
-            const bool still = (controllerPos - s_LastPos).Length() < 0.002f * vr->m_VRScale &&
-                DotProduct(cf, s_LastForward) > 0.99985f;
-            s_LastPos = controllerPos;
-            s_LastForward = cf;
+            const uint64_t drawMs = GetTickCount64();
+            const bool samePose = (controllerPos - s_FramePos).Length() < 0.0001f && DotProduct(cf, s_FrameForward) > 0.9999999f;
+            if (!samePose || drawMs - s_FrameMs > 30u)
+            {
+                // A new frame: still if it barely moved from the previous one.
+                s_Still = (controllerPos - s_FramePos).Length() < 0.002f * vr->m_VRScale &&
+                    DotProduct(cf, s_FrameForward) > 0.99985f;
+                s_FramePos = controllerPos;
+                s_FrameForward = cf;
+                s_FrameMs = drawMs;
+            }
+            const bool still = s_Still;
             const bool resting = kindFresh && meleeStill && (still || !anchor.valid) && !acting && !kicking && !vr->m_PrimaryAttackCmdOwned &&
                 !vr->IsMagazineInteractionManualActive() && !pose.weaponStrikeHidden && !pose.weaponSwitchCollapsed &&
                 (pose.weaponKind == l4d2vr_vm_anim::Kind::Idle || pose.weaponSwitchHidden);

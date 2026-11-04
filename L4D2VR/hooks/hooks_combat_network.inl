@@ -1067,7 +1067,19 @@ namespace
 void __fastcall Hooks::dUpdateFlashlight(void* ecx, void* edx, int entIndex, const Vector& origin, const Vector& forward, const Vector& right, const Vector& up, float fov, float farZ, float linearAtten, bool castsShadows, const char* textureName)
 {
 	Vector hmdOrigin{}, hmdForward{}, hmdRight{}, hmdUp{};
-	if (BuildHmdFlashlightPose(entIndex, textureName, hmdOrigin, hmdForward, hmdRight, hmdUp))
+	const bool hmdPose = BuildHmdFlashlightPose(entIndex, textureName, hmdOrigin, hmdForward, hmdRight, hmdUp);
+	// flashprobe self-test: where the local player's flashlight is drawn.
+	VR* const probeVr = Hooks::m_VR;
+	if (probeVr && probeVr->m_SelfTestEnabled && TextureNameIsFlashlight(textureName) && Hooks::m_Game &&
+		Hooks::m_Game->m_EngineClient && entIndex == Hooks::m_Game->m_EngineClient->GetLocalPlayer())
+	{
+		const Vector& p = hmdPose ? hmdOrigin : origin;
+		probeVr->m_SelfTestFlashlightPos[0].store(p.x, std::memory_order_relaxed);
+		probeVr->m_SelfTestFlashlightPos[1].store(p.y, std::memory_order_relaxed);
+		probeVr->m_SelfTestFlashlightPos[2].store(p.z, std::memory_order_relaxed);
+		probeVr->m_SelfTestFlashlightSerial.fetch_add(1u, std::memory_order_release);
+	}
+	if (hmdPose)
 	{
 		hkUpdateFlashlight.fOriginal(ecx, entIndex, hmdOrigin, hmdForward, hmdRight, hmdUp, fov, farZ, linearAtten, castsShadows, textureName);
 		return;

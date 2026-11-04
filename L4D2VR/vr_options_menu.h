@@ -139,7 +139,7 @@ namespace l4d2vr_options_menu
         { nullptr, RowKind::Info, "Open this menu", "Hold the pause button (left B on Index, Y on Quest/Touch, menu on Vive/WMR), point at VR Options next to the game's main or pause menu, press F8, or type vroptions in the console." },
         { "VrOptionsMenuHoldSeconds", RowKind::Slider, "Hold pause to open", "How long to hold the pause button to open this menu (0 = off).", 0.0f, 2.0f, 0.1f, "0.8", nullptr, nullptr, false, " s" },
         { nullptr, RowKind::Info, "Buttons", "Trigger: fire, pull the pin, menus. Grip: take, hold and holster items. Left stick: walk (click: recenter). Right stick: turn, jump and crouch. Bindings are built in per controller (docs/openxr.md)." },
-        { "GripToggle", RowKind::Toggle, "Toggle grips", "One squeeze takes an item, the next lets go. Off: hold the grip.", 0, 0, 0, "true" },
+        { "GripToggle", RowKind::Toggle, "Toggle grips", "Pavlov: one squeeze takes an item, the next puts it away at its holster or drops it. Off: hold the grip.", 0, 0, 0, "true" },
         { "StickJumpCrouch", RowKind::Toggle, "Jump and crouch on the stick", "Right stick up jumps, down crouches.", 0, 0, 0, "true" },
         { "StickCrouchToggle", RowKind::Toggle, "Stick crouch toggles", "Stick down toggles crouching instead of holding it.", 0, 0, 0, "true", nullptr, "StickJumpCrouch" },
         { "HolsterReleaseDrop", RowKind::Toggle, "Drop on grip release", "Letting go of the grip away from a holster drops the item.", 0, 0, 0, "true" },

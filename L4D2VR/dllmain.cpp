@@ -3185,6 +3185,12 @@ namespace
         { "2026-11-03_forefront_holster_yaw", "HolsterYawFollowSpeed", "0", false, "20" },
         // 2.0.5 empty hands: putting an item away leaves the hand empty.
         { "2026-11-03_forefront_empty_hands", "HolsterEmptyHands", "true", false, "true" },
+        // 2.0.6 (headset session 7): Pavlov toggle grips for everyone, once: the
+        // grip's second squeeze puts away or drops; letting go never drops.
+        // Holster-drawn items need HolsterReleaseDrop for that squeeze to drop.
+        // Hold grips stay an option (GripToggle=false afterwards is kept).
+        { "2026-11-04_pavlov_toggle_grip", "GripToggle", "true", false, nullptr },
+        { "2026-11-04_pavlov_toggle_grip_drop", "HolsterReleaseDrop", "true", false, nullptr },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3377,7 +3383,6 @@ namespace
         sampleKeys.insert("OpusVoicePushToTalkKey");
         sampleKeys.insert("ChestSlingDropDistanceMeters");
         sampleKeys.insert("ChestSlingGrabRadiusMeters");
-        sampleKeys.insert("ItemHandOffRadiusMeters");
         sampleKeys.insert("VrHandsTwoHandedAimShortGunsRearHandOnly");
         sampleKeys.insert("MenuLaserPointerEnabled");
         sampleKeys.insert("HolsterYawFollowSpeed");

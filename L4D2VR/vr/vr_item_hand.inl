@@ -1,16 +1,16 @@
 // Ambidextrous items: the hand that takes an item holds and uses it
-// (AmbidextrousItemHands, vr_item_hand.h).
-
-bool VR::ItemHandSwappedWithinMs(uint64_t ms) const
-{
-    const uint64_t at = m_ItemHandSwapAtMs.load(std::memory_order_acquire);
-    return at != 0u && GetTickCount64() - at < ms;
-}
+// (AmbidextrousItemHands, vr_item_hand.h). Since 2.0.6 a hand gets an item only
+// by taking it from a holster, the sling or its stowed place: a held item never
+// moves to the other hand (no hand-off, no release transfer).
 
 void VR::RequestItemHand(bool physicalLeft, l4d2vr_item_hand::Reason reason)
 {
+    if (!l4d2vr_item_hand::ChangesHands(reason))
+        return;
     if (!m_AmbidextrousItemHands && reason != l4d2vr_item_hand::Reason::Reset)
         return;
+    if (reason == l4d2vr_item_hand::Reason::SelfTest)
+        m_ItemHandAdoptHeld = m_GripToggle.Held(); // the held state moves with the item
     m_ItemHandSwitch.Request(l4d2vr_item_hand::SwappedForPhysicalHand(m_LeftHanded, physicalLeft), reason);
 }
 
@@ -48,8 +48,7 @@ void VR::CommitItemHandSwitch()
     // Mirrored-binding caches hold the previous source's state per action.
     m_LeftHandedDigitalActionFrameCache.clear();
     m_LeftHandedAnalogActionFrameCache.clear();
-    m_ItemHandAdoptGrip = reason == l4d2vr_item_hand::Reason::HandOff ||
-        reason == l4d2vr_item_hand::Reason::ReleaseTransfer;
+    m_ItemHandAdoptGrip = l4d2vr_item_hand::AdoptsGrip(reason);
     m_ItemHandForceGripUpFrame = reason == l4d2vr_item_hand::Reason::HolsterDraw;
     if (reason == l4d2vr_item_hand::Reason::HolsterDraw)
     {
@@ -75,7 +74,6 @@ bool VR::ItemHandReady(C_BasePlayer* localPlayer, bool isObserverOrIdle) const
 void VR::UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserverOrIdle, bool akimbo,
     bool toggleApplies, bool gripValid, bool& gripDown, bool& gripJustPressed, uint32_t& weaponGripInputState)
 {
-    static bool s_PrevVirtual = false;
     // Nobody holds anything: the next life (or the next VR session) starts with
     // the configured hands.
     if (m_ItemHandSwapped.load(std::memory_order_acquire) && !m_ItemHandSwitch.Pending() &&
@@ -94,66 +92,14 @@ void VR::UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserve
         weaponGripInputState = gripValid ? 1u : 0u;
     }
 
-    bool virtualNow = gripValid && gripDown;
-    const uint32_t support = m_PistolOffhandGripState.load(std::memory_order_acquire);
-    const bool supportSqueezing = (support & 3u) == 3u;
-    l4d2vr_item_hand::ReleaseInput release{};
-    release.enabled = m_AmbidextrousItemHands && !akimbo && !m_ItemHandSwitch.Pending() &&
-        !IsMagazineInteractionManualActive();
-    release.ready = ItemHandReady(localPlayer, isObserverOrIdle) && localPlayer->GetActiveWeapon() != nullptr;
-    release.released = s_PrevVirtual && !virtualNow;
-    release.twoHandGrip = m_VrHandsTwoHandedGripActive;
-    release.overHolster = m_HolsterHandInOwnZone.load(std::memory_order_acquire) ||
-        m_HolsterHandOverOtherZone.load(std::memory_order_acquire);
-    release.supportHolds = toggleApplies ? (!m_VrHandsTwoHandedGripHeldMode || supportSqueezing) : supportSqueezing;
-    if (l4d2vr_item_hand::ReleaseTransfer(release))
-    {
-        // Letting go with the item hand while the other hand holds the
-        // foregrip leaves the item in that hand instead of dropping it.
-        RequestItemHand(IsGameplayHandLeftPhysical(true), l4d2vr_item_hand::Reason::ReleaseTransfer);
-        m_ItemHandAdoptHeld = toggleApplies;
-        gripDown = true;
-        gripJustPressed = false;
-        weaponGripInputState = 3u;
-        virtualNow = true;
-        Game::logMsg("[VR][ItemHand] item hand let go on the foregrip: moving the item to the %s hand",
-            IsGameplayHandLeftPhysical(true) ? "left" : "right");
-    }
-    s_PrevVirtual = virtualNow;
-}
-
-// The free hand squeezed its grip and nothing else (holster, pouch, magazine,
-// bolt or slide, foregrip) took the squeeze: with the hands together, the item
-// moves to the free hand.
-void VR::UpdateItemHandOff(C_BasePlayer* localPlayer, bool isObserverOrIdle, bool akimbo, bool pressEdge)
-{
-    // Did the foregrip or magazine logic (UpdateMagazineInteraction, just run)
-    // react to this squeeze? Compared with the state after last frame's run.
-    const int magazineState = static_cast<int>(m_MagazineInteractionState);
-    const bool claimed = m_VrHandsTwoHandedGripActive != m_ItemHandOffTwoHandPrev ||
-        magazineState != m_ItemHandOffMagazineStatePrev;
-    m_ItemHandOffTwoHandPrev = m_VrHandsTwoHandedGripActive;
-    m_ItemHandOffMagazineStatePrev = magazineState;
-    l4d2vr_item_hand::HandOffInput in{};
-    in.enabled = m_AmbidextrousItemHands && !akimbo && !m_ItemHandSwitch.Pending() && !ItemHandSwappedWithinMs(400u);
-    in.ready = ItemHandReady(localPlayer, isObserverOrIdle);
-    in.pressEdge = pressEdge;
-    in.claimed = claimed || IsMagazineInteractionManualActive() || m_MagazineInteractionLeftHandHolding ||
-        MagazineInteractionOwnsGrip(true);
-    in.itemInHand = localPlayer && localPlayer->GetActiveWeapon() != nullptr;
-    in.handDistanceMeters = (m_LeftControllerPosAbs - m_RightControllerPosAbs).Length() / (std::max)(0.001f, m_VRScale);
-    in.radiusMeters = m_ItemHandOffRadiusMeters;
-    if (pressEdge && m_AmbidextrousItemHands)
-        Game::logMsg("[VR][ItemHand] free-hand squeeze: hands %.3f m apart (hand-off within %.2f m) claimed=%d ready=%d",
-            in.handDistanceMeters, in.radiusMeters, in.claimed ? 1 : 0, in.ready ? 1 : 0);
-    if (!l4d2vr_item_hand::HandOff(in))
-        return;
-    m_ItemHandAdoptHeld = m_GripToggle.Held();
-    RequestItemHand(IsGameplayHandLeftPhysical(true), l4d2vr_item_hand::Reason::HandOff);
+    // Since 2.0.6 letting go never moves the item to the hand on the foregrip:
+    // the owner's grip alone puts it away or drops it (vr_item_hand.h Ownership).
+    (void)akimbo;
+    (void)toggleApplies;
 }
 
 // Self-test steps (see docs/physical-overhaul.md):
-//   ambie2e     left-hand draw, left trigger fire and aim, hand-off, left grenade
+//   ambie2e     left-hand draw, left trigger fire and aim, no hand-off, left grenade
 //               throw, left pills, right-hand draw back; pouch side; no bashes.
 //   switchanim  every kind of weapon switch with the viewmodel trace and
 //               screenshots: no frame may show the draw animation.
@@ -314,8 +260,12 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
         {
             std::snprintf(detail, sizeof(detail), "item hand %s, active slot %d, clip %d -> %d", hand,
                 SelfTestActiveSlot(player) + 1, m_SelfTestValueA, clip());
-            SelfTestReport("ambidextrous: squeezing the rifle with the free hand hands it over",
-                !ItemHandIsPhysicalLeft() && SelfTestActiveSlot(player) == 0 && clip() == m_SelfTestValueA, detail);
+            // 2.0.6: a held item never changes hands (handswitch covers the
+            // sling path that does it); the rest of this step needs the
+            // rifle in the right hand, so the self-test puts it there.
+            SelfTestReport("ambidextrous: squeezing the rifle with the free hand does not take it",
+                ItemHandIsPhysicalLeft() && SelfTestActiveSlot(player) == 0 && clip() == m_SelfTestValueA, detail);
+            RequestItemHand(false, l4d2vr_item_hand::Reason::SelfTest);
             SelfTestReachRight(body::RightReady(), SelfTestVec(0.0f, -25.0f, 0.0f), 0.8f);
             SelfTestReachLeft(body::LeftReady(), SelfTestVec(0.0f, 25.0f, 0.0f), 0.8f);
         }
@@ -325,7 +275,7 @@ bool VR::RunItemHandSelfTestStep(const std::string& step, float t, C_BasePlayer*
         {
             const float yaw = aimYawFromHead();
             std::snprintf(detail, sizeof(detail), "clip %d -> %d; aim %.1f deg from the head", m_SelfTestValueA, clip(), yaw);
-            SelfTestReport("ambidextrous: the right hand fires after the hand-off",
+            SelfTestReport("ambidextrous: the right hand fires the rifle in the right hand",
                 clip() >= 0 && clip() < m_SelfTestValueA && std::fabs(yaw + 25.0f) < 8.0f, detail);
             // The grenade is on the dominant (right) upper chest: the left hand reaches across.
             SelfTestReachLeft(body::RightUpperChest(), SelfTestVec(30.0f, 40.0f, 0.0f), 0.5f);

@@ -3359,7 +3359,7 @@ void VR::ParseConfigFile()
     // Forefront / Pavlov empty hands: putting an item away (or letting go of a
     // sidearm near the body) leaves the hand empty.
     m_HolsterEmptyHands = getBool("HolsterEmptyHands", true);
-    m_ItemHandOffRadiusMeters = std::clamp(getFloat("ItemHandOffRadiusMeters", 0.14f), 0.05f, 0.3f);
+    // ItemHandOffRadiusMeters is retired (2.0.6): a held item never changes hands.
     // ItemHandMirror is retired (headset session 6): an item in the left hand is
     // always held by a mirrored left hand; the right hand never moves over.
     m_ItemHandMirror = true;

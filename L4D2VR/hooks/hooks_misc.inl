@@ -19497,7 +19497,16 @@ namespace
                 std::fabs(kick.yawDeg) > 0.05f;
             const bool meleeStill = weaponId != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE) ||
                 vr->m_MeleeLagDeg.load(std::memory_order_acquire) < 1.0f;
-            const bool resting = kindFresh && meleeStill && !acting && !kicking && !vr->m_PrimaryAttackCmdOwned &&
+            // Only from a still controller (under 2 mm and 1 degree since the
+            // last draw): a moving hand between placement and draw is noise.
+            static Vector s_LastPos{};
+            static Vector s_LastForward{};
+            const Vector controllerPos = vr->GetRightControllerAbsPos();
+            const bool still = (controllerPos - s_LastPos).Length() < 0.002f * vr->m_VRScale &&
+                DotProduct(cf, s_LastForward) > 0.99985f;
+            s_LastPos = controllerPos;
+            s_LastForward = cf;
+            const bool resting = kindFresh && meleeStill && (still || !anchor.valid) && !acting && !kicking && !vr->m_PrimaryAttackCmdOwned &&
                 !vr->IsMagazineInteractionManualActive() && !pose.weaponStrikeHidden && !pose.weaponSwitchCollapsed &&
                 (pose.weaponKind == l4d2vr_vm_anim::Kind::Idle || pose.weaponSwitchHidden);
             vr_vm_stabilize::Mat3x4 handWorld{};

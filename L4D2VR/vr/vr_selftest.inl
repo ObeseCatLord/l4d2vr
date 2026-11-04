@@ -1373,6 +1373,73 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         return RunHandThrowStep(step, t, player);
     if (step.rfind("arcthrow=", 0) == 0)
         return RunArcThrowStep(step, t, player);
+    // light=on|off: presses the flashlight action until the light is in that state.
+    if (step == "light=on" || step == "light=off")
+    {
+        const bool want = step == "light=on";
+        bool on = false;
+        const bool known = QueryFlashlightState(player, on);
+        if (at(0, 0.0f) && known && on != want)
+            button(m_ActionFlashlight, true);
+        if (at(1, 0.15f))
+            button(m_ActionFlashlight, false);
+        if (t < 1.2f)
+            return false;
+        std::snprintf(detail, sizeof(detail), "light %s", known ? (on ? "on" : "off") : "unknown");
+        SelfTestReport(step.c_str(), known && on == want, detail);
+        return true;
+    }
+    // flashprobe / wellprobe: where the engine draws the local flashlight, and
+    // where the published magazine-well and bolt boxes are, each against the
+    // drawn gun hand, in the item controller's frame (cm). With
+    // GunHandOnController the gun, its light and its boxes move together, so
+    // "minus hand" must not change between cfg=GunHandOnController=false and
+    // =true (2.0.5 moved only the drawn gun). wellprobe after magrelease checks
+    // the boxes published while the native clip is hidden (the reload path).
+    if (step == "flashprobe" || step == "wellprobe")
+    {
+        const bool flash = step == "flashprobe";
+        if (m_SelfTestStage == 0)
+        {
+            m_SelfTestStage = 1;
+            m_SelfTestValueA = static_cast<int>(m_SelfTestFlashlightSerial.load(std::memory_order_acquire));
+            m_SelfTestValueB = static_cast<int>(m_GunHandDrawnSerial.load(std::memory_order_acquire));
+            m_GunHandStageTraceUntilMs.store(GetTickCount64() + 600u, std::memory_order_release);
+        }
+        const bool lightSeen = static_cast<int>(m_SelfTestFlashlightSerial.load(std::memory_order_acquire)) != m_SelfTestValueA;
+        const bool handSeen = static_cast<int>(m_GunHandDrawnSerial.load(std::memory_order_acquire)) != m_SelfTestValueB;
+        if (((flash && !lightSeen) || !handSeen || t < 0.4f) && t < 2.0f)
+            return false;
+        GunHandDrawnProbe drawn{};
+        {
+            std::lock_guard<std::mutex> lock(m_GunHandProbeMutex);
+            drawn = m_GunHandDrawn;
+        }
+        Vector f{}, r{}, u{};
+        QAngle::AngleVectors(GetRightControllerAbsAngle(), &f, &r, &u);
+        const Vector c = GetRightControllerAbsPos();
+        const float sc = 100.0f / std::max(0.001f, m_VRScale);
+        auto rel = [&](const Vector& p) { const Vector d = p - c; return Vector(DotProduct(d, f) * sc, DotProduct(d, r) * sc, DotProduct(d, u) * sc); };
+        const Vector hand(drawn.pos[0], drawn.pos[1], drawn.pos[2]);
+        if (flash)
+        {
+            const Vector light = rel(Vector(m_SelfTestFlashlightPos[0].load(), m_SelfTestFlashlightPos[1].load(), m_SelfTestFlashlightPos[2].load()));
+            const Vector lh = light - hand;
+            std::snprintf(detail, sizeof(detail), "weapon=%d light(cm)=(%.1f %.1f %.1f) hand(cm)=(%.1f %.1f %.1f) light-hand=(%.1f %.1f %.1f) GunHandOnController=%d",
+                m_ActiveGunWeaponId.load(), light.x, light.y, light.z, hand.x, hand.y, hand.z, lh.x, lh.y, lh.z, m_GunHandOnController ? 1 : 0);
+            SelfTestReport("flashprobe", lightSeen && handSeen, detail);
+            return true;
+        }
+        MagazineInteractionBoxSnapshot well{}, bolt{};
+        const bool haveWell = GetMagazineInteractionBox(well);
+        const bool haveBolt = GetMagazineInteractionBoltBox(bolt);
+        const Vector w = rel(well.origin) - hand, b = rel(bolt.origin) - hand;
+        std::snprintf(detail, sizeof(detail), "weapon=%d hand(cm)=(%.1f %.1f %.1f) well-hand=(%.1f %.1f %.1f)%s bolt-hand=(%.1f %.1f %.1f)%s clipHidden=%d GunHandOnController=%d",
+            m_ActiveGunWeaponId.load(), hand.x, hand.y, hand.z, w.x, w.y, w.z, haveWell ? "" : "(none)", b.x, b.y, b.z,
+            haveBolt ? "" : "(none)", ShouldHideMagazineInteractionNativeClip() ? 1 : 0, m_GunHandOnController ? 1 : 0);
+        SelfTestReport("wellprobe", haveWell && handSeen, detail);
+        return true;
+    }
     if (step == "flashlight" || step == "flashlight=xr")
     {
         // The flashlight action (right stick click in every default binding)

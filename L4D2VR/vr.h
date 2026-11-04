@@ -1079,7 +1079,12 @@ public:
 	std::atomic<float> m_RenderGunHandShift[3]{ { 0.0f }, { 0.0f }, { 0.0f } };
 	Vector m_MeleeShiftApplied{ 0.0f, 0.0f, 0.0f };   // carried by the lagged melee pose
 	Vector GunHandShiftForViewmodel();                 // what GetRecommendedViewmodelAbsPos adds (main thread)
-	void RecordGunHandShiftAtCalcView(bool renderSnapshot);  // self-test: worst drawn item hand gap while recording
+	void RecordGunHandShiftAtCalcView(bool renderSnapshot);
+	Vector GunHandShiftAtCalcView() const
+	{
+		return Vector(m_GunHandShiftAtCalcView[0].load(std::memory_order_relaxed), m_GunHandShiftAtCalcView[1].load(std::memory_order_relaxed),
+			m_GunHandShiftAtCalcView[2].load(std::memory_order_relaxed));
+	}  // self-test: worst drawn item hand gap while recording
 	// Melee lag as a world rotation about the hand (2.0.6): the arm IK draws
 	// the hand un-lagged, on the controller, while the weapon trails in it
 	// (Ancient Dungeon: the hand follows the controller, the weapon is on a

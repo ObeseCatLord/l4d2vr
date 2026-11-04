@@ -410,30 +410,55 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
         const l4d2vr_gesture::GunBashEvent bash = m_GunBash.Update(sample, bashAllowed);
         const uint64_t nowMs = GetTickCount64();
         if (nowMs < m_VmAnimTraceUntilMs.load(std::memory_order_acquire))
-            Game::logMsg("[VR][Melee] bash trace: hand=(%.3f %.3f %.3f) vel=(%.2f %.2f %.2f) hmd=(%.3f %.3f %.3f) dt=%.4f forward=%.2f level=%.2f stickYaw=%.0f allowed=%d",
+            Game::logMsg("[VR][Melee] bash trace: hand=(%.3f %.3f %.3f) vel=(%.2f %.2f %.2f) hmd=(%.3f %.3f %.3f) dt=%.4f hand %.2f tip %.2f m/s stickYaw=%.0f allowed=%d",
                 sample.handPosition.x, sample.handPosition.y, sample.handPosition.z,
                 sample.handVelocity.x, sample.handVelocity.y, sample.handVelocity.z,
-                sample.hmdPosition.x, sample.hmdPosition.y, sample.hmdPosition.z, dt, bash.speed, bash.levelSpeed,
+                sample.hmdPosition.x, sample.hmdPosition.y, sample.hmdPosition.z, dt, bash.speed, bash.tipSpeed,
                 stickYawRate, bashAllowed ? 1 : 0);
         // Near misses (fast, but a gate said no), rate limited, so a headset
-        // session shows why a strike did not count.
-        const bool fast = bash.speed > 1.2f || bash.levelSpeed > 1.8f;
-        if (fast && !bash.fired &&
-            (l4d2vr_selftest::Get().active.load(std::memory_order_acquire) || nowMs - m_GunBashNearMissLogMs >= 1000u))
+        // session shows why a strike did not count. The fastest sample of a
+        // swing is logged (not its first fast frame).
+        const bool fast = bash.speed > 1.4f || bash.tipSpeed > 2.0f;
+        if (fast && !bash.fired && bash.speed > m_GunBashNearMissPeak)
         {
-            m_GunBashNearMissLogMs = nowMs;
-            Game::logMsg("[VR][Melee] bash candidate: forward %.2f m/s fraction %.2f barrel %.2f travel %.2f m angular %.0f reach %.2f m | level %.2f m/s lateral %.2f sweep travel %.2f m height %.2f m headYaw %.0f | stickYaw %.0f deg/s allowed=%d armed=%d",
-                bash.speed, bash.forwardFraction, bash.barrelDot, bash.travel, bash.peakAngular, bash.reach,
-                bash.levelSpeed, bash.lateralFraction, bash.sweepTravel, bash.height, bash.headYawRate, stickYawRate,
-                bashAllowed ? 1 : 0, bash.armed ? 1 : 0);
+            m_GunBashNearMissPeak = bash.speed;
+            m_GunBashNearMiss = bash;
+            m_GunBashNearMissAllowed = bashAllowed;
         }
-        if (bash.fired && !IsMagazineInteractionManualActive())
+        if (bash.fired)
+        {
+            m_GunBashNearMissPeak = 0.0f;
+        }
+        else if (!fast && m_GunBashNearMissPeak > 0.0f)
+        {
+            // The swing ended without a bash: log its fastest sample.
+            if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire) || nowMs - m_GunBashNearMissLogMs >= 1000u)
+            {
+                const l4d2vr_gesture::GunBashEvent& miss = m_GunBashNearMiss;
+                m_GunBashNearMissLogMs = nowMs;
+                Game::logMsg("[VR][Melee] bash candidate: hand %.2f m/s tip %.2f m/s forward %.2f travel %.2f m reach %.2f m height %.2f m headYaw %.0f deg/s | stickYaw %.0f deg/s allowed=%d armed=%d",
+                    miss.speed, miss.tipSpeed, miss.forwardFraction, miss.travel, miss.reach, miss.height,
+                    miss.headYawRate, stickYawRate, m_GunBashNearMissAllowed ? 1 : 0, miss.armed ? 1 : 0);
+            }
+            m_GunBashNearMissPeak = 0.0f;
+        }
+        // Only a hand on the bolt, slide or pump stops a bash (moving the gun
+        // then works the action). An empty gun waiting for a magazine or shells
+        // bashes: that is when a bash is needed most (the 2.0.7 gate blocked
+        // every reload state, so swings with the magazine out never shoved).
+        // The shove's impulse keeps the native reload gate (KeepNativeReloadGate).
+        const bool boltHeld = m_MagazineInteractionState == MagazineInteractionManualState::HoldingBolt;
+        if (bash.fired && !boltHeld)
         {
             shove = true;
             shoveDirection = toWorldD(bash.direction);
-            Game::logMsg("[VR][Melee] gun bash %s: forward %.2f m/s level %.2f m/s travel %.2f/%.2f m reach %.2f m (stick turn %.0f deg/s)",
-                bash.sweep ? "sweep" : "push", bash.speed, bash.levelSpeed, bash.travel, bash.sweepTravel, bash.reach,
-                stickYawRate);
+            Game::logMsg("[VR][Melee] gun bash %s: hand %.2f m/s tip %.2f m/s forward %.2f travel %.2f m reach %.2f m height %.2f m (stick turn %.0f deg/s)",
+                bash.sweep ? "swing" : "push", bash.speed, bash.tipSpeed, bash.forwardFraction, bash.travel, bash.reach,
+                bash.height, stickYawRate);
+        }
+        else if (bash.fired)
+        {
+            Game::logMsg("[VR][Melee] gun bash ignored: the off hand holds the bolt/slide/pump");
         }
     }
     if (shove)

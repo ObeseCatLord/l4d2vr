@@ -467,50 +467,62 @@ namespace l4d2vr_gesture
     };
 
     // --------------------------------------------------------------- gun bash
-    // Two strikes with a gun, both measured relative to the head in tracking
-    // space (artificial locomotion never moves the hand there):
-    //  - push: the gun driven forward along its barrel, away from the body;
-    //  - sweep: a fast, level, sideways swing of the gun in front of the body.
-    // Reaching for a holster (down to the hip, up over the shoulder, in to the
-    // chest), drawing (a fast wrist rotation), aiming and turning the whole
-    // body with the gun raised are neither.
+    // A gun bash is any fast swing of the gun in front of the body: a push, a
+    // sideways sweep, a downward chop or an upward butt stroke. It is measured
+    // at the gun as well as the hand, relative to the head in tracking space
+    // (artificial locomotion never moves the hand there):
+    //  - the hand is fast (an arm swing, not a wrist flick or an aim snap) and
+    //    the muzzle `tipLength` ahead of it along the barrel is fast too;
+    //  - the hand has really travelled (path length, so a wind-up does not
+    //    cancel the strike the way a net displacement does);
+    //  - the motion is not toward the player's back (reaching for a hip,
+    //    shoulder, chest or back holster, or pulling the gun to the face);
+    //  - the hand is in front of the eyes and above the hip, and the head is
+    //    not turning fast (turning the whole body swings the arm with it).
+    // Barrel alignment, wrist rotation and swing direction are not gated: a
+    // real bash rotates the gun hard and goes whichever way the player swings.
+    // Speeds are averaged over ~30 ms so a single tracking spike never fires.
     struct GunBashParams
     {
-        // Push.
-        float forwardSpeed = 1.6f;         // hand speed toward the view, relative to the HMD
-        float minForwardFraction = 0.7f;   // forward share of the hand speed (mostly a push)
-        float minBarrelDot = 0.4f;         // motion along the barrel
-        float minTravel = 0.10f;           // forward travel accumulated ...
-        float window = 0.20f;              // ... within this many seconds
-        float minReachForward = 0.30f;     // hand ahead of the eyes when it fires (arm extending)
-        float minStartForward = 0.18f;     // ... and the push began in front of the body, not at a holster
-        float maxAngularSpeedDeg = 600.0f; // peak wrist rotation allowed in the window
-        // Sweep.
+        float tipLength = 0.40f;            // muzzle ahead of the hand along the barrel
+        float minHandSpeed = 2.2f;          // hand speed relative to the HMD (a quick 0.3 s re-aim peaks near 1.9)
+        float minTipSpeed = 2.4f;           // muzzle speed relative to the HMD
+        // A straight push (mostly forward, away from the eyes, the gun not
+        // turning much) is never an aim move, so it needs less hand speed.
+        // Swinging the gun back out from a shoulder or hip holster turns it hard.
+        float pushMinForwardShare = 0.8f;
+        float minPushSpeed = 1.6f;
+        float pushMaxTipRatio = 1.5f;       // muzzle speed / hand speed
+        float minSwingTravel = 0.16f;       // hand path length of a swing ...
+        float minPushTravel = 0.10f;        // ... or of a straight push ...
+        float window = 0.20f;               // ... within this many seconds (snapping the
+                                            // gun back up after a reload is shorter)
+        float travelNoise = 0.0015f;        // per frame, not counted as travel
+        float speedSpan = 0.03f;            // speeds are averaged over this span
+        float maxBackwardFraction = 0.5f;   // backward share of the hand motion (toward the player's back)
+        float minReachForward = 0.15f;      // hand ahead of the eyes when it fires
+        float maxDrop = 0.50f;              // hand at most this far below the eyes (a hip reach is lower)
+        float maxHeadYawRateDeg = 200.0f;   // peak head turn in the window
+        // GunBashSweepEnabled=false keeps only pushes: mostly forward strikes.
         bool sweepEnabled = true;
-        float sweepSpeed = 2.4f;               // level hand speed relative to the HMD
-        float sweepMinLevel = 0.75f;           // level share of the hand speed (at most ~41 deg up or down)
-        float sweepMinLateral = 0.55f;         // share across the view: a sideways swing, not a push or pull
-        float sweepMaxBackward = 0.35f;        // toward the body: at most this share
-        float sweepMinTravel = 0.18f;          // level travel along the swing within the window
-        float sweepMinReach = 0.25f;           // hand ahead of the eyes when it fires
-        float sweepMaxDrop = 0.75f;            // hand at most this far below the eyes (a hip reach is lower)
-        float sweepMaxRise = 0.15f;            // ... and at most this far above them
-        float sweepMaxHeadYawRateDeg = 150.0f; // turning the whole body swings the arm with the head
-        // Both.
-        float releaseSpeed = 0.6f;         // speed (forward for a push, level for a sweep) to re-arm
-        float cooldown = 0.5f;
+        float pushMinForwardFraction = 0.6f;
+        float releaseSpeed = 1.0f;          // hand speed that re-arms (or a reversed swing)
+        float cooldown = 0.7f;              // the native shove interval (z_gun_swing_interval)
         Vector worldUp{ 0.0f, 0.0f, 1.0f };
     };
 
     struct GunBashEvent
     {
         bool fired = false;
-        bool sweep = false;                   // fired as a sideways sweep (else a push)
-        Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized shove direction
-        float speed = 0.0f;                   // forward speed toward the view
+        bool sweep = false;                   // fired as a swing (else a mostly forward push)
+        Vector direction{ 0.0f, 0.0f, 0.0f }; // normalized shove direction (head to muzzle, pitch within 45 deg)
         // Diagnostics of the last sample.
-        float forwardFraction = 0.0f, barrelDot = 0.0f, travel = 0.0f, peakAngular = 0.0f, reach = 0.0f;
-        float levelSpeed = 0.0f, lateralFraction = 0.0f, sweepTravel = 0.0f, headYawRate = 0.0f, height = 0.0f;
+        float speed = 0.0f;                   // hand speed relative to the HMD
+        float tipSpeed = 0.0f;                // muzzle speed relative to the HMD
+        float forwardFraction = 0.0f;         // forward share of the hand motion (negative: backward)
+        float travel = 0.0f;                  // hand path length within the window
+        float reach = 0.0f, height = 0.0f;    // hand ahead of / above the eyes
+        float headYawRate = 0.0f;             // peak in the window, deg/s
         bool armed = false;
     };
 
@@ -546,15 +558,9 @@ namespace l4d2vr_gesture
             if (status == SampleClock::Status::First)
             {
                 m_Count = 0;
-                m_PushArmed = m_SweepArmed = false;
+                m_Armed = false;
                 if (m_HasFired && s.time < m_LastFire) m_HasFired = false;
             }
-            const Vector relative = s.handVelocity - hmdVelocity;
-            const float speed = relative.Length();
-            const float forwardSpeed = DotProduct(relative, view);
-            const Vector level = relative - up * DotProduct(relative, up);
-            const float levelSpeed = level.Length();
-            const float angular = s.handAngularVelocityDeg.Length();
             float headYawRate = 0.0f;
             if (status == SampleClock::Status::Continuous && dt > 0.0f)
             {
@@ -562,84 +568,86 @@ namespace l4d2vr_gesture
                 headYawRate = std::atan2(sine, DotProduct(m_View, view)) / dt / kDegToRad;
             }
             m_View = view;
-            event.speed = forwardSpeed;
-            event.levelSpeed = levelSpeed;
-            event.headYawRate = headYawRate;
-            if (speed > 1e-4f) event.direction = relative * (1.0f / speed);
-            if (status == SampleClock::Status::Continuous)
-                Push(Entry{ s.time, forwardSpeed * dt, level * dt, angular, std::fabs(headYawRate) });
-            while (m_Count > 0 && At(0).time <= s.time - m_Params.window) Pop();
-            float travel = 0.0f, peakAngular = angular, peakYaw = std::fabs(headYawRate);
-            Vector levelTravel(0.0f, 0.0f, 0.0f);
+            // Hand and muzzle relative to the head. The head's own motion is
+            // removed by differentiating these offsets (or, when the sample
+            // reports both velocities, by the velocities' difference).
+            const Vector hand = s.handPosition - s.hmdPosition;
+            const Vector tip = hand + barrel * m_Params.tipLength;
+            Push(Entry{ s.time, hand, tip, std::fabs(headYawRate) });
+            while (m_Count > 1 && At(0).time <= s.time - m_Params.window) Pop();
+
+            // Averaged velocities over speedSpan (at least one frame).
+            Vector handVelocity(0.0f, 0.0f, 0.0f), tipVelocity(0.0f, 0.0f, 0.0f);
+            bool measured = false;
+            if (m_Count >= 2)
+            {
+                std::size_t k = m_Count - 2;
+                while (k > 0 && s.time - At(k).time < m_Params.speedSpan) --k;
+                const Entry& old = At(k);
+                const float span = s.time - old.time;
+                if (span > 1e-4f)
+                {
+                    handVelocity = (hand - old.hand) * (1.0f / span);
+                    tipVelocity = (tip - old.tip) * (1.0f / span);
+                    measured = true;
+                }
+            }
+            float travel = 0.0f, peakYaw = 0.0f;
             for (std::size_t i = 0; i < m_Count; ++i)
             {
-                travel += At(i).travel;
-                levelTravel = levelTravel + At(i).levelTravel;
-                peakAngular = std::max(peakAngular, At(i).angular);
+                // Tracking jitter never adds up to travel: each frame's first
+                // `travelNoise` metres do not count.
+                if (i > 0) travel += std::max(0.0f, (At(i).hand - At(i - 1).hand).Length() - m_Params.travelNoise);
                 peakYaw = std::max(peakYaw, At(i).headYaw);
             }
+            const float speed = handVelocity.Length();
+            const float tipSpeed = tipVelocity.Length();
+            const float forward = DotProduct(handVelocity, view);
             const bool cooled = !m_HasFired || s.time - m_LastFire >= m_Params.cooldown;
-            if (!m_PushArmed && forwardSpeed < m_Params.releaseSpeed && cooled) m_PushArmed = true;
-            if (!m_SweepArmed && levelSpeed < m_Params.releaseSpeed && cooled) m_SweepArmed = true;
+            const bool reversed = m_HasFired && DotProduct(handVelocity, m_FireVelocity) < 0.0f;
+            if (!m_Armed && measured && cooled && (speed < m_Params.releaseSpeed || reversed)) m_Armed = true;
 
-            const Vector offset = s.handPosition - s.hmdPosition;
-            const float reach = DotProduct(offset, view);
-            const float height = DotProduct(offset, up);
-            event.reach = reach;
-            event.height = height;
+            event.speed = speed;
+            event.tipSpeed = tipSpeed;
+            event.forwardFraction = speed > 1e-4f ? forward / speed : 0.0f;
             event.travel = travel;
-            event.peakAngular = peakAngular;
-            event.armed = m_PushArmed || m_SweepArmed;
-            if (!allowed || speed < 1e-4f)
+            event.reach = DotProduct(hand, view);
+            event.height = DotProduct(hand, up);
+            event.headYawRate = peakYaw;
+            event.armed = m_Armed;
+            if (!allowed || !m_Armed || speed < 1e-4f)
                 return event;
-            event.forwardFraction = forwardSpeed / speed;
-            event.barrelDot = DotProduct(event.direction, barrel);
-
-            // Push.
-            if (m_PushArmed && forwardSpeed >= m_Params.forwardSpeed &&
-                forwardSpeed >= m_Params.minForwardFraction * speed &&
-                event.barrelDot >= m_Params.minBarrelDot &&
-                travel >= m_Params.minTravel && peakAngular <= m_Params.maxAngularSpeedDeg &&
-                reach >= m_Params.minReachForward && reach - travel >= m_Params.minStartForward)
+            const bool push = event.forwardFraction >= m_Params.pushMinForwardFraction;
+            const bool straightPush = event.forwardFraction >= m_Params.pushMinForwardShare &&
+                speed >= m_Params.minPushSpeed && tipSpeed <= m_Params.pushMaxTipRatio * speed &&
+                travel >= m_Params.minPushTravel;
+            const bool swing = speed >= m_Params.minHandSpeed && tipSpeed >= m_Params.minTipSpeed &&
+                travel >= m_Params.minSwingTravel;
+            if ((straightPush || swing) &&
+                event.forwardFraction >= -m_Params.maxBackwardFraction &&
+                event.reach >= m_Params.minReachForward && event.height >= -m_Params.maxDrop &&
+                peakYaw <= m_Params.maxHeadYawRateDeg &&
+                (push || m_Params.sweepEnabled))
             {
-                Fire(s.time, event);
-                return event;
-            }
-
-            // Sweep.
-            if (!m_Params.sweepEnabled || levelSpeed < 1e-4f)
-                return event;
-            const Vector levelDirection = level * (1.0f / levelSpeed);
-            const Vector side = CrossProduct(up, view);
-            event.lateralFraction = std::fabs(DotProduct(level, side)) / levelSpeed;
-            event.sweepTravel = DotProduct(levelTravel, levelDirection);
-            if (m_SweepArmed && levelSpeed >= m_Params.sweepSpeed &&
-                levelSpeed >= m_Params.sweepMinLevel * speed &&
-                event.lateralFraction >= m_Params.sweepMinLateral &&
-                forwardSpeed >= -m_Params.sweepMaxBackward * speed &&
-                event.sweepTravel >= m_Params.sweepMinTravel &&
-                reach >= m_Params.sweepMinReach &&
-                height >= -m_Params.sweepMaxDrop && height <= m_Params.sweepMaxRise &&
-                peakYaw <= m_Params.sweepMaxHeadYawRateDeg)
-            {
-                Fire(s.time, event);
-                event.sweep = true;
-                // Shove toward the gun: level, from the head to the hand.
-                Vector toward = offset - up * height;
-                if (!Normalize(toward, event.direction)) event.direction = view;
+                m_Armed = false;
+                m_HasFired = true;
+                m_LastFire = s.time;
+                m_FireVelocity = handVelocity;
+                event.fired = true;
+                event.sweep = !push;
+                // Shove toward the muzzle, from the head, no steeper than 45 deg.
+                const float vertical = DotProduct(tip, up);
+                const Vector level = tip - up * vertical;
+                const float levelLength = level.Length();
+                Vector direction = levelLength > 0.05f ? level * (1.0f / levelLength) : view;
+                const float tilt = levelLength > 0.05f ? std::clamp(vertical / levelLength, -1.0f, 1.0f) : 0.0f;
+                if (!Normalize(direction + up * tilt, event.direction)) event.direction = view;
             }
             return event;
         }
 
     private:
-        struct Entry { float time; float travel; Vector levelTravel; float angular; float headYaw; };
-        void Fire(float time, GunBashEvent& event)
-        {
-            m_PushArmed = m_SweepArmed = false;
-            m_HasFired = true;
-            m_LastFire = time;
-            event.fired = true;
-        }
+        struct Entry { float time; Vector hand; Vector tip; float headYaw; };
         void Push(const Entry& entry)
         {
             if (m_Count == m_Entries.size()) Pop();
@@ -655,10 +663,10 @@ namespace l4d2vr_gesture
         std::size_t m_Head = 0, m_Count = 0;
         Vector m_View{ 1.0f, 0.0f, 0.0f };
         // A fresh detector waits for the hand to be still first.
-        bool m_PushArmed = false;
-        bool m_SweepArmed = false;
+        bool m_Armed = false;
         bool m_HasFired = false;
         float m_LastFire = 0.0f;
+        Vector m_FireVelocity{ 0.0f, 0.0f, 0.0f };
     };
 
     // ------------------------------------------------------------ pills mouth

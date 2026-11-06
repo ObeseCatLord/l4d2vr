@@ -33,6 +33,7 @@
 #include "vr_interaction_geometry.h"
 #include "vr_body_inventory.h"
 #include "vr_holster.h"
+#include "vr_grab_hover.h"
 #include "vr_melee_inertia.h"
 #include "vr_recoil.h"
 #include "vr_recoil_stance.h"
@@ -1715,6 +1716,31 @@ public:
     uint32_t m_HolsterLeftHoverPulseCount = 0u;
     bool m_WeaponGripPhysicalDown = false; // the weapon-hand grip is squeezed (before toggling)
     float m_HolsterGrabHapticAmplitude = 0.6f;
+    // 2.0.9 grab hover (vr_grab_hover.h): one light tick when a free hand
+    // first touches anything it can grab.
+    bool m_GrabHoverHapticEnabled = true;
+    float m_GrabHoverHapticAmplitude = 0.2f;
+    float m_GrabHoverHapticDurationMs = 20.0f;
+    l4d2vr_grab_hover::Latch m_GrabHoverLatch[2][l4d2vr_grab_hover::kSourceCount]; // [physical left, right][source]
+    l4d2vr_grab_hover::Gate m_GrabHoverGate[2];
+    uint32_t m_GrabHoverPulseCount = 0u;
+    // A pulse is due when a hand enters a new grab target (Latch rules); the
+    // tick goes through the haptic mixer (OpenXR vibration). True when it fired.
+    bool GrabHoverUpdate(bool physicalLeft, l4d2vr_grab_hover::Source source, int key, float overMeters, bool handFree);
+    int GrabHoverLatchedKey(bool physicalLeft, l4d2vr_grab_hover::Source source) const;
+    // The support (gameplay) hand touched a held-gun part last frame (the
+    // foregrip, bolt/pump, a spare magazine or the pouch): the item bodies
+    // on the body do not take that hand's squeeze (only the 2.0.8 handle
+    // volumes do), so they never steal a support or reload grab.
+    bool m_SupportHandAtGunPart = false;
+    bool m_SupportHandAtGunPartLeft = true; // gameplay side of that hand
+    // 2.0.9: the items hanging on the body (grab anywhere on them).
+    l4d2vr_holster::BodyItems m_HolsterBodyItems{};
+    void RefreshHolsterBodyItems(C_BasePlayer* localPlayer);
+    const l4d2vr_holster::BodyItems* HolsterBodyItemsFor(bool gameplayLeft) const
+    {
+        return (m_SupportHandAtGunPart && m_SupportHandAtGunPartLeft == gameplayLeft) ? nullptr : &m_HolsterBodyItems;
+    }
     l4d2vr_holster::Layout m_HolsterLayout{};
     l4d2vr_holster::GrabFsm m_HolsterGrab;
     struct HolsterRenderItem
@@ -1787,7 +1813,9 @@ public:
 	// The hand is at the stowed item (the slung gun anywhere from its handle to
 	// its foregrip, or the stowed item's own holster): taking it back wins over
 	// an overlapping holster (the sling handle sits by the hip).
-	bool HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& hand, std::uint32_t occupiedMask) const;
+	// 2.0.9: anywhere on its drawn body too (items: HolsterBodyItemsFor).
+	bool HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& hand, std::uint32_t occupiedMask,
+		const l4d2vr_holster::BodyItems* items = nullptr) const;
     void UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_holster::BodyFrame* frame,
         std::uint32_t occupiedMask, bool itemHandGripDown, bool itemHandClaimed);
     // CreateMove: the grip let go of the held item where it would drop. True

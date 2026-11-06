@@ -569,6 +569,11 @@ HolsterYawFollowSpeed=0
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4
 HolsterGrabHapticAmplitude=0.6
+# A light tick when an empty hand first touches something it can grab: an item on the body (anywhere
+# on it), the gun's foregrip, bolt or pump, a spare magazine or the magazine pouch. Once per touch.
+GrabHoverHapticEnabled=true
+GrabHoverHapticAmplitude=0.2
+GrabHoverHapticDurationMs=20
 ManualPumpEnabled=true
 // Pump and chrome shotgun pump: the fore-end follows your hand along the gun for ManualPumpTravelMeters;
 // pulling it back ManualPumpCockFraction of that ejects the shell, and once it is back within

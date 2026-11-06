@@ -113,7 +113,8 @@ bool VR::HolsterCatchRelease(uintptr_t weaponTag, int weaponId)
     return true;
 }
 
-bool VR::HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& hand, std::uint32_t occupiedMask) const
+bool VR::HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& hand, std::uint32_t occupiedMask,
+    const l4d2vr_holster::BodyItems* items) const
 {
     const int slot = StowedSlot();
     if (slot < 0 || slot >= l4d2vr_holster::kZoneCount || !frame.valid)
@@ -122,10 +123,22 @@ bool VR::HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& 
     {
         Vector handle{}, foregrip{};
         l4d2vr_holster::SlingHandle(frame, m_HolsterLayout, handle, foregrip);
-        return l4d2vr_holster::DistanceToSegment(hand, handle, foregrip) / (std::max)(1.0f, m_VRScale) <=
-            m_ChestSlingGrabRadiusMeters;
+        if (l4d2vr_holster::DistanceToSegment(hand, handle, foregrip) / (std::max)(1.0f, m_VRScale) <=
+            m_ChestSlingGrabRadiusMeters)
+            return true;
+        // 2.0.9: anywhere on the slung gun from the butt to the muzzle, unless
+        // another item's body or holster is nearer (a hip or chest item the
+        // barrel or stock passes).
+        if (!items || (items->mask & 1u) == 0u)
+            return false;
+        const float body = l4d2vr_holster::ItemBodyDistanceMeters(frame, m_HolsterLayout, l4d2vr_holster::Zone::Primary,
+            l4d2vr_holster::ItemShape::LongGun, hand);
+        if (!(body <= m_HolsterLayout.itemGrabMarginMeters))
+            return false;
+        return l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand, occupiedMask | 1u, nullptr, items) ==
+            l4d2vr_holster::Zone::Primary;
     }
-    return l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand, occupiedMask | (1u << slot)) ==
+    return l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand, occupiedMask | (1u << slot), nullptr, items) ==
         static_cast<l4d2vr_holster::Zone>(slot);
 }
 
@@ -178,9 +191,11 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
     // item's own holster does not count.
     // (Nearest grab wins: another holster only claims it when it is nearer
     // than the stowed item.)
+    const l4d2vr_holster::BodyItems* const leftItems = HolsterBodyItemsFor(true);
+    const l4d2vr_holster::BodyItems* const rightItems = HolsterBodyItemsFor(false);
     grab.claimed[0] = MagazineInteractionOwnsGrip(true) || IsMagazineInteractionManualActive() ||
-        (!HandAtStowedItem(*frame, m_LeftControllerPosAbs, occupiedMask) &&
-            l4d2vr_holster::FindZone(*frame, m_HolsterLayout, m_LeftControllerPosAbs, occupiedMask) !=
+        (!HandAtStowedItem(*frame, m_LeftControllerPosAbs, occupiedMask, leftItems) &&
+            l4d2vr_holster::FindZone(*frame, m_HolsterLayout, m_LeftControllerPosAbs, occupiedMask, nullptr, leftItems) !=
                 l4d2vr_holster::Zone::None);
     grab.claimed[1] = itemHandClaimed;
     const char* what = "sling";
@@ -196,6 +211,19 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
         // wins when both are in reach. The hand snaps to the grip.
         grab.toForegripMeters[0] = l4d2vr_holster::DistanceToSegment(m_LeftControllerPosAbs, handle, foregrip) / s;
         grab.toForegripMeters[1] = l4d2vr_holster::DistanceToSegment(m_RightControllerPosAbs, handle, foregrip) / s;
+        // 2.0.9: anywhere on the gun's body, butt to muzzle (HandAtStowedItem:
+        // when no other item is nearer); ranked after any handle grab.
+        const Vector* const hands[2] = { &m_LeftControllerPosAbs, &m_RightControllerPosAbs };
+        const l4d2vr_holster::BodyItems* const handItems[2] = { leftItems, rightItems };
+        for (int i = 0; i < 2; ++i)
+        {
+            if (!(grab.toForegripMeters[i] > grab.radiusMeters) || !HandAtStowedItem(*frame, *hands[i], occupiedMask, handItems[i]))
+                continue;
+            const float body = l4d2vr_holster::ItemBodyDistanceMeters(*frame, m_HolsterLayout, l4d2vr_holster::Zone::Primary,
+                l4d2vr_holster::ItemShape::LongGun, *hands[i]);
+            grab.toForegripMeters[i] = (std::max)(0.0f, grab.radiusMeters + (std::min)(0.0f,
+                body - m_HolsterLayout.itemGrabMarginMeters));
+        }
     }
     else
     {
@@ -203,16 +231,18 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
         // holster is the nearest grab for it (the same rule as a draw).
         what = "holster";
         grab.radiusMeters = l4d2vr_holster::ZoneReachMeters(m_HolsterLayout, stowedZone);
-        auto toHolster = [&](const Vector& hand)
+        // 2.0.9: the score covers the item's drawn body too; reach + score is
+        // within the reach exactly when the hand can grab it.
+        auto toHolster = [&](const Vector& hand, const l4d2vr_holster::BodyItems* items)
         {
-            float distance = -1.0f;
+            float score = 1.0e9f;
             const std::uint32_t mask = occupiedMask | stowedBit;
-            if (l4d2vr_holster::FindZone(*frame, m_HolsterLayout, hand, mask, &distance) != stowedZone)
+            if (l4d2vr_holster::FindZone(*frame, m_HolsterLayout, hand, mask, nullptr, items, &score) != stowedZone)
                 return -1.0f;
-            return distance;
+            return (std::max)(0.0f, grab.radiusMeters + (std::min)(0.0f, score));
         };
-        grab.toHandleMeters[0] = toHolster(m_LeftControllerPosAbs);
-        grab.toHandleMeters[1] = toHolster(m_RightControllerPosAbs);
+        grab.toHandleMeters[0] = toHolster(m_LeftControllerPosAbs, leftItems);
+        grab.toHandleMeters[1] = toHolster(m_RightControllerPosAbs, rightItems);
     }
     if (supportPress || itemPress)
     {

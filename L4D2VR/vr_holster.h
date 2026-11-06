@@ -145,6 +145,11 @@ namespace l4d2vr_holster
         // holsters leave a hand there to the magazines.
         Vector magPouch{ 0.07f, -0.10f, 0.32f };
         float magPouchReachMeters = 0.15f;
+        // 2.0.9: an item hanging on the body is grabbed anywhere on its drawn
+        // body (an oriented box around the model in its holstered pose,
+        // ItemBodyBox), not only at its handle: the hand's centre within this
+        // of the box surface. The handle volumes above still count too.
+        float itemGrabMarginMeters = 0.07f;
     };
 
     struct BodyFrame
@@ -488,47 +493,6 @@ namespace l4d2vr_holster
         return HandFitsZone(frame, layout, zone, hand, distance, true);
     }
 
-    // The zone the hand takes from (occupiedMask bit i = slot i holds an item
-    // the hand may take; 0x1F ignores occupancy). Forefront's rule: of the
-    // grab volumes the hand is in, the nearest wins (distance relative to each
-    // volume's reach, so a small pocket beats the big back sphere). The
-    // magazine pouch takes part too: when it wins, no holster takes the hand.
-    inline Zone FindZone(const BodyFrame& frame, const Layout& layout, const Vector& hand,
-        std::uint32_t occupiedMask, float* outDistanceMeters = nullptr)
-    {
-        if (outDistanceMeters)
-            *outDistanceMeters = 1.0e9f;
-        if (!frame.valid || !l4d2vr_interaction::Finite(hand))
-            return Zone::None;
-        Zone best = Zone::None;
-        float bestScore = 1.0e9f, bestDistance = 1.0e9f;
-        for (int i = 0; i < kZoneCount; ++i)
-        {
-            if ((occupiedMask & (1u << i)) == 0u)
-                continue;
-            const Zone zone = static_cast<Zone>(i);
-            float distance = 0.0f;
-            if (!HandFitsZone(frame, layout, zone, hand, distance))
-                continue;
-            const float score = distance / ZoneReachMeters(layout, zone);
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestDistance = distance;
-                best = zone;
-            }
-        }
-        if (best != Zone::None && layout.magPouchReachMeters > 0.0f)
-        {
-            const float pouch = MagazinePouchDistanceMeters(frame, layout, hand);
-            if (pouch <= layout.magPouchReachMeters && pouch / layout.magPouchReachMeters < bestScore)
-                return Zone::None;
-        }
-        if (outDistanceMeters)
-            *outDistanceMeters = bestDistance;
-        return best;
-    }
-
     // World placement for a holstered item. The returned basis is for the item's
     // reference bone, ValveBiped.weapon_bone (on the v_ models that the local
     // player's carried weapons report, and on the w_ models): axisZ = the
@@ -687,6 +651,170 @@ namespace l4d2vr_holster
         pose.axisZ = axisZ;
         pose.valid = l4d2vr_interaction::Finite(pose.origin) && l4d2vr_interaction::Finite(pose.axisX);
         return pose;
+    }
+
+    // 2.0.9: the drawn body of each item hanging on the body (grab anywhere
+    // on it). An oriented box in the item's reference-bone frame (model units,
+    // the ItemPose axes: Z barrel, Y sights/top, X = the gun's left side),
+    // measured roughly from the stock v_ models: long guns run 15 units
+    // behind the bone to 32 in front with the grip and magazine below,
+    // pistols 2 behind to 12 in front, melee blades along +Y from the handle
+    // at the bone, kits and the defibrillator thin along X, packs along Z.
+    inline void ItemBodyBox(ItemShape shape, Vector& centerUnits, Vector& halfUnits)
+    {
+        switch (shape)
+        {
+        case ItemShape::LongGun: centerUnits = Vector(0.0f, -2.0f, 8.5f); halfUnits = Vector(2.0f, 5.0f, 23.5f); break;
+        case ItemShape::Pistol: centerUnits = Vector(0.0f, -1.5f, 5.0f); halfUnits = Vector(1.5f, 3.5f, 7.0f); break;
+        case ItemShape::Melee: centerUnits = Vector(0.0f, 11.0f, 0.0f); halfUnits = Vector(2.5f, 15.0f, 2.5f); break;
+        case ItemShape::Kit: centerUnits = Vector(0.0f, 0.0f, 0.0f); halfUnits = Vector(2.0f, 6.0f, 7.0f); break;
+        case ItemShape::Defib: centerUnits = ReferenceToCenterUnits(ItemShape::Defib); halfUnits = Vector(2.5f, 6.0f, 7.0f); break;
+        case ItemShape::Pack: centerUnits = Vector(0.0f, 0.0f, 0.0f); halfUnits = Vector(6.5f, 6.5f, 2.0f); break;
+        case ItemShape::Equipment:
+        default: centerUnits = Vector(0.0f, 0.0f, 0.0f); halfUnits = Vector(2.5f, 4.5f, 2.5f); break;
+        }
+    }
+
+    // Signed distance (metres) from a point to an oriented box: negative inside
+    // (minus the depth to the nearest face).
+    inline float SignedBoxDistanceMeters(const ItemPose& pose, const Vector& centerUnits, const Vector& halfUnits,
+        const Vector& point, float unitsPerMeter)
+    {
+        const Vector center = pose.origin + pose.axisX * centerUnits.x + pose.axisY * centerUnits.y +
+            pose.axisZ * centerUnits.z;
+        const Vector d = point - center;
+        const float local[3] = { DotProduct(d, pose.axisX), DotProduct(d, pose.axisY), DotProduct(d, pose.axisZ) };
+        const float half[3] = { halfUnits.x, halfUnits.y, halfUnits.z };
+        float outside2 = 0.0f, insideMax = -1.0e9f;
+        for (int i = 0; i < 3; ++i)
+        {
+            const float q = std::fabs(local[i]) - half[i];
+            if (q > 0.0f)
+                outside2 += q * q;
+            insideMax = std::fmax(insideMax, q);
+        }
+        const float units = outside2 > 0.0f ? std::sqrt(outside2) : insideMax;
+        return units / (unitsPerMeter > 0.001f ? unitsPerMeter : 1.0f);
+    }
+
+    // The items hanging on the body this frame (bit i: slot i's item is drawn
+    // at its holster or on the sling, shape[i] its holster shape). Held items
+    // are not on the body and have only their holster's handle volume.
+    struct BodyItems
+    {
+        std::uint32_t mask = 0u;
+        ItemShape shape[kZoneCount] = { ItemShape::LongGun, ItemShape::Pistol, ItemShape::Equipment,
+            ItemShape::Kit, ItemShape::Equipment };
+    };
+
+    // Signed distance (metres) from the hand centre to the drawn body of the
+    // item in a zone, in its holstered pose. 1e9 when there is none.
+    inline float ItemBodyDistanceMeters(const BodyFrame& frame, const Layout& layout, Zone zone, ItemShape shape,
+        const Vector& hand)
+    {
+        if (!frame.valid || zone == Zone::None || SlotIndex(zone) < 0 || SlotIndex(zone) >= kZoneCount ||
+            !l4d2vr_interaction::Finite(hand))
+            return 1.0e9f;
+        // slot1 is the chest sling whatever the item (SlingPose: a long gun).
+        if (zone == Zone::Primary)
+            shape = ItemShape::LongGun;
+        const ItemPose pose = BuildItemPose(frame, layout, zone, shape);
+        if (!pose.valid)
+            return 1.0e9f;
+        Vector center{}, half{};
+        ItemBodyBox(shape, center, half);
+        const float distance = SignedBoxDistanceMeters(pose, center, half, hand, frame.unitsPerMeter);
+        return std::isfinite(distance) ? distance : 1.0e9f;
+    }
+
+    // The handle volumes' depth is scaled to a common 15 cm reach so the
+    // scores rank exactly like the 2.0.8 distance/reach rule (a small pocket
+    // still beats the big back sphere) while staying in metres, comparable
+    // with the item bodies' surface distances.
+    constexpr float kNominalReachMeters = 0.15f;
+
+    // How far (metres) the hand is from being able to grab in a zone: <= 0
+    // inside. The nearer of the handle volume (HandFitsZone against its reach)
+    // and, when the zone's item hangs on the body (items), the item's drawn
+    // body (its surface distance against itemGrabMarginMeters).
+    inline float GrabScoreMeters(const BodyFrame& frame, const Layout& layout, Zone zone, const Vector& hand,
+        const BodyItems* items, float* outHandleDistanceMeters = nullptr)
+    {
+        float distance = 1.0e9f;
+        HandFitsZone(frame, layout, zone, hand, distance);
+        if (outHandleDistanceMeters)
+            *outHandleDistanceMeters = distance;
+        const float reach = ZoneReachMeters(layout, zone);
+        float score = (std::isfinite(distance) && reach > 0.0f && distance < 1.0e8f)
+            ? (distance / reach - 1.0f) * kNominalReachMeters : 1.0e9f;
+        const int slot = SlotIndex(zone);
+        if (items && slot >= 0 && slot < kZoneCount && (items->mask & (1u << slot)) != 0u)
+        {
+            const float body = ItemBodyDistanceMeters(frame, layout, zone, items->shape[slot], hand);
+            if (body < 1.0e8f)
+                score = std::fmin(score, body - layout.itemGrabMarginMeters);
+        }
+        return score;
+    }
+
+    // The magazine pouch on the same scale (a sphere of magPouchReachMeters).
+    inline float MagazinePouchScoreMeters(const BodyFrame& frame, const Layout& layout, const Vector& hand)
+    {
+        if (!(layout.magPouchReachMeters > 0.0f))
+            return 1.0e9f;
+        const float pouch = MagazinePouchDistanceMeters(frame, layout, hand);
+        return pouch < 1.0e8f ? (pouch / layout.magPouchReachMeters - 1.0f) * kNominalReachMeters : 1.0e9f;
+    }
+
+    // The zone the hand takes from (occupiedMask bit i = slot i holds an item
+    // the hand may take; 0x1F ignores occupancy). Forefront's rule: of the
+    // grab volumes the hand is in, the nearest wins (GrabScoreMeters: the
+    // handle volumes by distance relative to their reach, so a small pocket
+    // beats the big back sphere; 2.0.9: the bodies of the items hanging on the
+    // body (items) by their surface distance, so the hand takes the item it
+    // is actually on and a long slung gun does not steal a hip or chest grab).
+    // The magazine pouch takes part too: when it wins, no holster takes the
+    // hand. outDistanceMeters: the winner's handle distance; outScoreMeters:
+    // its score (<= 0).
+    inline Zone FindZone(const BodyFrame& frame, const Layout& layout, const Vector& hand,
+        std::uint32_t occupiedMask, float* outDistanceMeters = nullptr, const BodyItems* items = nullptr,
+        float* outScoreMeters = nullptr)
+    {
+        if (outDistanceMeters)
+            *outDistanceMeters = 1.0e9f;
+        if (outScoreMeters)
+            *outScoreMeters = 1.0e9f;
+        if (!frame.valid || !l4d2vr_interaction::Finite(hand))
+            return Zone::None;
+        Zone best = Zone::None;
+        float bestScore = 1.0e9f, bestDistance = 1.0e9f;
+        for (int i = 0; i < kZoneCount; ++i)
+        {
+            if ((occupiedMask & (1u << i)) == 0u)
+                continue;
+            const Zone zone = static_cast<Zone>(i);
+            float distance = 0.0f;
+            const float score = GrabScoreMeters(frame, layout, zone, hand, items, &distance);
+            if (!(score <= 0.0f))
+                continue;
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestDistance = distance;
+                best = zone;
+            }
+        }
+        if (best != Zone::None)
+        {
+            const float pouch = MagazinePouchScoreMeters(frame, layout, hand);
+            if (pouch <= 0.0f && pouch < bestScore)
+                return Zone::None;
+        }
+        if (outDistanceMeters)
+            *outDistanceMeters = bestDistance;
+        if (outScoreMeters)
+            *outScoreMeters = bestScore;
+        return best;
     }
 
     // Paces a diagnostic log stream: a line is due on the first call, when the

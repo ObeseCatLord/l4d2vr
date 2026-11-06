@@ -3372,6 +3372,9 @@ void VR::ParseConfigFile()
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
     m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
     m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);
+    m_GrabHoverHapticEnabled = getBool("GrabHoverHapticEnabled", true);
+    m_GrabHoverHapticAmplitude = std::clamp(getFloat("GrabHoverHapticAmplitude", 0.2f), 0.0f, 1.0f);
+    m_GrabHoverHapticDurationMs = std::clamp(getFloat("GrabHoverHapticDurationMs", 20.0f), 1.0f, 100.0f);
     m_ManualPumpEnabled = getBool("ManualPumpEnabled", true);
     m_ManualPumpTravelMeters = std::clamp(getFloat("ManualPumpTravelMeters", 0.10f), 0.04f, 0.25f);
     m_ManualPumpCockFraction = std::clamp(getFloat("ManualPumpCockFraction", 0.70f),

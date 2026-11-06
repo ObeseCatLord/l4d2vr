@@ -5994,6 +5994,10 @@ bool VR::UpdateMagazineInteraction(
     // interactions (Pavlov), else the same input as everything else.
     const bool foregripDown = foregripSplit ? foregripInputDown : leftGripDown;
     const bool foregripJustPressed = foregripSplit ? foregripInputJustPressed : leftGripJustPressed;
+    // 2.0.9: the support hand is busy with the held gun (re-set below when it
+    // touches a gun part): the item bodies on the body leave its squeeze alone.
+    m_SupportHandAtGunPart = m_VrHandsTwoHandedGripActive || IsMagazineInteractionLeftHandActive();
+    m_SupportHandAtGunPartLeft = MagazineReloadSupportIsLeft();
     // Pavlov: the support hand that holds the pump shotgun's fore-end (the
     // foregrip, with its grip) works the pump without also squeezing the
     // trigger. Only with the grip/trigger split, where the grip is the foregrip.
@@ -6378,6 +6382,32 @@ bool VR::UpdateMagazineInteraction(
             return Vector(std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
         return local;
     };
+
+    // 2.0.9 grab hover (vr_grab_hover.h): one light tick when the free support
+    // hand reaches a gun part it can grab, with hysteresis (overMeters: how far
+    // outside the part's grab range the hand is). contactActive mirrors the
+    // latch; a state change that clears it re-arms the tick.
+    auto updateGrabHoverContact = [&](
+        bool& contactActive,
+        bool touching,
+        l4d2vr_grab_hover::Source source,
+        float overMeters)
+    {
+        if (touching)
+        {
+            m_SupportHandAtGunPart = true;
+            m_SupportHandAtGunPartLeft = MagazineReloadSupportIsLeft();
+        }
+        l4d2vr_grab_hover::Latch& latch =
+            m_GrabHoverLatch[magazineInteractionPhysicalLeftHand ? 0 : 1][static_cast<int>(source)];
+        if (!contactActive)
+            latch.Reset();
+        GrabHoverUpdate(magazineInteractionPhysicalLeftHand, source, touching ? 1 : 0,
+            std::isfinite(overMeters) ? overMeters : std::numeric_limits<float>::infinity(),
+            !m_MagazineInteractionLeftHandHolding);
+        contactActive = latch.Key() != 0;
+    };
+    const float grabHoverUnitsPerMeter = std::max(0.001f, m_VRScale);
 
     auto updateMagazineInteractionContactHaptic = [&](
         bool& contactActive,
@@ -7628,6 +7658,25 @@ bool VR::UpdateMagazineInteraction(
     else
     {
         clearMountFriendlyGripContact();
+
+        {
+            // 2.0.9 grab hover: a light tick when the free support hand reaches
+            // the held gun's foregrip (the two-hand grip target).
+            const bool supportFree = !m_VrHandsTwoHandedGripActive && !m_MagazineInteractionLeftHandHolding &&
+                !manualReloadOwnsOffhandInput;
+            float foregripDistance = FLT_MAX;
+            const bool touchingForegrip = supportFree && leftHandTouchesTwoHandedGripTarget(foregripDistance);
+            if (touchingForegrip)
+            {
+                m_SupportHandAtGunPart = true;
+                m_SupportHandAtGunPartLeft = MagazineReloadSupportIsLeft();
+            }
+            GrabHoverUpdate(magazineInteractionPhysicalLeftHand, l4d2vr_grab_hover::Source::Foregrip,
+                touchingForegrip ? 1 : 0,
+                foregripDistance != FLT_MAX ? foregripDistance / grabHoverUnitsPerMeter
+                    : std::numeric_limits<float>::infinity(),
+                supportFree);
+        }
 
         // Pavlov's auto-ungrip: the support hand lets go of the foregrip once it
         // is more than MaxTwoHandGripDistance (20 cm) away, so the next squeeze
@@ -8903,19 +8952,18 @@ bool VR::UpdateMagazineInteraction(
         if (hasPickupBox)
         {
             freshGrabDistance = MagazineInteractionHandPointDistanceSourceUnits(freshGrabBox, supportPosition, this);
-            updateMagazineInteractionContactHaptic(
+            updateGrabHoverContact(
                 m_MagazineInteractionFreshMagazineContactActive,
                 freshGrabDistance <= freshGrabRange,
-                0.012f,
-                150.0f,
-                0.22f);
+                l4d2vr_grab_hover::Source::Magazine,
+                (freshGrabDistance - freshGrabRange) / grabHoverUnitsPerMeter);
         }
         {
             // Pavlov's pouch highlight: within 35 cm of the empty off hand the
             // spare glows brighter, with a tick when it lights up.
+            // (2.0.9: no tick here any more; the grab hover ticks once when the
+            // hand reaches the spare.)
             const bool spareInReach = hasPickupBox && freshGrabDistance <= kReloadPouchHighlightMeters * m_VRScale;
-            if (spareInReach && !m_ReloadSpareNear.load(std::memory_order_relaxed))
-                TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(MagazineReloadSupportIsLeft()), 0.03f, 140.0f, 0.3f, 1);
             m_ReloadSpareNear.store(spareInReach, std::memory_order_release);
         }
         if (!allowTake || !hasPickupBox)
@@ -9093,12 +9141,11 @@ bool VR::UpdateMagazineInteraction(
             this);
         const float grabRange = std::max(0.0f, MagazineInteractionResolveBoltGrabPaddingMeters(this)) * m_VRScale;
         const bool touchingBolt = grabDistance <= grabRange;
-        updateMagazineInteractionContactHaptic(
+        updateGrabHoverContact(
             m_MagazineInteractionBoltContactActive,
             touchingBolt,
-            0.012f,
-            150.0f,
-            0.22f);
+            l4d2vr_grab_hover::Source::Bolt,
+            (grabDistance - grabRange) / grabHoverUnitsPerMeter);
 
         // A pump waiting to be cycled leaves the tube open: shells stay at the
         // waist and can be loaded first. Firing used to arm this stage and take
@@ -9922,7 +9969,8 @@ bool VR::UpdateMagazineInteraction(
         }
         const bool pouchInReach = pouchValid && l4d2vr_magazine::MayTakeFreshAmmo(pouchDistance, pouchRange, boltDistance,
             std::max(0.0f, MagazineInteractionResolveBoltGrabPaddingMeters(this)) * m_VRScale);
-        updateMagazineInteractionContactHaptic(m_MagazineSlapPouchContactActive, pouchInReach, 0.012f, 150.0f, 0.22f);
+        updateGrabHoverContact(m_MagazineSlapPouchContactActive, pouchInReach, l4d2vr_grab_hover::Source::Pouch,
+            pouchValid ? (pouchDistance - pouchRange) / grabHoverUnitsPerMeter : std::numeric_limits<float>::infinity());
         // A hand on the seated magazine pulls it out (below) rather than taking
         // a spare from a pouch that is also in reach.
         bool handOnSeatedMagazine = false;

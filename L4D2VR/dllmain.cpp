@@ -3389,6 +3389,9 @@ namespace
         sampleKeys.insert("HolsterHeightScale");
         sampleKeys.insert("HolsterHoverHapticAmplitude");
         sampleKeys.insert("HolsterGrabHapticAmplitude");
+        sampleKeys.insert("GrabHoverHapticEnabled");
+        sampleKeys.insert("GrabHoverHapticAmplitude");
+        sampleKeys.insert("GrabHoverHapticDurationMs");
         sampleKeys.insert("MagazineInteractionAutoEjectWhenEmpty");
         sampleKeys.insert("MagazineEmptyGlowEnabled");
         sampleKeys.insert("ManualReloadMagazineHandRotationOffsetDeg");

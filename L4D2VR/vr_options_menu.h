@@ -86,6 +86,7 @@ namespace l4d2vr_options_menu
         { "ChestSlingEnabled", RowKind::Toggle, "Chest sling", "Let go of a long gun near your body to hang it on your chest.", 0, 0, 0, "true" },
         { "HolsterPavlovLayoutEnabled", RowKind::Toggle, "Pavlov holster layout", "Holsters on your hips, chest and back like Pavlov VR.", 0, 0, 0, "true" },
         { "HolsterItemsVisible", RowKind::Toggle, "Show holstered items", "Draw the items that sit in your holsters.", 0, 0, 0, "true" },
+        { "GrabHoverHapticEnabled", RowKind::Toggle, "Touch tick on grabbable things", "A light buzz when an empty hand first touches something it can grab.", 0, 0, 0, "true" },
         { "HandPosesEnabled", RowKind::Toggle, "Finger poses", "Fingers wrap around what you hold.", 0, 0, 0, "true" },
         { "HideArms", RowKind::Toggle, "Hide arms", "Hide the first-person arms completely.", 0, 0, 0, "false" },
     };

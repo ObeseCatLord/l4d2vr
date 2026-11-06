@@ -165,3 +165,56 @@ void VR::LogHolsterGripPress(bool leftHand, const l4d2vr_holster::BodyFrame* fra
         frameYaw,
         m_BodyInventoryHeadYaw, l4d2vr_interaction::WrapYaw(m_BodyInventoryHeadYaw - frameYaw), pitch, activeSlot + 1);
 }
+
+// 2.0.9: the items hanging on the body this frame, with their holster shapes:
+// every carried item except the one in the hand (a stowed active item hangs
+// at its holster or on the sling). A hand grabs them anywhere on that body.
+void VR::RefreshHolsterBodyItems(C_BasePlayer* localPlayer)
+{
+    l4d2vr_holster::BodyItems items{};
+    if (localPlayer)
+    {
+        C_BaseCombatWeapon* const active = localPlayer->GetActiveWeapon();
+        const int stowed = StowedSlot();
+        for (int slot = 0; slot < l4d2vr_holster::kZoneCount; ++slot)
+        {
+            void* const weapon = localPlayer->Weapon_GetSlot(slot);
+            if (!weapon)
+                continue;
+            if (weapon == static_cast<void*>(active) && stowed != slot)
+                continue;
+            items.mask |= 1u << slot;
+            items.shape[slot] = HolsterShapeForWeaponId(HolsterReadWeaponId(weapon));
+        }
+    }
+    m_HolsterBodyItems = items;
+}
+
+bool VR::GrabHoverUpdate(bool physicalLeft, l4d2vr_grab_hover::Source source, int key, float overMeters, bool handFree)
+{
+    const int src = static_cast<int>(source);
+    if (src < 0 || src >= l4d2vr_grab_hover::kSourceCount)
+        return false;
+    const int hand = physicalLeft ? 0 : 1;
+    l4d2vr_grab_hover::Settings settings{};
+    settings.enabled = m_GrabHoverHapticEnabled;
+    settings.amplitude = m_GrabHoverHapticAmplitude;
+    settings.durationSeconds = m_GrabHoverHapticDurationMs * 0.001f;
+    const std::uint64_t nowMs = GetTickCount64();
+    const bool due = m_GrabHoverLatch[hand][src].Update(key, overMeters, handFree, nowMs, settings);
+    if (!due || !settings.enabled || !(settings.amplitude > 0.0f) || !(settings.durationSeconds > 0.0f))
+        return false;
+    if (!m_GrabHoverGate[hand].Allow(nowMs, settings))
+        return false;
+    TriggerPhysicalHandHapticPulse(physicalLeft, settings.durationSeconds, settings.frequency, settings.amplitude, 1);
+    ++m_GrabHoverPulseCount;
+    return true;
+}
+
+int VR::GrabHoverLatchedKey(bool physicalLeft, l4d2vr_grab_hover::Source source) const
+{
+    const int src = static_cast<int>(source);
+    if (src < 0 || src >= l4d2vr_grab_hover::kSourceCount)
+        return 0;
+    return m_GrabHoverLatch[physicalLeft ? 0 : 1][src].Key();
+}

@@ -440,6 +440,97 @@ static void TestForefrontLayoutRealisticBody()
     }
 }
 
+// 2.0.9: an item hanging on the body is grabbed anywhere on its drawn body;
+// overlapping items go to the one the hand is nearest (on).
+static void TestBodyGrabAnywhere()
+{
+    const Layout layout{};
+    BodyItems items{};
+    items.mask = 0x1Fu;
+    items.shape[0] = ItemShape::LongGun;
+    items.shape[1] = ItemShape::Pistol;
+    items.shape[2] = ItemShape::Equipment;
+    items.shape[3] = ItemShape::Kit;
+    items.shape[4] = ItemShape::Equipment;
+    auto along = [](const ItemPose& p, float x, float y, float z) { return p.origin + p.axisX * x + p.axisY * y + p.axisZ * z; };
+    for (int handed = 0; handed < 2; ++handed)
+    {
+        const bool leftHanded = handed == 1;
+        auto dom = [&](const Vector& v) { return leftHanded ? Mirror(v) : v; };
+        for (float yaw : { 0.0f, 37.0f, -150.0f })
+        for (float pitch : { 0.0f, 35.0f, -25.0f })
+        {
+            const Body body = MakeBody(yaw, pitch, 0.0f, leftHanded);
+            const BodyFrame& f = body.frame;
+            auto at = [&](const Vector& v) { return body.At(v.x, v.y, v.z); };
+            // The 2.0.8 reaches give the same zones with the item bodies.
+            CHECK(FindZone(f, layout, at(dom(kSlungGripRight)), 0x1Fu, nullptr, &items) == Zone::Primary);
+            CHECK(FindZone(f, layout, at(dom(kSlungForegripRight)), 0x1Fu, nullptr, &items) == Zone::Primary);
+            CHECK(FindZone(f, layout, at(dom(kRightHip)), 0x1Fu, nullptr, &items) == Zone::Secondary);
+            CHECK(FindZone(f, layout, at(dom(kRightBelt)), 0x1Fu, nullptr, &items) == Zone::Secondary);
+            CHECK(FindZone(f, layout, at(dom(kLeftHip)), 0x1Fu, nullptr, &items) == Zone::Consumable);
+            CHECK(FindZone(f, layout, at(dom(kLeftBelt)), 0x1Fu, nullptr, &items) == Zone::Consumable);
+            CHECK(FindZone(f, layout, at(dom(kRightUpperChest)), 0x1Fu, nullptr, &items) == Zone::Throwable);
+            CHECK(FindZone(f, layout, at(dom(kOverLeftShoulder)), 0x1Fu, nullptr, &items) == Zone::Medical);
+            CHECK(FindZone(f, layout, at(dom(kOverRightShoulder)), 0x1Fu, nullptr, &items) == Zone::Medical);
+            CHECK(FindZone(f, layout, at(dom(kLeftUpperChest)), 0x1Fu, nullptr, &items) == Zone::None); // the pouch
+            CHECK(FindZone(f, layout, at(kRightReady), 0x1Fu, nullptr, &items) == Zone::None);
+            CHECK(FindZone(f, layout, at(kLeftReady), 0x1Fu, nullptr, &items) == Zone::None);
+
+            // The slung gun: by the muzzle end and by the stock, far from the
+            // grip-to-foregrip handle volume.
+            const ItemPose sling = SlingPose(f, layout);
+            const Vector muzzle = along(sling, 0.0f, 0.0f, 30.0f);
+            const Vector stock = along(sling, 0.0f, -1.0f, -13.0f);
+            CHECK(FindZone(f, layout, muzzle, 0x1Fu) == Zone::None);
+            CHECK(FindZone(f, layout, muzzle, 0x1Fu, nullptr, &items) == Zone::Primary);
+            CHECK(FindZone(f, layout, stock, 0x1Fu) == Zone::None);
+            CHECK(FindZone(f, layout, stock, 0x1Fu, nullptr, &items) == Zone::Primary);
+            // ... a little off the gun's side still counts, well off it does not.
+            CHECK(FindZone(f, layout, muzzle + sling.axisX * (0.08f * body.s), 0x1Fu, nullptr, &items) == Zone::Primary);
+            CHECK(FindZone(f, layout, muzzle + sling.axisX * (0.25f * body.s), 0x1Fu, nullptr, &items) == Zone::None);
+            // Not slung (held, or no long gun): the body does not count.
+            BodyItems noGun = items;
+            noGun.mask &= ~1u;
+            CHECK(FindZone(f, layout, muzzle, 0x1Fu, nullptr, &noGun) == Zone::None);
+            CHECK(FindZone(f, layout, muzzle, 0x1Eu, nullptr, &items) == Zone::None);
+            float score = 0.0f;
+            CHECK(FindZone(f, layout, muzzle, 0x1Fu, nullptr, &items, &score) == Zone::Primary && score <= 0.0f);
+
+            // The hip pistol by the end of its barrel (it hangs muzzle down).
+            const ItemPose hip = BuildItemPose(f, layout, Zone::Secondary, ItemShape::Pistol);
+            const Vector pistolMuzzle = along(hip, 0.0f, 0.0f, 12.0f);
+            CHECK(FindZone(f, layout, pistolMuzzle, 0x1Fu, nullptr, &items) == Zone::Secondary);
+            // A melee weapon on the hip by the end of its blade.
+            BodyItems melee = items;
+            melee.shape[1] = ItemShape::Melee;
+            const ItemPose blade = BuildItemPose(f, layout, Zone::Secondary, ItemShape::Melee);
+            const Vector bladeTip = along(blade, 0.0f, 24.0f, 0.0f);
+            CHECK(FindZone(f, layout, bladeTip, 0x1Fu) == Zone::None);
+            CHECK(FindZone(f, layout, bladeTip, 0x1Fu, nullptr, &melee) == Zone::Secondary);
+
+            // Where the slung gun's barrel passes in front of the off-hand hip
+            // item, the hand on the barrel takes the gun and the hand on the
+            // item takes the item (nearest surface).
+            const ItemPose offHip = BuildItemPose(f, layout, Zone::Consumable, ItemShape::Equipment);
+            CHECK(FindZone(f, layout, offHip.origin, 0x1Fu, nullptr, &items) == Zone::Consumable);
+            // The grenade pocket next to the stock: on the grenade, the grenade.
+            const ItemPose pocket = BuildItemPose(f, layout, Zone::Throwable, ItemShape::Equipment);
+            CHECK(FindZone(f, layout, pocket.origin, 0x1Fu, nullptr, &items) == Zone::Throwable);
+            CHECK(FindZone(f, layout, pocket.origin, 0x1Bu, nullptr, &items) != Zone::Throwable);
+            // Nearest surface: a point on the gun's axis beside the hip item.
+            const Vector onBarrel = along(sling, 0.0f, 0.0f, 22.0f);
+            CHECK(FindZone(f, layout, onBarrel, 0x1Fu, nullptr, &items) == Zone::Primary);
+        }
+    }
+    // Signed box distance: inside negative, outside the Euclidean gap.
+    ItemPose unit{};
+    unit.valid = true;
+    CHECK(Near(SignedBoxDistanceMeters(unit, Vector(0, 0, 0), Vector(1, 2, 3), Vector(0, 0, 0), 1.0f), -1.0f, 1e-5f));
+    CHECK(Near(SignedBoxDistanceMeters(unit, Vector(0, 0, 0), Vector(1, 2, 3), Vector(4, 0, 0), 1.0f), 3.0f, 1e-5f));
+    CHECK(Near(SignedBoxDistanceMeters(unit, Vector(0, 0, 0), Vector(1, 2, 3), Vector(4, 6, 0), 2.0f), 2.5f, 1e-5f));
+}
+
 static void TestItemOrientationRealisticBody()
 {
     const Layout layout{};
@@ -542,6 +633,7 @@ static void TestItemOrientationRealisticBody()
 int main()
 {
     TestForefrontLayoutRealisticBody();
+    TestBodyGrabAnywhere();
     TestItemOrientationRealisticBody();
     TestNearAnyZone();
     TestWeaponClasses();

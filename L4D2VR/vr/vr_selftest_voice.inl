@@ -11,9 +11,11 @@
 //       writes the decoded audio (<prefix>-speaker-<n>.s16, <prefix>-mix.s16).
 //   opusvoicefallback  On a server without OpusVoice, or with
 //       cfg=OpusVoiceEnabled=false: holding push-to-talk sends no Opus frames.
-//   opusvoicestock     After opusvoice (this client is an Opus talker): the
+//   opusvoicestock     After opusvoice (this client is an Opus peer): the
 //       game's own voice, looped back by the server (voice_loopback 1, input
-//       from voice_input.wav), must be dropped by the stock voice filter.
+//       from voice_input.wav), while Opus is silent, must still be heard
+//       (2.0.10: a peer's stock voice is dropped only while its Opus frames
+//       arrive; 2.0.5-2.0.9 dropped it always, so open-mic talkers were lost).
 
 bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* player, bool& handled)
 {
@@ -61,9 +63,9 @@ bool VR::RunVoiceSelfTestStep(const std::string& step, float t, C_BasePlayer* pl
             std::snprintf(detail, sizeof(detail), "game voice packets from player %d: dropped %u, passed %u; peers=%llx opus sent %u",
                 local, dropped, passed, static_cast<unsigned long long>(s.peers), s.framesSent - s_Base.framesSent);
             if (dropped + passed == 0u)
-                Game::logMsg("[VR][SelfTest] INFO game voice of an Opus talker: no game voice packets arrived (the engine's voice does not run in this session): %s", detail);
+                Game::logMsg("[VR][SelfTest] INFO game voice of an Opus peer: no game voice packets arrived (the engine's voice does not run in this session): %s", detail);
             else
-                SelfTestReport("game voice of an Opus talker is dropped", dropped > 0 && passed == 0, detail);
+                SelfTestReport("game voice of an Opus peer that sends no Opus is heard", dropped == 0 && passed > 0, detail);
             cmd("voice_loopback 0; voice_inputfromfile 0");
             restore();
             return true;

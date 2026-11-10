@@ -118,7 +118,7 @@ static void TestFrames()
 static void TestSettings()
 {
     const Settings d = ParseSettingsText("");
-    Check(d.enabled && d.bitrate == 32000 && d.fec && d.mode == TransmitMode::PushToTalk && d.positional && d.agc);
+    Check(d.enabled && d.bitrate == 32000 && d.fec && d.mode == TransmitMode::FollowGame && d.positional && d.agc);
     Check(!d.loopback && d.testToneHz == 0.0f && d.pushToTalkKey.empty());
     const Settings s = ParseSettingsText(
         "// comment\n"
@@ -143,7 +143,97 @@ static void TestSettings()
     // Later lines win (config2.txt appended after config.txt).
     Check(ParseSettingsText("OpusVoiceBitrate=24000\nOpusVoiceBitrate=16000\n").bitrate == 16000);
     Check(ParseSettingsText("OpusVoiceMode=ptt\n").mode == TransmitMode::PushToTalk);
-    Check(ParseSettingsText("OpusVoiceMode=nonsense\n").mode == TransmitMode::PushToTalk);
+    Check(ParseSettingsText("OpusVoiceMode=nonsense\n").mode == TransmitMode::FollowGame);
+    Check(ParseSettingsText("OpusVoiceMode=game\n").mode == TransmitMode::FollowGame);
+    Check(ParseSettingsText("OpusVoiceMode=Auto\n").mode == TransmitMode::FollowGame);
+}
+
+// 2.0.10: Opus voice follows the game's voice settings (voice_enable,
+// voice_vox, voice_scale, volume).
+static void TestGameVoiceSettings()
+{
+    Settings s;   // OpusVoiceMode=game
+    GameVoiceSettings g;
+    // Cvars not read yet: push to talk, settings unchanged.
+    Settings e = ResolveWithGame(s, g);
+    Check(e.enabled && e.mode == TransmitMode::PushToTalk && e.volume == 1.0f);
+    // The game's Open mic -> voice activation; Push to talk -> push to talk.
+    g.known = true; g.openMic = true;
+    Check(ResolveWithGame(s, g).mode == TransmitMode::VoiceActivation);
+    g.openMic = false;
+    Check(ResolveWithGame(s, g).mode == TransmitMode::PushToTalk);
+    // An explicit mode wins over the game's setting.
+    Settings ptt = s; ptt.mode = TransmitMode::PushToTalk;
+    Settings vad = s; vad.mode = TransmitMode::VoiceActivation;
+    g.openMic = true;
+    Check(ResolveWithGame(ptt, g).mode == TransmitMode::PushToTalk);
+    g.openMic = false;
+    Check(ResolveWithGame(vad, g).mode == TransmitMode::VoiceActivation);
+    // The game's voice disabled -> Opus off too (and never on when the key is off).
+    g.enabled = false;
+    Check(!ResolveWithGame(s, g).enabled);
+    g.enabled = true;
+    Settings off = s; off.enabled = false;
+    Check(!ResolveWithGame(off, g).enabled && ResolveWithGame(s, g).enabled);
+    // Playback volume: OpusVoiceVolume x voice_scale x volume, clamped.
+    g.receiveScale = 0.5f; g.masterVolume = 0.8f;
+    Check(std::fabs(ResolveWithGame(s, g).volume - 0.4f) < 1e-5f);
+    Settings loud = s; loud.volume = 2.0f;
+    g.receiveScale = 5.0f; g.masterVolume = 3.0f;
+    Check(ResolveWithGame(loud, g).volume == 2.0f);
+    g.receiveScale = -1.0f;
+    Check(ResolveWithGame(loud, g).volume == 0.0f);
+    GameVoiceSettings a, b;
+    Check(SameGameVoice(a, b));
+    b.receiveScale = 0.9f;
+    Check(!SameGameVoice(a, b));
+}
+
+// 2.0.10: a peer's stock voice is dropped only while its Opus voice arrives.
+static void TestStockVoiceGate()
+{
+    double hold = -1e30;
+    // A peer that never sent Opus (open mic in the game, Opus waiting for push to talk).
+    Check(!DropStockVoice(true, 1000.0, hold));
+    // Not a peer: never dropped.
+    hold = StockVoiceHoldUntil(false, 1000.0);
+    Check(!DropStockVoice(false, 1001.0, hold));
+    // Opus arriving: dropped, also across gaps of bursty delivery.
+    Check(DropStockVoice(true, 1001.0, hold));
+    Check(DropStockVoice(true, 1000.0 + kStockVoiceHoldMs - 1.0, hold));
+    // Opus stopped without an End frame (lost): the game's voice plays again.
+    Check(!DropStockVoice(true, 1000.0 + kStockVoiceHoldMs + 1.0, hold));
+    // The End frame: only the jitter buffer's tail is covered.
+    hold = StockVoiceHoldUntil(true, 5000.0);
+    Check(DropStockVoice(true, 5000.0 + kStockVoiceEndHoldMs - 1.0, hold));
+    Check(!DropStockVoice(true, 5000.0 + kStockVoiceEndHoldMs + 1.0, hold));
+}
+
+// 2.0.10: the VR voice defaults run once (vr/config_migrations_applied.txt).
+static void TestVrVoiceDefaultsState()
+{
+    const std::string id = kVrVoiceDefaultsId;
+    Check(!MigrationStateHasId("", id));
+    const std::string fresh = MigrationStateWithId("", id);
+    Check(MigrationStateHasId(fresh, id) && fresh.find("# L4D2VR") == 0);
+    const std::string existing = "# header\n2026-11-03_magazine_interaction_on\n2026-11-04_pavlov_toggle_grip";
+    const std::string added = MigrationStateWithId(existing, id);
+    Check(added == existing + "\n" + id + "\n");
+    Check(MigrationStateHasId(added, "2026-11-04_pavlov_toggle_grip") && MigrationStateHasId(added, id));
+    Check(MigrationStateWithId(added, id) == added);   // once
+    Check(MigrationStateHasId("  " + id + "  # note\r\n", id));
+    Check(!MigrationStateHasId("# " + id + "\n", id));
+    Check(!MigrationStateHasId(id + "_other\n", id));
+    // Open mic, voice on, full receive volume.
+    bool vox = false, scale = false, enable = false;
+    for (const GameCvarDefault& d : kVrVoiceCvarDefaults)
+    {
+        const std::string name = d.name, value = d.value;
+        if (name == "voice_vox" && value == "1") vox = true;
+        if (name == "voice_scale" && value == "1") scale = true;
+        if (name == "voice_enable" && value == "1") enable = true;
+    }
+    Check(vox && scale && enable);
 }
 
 static void FillTone(std::int16_t* pcm, int n, double hz, double amp, int offset)
@@ -537,6 +627,8 @@ namespace
         void Send(int i, const char* text) override { sent[i].push_back(text); }
         bool CanHear(int r, int s) const override { return !deaf[r][s]; }
         std::uint64_t NowMs() const override { return now; }
+        std::vector<std::string> logs;
+        void Log(const char* line) override { logs.push_back(line); }
         int Count(int i, const char* prefix) const
         {
             auto it = sent.find(i);
@@ -589,6 +681,7 @@ static void TestRelay()
     Check(host.Count(3, "l4d2vr_voice_rx") == 0);        // vanilla client never gets Opus
     Check(host.Count(4, "l4d2vr_voice_rx") == 0);        // game rules: cannot hear
     Check(relay.RelayedTotal() == 1 && relay.DeliveredTotal() == 1);
+    Check(relay.Client(1)->deliveredFrames == 1u && !relay.Client(1)->loggedUnheard);
 
     // A listener cannot send; malformed frames are rejected.
     Check(Dispatch(relay, host, 2, { "l4d2vr_voice_up", text }));
@@ -625,6 +718,24 @@ static void TestRelay()
     for (int i = 0; i < 500; ++i) { h3.now += 20u; Dispatch(steady, h3, 1, { "l4d2vr_voice_up", text }); }
     Check(h3.Count(2, "l4d2vr_voice_rx") == 500);
 
+    // 2.0.10 log: copies delivered, and once when no Opus listener may hear the talker.
+    int relayedLogs = 0;
+    for (const auto& l : h3.logs) relayedLogs += l.find("player 1 Opus voice frames relayed 0 (delivered 0 copies, rejected 0)") != std::string::npos;
+    Check(relayedLogs == 1);
+    Relay muted;
+    muted.SetEnabled(true);
+    FakeHost h4;
+    h4.connected[1] = h4.connected[2] = true;
+    h4.deaf[2][1] = true;
+    Dispatch(muted, h4, 1, { "l4d2vr_voice_hello", "1", "3" });
+    Dispatch(muted, h4, 2, { "l4d2vr_voice_hello", "1", "3" });
+    h4.logs.clear();
+    for (int i = 0; i < 3; ++i) { h4.now += 20u; Dispatch(muted, h4, 1, { "l4d2vr_voice_up", text }); }
+    Check(h4.Count(2, "l4d2vr_voice_rx") == 0 && muted.Client(1)->loggedUnheard && muted.Client(1)->deliveredFrames == 0u);
+    int unheardLogs = 0;
+    for (const auto& l : h4.logs) unheardLogs += l.find("cannot hear this player") != std::string::npos;
+    Check(unheardLogs == 1);
+
     // A talker leaving updates everyone's peers; an opt-out (flags 0) too.
     host.sent.clear();
     relay.Reset(host, 1);
@@ -646,6 +757,9 @@ int main()
     TestBase64();
     TestFrames();
     TestSettings();
+    TestGameVoiceSettings();
+    TestStockVoiceGate();
+    TestVrVoiceDefaultsState();
     TestVad();
     TestTransmitter();
     TestJitterSteady();

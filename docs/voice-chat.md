@@ -1,4 +1,4 @@
-# Opus voice chat (2.0.5)
+# Opus voice chat (2.0.5, fixed in 2.0.10)
 
 L4D2's own voice chat uses a fixed codec (Miles/Speex at 11 kHz; there is no `sv_voicecodec`
 to change it), which is why it sounds grainy and is hard to understand. With 2.0.5, players who
@@ -17,7 +17,28 @@ VR and desktop players with the mod both use it. Nothing changes for anyone on p
 
 ## Talking
 
-* **Push to talk** (default, `OpusVoiceMode=ptt`), any of:
+Opus voice follows the game's own voice settings (**Options > Audio**, `OpusVoiceMode=game`, the
+default since 2.0.10):
+
+| Game setting | Opus voice |
+|---|---|
+| Voice communication *Disabled* (`voice_enable 0`) | off (you neither send nor hear Opus; the game's voice is off too) |
+| *Push to talk* (`voice_vox 0`) | push to talk, see below |
+| *Open mic* (`voice_vox 1`) | voice activation, see below (a voice button still forces it open) |
+| Voice receive volume (`voice_scale`) and the master volume (`volume`) | scale Opus playback like the game's voice: `OpusVoiceVolume` x `voice_scale` x `volume` |
+
+Changes in that menu apply within half a second, in a game or not. `OpusVoiceMode=ptt` or `vad`
+fixes the mode regardless of the game's setting.
+
+**VR players** get the game's voice set once to *Open mic*, voice on and the receive volume at its
+maximum (`voice_enable 1`, `voice_modenable 1`, `voice_vox 1`, `voice_scale 1`; nobody holds a
+voice key in a headset) the first time they are in a game in VR with 2.0.10. It is recorded in
+`vr/config_migrations_applied.txt` (`2026-11-09_vr_voice_open_mic`) and saved to `config.cfg`
+right away; whatever you set in Options > Audio afterwards is kept. Desktop players keep the
+game's defaults (push to talk). The open-mic threshold of the game's own voice (`voice_threshold`)
+is left alone; Opus uses its own voice activation (`OpusVoiceVadSensitivity`).
+
+* **Push to talk** (`OpusVoiceMode=ptt`, or `game` with the game on Push to talk), any of:
   * the game's own voice key (`+voicerecord`, whatever you bound it to);
   * the VR voice combo (`VoiceRecordCombo`, default Crouch+Reload);
   * the **VoicePushToTalk** controller button: the **left menu button** on Quest/Touch, Quest Pro,
@@ -27,9 +48,10 @@ VR and desktop players with the mod both use it. Nothing changes for anyone on p
 
   Every push-to-talk also keys the game's own voice, so players without the mod hear you. Opus
   keeps sending 160 ms after you let go, so the last syllable is not cut off.
-* **Voice activation** (`OpusVoiceMode=vad`): you are sent whenever you speak
-  (`OpusVoiceVadSensitivity`), with 60 ms of pre-roll and a 300 ms hangover. Only mod players hear
-  voice-activated speech; the game's voice still needs a push-to-talk.
+* **Voice activation** (`OpusVoiceMode=vad`, or `game` with the game on Open mic): you are sent
+  whenever you speak (`OpusVoiceVadSensitivity`), with 60 ms of pre-roll and a 300 ms hangover;
+  holding a voice button also sends. With the game on Open mic, players without the mod hear you
+  through the game's open mic as well; with `vad` and the game on Push to talk, only mod players do.
 * **Microphone test**: `OpusVoiceLoopback=true` sends your voice back to you through the server,
   as others hear it.
 
@@ -41,13 +63,13 @@ source). Playback uses the default output device, which is also the one the game
 | Key | Default | Meaning |
 |---|---|---|
 | `OpusVoiceEnabled` | `true` | Opus voice with mod players (false: the game's voice only) |
-| `OpusVoiceMode` | `ptt` | `ptt` push to talk, `vad` voice activation |
+| `OpusVoiceMode` | `game` | `game` follow the game's Push to talk / Open mic (2.0.10; was `ptt`, migrated once), `ptt` push to talk, `vad` voice activation |
 | `OpusVoiceVadSensitivity` | `0.55` | 0..1, higher opens on quieter speech |
 | `OpusVoiceBitrate` | `32000` | bit/s you send, 12000-64000 |
 | `OpusVoiceFec` | `true` | in-band forward error correction |
 | `OpusVoiceExpectedLossPercent` | `5` | loss the FEC is tuned for, 0-40 |
 | `OpusVoiceMicGain` | `1.0` | microphone gain, 0-4 |
-| `OpusVoiceVolume` | `1.0` | voice chat volume, 0-2 (separate from the game's volume) |
+| `OpusVoiceVolume` | `1.0` | voice chat volume, 0-2, times the game's `voice_scale` and `volume` |
 | `OpusVoiceAgc` | `true` | even out every talker to the same loudness |
 | `OpusVoiceAgcMaxGain` | `6` | most a quiet talker is raised, 1-16x |
 | `OpusVoicePositional` | `true` | pan and distance attenuation |
@@ -104,9 +126,27 @@ talker to 60 frames/s (30 burst), and forwards it only to mod clients that opted
 game lets hear the talker** (`IVoiceServer::GetClientListening`: team voice in versus, alltalk,
 player mutes). A talker costs each listener about 5 KB/s at 32 kbit/s.
 
-Each player is heard once: a mod client drops the game's own voice packets of players listed in
-`l4d2vr_voice_peers` (a hook on engine.dll `CClientState::ProcessVoiceData`), while players
-without the mod keep getting the game's voice from everyone. Why not reuse the engine's own voice
+Each player is heard once: a mod client drops the game's own voice packets of a player listed in
+`l4d2vr_voice_peers` (a hook on engine.dll `CClientState::ProcessVoiceData`) **only while that
+player's Opus frames are arriving** (from each frame for 1.5 s, from an End frame for 0.4 s, the
+jitter buffer's tail). Players without the mod keep getting the game's voice from everyone, and a
+mod player who talks only through the game's voice (open mic while Opus waits for push to talk,
+no microphone for Opus, Opus turned off) is heard through it. When a talker starts after a pause,
+the first packet or two of the game's voice can play before the first Opus frame arrives.
+
+### What went wrong in 2.0.5-2.0.9
+
+`l4d2vr_voice_peers` lists every mod player whose hello says it *may* transmit, and every mod
+client dropped those players' game voice unconditionally. Opus shipped as push to talk
+(`OpusVoiceMode=ptt`) and ignored the game's voice settings, so a player on the game's Open mic
+(the obvious choice in VR) sent only the game's voice, which every other mod player dropped, and
+sent Opus only while a push-to-talk button was held. Two mod players on open mic heard nothing of
+each other, in either direction. Seen in a Marmot session (2026-11-10): the other player sent no
+Opus frame all session (the plugin never logged a relayed frame for them) while their game voice
+reached this client and was dropped (`stockDropped` rising with `sent` unchanged); this client's
+Opus frames were relayed only during the occasional push-to-talk presses. Fixed in 2.0.10 by
+dropping game voice only while Opus actually arrives, `OpusVoiceMode=game`, and the one-time VR
+open-mic default. Why not reuse the engine's own voice
 messages (`CLC_VoiceData`/`SVC_VoiceData`)? Their payload is relayed by the engine
 (engine_srv.so), not the game DLL, so filtering it per recipient would mean patching the engine
 on every server, and vanilla clients would decode Opus frames as noise; the string-command
@@ -127,16 +167,23 @@ buffer is still growing. A two-player test with real microphones has not been do
 
 ## Limits and known gaps
 
-* Opus voice needs both players to have the mod (2.0.5+) and the server to have `OpusVoice`.
+* Opus voice needs both players to have the mod (2.0.5+) and the server to have `OpusVoice`. A
+  2.0.5-2.0.9 client still drops the game's voice of every Opus peer, so it hears an open-mic
+  2.0.10 player only through Opus (which 2.0.10 sends on open mic); update everyone.
 * The game's "talking" icon does not light up for a player heard through Opus (their game voice
   packets are dropped); vrmod_log.txt logs voice statistics every 5 s while voice is in use.
-* Voice-activation speech reaches mod players only.
+* `OpusVoiceMode=vad` with the game on Push to talk reaches mod players only.
 * Downstream frames use the reliable channel: a lost packet delays (rather than drops) voice, and
   frames come in bursts; on a remote server that costs up to 300 ms of buffering and some
   concealment at the start of a conversation. A possible next step is an unreliable downstream
   (a user message only mod clients receive).
 
 ## Server operators
+
+The plugin logs, every 1500 frames of a talker, the frames relayed, the copies delivered to
+listeners and the frames rejected (malformed or over the rate limit: 60 frames/s, bursts of 50
+since 2.0.10, was 30), and once per talker when Opus listeners exist but the game's voice rules
+(team voice, mutes) let none of them hear it.
 
 The dedicated plugin advertises `OpusVoice` (0x2000) whenever it loads; clear the bit with
 `FeatureMask` in `addons/l4d2vr_server_config.txt` to keep everyone on the game's voice. It uses

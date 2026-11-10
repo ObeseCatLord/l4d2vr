@@ -2241,6 +2241,9 @@ void Game::UpdateOpusVoice()
     if (!m_EngineClient) return;
     // Main thread, MinHook initialized: hook the stock voice receive once.
     OpusVoiceClient::InstallStockVoiceFilter();
+    // VR players: the game's voice to open mic once ever (CreateMove runs in a
+    // game, long after config.cfg was read, so the engine cannot undo it).
+    if (m_VR && m_VR->m_IsVREnabled && m_EngineClient->IsInGame()) m_VR->ApplyVrVoiceDefaultsOnce();
     if (g_L4D2VRDesktopMode || !m_VR || !m_VR->m_IsVREnabled) OpusVoiceClient::PollDesktopSettings();
     OpusVoiceClient::FrameInputs in;
     in.inGame = m_EngineClient->IsInGame();
@@ -2249,6 +2252,30 @@ void Game::UpdateOpusVoice()
     // s_ServerUnderstandsVR is also reset when the map finishes loading, after
     // the ack may already have arrived, so it is not a gate here.
     in.serverFeatures = m_VR ? m_VR->m_ServerFeatureMask.load(std::memory_order_acquire) : 0u;
+    // The game's own voice settings (Options > Audio): Opus voice follows them
+    // live, read twice a second.
+    {
+        static l4d2vr_voice::GameVoiceSettings s_GameVoice{};
+        static ULONGLONG s_GameVoiceReadMs = 0;
+        const ULONGLONG nowMs = GetTickCount64();
+        if (m_Cvar && (s_GameVoiceReadMs == 0 || nowMs - s_GameVoiceReadMs >= 500))
+        {
+            s_GameVoiceReadMs = nowMs;
+            const int enable = GetConVarInt("voice_enable", -1);
+            const int vox = GetConVarInt("voice_vox", -1);
+            const float scale = GetConVarFloat("voice_scale", -1.0f);
+            const float volume = GetConVarFloat("volume", -1.0f);
+            if (enable >= 0 && vox >= 0 && std::isfinite(scale) && scale >= 0.0f)
+            {
+                s_GameVoice.known = true;
+                s_GameVoice.enabled = enable != 0;
+                s_GameVoice.openMic = vox != 0;
+                s_GameVoice.receiveScale = scale;
+                s_GameVoice.masterVolume = (std::isfinite(volume) && volume >= 0.0f) ? volume : 1.0f;
+            }
+        }
+        in.gameVoice = s_GameVoice;
+    }
     if (in.inGame)
     {
         if (m_VR && m_VR->m_IsVREnabled)

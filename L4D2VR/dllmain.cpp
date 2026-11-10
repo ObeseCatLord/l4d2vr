@@ -3191,6 +3191,10 @@ namespace
         // Hold grips stay an option (GripToggle=false afterwards is kept).
         { "2026-11-04_pavlov_toggle_grip", "GripToggle", "true", false, nullptr },
         { "2026-11-04_pavlov_toggle_grip_drop", "HolsterReleaseDrop", "true", false, nullptr },
+        // 2.0.10 voice chat: Opus voice follows the game's Push to talk / Open
+        // mic setting (2.0.5-2.0.9 shipped ptt, so open-mic players were heard
+        // by no mod player). Only the old shipped ptt changes.
+        { "2026-11-09_opus_voice_mode_game", "OpusVoiceMode", "game", false, "ptt" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

@@ -42,13 +42,17 @@ namespace l4d2vr_voice_server
         std::uint64_t refillMs = 0u;
         std::uint32_t relayedFrames = 0u;   // frames this talker sent that were forwarded
         std::uint32_t rejectedFrames = 0u;  // malformed or over the rate limit
+        std::uint32_t deliveredFrames = 0u; // copies of this talker's frames sent to listeners (2.0.10 log)
+        bool loggedUnheard = false;         // "nobody can hear this talker" logged once
     };
 
     class Relay
     {
     public:
         static constexpr double kFramesPerSecond = 60.0;   // 50 + slack for bursts after a hitch
-        static constexpr double kBurstFrames = 30.0;
+        // 2.0.10: one second of voice (was 30 frames: a client or server hitch
+        // of ~0.6 s cut the burst that followed it, 93 of the first 1500 frames on Marmot).
+        static constexpr double kBurstFrames = 50.0;
 
         static bool IsVoiceCommand(const char* name)
         {
@@ -153,9 +157,10 @@ namespace l4d2vr_voice_server
             c.tokens -= 1.0;
             if (c.relayedFrames % 1500u == 0u)
             {
-                char log[96];
-                std::snprintf(log, sizeof(log), "L4D2VR server: player %d Opus voice frames relayed %u (rejected %u)\n", index,
-                    static_cast<unsigned>(c.relayedFrames), static_cast<unsigned>(c.rejectedFrames));
+                char log[160];
+                std::snprintf(log, sizeof(log), "L4D2VR server: player %d Opus voice frames relayed %u (delivered %u copies, rejected %u)\n",
+                    index, static_cast<unsigned>(c.relayedFrames), static_cast<unsigned>(c.deliveredFrames),
+                    static_cast<unsigned>(c.rejectedFrames));
                 host.Log(log);
             }
             char line[48 + kMaxFrameTextChars];
@@ -163,13 +168,30 @@ namespace l4d2vr_voice_server
             if (n <= 0 || n >= static_cast<int>(sizeof(line))) { ++c.rejectedFrames; return; }
             ++c.relayedFrames;
             ++m_RelayedTotal;
+            int listeners = 0, unheard = 0;
             for (int r = 1; r <= m_ClientMax; ++r)
             {
                 const RelayClient& rc = m_Clients[static_cast<std::size_t>(r)];
                 if (!rc.hello || !(rc.flags & kHelloReceive) || !host.Connected(r)) continue;
-                if (r == index ? !(c.flags & kHelloLoopback) : !host.CanHear(r, index)) continue;
+                if (r == index ? !(c.flags & kHelloLoopback) : !host.CanHear(r, index))
+                {
+                    if (r != index) ++unheard;
+                    continue;
+                }
                 host.Send(r, line);
                 ++m_DeliveredTotal;
+                ++c.deliveredFrames;
+                if (r != index) ++listeners;
+            }
+            // Other Opus clients are there but the game's voice rules let none
+            // of them hear this talker: say so once (team voice, mutes).
+            if (listeners == 0 && unheard > 0 && !c.loggedUnheard)
+            {
+                c.loggedUnheard = true;
+                char log[160];
+                std::snprintf(log, sizeof(log), "L4D2VR server: player %d Opus voice: %d Opus listener(s) cannot hear this player (game voice rules)\n",
+                    index, unheard);
+                host.Log(log);
             }
         }
 

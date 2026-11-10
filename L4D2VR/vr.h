@@ -3962,6 +3962,9 @@ public:
 
 	// One-shot menu ConVar injection: apply launch-style visual defaults after the first main-menu entry.
 	bool m_MainMenuOneShotVisualCvarsInjected = false;
+	// 2.0.10: the game's voice set to open mic / full receive volume once ever
+	// for VR players (l4d2vr_voice::kVrVoiceDefaultsId); checked once per session.
+	bool m_VrVoiceDefaultsChecked = false;
 
 	// Optional persisted video.txt profile for VR. Applied once when enabled and again after returning to the main menu.
 	bool m_VrRecommendedVideoSettingsEnabled = false;
@@ -5304,6 +5307,7 @@ public:
 	void RestoreShadowEntityDefaults();
 	void ResetShadowEntityOverrideTracking();
 	void UpdateAutoMatQueueMode();
+	void ApplyVrVoiceDefaultsOnce();
 	void ReleaseVRRenderTargetsForDeviceReset();
 	void ReleaseVrHandsD3DResources();
 	bool DrawVrHandsForEye(const CViewSetup& view, int eyeIndex, VrHandDrawPass drawPass);

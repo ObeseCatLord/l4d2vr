@@ -31,6 +31,8 @@ EXEMPT = {
 # key -> list of (old shipped values) that a migration must replace.
 # Fork releases 1.2.2 .. 2.0.4 and the upstream builds players update from.
 KNOWN_SHIPPED_CHANGES = {
+    # 2.0.10: Opus voice follows the game's voice setting (2.0.5-2.0.9 shipped ptt).
+    'OpusVoiceMode': ['ptt'],
     # Fork releases (config.txt at 1.2.2, 2.0.0 .. 2.0.4).
     'AimLineEnabled': ['true'],
     'CrosshairEnabled': ['true'],

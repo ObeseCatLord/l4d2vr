@@ -16,8 +16,9 @@
 //                     sent unreliably (IVEngineClient::ServerCmd(.., false))
 //   server -> client  l4d2vr_voice_rx <player> <frame>        relayed frame
 //   server -> client  l4d2vr_voice_peers <lo> <hi>            players (bit i-1)
-//                     that send Opus: their stock voice is dropped by this
-//                     client (each is heard once, through Opus)
+//                     that may send Opus: while their Opus voice is actually
+//                     arriving, their stock voice is dropped by this client
+//                     (each is heard once); otherwise it plays (2.0.10)
 // <frame> is base64url (no padding) of:
 //   [0] version (1)  [1] flags (Start, End)  [2..3] sequence (LE)
 //   [4] talkspurt id [5] Opus bytes N        [6..] N Opus bytes (N = 0 only with End)
@@ -251,7 +252,10 @@ namespace l4d2vr_voice
     }
 
     // ---- settings -------------------------------------------------------------------
-    enum class TransmitMode : std::uint8_t { PushToTalk, VoiceActivation };
+    // FollowGame (2.0.10 default): the game's own voice setting decides, the
+    // way it decides for the game's voice: "Open mic" (voice_vox 1) = voice
+    // activation, "Push to talk" (voice_vox 0) = push to talk.
+    enum class TransmitMode : std::uint8_t { PushToTalk, VoiceActivation, FollowGame };
 
     struct Settings
     {
@@ -259,7 +263,7 @@ namespace l4d2vr_voice
         int bitrate = 32000;                 // OpusVoiceBitrate (bits/s, 12000..64000)
         bool fec = true;                     // OpusVoiceFec (in-band FEC, upstream is unreliable)
         int expectedLossPercent = 5;         // OpusVoiceExpectedLossPercent (FEC strength)
-        TransmitMode mode = TransmitMode::PushToTalk;   // OpusVoiceMode = ptt | vad
+        TransmitMode mode = TransmitMode::FollowGame;   // OpusVoiceMode = game | ptt | vad
         float vadSensitivity = 0.55f;        // OpusVoiceVadSensitivity (0..1, higher opens on quieter speech)
         float micGain = 1.0f;                // OpusVoiceMicGain (0..4)
         float volume = 1.0f;                 // OpusVoiceVolume (0..2)
@@ -323,6 +327,7 @@ namespace l4d2vr_voice
             const std::string m = Lower(Trim(v));
             if (m == "vad" || m == "voice" || m == "voiceactivation" || m == "open") s.mode = TransmitMode::VoiceActivation;
             else if (m == "ptt" || m == "pushtotalk" || m == "push") s.mode = TransmitMode::PushToTalk;
+            else if (m == "game" || m == "auto" || m == "follow" || m == "followgame") s.mode = TransmitMode::FollowGame;
         }
         if (str("OpusVoiceVadSensitivity")) s.vadSensitivity = std::clamp(ParseFloatText(v, s.vadSensitivity), 0.0f, 1.0f);
         if (str("OpusVoiceMicGain")) s.micGain = std::clamp(ParseFloatText(v, s.micGain), 0.0f, 4.0f);
@@ -371,6 +376,103 @@ namespace l4d2vr_voice
                 if (Lower(p.first) == Lower(key)) { out = p.second; found = true; }
             return found;
         });
+    }
+
+    // ---- the game's own voice settings (2.0.10) ----------------------------------------
+    // Read from the game's cvars (Options > Audio > Voice), live: Opus voice
+    // follows what the player sets there instead of ignoring it.
+    struct GameVoiceSettings
+    {
+        bool known = false;           // the cvars were read (false: the settings alone decide)
+        bool enabled = true;          // voice_enable ("Voice communication" Enabled/Disabled)
+        bool openMic = false;         // voice_vox ("Open mic" vs "Push to talk")
+        float receiveScale = 1.0f;    // voice_scale ("Voice receive volume")
+        float masterVolume = 1.0f;    // volume (the game's master volume also scales its voice)
+    };
+
+    inline bool SameGameVoice(const GameVoiceSettings& a, const GameVoiceSettings& b)
+    {
+        return a.known == b.known && a.enabled == b.enabled && a.openMic == b.openMic &&
+            std::fabs(a.receiveScale - b.receiveScale) < 1e-3f && std::fabs(a.masterVolume - b.masterVolume) < 1e-3f;
+    }
+
+    // The settings in effect: OpusVoiceEnabled and the game's voice switch,
+    // OpusVoiceMode=game resolved from the open-mic setting, and the playback
+    // volume scaled like the game's voice (voice_scale x volume).
+    inline Settings ResolveWithGame(Settings s, const GameVoiceSettings& g)
+    {
+        if (g.known && !g.enabled) s.enabled = false;
+        if (s.mode == TransmitMode::FollowGame)
+            s.mode = (g.known && g.openMic) ? TransmitMode::VoiceActivation : TransmitMode::PushToTalk;
+        if (g.known)
+            s.volume = std::clamp(s.volume * std::clamp(g.receiveScale, 0.0f, 2.0f) * std::clamp(g.masterVolume, 0.0f, 1.0f),
+                0.0f, 2.0f);
+        return s;
+    }
+
+    inline const char* ModeName(TransmitMode m)
+    {
+        return m == TransmitMode::VoiceActivation ? "open mic (voice activation)"
+            : m == TransmitMode::PushToTalk ? "push to talk" : "follows the game";
+    }
+
+    // ---- stock voice of Opus talkers (2.0.10) ------------------------------------------
+    // A peer (hello with transmit) is heard through Opus only while its Opus
+    // frames actually arrive. 2.0.5-2.0.9 dropped a peer's stock voice whenever
+    // it was a peer, so an open-mic talker (stock voice on, Opus waiting for
+    // push-to-talk) was heard by no one with the mod. Now its stock voice is
+    // dropped only from its first Opus frame until a moment after the last.
+    constexpr double kStockVoiceHoldMs = 1500.0;    // after an Opus frame (covers bursty arrival)
+    constexpr double kStockVoiceEndHoldMs = 400.0;  // after the End frame (the jitter buffer's tail)
+
+    inline double StockVoiceHoldUntil(bool endFrame, double nowMs)
+    {
+        return nowMs + (endFrame ? kStockVoiceEndHoldMs : kStockVoiceHoldMs);
+    }
+
+    inline bool DropStockVoice(bool peer, double nowMs, double holdUntilMs)
+    {
+        return peer && nowMs < holdUntilMs;
+    }
+
+    // ---- VR voice defaults, once (2.0.10) ------------------------------------------------
+    // The first VR session after 2.0.10 sets the game's voice to open mic at
+    // full receive volume, once (recorded in vr/config_migrations_applied.txt);
+    // what the player sets afterwards in the game's menu is kept. Desktop
+    // players keep the game's defaults.
+    constexpr char kVrVoiceDefaultsId[] = "2026-11-09_vr_voice_open_mic";
+    struct GameCvarDefault { const char* name; const char* value; };
+    constexpr GameCvarDefault kVrVoiceCvarDefaults[] = {
+        { "voice_enable", "1" },      // voice on
+        { "voice_modenable", "1" },   // the server's voice manager lets this client hear others
+        { "voice_vox", "1" },         // open mic (no button to hold in a headset)
+        { "voice_scale", "1" },       // receive volume at the menu's maximum (the game's voice is quiet)
+    };
+
+    // vr/config_migrations_applied.txt: one id per line, '#' comments.
+    inline bool MigrationStateHasId(const std::string& text, const std::string& id)
+    {
+        std::size_t pos = 0;
+        while (pos <= text.size())
+        {
+            std::size_t nl = text.find('\n', pos);
+            if (nl == std::string::npos) nl = text.size();
+            std::string line = text.substr(pos, nl - pos);
+            const std::size_t hash = line.find('#');
+            if (hash != std::string::npos) line.erase(hash);
+            if (Trim(line) == id) return true;
+            if (nl == text.size()) break;
+            pos = nl + 1;
+        }
+        return false;
+    }
+
+    inline std::string MigrationStateWithId(std::string text, const std::string& id)
+    {
+        if (MigrationStateHasId(text, id)) return text;
+        if (text.empty()) text = "# L4D2VR one-shot config migrations. Do not edit unless you want a migration to run again.\n";
+        if (text.back() != '\n') text += '\n';
+        return text + id + "\n";
     }
 
     // ---- voice activation (energy gate, adaptive noise floor) ------------------------

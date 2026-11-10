@@ -42,6 +42,9 @@ namespace OpusVoiceClient
         l4d2vr_voice::Vec3 listener{};        // head position (Source units)
         float listenerYawDeg = 0.0f;          // head yaw
         bool gameWindowFocused = true;        // for the desktop push-to-talk key
+        // The game's voice cvars (voice_enable, voice_vox, voice_scale, volume):
+        // Opus voice follows them live (2.0.10). known=false keeps the last ones.
+        l4d2vr_voice::GameVoiceSettings gameVoice{};
         // Head position of a talker (1-based); false when unknown (centred).
         std::function<bool(int player, l4d2vr_voice::Vec3& head)> speakerHead;
         // Sends a string command to the server (unreliable).
@@ -49,6 +52,7 @@ namespace OpusVoiceClient
     };
 
     void ApplySettings(const l4d2vr_voice::Settings& settings);
+    // The settings in effect (resolved with the game's voice settings).
     l4d2vr_voice::Settings CurrentSettings();
     // Desktop mode (no VR config parse): read the OpusVoice* keys from
     // VR/config.txt and VR/config2.txt (rechecked every few seconds).
@@ -78,7 +82,8 @@ namespace OpusVoiceClient
     void ResetLoopbackAnalysis();
 
     // Stock voice (CClientState::ProcessVoiceData) from this sender (0-based
-    // client slot) duplicates its Opus voice: drop it.
+    // client slot) duplicates its Opus voice: drop it. True only for a peer
+    // whose Opus frames are arriving now (2.0.10); otherwise the game's voice plays.
     bool ShouldDropStockVoice(int senderClientSlot);
     // Hooks engine.dll's ProcessVoiceData (after MH_Initialize); once.
     bool InstallStockVoiceFilter();

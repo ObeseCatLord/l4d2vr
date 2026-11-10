@@ -52,6 +52,7 @@ namespace
         float targetLeft = 1.0f, targetRight = 1.0f;
         double lastArrivalMs = -1e30;
         double lastAudioMs = -1e30;
+        double stockHoldUntilMs = -1e30;   // drop this player's stock voice until then (Opus is arriving)
         bool used = false;
         // Audio thread only.
         OpusDecoder* decoder = nullptr;
@@ -63,6 +64,7 @@ namespace
 
     std::mutex g_Mutex;
     Settings g_Settings;                               // g_Mutex
+    GameVoiceSettings g_GameVoice;                     // g_Mutex: the game's voice cvars (2.0.10)
     std::array<Speaker, kMaxPlayers + 1> g_Speakers;   // g_Mutex for the shared fields
     std::deque<std::string> g_Outgoing;                // g_Mutex
     OpusVoiceClient::Stats g_Stats;                    // g_Mutex
@@ -95,10 +97,11 @@ namespace
     HANDLE g_WakeEvent = nullptr;
     std::once_flag g_StartOnce;
 
+    // The settings in effect (OpusVoice* keys resolved with the game's voice settings).
     Settings SettingsSnapshot()
     {
         std::lock_guard<std::mutex> lock(g_Mutex);
-        return g_Settings;
+        return ResolveWithGame(g_Settings, g_GameVoice);
     }
 
     bool LoopbackWanted(const Settings& s)
@@ -324,7 +327,9 @@ namespace
                     for (int i = 0; i < kFrameSamples; ++i)
                         pcm[i] = static_cast<std::int16_t>(std::clamp(static_cast<int>(pcm[i] * s.micGain), -32768, 32767));
                 const bool vad = m_Vad.Update(pcm, kFrameSamples, s.vadSensitivity);
-                gate = ptt ? PushToTalkHeld() : vad;
+                // Open mic: speech opens the gate, and holding a voice button
+                // still forces it open (as the game's own voice does).
+                gate = ptt ? PushToTalkHeld() : (vad || PushToTalkHeld());
             }
             const Transmitter::Step step = m_Tx.Update(gate, ptt, allowed, static_cast<int>(m_Preroll.size()));
             if (step.resetEncoder) opus_encoder_ctl(m_Encoder, OPUS_RESET_STATE);
@@ -810,7 +815,7 @@ namespace OpusVoiceClient
         g_TransmitAllowed.store(false);
         g_Peers.store(0u);
         std::lock_guard<std::mutex> lock(g_Mutex);
-        for (Speaker& sp : g_Speakers) { sp.jitter.Reset(); sp.used = false; }
+        for (Speaker& sp : g_Speakers) { sp.jitter.Reset(); sp.used = false; sp.stockHoldUntilMs = -1e30; }
         g_Outgoing.clear();
         Wake();
     }
@@ -848,6 +853,7 @@ namespace OpusVoiceClient
         if (now - sp.lastArrivalMs < 1000.0) g_Stats.maxArrivalGapMs = std::max(g_Stats.maxArrivalGapMs, now - sp.lastArrivalMs);
         sp.jitter.Insert(f, now);
         sp.lastArrivalMs = now;
+        sp.stockHoldUntilMs = StockVoiceHoldUntil(f.size == 0u && (f.flags & kFlagEnd) != 0u, now);
         sp.used = true;
         ++g_Stats.framesReceived;
     }
@@ -873,7 +879,14 @@ namespace OpusVoiceClient
 
     bool ShouldDropStockVoice(int senderClientSlot)
     {
-        return (g_Peers.load() & PlayerBit(senderClientSlot + 1)) != 0u;
+        const int player = senderClientSlot + 1;
+        const bool peer = (g_Peers.load() & PlayerBit(player)) != 0u;
+        if (!peer || player < 1 || player > kMaxPlayers) return false;
+        // Only while this talker's Opus voice is arriving: a peer that talks
+        // through the game's voice alone (open mic while Opus waits for a
+        // button, no microphone for Opus, ...) is still heard.
+        std::lock_guard<std::mutex> lock(g_Mutex);
+        return DropStockVoice(peer, NowMs(), g_Speakers[static_cast<std::size_t>(player)].stockHoldUntilMs);
     }
 
     void NoteStockVoiceDropped() { g_StockDropped.fetch_add(1u); }
@@ -912,6 +925,31 @@ namespace OpusVoiceClient
 
     void Frame(const FrameInputs& in)
     {
+        if (in.gameVoice.known)
+        {
+            bool changed = false;
+            Settings raw;
+            {
+                std::lock_guard<std::mutex> lock(g_Mutex);
+                changed = !SameGameVoice(g_GameVoice, in.gameVoice);
+                if (changed) g_GameVoice = in.gameVoice;
+                raw = g_Settings;
+            }
+            if (changed)
+            {
+                const Settings e = ResolveWithGame(raw, in.gameVoice);
+                static int s_GameLogs = 0;
+                if (s_GameLogs < 24)
+                {
+                    ++s_GameLogs;
+                    Game::logMsg("[VR][Voice] game voice settings: voice_enable=%d voice_vox=%d voice_scale=%.2f volume=%.2f -> Opus voice %s, %s%s, playback gain %.2f",
+                        in.gameVoice.enabled ? 1 : 0, in.gameVoice.openMic ? 1 : 0, in.gameVoice.receiveScale, in.gameVoice.masterVolume,
+                        e.enabled ? "on" : "off", ModeName(e.mode),
+                        raw.mode == TransmitMode::FollowGame ? " (OpusVoiceMode=game)" : " (OpusVoiceMode)", e.volume);
+                }
+                Wake();
+            }
+        }
         const Settings s = SettingsSnapshot();
         // CreateMove (and so Frame) stops while not in a game: a long gap with
         // no feature ack since means a new server or map; wait for its ack.
@@ -946,7 +984,7 @@ namespace OpusVoiceClient
             in.serverCommand(line, true);
             static int s_HelloLogs = 0;
             if (s_HelloLogs < 12) { ++s_HelloLogs; Game::logMsg("[VR][Voice] sent %s (server features 0x%X)", line, in.serverFeatures); }
-            if (hello == 0) Game::logMsg("[VR][Voice] Opus voice off (OpusVoiceEnabled=false): the game's own voice is used");
+            if (hello == 0) Game::logMsg("[VR][Voice] Opus voice off (OpusVoiceEnabled=false or the game's voice disabled): the game's own voice is used");
         }
         const bool active = g_Negotiation.Active();
         const bool transmit = g_Negotiation.TransmitAllowed();
@@ -997,11 +1035,19 @@ namespace OpusVoiceClient
         {
             g_LastStatsLogMs = now;
             const Stats st = GetStats();
-            if (st.framesSent || st.framesReceived)
-                Game::logMsg("[VR][Voice] stats: active=%d tx=%d capture=%d output=%d sent=%u (%u B, %u spurts) received=%u decoded=%u fec=%u plc=%u mixed=%u stockDropped=%u peers=%llx jitter=%dms maxGap=%.0fms",
-                    st.active ? 1 : 0, st.transmitAllowed ? 1 : 0, st.captureOpen ? 1 : 0, st.outputOpen ? 1 : 0,
+            // While voice is in use (Opus or the game's own voice), once per change.
+            static std::uint64_t s_LastActivity = 0u;
+            const std::uint64_t activity = std::uint64_t{ st.framesSent } + st.framesReceived + st.stockVoiceDropped + st.stockVoicePassed;
+            if (activity != s_LastActivity)
+            {
+                s_LastActivity = activity;
+                Game::logMsg("[VR][Voice] stats: active=%d tx=%d mode=%s capture=%d output=%d sent=%u (%u B, %u spurts) received=%u decoded=%u fec=%u plc=%u mixed=%u stockDropped=%u stockPassed=%u peers=%llx jitter=%dms maxGap=%.0fms",
+                    st.active ? 1 : 0, st.transmitAllowed ? 1 : 0, ModeWanted(s) == TransmitMode::VoiceActivation ? "vad" : "ptt",
+                    st.captureOpen ? 1 : 0, st.outputOpen ? 1 : 0,
                     st.framesSent, st.bytesSent, st.talkspurtsSent, st.framesReceived, st.decoded, st.fec, st.concealed,
-                    st.mixedBlocks, st.stockVoiceDropped, static_cast<unsigned long long>(st.peers), st.lastJitterTargetMs, st.maxArrivalGapMs);
+                    st.mixedBlocks, st.stockVoiceDropped, st.stockVoicePassed, static_cast<unsigned long long>(st.peers),
+                    st.lastJitterTargetMs, st.maxArrivalGapMs);
+            }
             std::lock_guard<std::mutex> lock(g_Mutex);
             g_Stats.maxArrivalGapMs = 0.0;
         }

@@ -66,6 +66,20 @@ namespace l4d2vr_openxr
         return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
     }
 
+    // The OpenXR loader ignores XR_RUNTIME_JSON in an elevated process.
+    inline bool ProcessIsElevated()
+    {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+            return false;
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        const bool elevated = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) &&
+            elevation.TokenIsElevated != 0;
+        CloseHandle(token);
+        return elevated;
+    }
+
     // Everything Preflight needs; cheap (registry and file checks, no loader).
     inline RuntimeFacts GatherRuntimeFacts(bool wine)
     {
@@ -74,6 +88,8 @@ namespace l4d2vr_openxr
         facts.activeRuntime32 = ReadActiveRuntime(KEY_WOW64_32KEY);
         facts.activeRuntime64 = ReadActiveRuntime(KEY_WOW64_64KEY);
         facts.activeRuntime32Exists = FileExists(facts.activeRuntime32);
+        facts.sibling32Of64 = ThirtyTwoBitSibling(facts.activeRuntime64);
+        facts.sibling32Of64Exists = FileExists(facts.sibling32Of64);
         char value[1024] = {};
         const DWORD n = GetEnvironmentVariableA("XR_RUNTIME_JSON", value, sizeof(value));
         if (n > 0 && n < sizeof(value))

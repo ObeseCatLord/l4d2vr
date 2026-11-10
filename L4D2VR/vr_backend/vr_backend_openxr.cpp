@@ -984,11 +984,30 @@ private:
             // Cheap checks first (registry, files): no runtime registered, a
             // 64-bit-only runtime, a Proton without 32-bit wineopenxr. The
             // loader is not touched then, so desktop mode starts at once.
-            const xrm::RuntimeFacts facts = xrm::GatherRuntimeFacts(wine);
-            Game::logMsg("[VR][OpenXR] runtime registration: 32-bit '%s'%s, 64-bit '%s'%s%s",
+            xrm::RuntimeFacts facts = xrm::GatherRuntimeFacts(wine);
+            Game::logMsg("[VR][OpenXR] runtime registration: 32-bit '%s'%s, 64-bit '%s'%s%s%s",
                 facts.activeRuntime32.c_str(), facts.activeRuntime32.empty() ? "" : (facts.activeRuntime32Exists ? " (exists)" : " (MISSING)"),
-                facts.activeRuntime64.c_str(), facts.runtimeJsonEnv.empty() ? "" : (", XR_RUNTIME_JSON=" + facts.runtimeJsonEnv).c_str(),
+                facts.activeRuntime64.c_str(),
+                facts.sibling32Of64.empty() ? "" : (std::string(", its 32-bit manifest ") + xrm::ManifestFileName(facts.sibling32Of64) +
+                    (facts.sibling32Of64Exists ? " exists" : " is missing")).c_str(),
+                facts.runtimeJsonEnv.empty() ? "" : (", XR_RUNTIME_JSON=" + facts.runtimeJsonEnv).c_str(),
                 wine ? (facts.wineOpenXr32 ? ", Proton 32-bit wineopenxr present" : ", Proton 32-bit wineopenxr MISSING") : "");
+            // The 32-bit registry view does not match the active runtime (e.g.
+            // SteamVR set as the OpenXR runtime before 2.17 wrote only the 64-bit
+            // view): load the active runtime's own 32-bit manifest in this
+            // process (openxr_runtime_diagnosis.h Choose32BitRuntimeOverride).
+            const xrm::RuntimeOverride runtimeOverride = xrm::Choose32BitRuntimeOverride(facts);
+            if (!runtimeOverride.manifest.empty())
+            {
+                SetEnvironmentVariableA("XR_RUNTIME_JSON", runtimeOverride.manifest.c_str());
+                facts.runtimeJsonEnv = runtimeOverride.manifest;
+                Game::logMsg("[VR][OpenXR] %s: using %s for this game (XR_RUNTIME_JSON in this process; the registry is "
+                    "not changed; SteamVR Settings > OpenXR > Set SteamVR as OpenXR Runtime fixes the registration "
+                    "for every 32-bit game)%s",
+                    runtimeOverride.why.c_str(), runtimeOverride.manifest.c_str(),
+                    xrm::ProcessIsElevated() ? ". WARNING: the game runs as administrator, and the OpenXR loader then ignores "
+                        "XR_RUNTIME_JSON: do not run Steam or the game as administrator" : "");
+            }
             const xrm::Preflight preflight = xrm::CheckPreflight(facts);
             if (!preflight.tryRuntime)
             {
@@ -1051,7 +1070,9 @@ private:
             if (XR_FAILED(r))
             {
                 m_Instance = XR_NULL_HANDLE;
-                reason = "xrCreateInstance failed (" + std::to_string(static_cast<int>(r)) + ")";
+                reason = xrm::IsRuntimeUnavailableResult(static_cast<int>(r))
+                    ? xrm::LoaderFailureReason(static_cast<int>(r), facts, wineVrState)
+                    : "xrCreateInstance failed (" + std::to_string(static_cast<int>(r)) + ")";
                 return false;
             }
 #define L4D2VR_XR_LOAD_INSTANCE(name) \

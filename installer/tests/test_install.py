@@ -346,5 +346,34 @@ class PackageValidationTests(TempDirTest):
         self.assertEqual(package.mod_version, "1.2.3")
 
 
+class ForeignModTests(TempDirTest):
+    def setUp(self):
+        super().setUp()
+        self.game = make_game(self.tmp)
+
+    def test_foreign_d3d9_is_reported_and_backed_up(self):
+        (self.game / "d3d9.dll").write_bytes(b"MZ...imports openvr_api.dll...")
+        (self.game / "openvr_api.dll").write_bytes(b"MZ")
+        notes = install.foreign_mod_notes(self.game)
+        self.assertTrue(any("did not install" in n and "OpenVR VR mod build" in n for n in notes), notes)
+        self.assertTrue(any("openvr_api.dll" in n for n in notes), notes)
+        logs = []
+        zip_path = make_zip(self.tmp / "dl" / "v1.zip", CLIENT_V1)
+        install.install_package(install.client_target(self.game), zip_path, {}, log=logs.append)
+        self.assertTrue(any(line.startswith("Note: The game folder has a d3d9.dll") for line in logs), logs)
+        backups = list((self.game / install.BACKUP_DIR).rglob("d3d9.dll"))
+        self.assertEqual([b.read_bytes() for b in backups], [b"MZ...imports openvr_api.dll..."])
+        # Our own d3d9.dll afterwards: no warning.
+        self.assertEqual([n for n in install.foreign_mod_notes(self.game) if "d3d9.dll" in n], [])
+
+    def test_workshop_item_is_reported(self):
+        item = self.tmp / "steamapps" / "workshop" / "content" / "550" / install.WORKSHOP_VR_ITEM
+        item.mkdir(parents=True)
+        self.assertTrue(any("Workshop" in n for n in install.foreign_mod_notes(self.game)))
+
+    def test_clean_folder_has_no_notes(self):
+        self.assertEqual(install.foreign_mod_notes(self.game), [])
+
+
 if __name__ == "__main__":
     unittest.main()

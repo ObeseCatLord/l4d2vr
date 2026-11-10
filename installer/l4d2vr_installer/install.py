@@ -569,9 +569,59 @@ def _remove_empty_parents(root: Path, removed: Path) -> None:
         parent = parent.parent
 
 
+WORKSHOP_VR_ITEM = "3724995607"  # the upstream L4D2VR Workshop item (OpenVR builds)
+
+
+def _describe_dll(data: bytes) -> str:
+    lowered = data.lower()
+    if b"openxr_loader.dll" in lowered and b"l4d2vr" in lowered:
+        return "an L4D2VR OpenXR build"
+    if b"openvr_api.dll" in lowered:
+        return "an OpenVR VR mod build (the original L4D2VR / Workshop mod, or this fork before 2.0)"
+    if b"reshade" in lowered:
+        return "ReShade"
+    return "an unknown d3d9.dll"
+
+
+def foreign_mod_notes(game_dir: Path) -> List[str]:
+    """Warnings about another VR mod (or another d3d9.dll) in a client game
+    folder: a d3d9.dll this installer did not write, OpenVR files of older VR
+    mod builds, and the upstream Workshop item that ships its own build."""
+    game_dir = Path(game_dir)
+    notes: List[str] = []
+    state = read_json(resolve_ci(game_dir, "vr/installed_release.json")) or {}
+    recorded = (state.get("files") or {}).get("d3d9.dll")
+    dll = resolve_ci(game_dir, "d3d9.dll")
+    if dll.is_file():
+        try:
+            data = dll.read_bytes()
+        except OSError:
+            data = b""
+        if recorded is None or sha256_bytes(data) != recorded:
+            notes.append(f"The game folder has a d3d9.dll this installer did not install ({_describe_dll(data)}). "
+                         "Installing replaces it with this mod's d3d9.dll and keeps it in the backup (Restore brings "
+                         "it back). Only one d3d9.dll mod can run at a time.")
+    for name in ("openvr_api.dll", "vr/manifest.vrmanifest"):
+        if resolve_ci(game_dir, name).is_file():
+            notes.append(f"Found {name} from an OpenVR VR mod build; the OpenXR mod does not use it (an install or update removes it, with a backup).")
+    candidates = [
+        game_dir / "left4dead2" / "addons" / "workshop" / f"{WORKSHOP_VR_ITEM}.vpk",
+        game_dir / "left4dead2" / "addons" / f"{WORKSHOP_VR_ITEM}.vpk",
+        game_dir.parent.parent / "workshop" / "content" / "550" / WORKSHOP_VR_ITEM,
+    ]
+    if any(path.exists() for path in candidates):
+        notes.append(f"You are subscribed to the original L4D2VR Steam Workshop item ({WORKSHOP_VR_ITEM}), which ships "
+                     "its own (OpenVR) build. This installer turns off its self-update prompt; to avoid mixing the two "
+                     "mods, unsubscribe from it in the Steam Workshop.")
+    return notes
+
+
 def install_package(target: Target, zip_path: Path, metadata: Optional[dict] = None, *,
                     pin_workshop: bool = True, dry_run: bool = False, log: Log = _noop) -> Plan:
     package = open_package(zip_path, target)
+    if target.kind == "client":
+        for note in foreign_mod_notes(target.root):
+            log("Note: " + note)
     plan = plan_install(target, package, metadata, pin_workshop=pin_workshop)
     if not plan.changes and not dry_run and target.state_path.is_file():
         state = target.read_state() or {}

@@ -36,6 +36,22 @@ static_assert(offsetof(CBaseEdict, m_NetworkSerialNumber) == 4u, "Unexpected L4D
 
 static std::mutex logMutex;
 static std::once_flag logResetOnce;
+
+// vrmod_log.txt next to left4dead2.exe (the game folder), whatever the working
+// directory is (a shortcut or launcher can start the game elsewhere).
+static const std::wstring& VrLogPath()
+{
+    static const std::wstring path = []() {
+        wchar_t exePath[MAX_PATH] = {};
+        const DWORD n = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH)
+            return std::wstring(L"vrmod_log.txt");
+        std::wstring dir(exePath, n);
+        const size_t slash = dir.find_last_of(L"\\/");
+        return slash == std::wstring::npos ? std::wstring(L"vrmod_log.txt") : dir.substr(0, slash + 1) + L"vrmod_log.txt";
+    }();
+    return path;
+}
 using tCreateInterface = void* (__cdecl*)(const char* name, int* returnCode);
 
 void L4D2VRConfigOverlay_StartWorker();
@@ -672,19 +688,33 @@ static int FindRecvPropOffsetRecursive(const SourceRecvTable* table, const char*
 static int FindRecvPropOffsetSafe(void* baseClientDll, const char* networkName, const char* propName);
 
 // === Utility: Retry module load with logging ===
-static HMODULE GetModuleWithRetry(const char* dllname, std::chrono::milliseconds timeout = std::chrono::seconds(30), int delayMs = 50)
+// The game loads client.dll and friends long after d3d9.dll; a slow first
+// start (disk, shader cache, antivirus) can take well over 30 s, so wait up to
+// 10 minutes and note the wait in the log.
+static HMODULE GetModuleWithRetry(const char* dllname, std::chrono::milliseconds timeout = std::chrono::minutes(10), int delayMs = 50)
 {
     const auto start = std::chrono::steady_clock::now();
     int attempt = 0;
+    bool slowLogged = false;
 
     while (true)
     {
         HMODULE handle = GetModuleHandleA(dllname);
         if (handle)
+        {
+            if (slowLogged)
+                Game::logMsg("[VR] %s loaded after %.0f s", dllname,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
             return handle;
+        }
 
         ++attempt;
         Sleep(delayMs);
+        if (!slowLogged && std::chrono::steady_clock::now() - start >= std::chrono::seconds(30))
+        {
+            slowLogged = true;
+            Game::logMsg("[VR] still waiting for the game to load %s (30 s so far)", dllname);
+        }
 
         if (timeout.count() >= 0 && std::chrono::steady_clock::now() - start >= timeout)
             break;
@@ -1264,7 +1294,7 @@ void Game::logMsg(const char* fmt, ...)
     std::lock_guard<std::mutex> lock(logMutex);
     std::call_once(logResetOnce, []()
         {
-            FILE* file = fopen("vrmod_log.txt", "w");
+            FILE* file = _wfopen(VrLogPath().c_str(), L"w");
             if (file)
                 fclose(file);
         });
@@ -1283,10 +1313,10 @@ void Game::logMsg(const char* fmt, ...)
 
     printf("\n");
 
-    const char* logFiles[] = { "vrmod_log.txt"};
-    for (const char* logFile : logFiles)
+    const std::wstring* logFiles[] = { &VrLogPath() };
+    for (const std::wstring* logFile : logFiles)
     {
-        FILE* file = fopen(logFile, "a");
+        FILE* file = _wfopen(logFile->c_str(), L"a");
         if (!file)
             continue;
 

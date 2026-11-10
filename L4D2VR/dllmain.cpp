@@ -3709,9 +3709,33 @@ extern "C" bool L4D2VR_DesktopModeActive()
     return desktop;
 }
 
+// First vrmod_log.txt line: which build runs from where, so a log can be told
+// apart from another VR mod's (or an old) one.
+static void LogStartupBanner(HMODULE hModule)
+{
+    const std::filesystem::path gameRootPath = GetGameRootPath();
+    std::string version;
+    if (gameRootPath.empty() || !ReadAsciiFile(gameRootPath / L"VR" / L"version.txt", version))
+        version = "unknown (vr/version.txt missing)";
+    version = TrimAsciiWhitespace(version);
+    wchar_t modulePath[MAX_PATH] = {};
+    GetModuleFileNameW(hModule, modulePath, MAX_PATH);
+    const std::filesystem::path loader = std::filesystem::path(modulePath).parent_path() / L"openxr_loader.dll";
+    std::error_code ec;
+    const bool loaderPresent = std::filesystem::exists(loader, ec);
+    using WineGetVersion = const char* (__cdecl*)();
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    const auto wineVersion = ntdll ? reinterpret_cast<WineGetVersion>(GetProcAddress(ntdll, "wine_get_version")) : nullptr;
+    Game::logMsg("[VR] L4D2VR %s (OpenXR build) starting: d3d9.dll %ls, game folder %ls, %s%s; renderer: the mod's DXVK "
+        "(Direct3D 9 -> Vulkan) inside d3d9.dll, VR through OpenXR (XR_KHR_vulkan_enable) with %ls (%s)",
+        version.c_str(), modulePath, gameRootPath.c_str(), wineVersion ? "Wine/Proton " : "Windows",
+        wineVersion ? wineVersion() : "", loader.c_str(), loaderPresent ? "present" : "MISSING");
+}
+
 DWORD WINAPI InitL4D2VR(HMODULE hModule)
 {
     timeBeginPeriod(1);
+    LogStartupBanner(hModule);
     StartForcedIndexBufferPolicy();
 
 #ifdef _DEBUG

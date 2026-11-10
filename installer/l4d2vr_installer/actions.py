@@ -326,6 +326,7 @@ def status_lines(game_dir: Optional[Path], server_dir: Optional[Path] = None,
         lines.append(f"Game folder: {game_dir} [{ {'windows': 'Windows build', 'linux': 'native Linux build (needs Proton)', 'missing': 'not found'}[depot] }]")
         target = install.client_target(game_dir)
         lines += install.status(target).lines()
+        lines += ["Warning: " + note for note in install.foreign_mod_notes(game_dir)]
         lines += openxr_requirement_lines(game_dir, roots)
         if not sys.platform.startswith("win"):
             lines += launch_options_lines(game_dir)

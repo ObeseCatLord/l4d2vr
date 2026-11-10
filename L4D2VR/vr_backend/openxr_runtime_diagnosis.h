@@ -15,6 +15,8 @@
 //   2. LoaderFailureReason(result, facts, wineVrState): the loader or runtime
 //      answered with an error (XR_ERROR_RUNTIME_UNAVAILABLE and friends).
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 namespace l4d2vr_openxr
@@ -40,6 +42,11 @@ namespace l4d2vr_openxr
         std::string activeRuntime64;
         bool activeRuntime32Exists = false;   // that 32-bit manifest file exists
         std::string runtimeJsonEnv;           // XR_RUNTIME_JSON in the Win32 environment
+        // The 32-bit manifest that sits next to the active 64-bit one
+        // (steamxr_win64.json -> steamxr_win32.json, *_64.json -> *_32.json),
+        // see ThirtyTwoBitSibling; empty when the name has no 64 in it.
+        std::string sibling32Of64;
+        bool sibling32Of64Exists = false;
         // Proton: the prefix has a 32-bit wineopenxr.dll (syswow64).
         bool wineOpenXr32 = false;
     };
@@ -61,6 +68,100 @@ namespace l4d2vr_openxr
     {
         return "Run the game with Proton Hotfix (2026-10-07 or newer) or Proton Experimental (11.0-20261014 or newer) "
                "and the launch option PROTON_USE_WOW64=1 (the L4D2VR installer sets both)";
+    }
+
+    inline std::string LowerAscii(std::string text)
+    {
+        std::transform(text.begin(), text.end(), text.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }
+
+    inline std::string ManifestFileName(const std::string& path)
+    {
+        const size_t slash = path.find_last_of("\\/");
+        return slash == std::string::npos ? path : path.substr(slash + 1);
+    }
+
+    // Same manifest? (case-insensitive, either slash; Windows paths)
+    inline bool SameManifest(const std::string& a, const std::string& b)
+    {
+        auto norm = [](const std::string& path) {
+            std::string out = LowerAscii(path);
+            std::replace(out.begin(), out.end(), '/', '\\');
+            return out;
+        };
+        return !a.empty() && norm(a) == norm(b);
+    }
+
+    // SteamVR's runtime manifests: steamxr_win64.json and (2.17+) steamxr_win32.json.
+    inline bool IsSteamVrManifest(const std::string& path)
+    {
+        return LowerAscii(ManifestFileName(path)).rfind("steamxr_win", 0) == 0;
+    }
+
+    // The 32-bit manifest a runtime ships next to its 64-bit one: the last "64"
+    // in the file name becomes "32" (steamxr_win64.json -> steamxr_win32.json,
+    // oculus_openxr_64.json -> oculus_openxr_32.json). Empty when the name has
+    // no "64" (such runtimes register both views themselves).
+    inline std::string ThirtyTwoBitSibling(const std::string& manifest64)
+    {
+        const std::string name = ManifestFileName(manifest64);
+        const size_t at = name.rfind("64");
+        if (name.empty() || at == std::string::npos)
+            return std::string();
+        std::string sibling = manifest64;
+        sibling.replace(manifest64.size() - name.size() + at, 2, "32");
+        return sibling;
+    }
+
+    // Which runtime the 32-bit game should load when the registry's 32-bit view
+    // does not match the user's choice. The OpenXR loader of a 32-bit process
+    // only reads HKLM\SOFTWARE\WOW6432Node\Khronos\OpenXR\1\ActiveRuntime. A
+    // runtime that registered only the 64-bit view (SteamVR set as the OpenXR
+    // runtime before 2.17, which added steamxr_win32.json) leaves that empty,
+    // stale or pointing at an older choice (e.g. Oculus), although the 32-bit
+    // manifest of the active runtime is installed. The mod then hands that
+    // manifest to its own loader through XR_RUNTIME_JSON (this process only, no
+    // registry change, no admin rights).
+    //   * no 32-bit registration, or its manifest is gone: the active 64-bit
+    //     runtime's 32-bit sibling, any runtime;
+    //   * a different 32-bit registration: only when SteamVR is the active
+    //     (64-bit) runtime; other runtimes register both views themselves.
+    // Never under Wine and never over an XR_RUNTIME_JSON the player set.
+    struct RuntimeOverride
+    {
+        std::string manifest;  // empty: keep the registry's choice
+        std::string why;
+    };
+
+    inline RuntimeOverride Choose32BitRuntimeOverride(const RuntimeFacts& facts)
+    {
+        RuntimeOverride out;
+        if (facts.wine || !facts.runtimeJsonEnv.empty() || facts.activeRuntime64.empty() ||
+            facts.sibling32Of64.empty() || !facts.sibling32Of64Exists ||
+            SameManifest(facts.sibling32Of64, facts.activeRuntime32))
+            return out;
+        const std::string active = IsSteamVrManifest(facts.activeRuntime64) ? "SteamVR" : facts.activeRuntime64;
+        if (facts.activeRuntime32.empty())
+            out.why = "no 32-bit OpenXR runtime is registered (HKLM\\SOFTWARE\\WOW6432Node\\Khronos\\OpenXR\\1), but the "
+                "active OpenXR runtime (" + active + ") has a 32-bit runtime";
+        else if (!facts.activeRuntime32Exists)
+            out.why = "the registered 32-bit OpenXR runtime (" + facts.activeRuntime32 + ") does not exist, but the "
+                "active OpenXR runtime (" + active + ") has a 32-bit runtime";
+        else if (IsSteamVrManifest(facts.activeRuntime64))
+            out.why = "the 32-bit OpenXR registration points to another runtime (" + facts.activeRuntime32 +
+                ") than the active one (SteamVR)";
+        else
+            return out;
+        out.manifest = facts.sibling32Of64;
+        return out;
+    }
+
+    // An old SteamVR (before 2.17) is the active runtime: it has no 32-bit runtime.
+    inline bool IsOldSteamVr(const RuntimeFacts& facts)
+    {
+        return IsSteamVrManifest(facts.activeRuntime64) && !facts.sibling32Of64.empty() && !facts.sibling32Of64Exists;
     }
 
     inline Preflight CheckPreflight(const RuntimeFacts& facts)
@@ -87,6 +188,11 @@ namespace l4d2vr_openxr
         {
             if (facts.activeRuntime64.empty())
                 out.reason = "no OpenXR runtime is installed (no active OpenXR runtime is registered)";
+            else if (IsOldSteamVr(facts))
+                out.reason = "the active OpenXR runtime is SteamVR (" + facts.activeRuntime64 + "), but this SteamVR "
+                    "has no 32-bit OpenXR runtime (" + ManifestFileName(facts.sibling32Of64) + " is missing), and Left 4 "
+                    "Dead 2 is a 32-bit game. Update SteamVR to 2.17 or newer (Steam > Library > SteamVR), then open "
+                    "SteamVR Settings > OpenXR and press Set SteamVR as OpenXR Runtime";
             else
                 out.reason = "the active OpenXR runtime (" + facts.activeRuntime64 +
                     ") is 64-bit only, and Left 4 Dead 2 is a 32-bit game. " + WindowsRuntimeFix();
@@ -139,6 +245,9 @@ namespace l4d2vr_openxr
             return "no OpenXR runtime" + code + ": wineopenxr found no host OpenXR runtime. Start Monado, WiVRn or "
                    "SteamVR (and set it as the active OpenXR runtime) before the game";
         }
+        if (!facts.runtimeJsonEnv.empty())
+            return "the OpenXR runtime " + facts.runtimeJsonEnv + " is not available" + code +
+                ". Start it (and switch on the headset) before the game";
         if (!facts.activeRuntime32.empty())
             return "the active 32-bit OpenXR runtime (" + facts.activeRuntime32 + ") is not available" + code +
                 ". Start it (and switch on the headset) before the game";

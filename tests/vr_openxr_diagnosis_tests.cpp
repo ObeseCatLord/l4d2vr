@@ -95,7 +95,50 @@ int main()
     Check(Contains(r, "steamxr_win32.json") && Contains(r, "is not available") && Contains(r, "(result -51)"),
         "Windows, registered 32-bit runtime unavailable");
     r = xrm::LoaderFailureReason(xrm::kXrErrorRuntimeUnavailable, envOverride, xrm::kWineVrStateUnknown);
+    Check(Contains(r, "D:\\dev\\runtime.json") && Contains(r, "is not available"), "Windows, XR_RUNTIME_JSON runtime unavailable: named");
+    r = xrm::LoaderFailureReason(xrm::kXrErrorRuntimeUnavailable, none, xrm::kWineVrStateUnknown);
     Check(Contains(r, "no active OpenXR runtime with a 32-bit manifest"), "Windows, nothing known: the M2 wording plus the fix");
+
+    // ---- 32-bit registration that does not match the active runtime ---------
+    const std::string sv64 = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\steamxr_win64.json";
+    const std::string sv32 = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\steamxr_win32.json";
+    Check(xrm::ThirtyTwoBitSibling(sv64) == sv32, "steamxr_win64.json -> steamxr_win32.json");
+    Check(xrm::ThirtyTwoBitSibling("C:\\Oculus\\oculus_openxr_64.json") == "C:\\Oculus\\oculus_openxr_32.json", "_64 -> _32");
+    Check(xrm::ThirtyTwoBitSibling("C:\\x64\\virtualdesktop-openxr.json").empty(), "no 64 in the file name: no sibling");
+    xrm::RuntimeFacts svOnly64;  // SteamVR set as the runtime before 2.17: only the 64-bit view written
+    svOnly64.activeRuntime64 = sv64;
+    svOnly64.sibling32Of64 = sv32;
+    svOnly64.sibling32Of64Exists = true;
+    xrm::RuntimeOverride o = xrm::Choose32BitRuntimeOverride(svOnly64);
+    Check(o.manifest == sv32 && Contains(o.why, "no 32-bit OpenXR runtime is registered"), "64-bit-only SteamVR registration: its 32-bit manifest");
+    xrm::RuntimeFacts svOther32 = svOnly64;  // an older 32-bit choice (Oculus) left behind
+    svOther32.activeRuntime32 = "C:\\Oculus\\oculus_openxr_32.json";
+    svOther32.activeRuntime32Exists = true;
+    o = xrm::Choose32BitRuntimeOverride(svOther32);
+    Check(o.manifest == sv32 && Contains(o.why, "oculus_openxr_32.json"), "SteamVR active, 32-bit view elsewhere: SteamVR");
+    xrm::RuntimeFacts svMatch = svOnly64;
+    svMatch.activeRuntime32 = "c:/program files (x86)/steam/steamapps/common/steamvr/STEAMXR_WIN32.json";
+    svMatch.activeRuntime32Exists = true;
+    Check(xrm::Choose32BitRuntimeOverride(svMatch).manifest.empty(), "matching registration (case, slashes): untouched");
+    xrm::RuntimeFacts oculusOther32;  // Oculus active, SteamVR 32-bit: runtimes that write both views are trusted
+    oculusOther32.activeRuntime64 = "C:\\Oculus\\oculus_openxr_64.json";
+    oculusOther32.sibling32Of64 = "C:\\Oculus\\oculus_openxr_32.json";
+    oculusOther32.sibling32Of64Exists = true;
+    oculusOther32.activeRuntime32 = sv32;
+    oculusOther32.activeRuntime32Exists = true;
+    Check(xrm::Choose32BitRuntimeOverride(oculusOther32).manifest.empty(), "non-SteamVR active with its own 32-bit choice: untouched");
+    xrm::RuntimeFacts svWine = svOnly64;
+    svWine.wine = true;
+    Check(xrm::Choose32BitRuntimeOverride(svWine).manifest.empty(), "never under Proton");
+    xrm::RuntimeFacts svEnv = svOnly64;
+    svEnv.runtimeJsonEnv = "D:\\dev\\runtime.json";
+    Check(xrm::Choose32BitRuntimeOverride(svEnv).manifest.empty(), "never over the player's XR_RUNTIME_JSON");
+    xrm::RuntimeFacts oldSteamVr = svOnly64;  // SteamVR before 2.17: no steamxr_win32.json
+    oldSteamVr.sibling32Of64Exists = false;
+    Check(xrm::Choose32BitRuntimeOverride(oldSteamVr).manifest.empty(), "old SteamVR: nothing to switch to");
+    p = xrm::CheckPreflight(oldSteamVr);
+    Check(!p.tryRuntime && Contains(p.reason, "Update SteamVR to 2.17") && Contains(p.reason, "steamxr_win32.json is missing"),
+        "old SteamVR: says to update SteamVR");
     r = xrm::LoaderFailureReason(-38, steamvr, xrm::kWineVrStateUnknown);
     Check(r == "the OpenXR loader failed (result -38)", "other loader errors keep their code");
     Check(xrm::IsRuntimeUnavailableResult(xrm::kXrErrorInstanceLost) && xrm::IsRuntimeUnavailableResult(xrm::kXrErrorRuntimeFailure) &&

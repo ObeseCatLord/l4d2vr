@@ -25,6 +25,14 @@ The game reads the active runtime from
 can differ from the 64-bit one other games use. The installer's `status` command (and the GUI's
 Play tab) shows both.
 
+If SteamVR is the active (64-bit) OpenXR runtime but the 32-bit registration is missing or points to another
+runtime (SteamVR was set as the OpenXR runtime before 2.17 added `steamxr_win32.json`), the mod loads SteamVR's
+`steamxr_win32.json` itself for this game (through `XR_RUNTIME_JSON`, no registry change) and logs it. Pressing
+*Set SteamVR as OpenXR Runtime* in SteamVR's settings again fixes the registration for every 32-bit game.
+
+`vrmod_log.txt` is written next to `left4dead2.exe`. Its first line names the mod version, the `d3d9.dll` that
+was loaded and the render path; a log without that line comes from another VR mod or an older run.
+
 No launch options are needed. Running the game as administrator makes the loader ignore
 `XR_RUNTIME_JSON` and `XR_API_LAYER_PATH`, so do not rely on those variables to pick a runtime.
 

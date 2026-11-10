@@ -1487,6 +1487,56 @@ void VR::InstallApplicationManifest(const char* fileName)
 }
 
 
+// 2.0.10: VR players get the game's voice as open mic at full receive volume,
+// once ever (nobody holds a voice key in a headset). Recorded in
+// vr/config_migrations_applied.txt; what the player sets later in the game's
+// own Options > Audio menu is never touched again. Desktop players keep the
+// game's defaults. Opus voice (OpusVoiceMode=game) follows these settings.
+void VR::ApplyVrVoiceDefaultsOnce()
+{
+    if (m_VrVoiceDefaultsChecked || !m_IsVREnabled || !m_Game || !m_Game->m_Cvar)
+        return;
+    m_VrVoiceDefaultsChecked = true;
+
+    const std::string statePath = "VR\\config_migrations_applied.txt";
+    std::string state;
+    {
+        std::ifstream in(statePath, std::ios::binary);
+        if (in)
+        {
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            state = ss.str();
+        }
+    }
+    if (l4d2vr_voice::MigrationStateHasId(state, l4d2vr_voice::kVrVoiceDefaultsId))
+        return;
+
+    std::string applied;
+    for (const l4d2vr_voice::GameCvarDefault& d : l4d2vr_voice::kVrVoiceCvarDefaults)
+    {
+        if (!m_Game->SetConVarString(d.name, d.value))
+        {
+            Game::logMsg("[VR][Voice] VR voice defaults: %s not set; retrying next session", d.name);
+            return;
+        }
+        applied += std::string(" ") + d.name + "=" + d.value;
+    }
+    if (m_Game->GetConVarInt("voice_vox", 0) != 1)
+    {
+        Game::logMsg("[VR][Voice] VR voice defaults: voice_vox did not take; retrying next session");
+        return;
+    }
+    {
+        std::ofstream out(statePath, std::ios::binary | std::ios::trunc);
+        out << l4d2vr_voice::MigrationStateWithId(state, l4d2vr_voice::kVrVoiceDefaultsId);
+    }
+    // Save them in config.cfg now (the game otherwise writes it when it quits).
+    m_Game->ClientCmd_Unrestricted("host_writeconfig");
+    Game::logMsg("[VR][Voice] VR voice defaults applied once:%s (open mic; change it in Options > Audio, it is kept)",
+        applied.c_str());
+}
+
 void VR::UpdateAutoMatQueueMode()
 {
     // Avoid changing engine threading mode when VR rendering is not active.

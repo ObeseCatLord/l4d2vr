@@ -29189,6 +29189,8 @@ void Hooks::dPopRenderTargetAndViewport(void* ecx, void* edx)
 
 void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
 {
+    // 2.0.11: main thread, every frame (menus too): send queued server commands.
+    if (m_Game) m_Game->FlushDeferredServerCmds(false);
     if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
         return hkVgui_Paint.fOriginal(ecx, mode);
 

@@ -6,6 +6,8 @@ class C_WeaponCSBase;
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 #include <cstdarg>
 #include <Windows.h>
 #include "vr_magazine_policy.h"
@@ -375,12 +377,23 @@ public:
         const void* expectedEntity = nullptr) const;
     bool IsDualPistolWeapon(C_WeaponCSBase* weapon, int* clip = nullptr) const;
 
+    std::atomic<DWORD> m_MainThreadId{ 0u };
+    std::mutex m_DeferredServerCmdMutex;
+    std::vector<std::pair<std::string, bool>> m_DeferredServerCmds;
+    bool m_DeferredServerCmdOverflowLogged = false;
+
     // === Rendering Thread Mode ===
     // Returns material system thread mode (0 = single-threaded, >0 = queued/multicore).
     int GetMatQueueMode() const;
 
     // === Command Execution ===
+    // 2.0.11: ServerCmd writes into the net channel. Called from another thread
+    // than the game's main thread (VR::Update runs on the material worker with
+    // multicore rendering), it is queued and sent from the main thread
+    // (FlushDeferredServerCmds at the start of CreateMove and VGui_Paint).
     void ServerCmd(const char* szCmdString, bool reliable = true);
+    // recordMainThread: the caller is known to run on the main thread (CreateMove).
+    void FlushDeferredServerCmds(bool recordMainThread);
     void ClientCmd(const char* szCmdString);
     void ClientCmd_Unrestricted(const char* szCmdString);
     void* FindConVar(const char* name) const;

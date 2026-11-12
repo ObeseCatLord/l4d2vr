@@ -13,6 +13,8 @@ static bool IsClientAttachedToLadder(Game* game, C_BasePlayer* player)
 
 bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime, CUserCmd* cmd)
 {
+	// 2.0.11: server commands queued by other threads go out from here.
+	if (m_Game) m_Game->FlushDeferredServerCmds(true);
 	// Opus voice chat runs every client frame, VR or desktop (before any early return).
 	if (m_Game) m_Game->UpdateOpusVoice();
 	// When returning from spectator/observer back to a live player entity ("rescued"),

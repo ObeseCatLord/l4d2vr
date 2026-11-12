@@ -3172,8 +3172,49 @@ bool Game::IsDualPistolWeapon(C_WeaponCSBase* weapon, int* clip) const
 // === Commands ===
 void Game::ServerCmd(const char* szCmdString, bool reliable)
 {
-    if (m_EngineClient && szCmdString && *szCmdString)
-        m_EngineClient->ServerCmd(szCmdString, reliable);
+    if (!m_EngineClient || !szCmdString || !*szCmdString)
+        return;
+    const DWORD mainThread = m_MainThreadId.load(std::memory_order_acquire);
+    if (mainThread != 0u && GetCurrentThreadId() != mainThread)
+    {
+        std::lock_guard<std::mutex> lock(m_DeferredServerCmdMutex);
+        constexpr size_t kMaxDeferred = 512u;
+        if (m_DeferredServerCmds.size() >= kMaxDeferred)
+        {
+            if (!m_DeferredServerCmdOverflowLogged)
+            {
+                m_DeferredServerCmdOverflowLogged = true;
+                Game::logMsg("[VR] deferred server commands overflow (%u queued): dropping new ones until the main thread runs",
+                    static_cast<unsigned>(m_DeferredServerCmds.size()));
+            }
+            return;
+        }
+        m_DeferredServerCmds.emplace_back(szCmdString, reliable);
+        return;
+    }
+    m_EngineClient->ServerCmd(szCmdString, reliable);
+}
+
+void Game::FlushDeferredServerCmds(bool recordMainThread)
+{
+    if (recordMainThread)
+        m_MainThreadId.store(GetCurrentThreadId(), std::memory_order_release);
+    else if (m_MainThreadId.load(std::memory_order_acquire) != GetCurrentThreadId())
+        return;
+    static thread_local std::vector<std::pair<std::string, bool>> s_Pending;
+    {
+        std::lock_guard<std::mutex> lock(m_DeferredServerCmdMutex);
+        if (m_DeferredServerCmds.empty())
+            return;
+        s_Pending.swap(m_DeferredServerCmds);
+        m_DeferredServerCmdOverflowLogged = false;
+    }
+    if (m_EngineClient)
+    {
+        for (const auto& command : s_Pending)
+            m_EngineClient->ServerCmd(command.first.c_str(), command.second);
+    }
+    s_Pending.clear();
 }
 
 void Game::ClientCmd(const char* szCmdString)

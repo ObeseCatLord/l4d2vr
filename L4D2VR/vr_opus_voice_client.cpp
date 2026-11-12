@@ -69,6 +69,7 @@ namespace
     std::deque<std::string> g_Outgoing;                // g_Mutex
     OpusVoiceClient::Stats g_Stats;                    // g_Mutex
     std::vector<std::int16_t> g_LoopbackPcm;           // g_Mutex
+    MicLevelStats g_MicStats;                          // g_Mutex: since the last mic level line (2.0.11)
 
     // Game thread only.
     ClientNegotiation g_Negotiation;
@@ -76,6 +77,7 @@ namespace
     bool g_FeaturesValid = false;        // a feature ack arrived in this server session
     double g_LastFrameMs = 0.0, g_LastFeatureAckMs = 0.0;
     double g_LastStatsLogMs = 0.0;
+    double g_LastMicLogMs = 0.0;
     double g_DesktopSettingsCheckMs = -1e30;
     std::string g_DesktopSettingsStamp;
     bool g_SettingsFromVR = false;
@@ -326,7 +328,14 @@ namespace
                 if (s.micGain != 1.0f)
                     for (int i = 0; i < kFrameSamples; ++i)
                         pcm[i] = static_cast<std::int16_t>(std::clamp(static_cast<int>(pcm[i] * s.micGain), -32768, 32767));
+                const bool clipped = FrameClipped(pcm, kFrameSamples);
                 const bool vad = m_Vad.Update(pcm, kFrameSamples, s.vadSensitivity);
+                // The mic AGC learns the speech level only (never the noise between words).
+                if (s.micAgc && m_Vad.SpeechFrame()) m_MicAgc.Observe(m_Vad.Rms());
+                {
+                    std::lock_guard<std::mutex> lock(g_Mutex);
+                    g_MicStats.Add(m_Vad, clipped, s.vadSensitivity, s.micAgc ? m_MicAgc.Gain() : 1.0f);
+                }
                 // Open mic: speech opens the gate, and holding a voice button
                 // still forces it open (as the game's own voice does).
                 gate = ptt ? PushToTalkHeld() : (vad || PushToTalkHeld());
@@ -335,9 +344,9 @@ namespace
             if (step.resetEncoder) opus_encoder_ctl(m_Encoder, OPUS_RESET_STATE);
             const int skip = static_cast<int>(m_Preroll.size()) - step.prerollFrames;
             for (int i = 0; i < static_cast<int>(m_Preroll.size()); ++i)
-                if (i >= skip) Encode(m_Preroll[static_cast<std::size_t>(i)].data());
+                if (i >= skip) EncodeSent(s, m_Preroll[static_cast<std::size_t>(i)].data());
             if (step.resetEncoder) m_Preroll.clear();
-            if (step.encode) Encode(pcm);
+            if (step.encode) EncodeSent(s, pcm);
             if (step.sendEnd) QueueEnd();
             if (!step.encode && pcm)
             {
@@ -348,6 +357,18 @@ namespace
             std::lock_guard<std::mutex> lock(g_Mutex);
             g_Stats.inputLevel = m_Vad.Level();
             if (step.resetEncoder) ++g_Stats.talkspurtsSent;
+        }
+
+        // A frame that is sent: the mic AGC (2.0.11) on a copy (pre-roll frames
+        // stay raw until then), then Opus.
+        void EncodeSent(const Settings& s, const std::int16_t* pcm)
+        {
+            if (!pcm) return;
+            if (!s.micAgc) { Encode(pcm); return; }
+            std::int16_t boosted[kFrameSamples];
+            std::copy_n(pcm, kFrameSamples, boosted);
+            m_MicAgc.Apply(boosted, kFrameSamples);
+            Encode(boosted);
         }
 
         void Encode(const std::int16_t* pcm)
@@ -442,6 +463,7 @@ namespace
             }
             g_Transmitting.store(false);
             m_Vad.Reset();
+            m_MicAgc.Reset();
             m_Preroll.clear();
             m_CaptureRetryMs = 0.0;
             m_OutputRetryMs = 0.0;
@@ -586,6 +608,7 @@ namespace
         int m_EncBitrate = -1, m_EncLoss = -1;
         bool m_EncFec = false;
         Vad m_Vad;
+        MicAgc m_MicAgc;
         Transmitter m_Tx;
         std::deque<std::vector<std::int16_t>> m_Preroll;
 
@@ -942,10 +965,11 @@ namespace OpusVoiceClient
                 if (s_GameLogs < 24)
                 {
                     ++s_GameLogs;
-                    Game::logMsg("[VR][Voice] game voice settings: voice_enable=%d voice_vox=%d voice_scale=%.2f volume=%.2f -> Opus voice %s, %s%s, playback gain %.2f",
+                    Game::logMsg("[VR][Voice] game voice settings: voice_enable=%d voice_vox=%d voice_scale=%.2f volume=%.2f voice_threshold=%.1f -> Opus voice %s, %s%s, playback gain %.2f, voice activation sensitivity %.2f%s",
                         in.gameVoice.enabled ? 1 : 0, in.gameVoice.openMic ? 1 : 0, in.gameVoice.receiveScale, in.gameVoice.masterVolume,
-                        e.enabled ? "on" : "off", ModeName(e.mode),
-                        raw.mode == TransmitMode::FollowGame ? " (OpusVoiceMode=game)" : " (OpusVoiceMode)", e.volume);
+                        in.gameVoice.micThreshold, e.enabled ? "on" : "off", ModeName(e.mode),
+                        raw.mode == TransmitMode::FollowGame ? " (OpusVoiceMode=game)" : " (OpusVoiceMode)", e.volume, e.vadSensitivity,
+                        raw.vadSensitivity < 0.0f ? " (OpusVoiceVadSensitivity=game)" : " (OpusVoiceVadSensitivity)");
                 }
                 Wake();
             }
@@ -1029,6 +1053,41 @@ namespace OpusVoiceClient
             Speaker& sp = g_Speakers[static_cast<std::size_t>(p)];
             sp.targetLeft = g.left;
             sp.targetRight = g.right;
+        }
+
+        // Microphone level (2.0.11), every 10 s while the microphone runs: what
+        // the voice activation sees, to tune OpusVoiceVadSensitivity / the game's
+        // microphone sensitivity. Only when someone talked or the levels moved.
+        if (now - g_LastMicLogMs > 10000.0)
+        {
+            g_LastMicLogMs = now;
+            MicLevelStats m;
+            GameVoiceSettings gv;
+            float rawSens;
+            {
+                std::lock_guard<std::mutex> lock(g_Mutex);
+                m = g_MicStats;
+                g_MicStats = MicLevelStats{};
+                gv = g_GameVoice;
+                rawSens = g_Settings.vadSensitivity;
+            }
+            static float s_LoggedNoise = -1.0f, s_LoggedOpenAt = -1.0f;
+            static double s_LastMicLineMs = 0.0;
+            const bool moved = s_LoggedNoise < 0.0f || std::fabs(m.noise - s_LoggedNoise) > 0.25f * std::max(s_LoggedNoise, 5.0f) ||
+                std::fabs(m.openAt - s_LoggedOpenAt) > 0.25f * std::max(s_LoggedOpenAt, 5.0f);
+            if (m.frames > 0 && (m.openFrames > 0 || m.clippedFrames > 0 || moved || now - s_LastMicLineMs > 60000.0))
+            {
+                s_LoggedNoise = m.noise;
+                s_LoggedOpenAt = m.openAt;
+                s_LastMicLineMs = now;
+                char source[96];
+                if (rawSens >= 0.0f) std::snprintf(source, sizeof(source), "OpusVoiceVadSensitivity");
+                else if (gv.known && gv.micThreshold > 0.0f) std::snprintf(source, sizeof(source), "game voice_threshold %.1f", gv.micThreshold);
+                else std::snprintf(source, sizeof(source), "default");
+                Game::logMsg("[VR][OpusVoice] mic: %u frames, level avg %.0f, speech avg %.0f peak %.0f (%u frames), noise floor %.0f, openAt %.0f (sensitivity %.2f, %s), gate open %.1f%%, %u talkspurts, %u clipped frames, mic agc %.2fx, mode %s",
+                    m.frames, m.AverageRms(), m.SpeechAverageRms(), m.speechPeak, m.speechFrames, m.noise, m.openAt, m.sensitivity, source,
+                    m.OpenPercent(), m.talkspurts, m.clippedFrames, m.agcGain, ModeWanted(s) == TransmitMode::VoiceActivation ? "open mic" : "push to talk");
+            }
         }
 
         if (now - g_LastStatsLogMs > 5000.0)

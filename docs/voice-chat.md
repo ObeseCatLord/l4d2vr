@@ -26,6 +26,7 @@ default since 2.0.10):
 | *Push to talk* (`voice_vox 0`) | push to talk, see below |
 | *Open mic* (`voice_vox 1`) | voice activation, see below (a voice button still forces it open) |
 | Voice receive volume (`voice_scale`) and the master volume (`volume`) | scale Opus playback like the game's voice: `OpusVoiceVolume` x `voice_scale` x `volume` |
+| Microphone sensitivity (`voice_threshold`) | how quiet speech still opens Opus open mic (`OpusVoiceVadSensitivity=game`, 2.0.11), see below |
 
 Changes in that menu apply within half a second, in a game or not. `OpusVoiceMode=ptt` or `vad`
 fixes the mode regardless of the game's setting.
@@ -35,8 +36,8 @@ maximum (`voice_enable 1`, `voice_modenable 1`, `voice_vox 1`, `voice_scale 1`; 
 voice key in a headset) the first time they are in a game in VR with 2.0.10. It is recorded in
 `vr/config_migrations_applied.txt` (`2026-11-09_vr_voice_open_mic`) and saved to `config.cfg`
 right away; whatever you set in Options > Audio afterwards is kept. Desktop players keep the
-game's defaults (push to talk). The open-mic threshold of the game's own voice (`voice_threshold`)
-is left alone; Opus uses its own voice activation (`OpusVoiceVadSensitivity`).
+game's defaults (push to talk). The game's microphone sensitivity (`voice_threshold`) is never
+changed by the mod; since 2.0.11 Opus voice activation follows it (below).
 
 * **Push to talk** (`OpusVoiceMode=ptt`, or `game` with the game on Push to talk), any of:
   * the game's own voice key (`+voicerecord`, whatever you bound it to);
@@ -49,8 +50,9 @@ is left alone; Opus uses its own voice activation (`OpusVoiceVadSensitivity`).
   Every push-to-talk also keys the game's own voice, so players without the mod hear you. Opus
   keeps sending 160 ms after you let go, so the last syllable is not cut off.
 * **Voice activation** (`OpusVoiceMode=vad`, or `game` with the game on Open mic): you are sent
-  whenever you speak (`OpusVoiceVadSensitivity`), with 60 ms of pre-roll and a 300 ms hangover;
-  holding a voice button also sends. With the game on Open mic, players without the mod hear you
+  whenever you speak (`OpusVoiceVadSensitivity`), with 100 ms of pre-roll and a 400 ms hangover
+  (2.0.11; was 60 / 300 ms), so word onsets and endings are not clipped; holding a voice button
+  also sends. With the game on Open mic, players without the mod hear you
   through the game's open mic as well; with `vad` and the game on Push to talk, only mod players do.
 * **Microphone test**: `OpusVoiceLoopback=true` sends your voice back to you through the server,
   as others hear it.
@@ -58,17 +60,56 @@ is left alone; Opus uses its own voice activation (`OpusVoiceVadSensitivity`).
 The microphone is the Windows default recording device (Proton: the PulseAudio/PipeWire default
 source). Playback uses the default output device, which is also the one the game plays on.
 
+## Open mic sensitivity and quiet microphones (2.0.11)
+
+Opus voice activation is an energy gate on 20 ms frames with an adaptive noise floor:
+
+* The **noise floor** follows the quietest frame of the last 1.2 s (minimum statistics): it drops
+  at once on a quieter frame and rises toward that minimum over about a second. The short pauses
+  between words keep it at the room's level while you talk; steady noise (a fan, hum, a PC) has no
+  pauses, so the floor rises to it and it never holds the gate open (noise that suddenly appears
+  can open the gate for a few seconds at most, once).
+* The gate **opens** after two frames above `max(noise floor x ratio, absolute floor)` and closes
+  after 400 ms below 55% of that. With sensitivity `s` (0..1): ratio `5 - 2s` (5x .. 3x) and
+  absolute floor `400 x 0.05^s` RMS (400 .. 20; 66 at 0.6), in 16-bit sample units. Speech at
+  RMS 150 opens over a room noise of up to ~40 RMS at the default.
+* `OpusVoiceVadSensitivity=game` (the default since 2.0.11; the old shipped `0.55` is migrated
+  once, any other number you set is kept): the game's **Microphone sensitivity** slider in
+  Options > Audio decides. That slider is `voice_threshold`, 1..2000; the engine default 2000 is
+  the slider's least sensitive end and lower is more sensitive. (engine.dll's open mic treats a
+  captured buffer as silence when `voice_threshold` is above both its peak-to-peak range and its
+  highest sample, with no noise tracking: at 2000 it needs speech of RMS ~330, at 65 almost
+  anything opens it.) Opus maps it logarithmically: 2000 -> 0.6 (the built-in default), 20 and
+  below -> 1.0; for example 200 -> 0.8, 65 -> 0.9. A number 0..1 overrides the slider. Without the
+  game's cvars (not read yet) the sensitivity is 0.6.
+* **Microphone AGC** (`OpusVoiceMicAgc=true`): frames that are sent are raised toward speech at
+  RMS ~3000 (about -21 dBFS), at most 4x, never lowered, ramped and limited so nothing clips.
+  The level is learnt from speech frames only (the gate open and the frame above its close
+  level), so background noise never raises the gain; the noise between words while you talk is
+  raised by the same gain as your voice. The gate itself always looks at the signal before the
+  AGC (after `OpusVoiceMicGain`). Listeners' own AGC (`OpusVoiceAgc`) still evens out talkers.
+* **Log**: every 10 s while the microphone runs (and something happened or the levels moved, or
+  once a minute) `vrmod_log.txt` gets a line like
+
+  `[VR][OpusVoice] mic: 500 frames, level avg 41, speech avg 230 peak 610 (120 frames), noise floor 28, openAt 90 (sensitivity 0.90, game voice_threshold 65.0), gate open 31.4%, 3 talkspurts, 0 clipped frames, mic agc 3.10x, mode open mic`
+
+  *level avg* is the RMS of all frames, *speech* the frames the gate called speech, *openAt* the
+  level that opens the gate right now. If you are not heard, compare *speech avg* with *openAt*;
+  *clipped frames* counts frames at full scale (lower `OpusVoiceMicGain` or the system mic level).
+  The game voice settings line also shows `voice_threshold` and the resulting sensitivity.
+
 ## Settings (`VR/config.txt`, also in the config panel under *Voice Chat*)
 
 | Key | Default | Meaning |
 |---|---|---|
 | `OpusVoiceEnabled` | `true` | Opus voice with mod players (false: the game's voice only) |
 | `OpusVoiceMode` | `game` | `game` follow the game's Push to talk / Open mic (2.0.10; was `ptt`, migrated once), `ptt` push to talk, `vad` voice activation |
-| `OpusVoiceVadSensitivity` | `0.55` | 0..1, higher opens on quieter speech |
+| `OpusVoiceVadSensitivity` | `game` | `game` = the game's Microphone sensitivity (`voice_threshold`, 2.0.11; was `0.55`, migrated once), or 0..1, higher opens on quieter speech |
 | `OpusVoiceBitrate` | `32000` | bit/s you send, 12000-64000 |
 | `OpusVoiceFec` | `true` | in-band forward error correction |
 | `OpusVoiceExpectedLossPercent` | `5` | loss the FEC is tuned for, 0-40 |
 | `OpusVoiceMicGain` | `1.0` | microphone gain, 0-4 |
+| `OpusVoiceMicAgc` | `true` | raise a quiet microphone (up to 4x) before sending, learnt from speech only (2.0.11) |
 | `OpusVoiceVolume` | `1.0` | voice chat volume, 0-2, times the game's `voice_scale` and `volume` |
 | `OpusVoiceAgc` | `true` | even out every talker to the same loudness |
 | `OpusVoiceAgcMaxGain` | `6` | most a quiet talker is raised, 1-16x |

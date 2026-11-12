@@ -344,13 +344,18 @@ OpusVoiceEnabled=true
 // game = follow the game's Push to talk / Open mic setting (2.0.10), ptt = always push to
 // talk, vad = always voice activation (vad without the game's open mic: mod players only).
 OpusVoiceMode=game
-OpusVoiceVadSensitivity=0.55
+// Open mic sensitivity: game (2.0.11) = the game's Options > Audio "Microphone sensitivity"
+// slider (voice_threshold) decides; or 0..1, higher opens on quieter speech. Steady background
+// noise (fans, hum) is learnt and never opens the microphone at any setting.
+OpusVoiceVadSensitivity=game
 // Bits per second (12000-64000). 32000 = clear full-band speech.
 OpusVoiceBitrate=32000
 // In-band forward error correction: a lost frame is rebuilt from the next one.
 OpusVoiceFec=true
 OpusVoiceExpectedLossPercent=5
 OpusVoiceMicGain=1.0
+// Raise a quiet microphone (up to 4x) before sending; only your speech sets the level (2.0.11).
+OpusVoiceMicAgc=true
 // Opus voice volume (0-2), times the game's voice receive volume and master volume.
 OpusVoiceVolume=1.0
 // Each talker evens out to the same loudness (quiet microphones are raised up to this much).

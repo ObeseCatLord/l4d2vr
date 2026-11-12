@@ -15,6 +15,8 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 {
 	// No config hot reload while this command reads the settings (review B05).
 	l4d2vr_config_lock::ConfigLock::MaybeReadScope configRead(m_VR ? &m_VR->m_ConfigLock : nullptr);
+	// Desktop mode: put back game settings a VR session changed (review B37).
+	if (m_VR && !m_VR->m_IsVREnabled) m_VR->RestoreGameCvarsAfterVrOnce();
 	// Opus voice chat runs every client frame, VR or desktop (before any early return).
 	if (m_Game) m_Game->UpdateOpusVoice();
 	// When returning from spectator/observer back to a live player entity ("rescued"),

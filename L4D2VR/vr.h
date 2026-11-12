@@ -3963,6 +3963,14 @@ public:
 
 	// One-shot menu ConVar injection: apply launch-style visual defaults after the first main-menu entry.
 	bool m_MainMenuOneShotVisualCvarsInjected = false;
+	// 2.0.11 (review B37): game settings VR changes (crosshair, film grain,
+	// motion blur, fps_max, mat_queue_mode) are no longer saved to config.cfg
+	// while VR runs; the player's own values are kept in
+	// VR\vr_saved_game_cvars.txt and put back by the next non-VR start.
+	void ProtectGameCvarForVr(const char* name);
+	void RestoreGameCvarsAfterVrOnce();
+	std::unordered_set<std::string> m_VrProtectedGameCvars;
+	bool m_GameCvarsRestoreDone = false;
 	// 2.0.10: the game's voice set to open mic / full receive volume once ever
 	// for VR players (l4d2vr_voice::kVrVoiceDefaultsId); checked once per session.
 	bool m_VrVoiceDefaultsChecked = false;

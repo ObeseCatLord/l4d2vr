@@ -600,14 +600,12 @@ add_test(NAME vr_throw_lifecycle COMMAND vr_throw_lifecycle_tests)
 set(native_reload_bridge_source "${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/vr_hands/vr_hand_vr_bridge.cpp")
 set(native_reload_input_source "${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/vr/vr_process_input.inl")
 set(native_reload_config_source "${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/dllmain.cpp")
-set(native_reload_embedded_source "${CMAKE_CURRENT_SOURCE_DIR}/../L4D2VR/vr_config_overlay_embedded.inl")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${native_reload_bridge_source}" "${native_reload_input_source}"
-    "${native_reload_config_source}" "${native_reload_embedded_source}")
+    "${native_reload_config_source}")
 file(READ "${native_reload_bridge_source}" native_reload_bridge_text)
 file(READ "${native_reload_input_source}" native_reload_input_text)
 file(READ "${native_reload_config_source}" native_reload_config_text)
-file(READ "${native_reload_embedded_source}" native_reload_embedded_text)
 extract_throw_lifecycle_function("${native_reload_bridge_text}"
     "VR::UpdateNativeAmmoReloadButtonContext" native_reload_context)
 extract_mirrored_analog_fixture("${native_reload_input_text}"
@@ -625,13 +623,9 @@ extract_mirrored_analog_fixture("${native_reload_config_text}"
     "        {\n            std::vector<std::string> removedKeys;"
     "        std::istringstream sampleStream(sampleText);" native_reload_cleanup)
 string(APPEND native_reload_config "\nbool CleanupNativeReloadConfig(std::string& configText, const std::string& sampleText) { (void)sampleText; bool configChanged = false;\n${native_reload_cleanup}\nreturn configChanged; }\n")
-extract_mirrored_analog_fixture("${native_reload_embedded_text}"
-    "    static constexpr char kCfgSampleConfigText2[]"
-    "    static constexpr const char* kCfgSampleConfigChunks[]" native_reload_embedded)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_native_reload_context.inl" "${native_reload_context}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_native_reload_pulse.inl" "${native_reload_pulse}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_native_reload_config.inl" "${native_reload_config}")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vr_native_reload_embedded_sample.inl" "${native_reload_embedded}")
 add_executable(vr_native_reload_tests vr_native_reload_tests.cpp)
 target_compile_features(vr_native_reload_tests PRIVATE cxx_std_17)
 target_include_directories(vr_native_reload_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

@@ -1518,9 +1518,9 @@ public:
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_BodyGripSelectionSerial{ 0 };
     std::atomic<uint32_t> m_GripDrawSerial{ 0 }; // weapon-hand grip drew from a holster (the grip took the item)
-    bool m_BodyGripInventoryEnabled = false;
+    bool m_BodyGripInventoryEnabled = true;    // = the parser and config.txt default
     bool m_PhysicalReloadOnUnsupportedServers = true;
-    bool m_ManualPumpEnabled = false;
+    bool m_ManualPumpEnabled = true;
     // Manual pump stroke (l4d2vr_physical::PumpStroke): the fore-end's hand
     // travel, the fraction of it that cocks the action, the distance from the
     // closed position (fraction of the travel) within which the forward stroke
@@ -2226,7 +2226,7 @@ public:
 
 	ActionCombo m_VoiceRecordCombo{ &m_ActionCrouch, &m_ActionReload };
 	ActionCombo m_QuickTurnCombo{ &m_ActionSecondaryAttack, &m_ActionCrouch };
-	ActionCombo m_ViewmodelAdjustCombo{ &m_ActionSecondaryAttack, &m_ActionUse };
+	ActionCombo m_ViewmodelAdjustCombo{ &m_ActionReload, &m_ActionSecondaryAttack };   // = config.txt Reload+SecondaryAttack
 	bool m_SpeechToTextEnabled = false;
 	bool m_SpeechToTextSendChatEnabled = true;
 	bool m_SpeechToTextSendVoiceEnabled = false;

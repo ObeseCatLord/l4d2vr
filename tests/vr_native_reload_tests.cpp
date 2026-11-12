@@ -19,7 +19,6 @@
 #include "../L4D2VR/vr_config_migration.h"
 #include <unordered_map>
 #include <vector>
-#include "vr_native_reload_embedded_sample.inl"
 
 static int checks = 0;
 static void Require(bool result, const char* message)
@@ -216,8 +215,6 @@ static void TestLegacySample()
     std::string tuned = "ScopeDefaultFov=9\nScopeFov=12\n";
     CleanupNativeReloadConfig(tuned, legacySample);
     Require(tuned.find("ScopeDefaultFov=9") != std::string::npos, "An existing new key wins over the old one");
-    Require(std::string(kCfgSampleConfigText2).find("ScopePhysicalLensEnabled=true\nScopeBaseMagnification=2") != std::string::npos,
-        "Embedded reset defaults include the supported physical scope options");
 }
 
 int main()

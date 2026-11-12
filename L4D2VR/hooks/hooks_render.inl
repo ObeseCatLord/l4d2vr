@@ -4026,6 +4026,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 
 			if (l4d2vr_controller_identity::UsablePose(renderPoses[vr::k_unTrackedDeviceIndex_Hmd]))
 			{
+				TrackedDevicePoseData hmdPose{};
 				// 2.0.11: the queued submit carries the HMD pose this frame is
 				// rendered from (pose waiter snapshot or tracking prediction), so
 				// the OpenXR projection layer never claims the waiter's newer pose.
@@ -4034,7 +4035,6 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					renderHmdPoseForSubmit = renderPoses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
 					renderHmdPoseForSubmitValid = true;
 				}
-				TrackedDevicePoseData hmdPose{};
 				m_VR->GetPoseData(renderPoses[vr::k_unTrackedDeviceIndex_Hmd], hmdPose);
 				QAngle hmdAngLocal = hmdPose.TrackedDeviceAng;
 				Vector hmdPosLocal = hmdPose.TrackedDevicePos;

@@ -118,6 +118,7 @@ struct DriverV2
     FrameRing ring;
     FakeRuntime rt;
     int eyesInBegun = 0;
+    int eyesSinceWaitBegin = 0;
 
     void CallBegin()
     {
@@ -145,7 +146,11 @@ struct DriverV2
         {
             if (ring.HasBegun())
                 EndBegun(true);
+            const bool gameSubmitting = eyesSinceWaitBegin > 0;
+            eyesSinceWaitBegin = 0;
             CallBegin();
+            if (!gameSubmitting && ring.HasBegun())
+                EndBegun(true);  // no game submits: close at once (loading stall)
         }
         return ring.BeginWait();
     }
@@ -170,6 +175,7 @@ struct DriverV2
     void SubmitEye(int)
     {
         BeginForGame();
+        ++eyesSinceWaitBegin;
         if (ring.HasBegun())
             ++eyesInBegun;
     }
@@ -355,6 +361,10 @@ int main()
         // arrives during that wait and ends frame k itself.
         DriverV2 d;
         Check(d.WaitGetPoses(), "v2: first wait");
+        d.SubmitEye(0);   // the game is rendering: its first frame ends normally
+        d.SubmitEye(1);
+        d.EndForGame();
+        Check(d.WaitGetPoses(), "v2: second wait");
         for (int frame = 0; frame < 60; ++frame)
         {
             const int64_t poseDisplay = d.ring.Waited().displayTime;
@@ -376,6 +386,7 @@ int main()
         // closed with the last layers, the image goes into the newer frame.
         DriverV2 d;
         Check(d.WaitGetPoses(), "v2 late: first wait");
+        d.eyesSinceWaitBegin = 2;  // the game has been submitting
         Check(d.WaitBegin() && d.WaitComplete(), "v2 late: frame 1 begun early, frame 2 waited");
         d.SubmitEye(0);   // begin side: closes frame 1 stale, begins frame 2
         d.SubmitEye(1);   // same game frame: stays in frame 2
@@ -389,6 +400,7 @@ int main()
         // eye: both eyes stay in one frame.
         DriverV2 d;
         Check(d.WaitGetPoses(), "v2 split: first wait");
+        d.eyesSinceWaitBegin = 2;  // the game has been submitting
         Check(d.WaitBegin(), "v2 split: begin early");
         d.SubmitEye(0);
         Check(d.WaitComplete(), "v2 split: next wait done between the eyes");
@@ -418,7 +430,8 @@ int main()
         Check(d.WaitGetPoses(), "v2 pump: first wait");
         for (int pumped = 0; pumped < 100; ++pumped)
             Check(d.WaitGetPoses(), "v2 pump: wait");
-        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.rt.ends == 99, "v2 pump: whole frames keep flowing");
+        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.rt.ends == 100, "v2 pump: whole frames keep flowing");
+        Check(!d.ring.HasBegun(), "v2 pump: without game submits no frame is left open across a wait");
         d.SubmitEye(0);
         d.SubmitEye(1);
         d.EndForGame();

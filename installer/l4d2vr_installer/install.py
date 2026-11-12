@@ -57,6 +57,13 @@ CLIENT_PRESERVE = (
     "vr/native_viewmodel_hands_freeze_pose.txt",  # saved by the in-game hand pose editor
 )
 SERVER_PRESERVE = ("*l4d2vr_server_config.txt", "cfg/*")
+# Shipped files that players are told to tune by hand. An update keeps the
+# player's edited copy and writes the new default next to it as <name>.new.
+CLIENT_USER_TUNABLE = (
+    "vr/haptics_config.txt",
+    "vr/local_client_convars.nut",
+)
+NEW_SUFFIX = ".new"
 # OpenVR files of the releases before the OpenXR-only 1.3. When a package no
 # longer ships them, an update removes them (backed up first, like every
 # removal), whether an earlier installer run recorded them or not, and even if
@@ -221,7 +228,7 @@ def _strip_wrapper(raw: Dict[str, zipfile.ZipInfo], target: Target) -> Dict[str,
 class PlanItem:
     rel: str  # path inside the package (normalized)
     dest: Path
-    action: str  # add | overwrite | unchanged | preserve | remove | keep-modified
+    action: str  # add | overwrite | unchanged | preserve | remove | keep-modified | keep-user
     new_sha: Optional[str] = None
     old_sha: Optional[str] = None
     data: Optional[bytes] = None  # generated content (not from the archive)
@@ -246,7 +253,7 @@ class Plan:
         counts = {}
         for item in self.items:
             counts[item.action] = counts.get(item.action, 0) + 1
-        order = ("add", "overwrite", "remove", "unchanged", "preserve", "keep-modified")
+        order = ("add", "overwrite", "remove", "unchanged", "preserve", "keep-modified", "keep-user")
         return ", ".join(f"{counts[name]} {name}" for name in order if counts.get(name))
 
 
@@ -273,8 +280,23 @@ def plan_install(target: Target, package: Package, metadata: Optional[dict] = No
         new_sha = _member_sha(package, rel)
         exists = dest.is_file()
         old_sha = sha256_file(dest) if exists else None
+        recorded = (previous.get("files") or {}).get(rel)
         if exists and target.is_preserved(rel):
             action = "preserve"
+        elif (exists and target.kind == "client" and is_user_tunable(rel) and recorded
+              and old_sha not in (recorded, new_sha)):
+            # The player edited a tuning file the installer wrote: keep it,
+            # and put the new default next to it.
+            plan.items.append(PlanItem(rel, dest, "keep-user", recorded, old_sha))
+            side_rel = rel + NEW_SUFFIX
+            side = resolve_ci(target.root, side_rel)
+            _check_dest(side)
+            seen_dest.add(os.path.normcase(str(side)))
+            side_old = sha256_file(side) if side.is_file() else None
+            side_action = "add" if side_old is None else ("unchanged" if side_old == new_sha else "overwrite")
+            plan.items.append(PlanItem(side_rel, side, side_action, new_sha, side_old, package.read(rel)))
+            plan.warnings.append(f"You changed {rel}; keeping your copy. The new default is in {side_rel}.")
+            continue
         elif not exists:
             action = "add"
         elif old_sha == new_sha:
@@ -324,6 +346,10 @@ def plan_install(target: Target, package: Package, metadata: Optional[dict] = No
     plan.metadata.setdefault("previous_version", previous.get("version"))
     plan.metadata.setdefault("previous_tag", previous.get("tag"))
     return plan
+
+
+def is_user_tunable(rel: str) -> bool:
+    return rel.lower() in CLIENT_USER_TUNABLE
 
 
 def is_retired_client_file(rel: str) -> bool:
@@ -418,8 +444,10 @@ def _state_document(plan: Plan, backup_name: Optional[str]) -> dict:
     previous = target.read_state() or {}
     # Preserved files only count as ours when this run created them (e.g. a
     # default config on first install); after that they belong to the user.
+    # keep-user: the player's edited copy of a tuning file; the hash the
+    # installer last wrote stays recorded so the next update knows it again.
     files = {item.rel: item.new_sha for item in plan.items
-             if item.action in ("add", "overwrite", "unchanged")}
+             if item.action in ("add", "overwrite", "unchanged", "keep-user")}
     meta = plan.metadata
     backups = list(previous.get("backups") or [])
     if backup_name:
@@ -456,6 +484,8 @@ def apply_plan(plan: Plan, dry_run: bool = False, log: Log = _noop) -> Optional[
         log(f"  {item.action:9} {item.rel}")
     for item in plan.by_action("preserve"):
         log(f"  keep      {item.rel} (your file)")
+    for item in plan.by_action("keep-user"):
+        log(f"  keep      {item.rel} (you edited it; new default in {item.rel}{NEW_SUFFIX})")
     if dry_run:
         log("Dry run: no files were changed.")
         return None

@@ -220,6 +220,26 @@ class InstallTests(TempDirTest):
         with self.assertRaises(InstallerError):
             install.restore_backup(self.target())
 
+    def test_update_keeps_user_tuned_haptics_and_writes_new_default(self):
+        self.install(self.v1)
+        haptics = self.game / "vr" / "haptics_config.txt"
+        haptics.write_bytes(b"my tuning")
+        self.install(self.v2)
+        self.assertEqual(haptics.read_bytes(), b"my tuning")
+        self.assertEqual((self.game / "vr" / "haptics_config.txt.new").read_bytes(), CLIENT_V2["vr/haptics_config.txt"])
+        self.assertTrue(any("haptics_config.txt" in line and "keep" in line for line in self.logs))
+        # Unedited tuning files are still updated.
+        self.assertEqual(self.state()["files"]["vr/haptics_config.txt"], sha(CLIENT_V1["vr/haptics_config.txt"]))
+        install.uninstall(self.target(), log=self.logs.append)
+        self.assertEqual(haptics.read_bytes(), b"my tuning")
+        self.assertFalse((self.game / "vr" / "haptics_config.txt.new").exists())
+
+    def test_unedited_haptics_is_updated(self):
+        self.install(self.v1)
+        self.install(self.v2)
+        self.assertEqual((self.game / "vr" / "haptics_config.txt").read_bytes(), CLIENT_V2["vr/haptics_config.txt"])
+        self.assertFalse((self.game / "vr" / "haptics_config.txt.new").exists())
+
     def test_update_keeps_user_modified_stale_file(self):
         self.install(self.v1)
         (self.game / "vr/old_only_in_v1.txt").write_bytes(b"edited")

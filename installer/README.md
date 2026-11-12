@@ -13,12 +13,18 @@ a **Launch in VR** button. It also has a full command line for headless use.
 - **Installs / updates** `l4d2vr.zip` from the latest GitHub release into the game
   folder (next to `left4dead2.exe`). Downloads are checked against the release's
   size and SHA-256 (a `l4d2vr.sha256` asset, a `l4d2vr-manifest.json` asset, or
-  GitHub's own asset digest). A mismatch stops the install before any file changes.
+  GitHub's own asset digest). A mismatch stops the install before any file changes;
+  only `https://` downloads are accepted, and a release without any SHA-256 is refused
+  unless you pass `--allow-unverified`. A dropped download is retried (resumed when the
+  server allows it). Offline, the `l4d2vr.zip` next to the installer is used, but never
+  when it is older than the installed build.
 - **Keeps your files**: `vr/config.txt`, `vr/config2.txt`,
   `vr/config_migrations_applied.txt`, `viewmodel_adjustments.txt`,
   `viewmodel_auto_grip_cache.txt`, `scope_adjustments.txt`, any
   `vr/*adjustments*.txt` and `vr/*calibration*` are never overwritten once they
   exist. Add your own patterns with `--preserve` (remembered for later updates).
+  If you edited `vr/haptics_config.txt` or `vr/local_client_convars.nut`, an update
+  keeps your copy and writes the new default next to it as `<name>.new`.
 - **Warns about other VR mods**: a `d3d9.dll` it did not install (an OpenVR VR mod build,
   ReShade, ...), old `openvr_api.dll` files and a subscription to the original L4D2VR
   Workshop item are reported by Install and `status`; the replaced files are backed up.
@@ -124,7 +130,7 @@ Every command that changes files accepts `--dry-run`.
 | `detect` | Show Steam folders, game installs, users, Proton builds, OpenXR runtimes |
 | `status [--online] [--server-dir D]` | Installed version, changed files, backups, launch options, compat tool |
 | `check` | Is a newer mod release (and installer) available? |
-| `install` / `update` | Install the latest release; `--zip l4d2vr.zip` installs a local file offline; `--force` reinstalls |
+| `install` / `update` | Install the latest release; `--zip l4d2vr.zip` installs a local file offline; `--force` reinstalls (missing or changed mod files are repaired without it; the window has a Repair checkbox) |
 | `restore [--list] [--backup NAME] [--force]` | Undo the most recent install/update |
 | `uninstall [--force]` | Undo every install; leaves files you edited |
 | `launch-options show\|apply\|remove` | Linux Proton launch options (`--all-users`, `--steam-user ID`) |
@@ -138,7 +144,8 @@ Every command that changes files accepts `--dry-run`.
 
 Common options: `--game-dir`, `--repo owner/name` (another fork),
 `--source github|manifest`, `--manifest-url URL`, `--channel stable|beta`
-(beta includes pre-releases). Set `GITHUB_TOKEN` if you hit GitHub's API rate limit.
+(beta includes pre-releases), `--allow-unverified`. The checked-in `installer/manifest.json`
+is a placeholder (version 0.0.0) and is refused until it is generated with `make-manifest`. Set `GITHUB_TOKEN` if you hit GitHub's API rate limit.
 The server password can also come from `L4D2VR_SERVER_PASSWORD`. Passwords are never saved.
 
 Settings (game folder, source, route, Monado paths) are remembered in

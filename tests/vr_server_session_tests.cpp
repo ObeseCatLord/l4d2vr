@@ -175,6 +175,21 @@ namespace
         Dispatch(s, 1, &e[1], { "l4d2vr_pose_upload", "11", payload.c_str() });
         Dispatch(s, 1, &e[1], { "l4d2vr_pose_upload", "12", payload.c_str() });   // < 16.667 ms later
         Check(host.sent.size() == 1u && host.sent[0].text == Receive(1, 11, payload));
+        // The newer upload of the burst is relayed when the window ends (latest wins).
+        host.sent.clear();
+        s.GameFrame();
+        Check(host.sent.empty());
+        host.Advance(20);
+        s.GameFrame();
+        {
+            int receives = 0;
+            for (const auto& m : host.sent)
+                if (m.text.rfind("l4d2vr_pose_receive", 0) == 0) { ++receives; Check(m.text == Receive(1, 12, payload)); }
+            Check(receives == 1);
+        }
+        host.sent.clear();
+        s.GameFrame();
+        Check(host.sent.empty());
         // Wrap-around.
         for (const char* step : { "20000", "40000", "60000" })
         {

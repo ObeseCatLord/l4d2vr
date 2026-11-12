@@ -175,6 +175,51 @@ public:
     virtual bool SetClientProximity(int receiver, int sender, bool proximity) = 0;
 };
 
+// engine_srv.so "EngineTraceServer003" (CEngineTrace). L4D2 puts TraceRay in
+// slot 5 (the client's IEngineTrace uses the same slot); no destructors.
+struct alignas(16) VectorAligned16 { float x, y, z, w; };
+struct TraceRay_t
+{
+    VectorAligned16 start, delta, startOffset, extents;
+    const void* worldAxisTransform;
+    bool isRay, isSwept;
+};
+struct TracePlane { Vector normal; float dist; unsigned char type, signbits, pad[2]; };
+struct TraceResult
+{
+    Vector startpos, endpos;
+    TracePlane plane;
+    float fraction;
+    int contents;
+    unsigned short dispFlags;
+    bool allsolid, startsolid;
+    float fractionleftsolid;
+    const char* surfaceName;
+    short surfaceProps;
+    unsigned short surfaceFlags;
+    int hitgroup;
+    short physicsbone;
+    void* entity;
+    int hitbox;
+    unsigned char reserve[64];   // room for fields this build does not name
+};
+class ITraceFilterLinux
+{
+public:
+    virtual bool ShouldHitEntity(void* entity, int contentsMask) = 0;
+    virtual int GetTraceType() const = 0;   // 0 = TRACE_EVERYTHING
+};
+class IEngineTraceLinux
+{
+public:
+    virtual void fn0() = 0;
+    virtual void fn1() = 0;
+    virtual void fn2() = 0;
+    virtual void fn3() = 0;
+    virtual void fn4() = 0;
+    virtual void TraceRay(const TraceRay_t& ray, unsigned int mask, ITraceFilterLinux* filter, TraceResult* trace) = 0;
+};
+
 // CUserCmd as laid out by server_srv.so's ReadUsercmd (vptr + fields, 0x58).
 struct CUserCmdLinux
 {
@@ -543,6 +588,7 @@ namespace
 
     IVEngineServer* g_Engine = nullptr;
     IVoiceServer* g_VoiceServer = nullptr;   // optional (Opus voice listening rules)
+    IEngineTraceLinux* g_EngineTrace = nullptr;   // optional (hand wall trace)
     ServerConfig g_Config{};
     l4d2vr_linux::FeatureResolution g_Resolved{};
     std::uint32_t g_Features = 0u;     // resolved & operator-enabled
@@ -710,6 +756,22 @@ namespace
         if (accessor) accessor[1] = 0u;    // CBaseEdict::StateChanged(): change serial 0
     }
 
+    // Per-player budget for client-driven log lines (throws, drops); verbose logs all.
+    std::array<LogBudget, kMaxPlayerSlots + 1> g_LogBudgets{};
+    bool ClientLogAllowed(int index)
+    {
+        if (g_Config.verbose) return true;
+        if (index < 0 || index > kMaxPlayerSlots) return false;
+        switch (g_LogBudgets[static_cast<std::size_t>(index)].Take(SteadyMs()))
+        {
+        case LogBudget::Verdict::Log: return true;
+        case LogBudget::Verdict::LogSuppressedNote:
+            Log("player=%d: further throw/drop lines suppressed for 10 s", index);
+            return false;
+        default: return false;
+        }
+    }
+
     // ---- Execution context (the game simulates and reads usercmds on one thread) -----
     struct ExecFrame
     {
@@ -743,10 +805,23 @@ namespace
         std::uint64_t NowUs() const override { return SteadyUs(); }
         bool ViewYaw(int index, float& yaw) const override
         {
-            if (!IsValidPlayerIndex(index) || !g_Players[static_cast<std::size_t>(index)].haveViewYaw) return false;
-            yaw = g_Players[static_cast<std::size_t>(index)].viewYaw;
-            return std::isfinite(yaw);
+            if (!IsValidPlayerIndex(index)) return false;
+            const PlayerVRState& p = g_Players[static_cast<std::size_t>(index)];
+            if (p.haveViewYaw)
+            {
+                yaw = p.viewYaw;
+                return std::isfinite(yaw);
+            }
+            // Before the sender's first VR usercmd (or without the decoder):
+            // the player's own server eye angles.
+            edict_t* base = EdictBase();
+            void* player = base && g_N.eyeAngles ? EntityFromEdict(&base[index]) : nullptr;
+            const QAngle* angles = player ? g_N.eyeAngles(player) : nullptr;
+            if (!angles || !std::isfinite(angles->y)) return false;
+            yaw = angles->y;
+            return true;
         }
+        bool HasViewYawSource() const override { return g_Resolved.usercmdDecoder || g_N.eyeAngles != nullptr; }
         void Log(const char* line) override { std::fputs(line, stderr); }
         // Opus voice follows the game's own voice rules (team, alltalk, mutes).
         bool VoiceCanHear(int receiver, int sender) const override
@@ -930,7 +1005,9 @@ namespace
         cmd.random_seed = move->random_seed;
         cmd.mousedx = move->mousedx;
         cmd.mousedy = move->mousedy;
-        const DecodedUsercmd decoded = DecodeVRUsercmd(cmd);
+        // Exact-pitch packing: z is restored around the player's own origin.
+        const float referenceZ = g_DecodeOrigin.z + pitch_pack::kReferenceAboveOrigin;
+        const DecodedUsercmd decoded = DecodeVRUsercmd(cmd, g_DecodeHaveOrigin ? &referenceZ : nullptr);
         // Write back exactly the fields the listen-host decoder strips.
         move->command_number = cmd.command_number;
         move->tick_count = cmd.tick_count;
@@ -943,6 +1020,10 @@ namespace
         move->forwardmove = cmd.forwardmove;   // a hand throw packs its velocity here
         move->sidemove = cmd.sidemove;
         if (!IsValidPlayerIndex(g_DecodeIndex)) return;
+        // VR treatment only after the handshake (legitimate clients send VR
+        // commands only once acknowledged); the command is stripped either way.
+        const SessionClient* client = g_Session.Client(g_DecodeIndex);
+        if (!client || !client->helloSeen) return;
         PlayerVRState& p = g_Players[static_cast<std::size_t>(g_DecodeIndex)];
         RecordDecodedCommand(p, cmd, decoded, g_DecodeHaveOrigin, g_DecodeOrigin, SteadyMs());
         g_Session.NoteVRUsercmd(g_DecodeIndex);
@@ -977,6 +1058,10 @@ namespace
 
     int DetourFireTerrorBullets(int playerId, const Vector& origin, const QAngle& angles, int weaponId, int a5, int a6, float a7)
     {
+        // Hand-origin bullets are the AkimboRays feature (operator mask and
+        // the player's own feature request).
+        if (!IsValidPlayerIndex(playerId) || (g_Session.EffectiveFeatures(playerId) & kFeatureAkimboRays) == 0u)
+            return g_N.fireBullets(playerId, origin, angles, weaponId, a5, a6, a7);
         if (g_Exec && g_Exec->index == playerId && g_Exec->ctx.poseValid)
         {
             const Vector position = ToVector(g_Exec->ctx.position);
@@ -1073,6 +1158,7 @@ namespace
             const std::uint64_t now = SteadyMs();
             const double waitedMs = storage.decodedAtMs && now >= storage.decodedAtMs
                 ? static_cast<double>(now - storage.decodedAtMs) : -1.0;
+            if (ClientLogAllowed(index))
             Log("hand throw spawn player=%d weapon=%d command=%d origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f) "
                 "speed=%.1f hand=(%.1f %.1f %.1f) body=(%.1f %.1f %.1f) receiveToSpawnMs=%.1f ticksAfterRelease=0",
                 index, expectedWeaponId, storage.releaseCommand, storage.release.origin.x, storage.release.origin.y,
@@ -1081,7 +1167,7 @@ namespace
                 storage.handVelocity.y, storage.handVelocity.z, storage.playerVelocity.x, storage.playerVelocity.y,
                 storage.playerVelocity.z, waitedMs);
         }
-        else
+        else if (ClientLogAllowed(index))
         {
             Log("throw player=%d weapon=%d velocity=(%.1f %.1f %.1f)", index, expectedWeaponId,
                 storage.release.velocity.x, storage.release.velocity.y, storage.release.velocity.z);
@@ -1142,17 +1228,104 @@ namespace
         }
     }
 
-    // Instant deploy: the weapon (and the player) may attack now.
-    void ClearAttackDelay(void* self, void* weapon)
+    // Instant deploy: the deploy delay of a switch is removed, the weapon's
+    // own fire cycle (noted while it was held) is kept.
+    void ClearAttackDelay(void* self, void* weapon, const PlayerVRState& p)
     {
         const float now = Curtime();
         if (!self || !weapon || !(now >= 0.0f) || !std::isfinite(now))
             return;
-        Field<float>(weapon, g_P.nextPrimary) = std::min(Field<float>(weapon, g_P.nextPrimary), now);
-        Field<float>(weapon, g_P.nextSecondary) = std::min(Field<float>(weapon, g_P.nextSecondary), now);
-        Field<float>(self, g_P.nextAttack) = std::min(Field<float>(self, g_P.nextAttack), now);
+        float notedPrimary = 0.0f, notedSecondary = 0.0f;
+        const bool noted = p.weaponReady.Find(reinterpret_cast<std::uintptr_t>(weapon), notedPrimary, notedSecondary);
+        float& primary = Field<float>(weapon, g_P.nextPrimary);
+        float& secondary = Field<float>(weapon, g_P.nextSecondary);
+        float& player = Field<float>(self, g_P.nextAttack);
+        primary = InstantDeployTimer(primary, noted, notedPrimary, now);
+        secondary = InstantDeployTimer(secondary, noted, notedSecondary, now);
+        player = InstantDeployTimer(player, p.havePlayerNextAttack, p.playerNextAttack, now);
         MarkChanged(weapon);
         MarkChanged(self);
+    }
+
+    // Notes the held weapon's fire timers and the player's attack timer.
+    void NoteWeaponReady(void* self, void* weapon, PlayerVRState& p)
+    {
+        if (!self || !weapon || !g_P.deploy || !g_N.getOwner || g_N.getOwner(weapon) != self) return;
+        p.weaponReady.Note(reinterpret_cast<std::uintptr_t>(weapon), Field<float>(weapon, g_P.nextPrimary),
+            Field<float>(weapon, g_P.nextSecondary));
+        p.playerNextAttack = Field<float>(self, g_P.nextAttack);
+        p.havePlayerNextAttack = std::isfinite(p.playerNextAttack);
+    }
+
+    // ---- Hand wall trace (eye -> hand) ---------------------------------------------
+    class HandTraceFilter final : public ITraceFilterLinux
+    {
+    public:
+        explicit HandTraceFilter(void* self) : m_Self(self) {}
+        // Players (and the player's own items) never stop the hand; world,
+        // doors, brushes and props do.
+        bool ShouldHitEntity(void* entity, int) override { return entity && entity != m_Self && !IsTerrorPlayer(entity); }
+        int GetTraceType() const override { return 0; }
+    private:
+        void* m_Self;
+    };
+    constexpr unsigned kHandTraceMask = 0x1u | 0x2u | 0x4000u;   // SOLID | WINDOW | MOVEABLE
+
+    struct HandTraceContext { void* player = nullptr; };
+
+    bool TraceHand(void* context, const Vec3& eye, Vec3& hand)
+    {
+        const auto* ctx = static_cast<const HandTraceContext*>(context);
+        if (!g_EngineTrace || !ctx || !ctx->player || !eye.Finite() || !hand.Finite()) return false;
+        const Vec3 delta = hand - eye;
+        const float length = delta.Length();
+        if (!(length > 1.0f)) return false;
+        TraceRay_t ray{};
+        ray.start = { eye.x, eye.y, eye.z, 0.0f };
+        ray.delta = { delta.x, delta.y, delta.z, 0.0f };
+        ray.isRay = true;
+        ray.isSwept = true;
+        TraceResult trace{};
+        trace.fraction = 1.0f;
+        HandTraceFilter filter(ctx->player);
+        g_EngineTrace->TraceRay(ray, kHandTraceMask, &filter, &trace);
+        if (trace.startsolid || trace.allsolid || !std::isfinite(trace.fraction) || trace.fraction >= 1.0f)
+            return false;
+        // Two units in front of the surface.
+        const float keep = std::max(0.0f, trace.fraction * length - 2.0f) / length;
+        hand = eye + delta * keep;
+        return true;
+    }
+
+    // engine_srv.so's TraceRay must be code inside engine_srv.so before it is called.
+    struct CodeRangeQuery { std::uintptr_t address = 0u; bool inside = false; };
+    int FindEngineCodeCallback(dl_phdr_info* info, std::size_t, void* data)
+    {
+        auto* q = static_cast<CodeRangeQuery*>(data);
+        if (!info || !info->dlpi_name) return 0;
+        const std::string path(info->dlpi_name);
+        const auto slash = path.find_last_of('/');
+        const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+        if (file != "engine_srv.so" && file != "engine.so") return 0;
+        for (int i = 0; i < info->dlpi_phnum; ++i)
+        {
+            const auto& ph = info->dlpi_phdr[i];
+            const std::uintptr_t begin = static_cast<std::uintptr_t>(info->dlpi_addr) + ph.p_vaddr;
+            if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X) != 0 && q->address >= begin && q->address < begin + ph.p_memsz)
+                q->inside = true;
+        }
+        return 1;
+    }
+
+    bool EngineTraceLooksValid(IEngineTraceLinux* trace)
+    {
+        if (!trace) return false;
+        const auto vtable = *reinterpret_cast<const std::uintptr_t* const*>(trace);
+        if (!vtable) return false;
+        CodeRangeQuery q{};
+        q.address = vtable[5];
+        dl_iterate_phdr(FindEngineCodeCallback, &q);
+        return q.inside;
     }
 
     void DetourPlayerRunCommand(void* self, CUserCmdLinux* ucmd, void* moveHelper)
@@ -1168,6 +1341,12 @@ namespace
         const std::uint32_t features = g_Session.EffectiveFeatures(index);
         const Status status = ReadStatus(self);
         void* weaponBefore = g_N.getActiveWeapon(self);
+
+        // Fire timers of the held weapon, before this command can switch it.
+        const bool switchedBetween = p.lastActiveWeapon != 0u &&
+            reinterpret_cast<std::uintptr_t>(weaponBefore) != p.lastActiveWeapon;
+        if (!switchedBetween)
+            NoteWeaponReady(self, weaponBefore, p);
 
         ExecInput in{};
         in.features = features;
@@ -1213,11 +1392,28 @@ namespace
                 in.playerVelocity = originVelocity;
             }
         }
+        if (in.handThrowBackend && weaponBefore && weapon::IsThrowable(in.weaponId))
+        {
+            // A spent grenade (redraw pending, or no grenade ammo left) is never re-armed.
+            in.throwableLoaded = Field<unsigned char>(weaponBefore, g_P.grenadeRedraw) == 0;
+            if (in.throwableLoaded && g_N.ammoCount && g_P.primaryAmmoType > 0)
+            {
+                const int ammoType = Field<int>(weaponBefore, g_P.primaryAmmoType);
+                if (ammoType >= 0 && ammoType < 32)
+                    in.throwableLoaded = g_N.ammoCount(self, ammoType) > 0;
+            }
+        }
         if (pose && pose->poseValid && g_N.eyePosition)
         {
             const Vector eye = g_N.eyePosition(self);
             in.eye = ToVec(eye);
             in.haveEye = in.eye.Finite();
+        }
+        HandTraceContext traceContext{ self };
+        if (g_EngineTrace && g_Config.handTraceEnabled)
+        {
+            in.traceHand = &TraceHand;
+            in.traceContext = &traceContext;
         }
 
         ExecFrame frame{};
@@ -1233,7 +1429,7 @@ namespace
         {
             // The item was switched between commands (a holster draw's "use"
             // command): it is in the VR hand already, so it may fire now.
-            ClearAttackDelay(self, weaponBefore);
+            ClearAttackDelay(self, weaponBefore, p);
             if (g_Config.verbose)
                 Log("player=%d command=%d instant deploy (switched between commands)", index, ucmd->command_number);
         }
@@ -1289,8 +1485,9 @@ namespace
                     MarkChanged(weaponBefore);
                 }
                 p.pendingThrow = {};
-                Log("hand throw not executed player=%d command=%d weapon=%d stillHeld=%d", index,
-                    ucmd->command_number, in.weaponId, stillHeld ? 1 : 0);
+                if (ClientLogAllowed(index))
+                    Log("hand throw not executed player=%d command=%d weapon=%d stillHeld=%d", index,
+                        ucmd->command_number, in.weaponId, stillHeld ? 1 : 0);
             }
             MarkChanged(self);
             g_HandThrowSpawnedIndex = -1;
@@ -1334,11 +1531,14 @@ namespace
                 const Vector origin = ToVector(actions.dropRequest.origin);
                 g_N.animatingTeleport(weaponAfter, &origin, nullptr, &velocity);
             }
-            Log("%s player=%d weapon=%d velocity=(%.1f %.1f %.1f) atHand=%d", actions.dropRequest.holster ? "holster drop" : "inventory drop",
-                index, actions.dropRequest.weaponId, velocity.x, velocity.y, velocity.z, atHand ? 1 : 0);
+            if (ClientLogAllowed(index))
+                Log("%s player=%d weapon=%d velocity=(%.1f %.1f %.1f) atHand=%d", actions.dropRequest.holster ? "holster drop" : "inventory drop",
+                    index, actions.dropRequest.weaponId, velocity.x, velocity.y, velocity.z, atHand ? 1 : 0);
         }
         if (actions.instantDeploy && weaponAfter)
-            ClearAttackDelay(self, weaponAfter);
+            ClearAttackDelay(self, weaponAfter, p);
+        else if (weaponAfter && weaponAfter == weaponBefore)
+            NoteWeaponReady(self, weaponAfter, p);   // a shot in this command starts the cycle
     }
 
     // ---- Network properties -------------------------------------------------------------
@@ -1666,8 +1866,10 @@ namespace
                 g_HookEyePosition.Remove();
                 g_HookEyeAngles.Remove();
                 groups &= ~(l4d2vr_linux::kGroupEye | l4d2vr_linux::kGroupMelee);
-                // PreExecute still needs the native eye position for the reach clamp.
+                // PreExecute still needs the native eye position for the reach clamp,
+                // and the v3 -> v2 pose relay the view yaw.
                 g_N.eyePosition = As<FnEyePosition>(Address(results, "EyePosition"));
+                g_N.eyeAngles = As<FnEyeAngles>(Address(results, "EyeAngles"));
             }
             if ((groups & l4d2vr_linux::kGroupMelee) != 0u &&
                 vtable(g_HookShootPosition, "Weapon_ShootPosition", reinterpret_cast<void*>(&DetourShootPosition)))
@@ -1733,6 +1935,8 @@ namespace
     {
         std::uint32_t features = g_Features;
         if (!g_GlobalsValidated) features &= ~(kFeatureInstantDeploy | kFeatureHandThrow);
+        // v3 -> v2 downconversion needs the sender's view yaw.
+        if (!g_Host.HasViewYawSource()) features &= ~kFeaturePoseV3;
         SessionCapabilities caps{};
         caps.usercmdDecoder = g_Resolved.usercmdDecoder;
         caps.interaction = g_Resolved.interaction;
@@ -1789,6 +1993,8 @@ namespace
             g_EdictCount = 0;
             g_Engine = nullptr;
             g_VoiceServer = nullptr;
+            g_EngineTrace = nullptr;
+            for (LogBudget& b : g_LogBudgets) b.Reset();
             if (interfaceFactory)
             {
                 int code = IFACE_FAILED;
@@ -1797,6 +2003,15 @@ namespace
                 g_VoiceServer = static_cast<IVoiceServer*>(interfaceFactory("VoiceServer002", &code));
                 if (!g_VoiceServer)
                     Log("VoiceServer002 unavailable; Opus voice reaches every opted-in player");
+                code = IFACE_FAILED;
+                g_EngineTrace = static_cast<IEngineTraceLinux*>(interfaceFactory("EngineTraceServer003", &code));
+                if (g_EngineTrace && !EngineTraceLooksValid(g_EngineTrace))
+                {
+                    Log("EngineTraceServer003 TraceRay is not engine code; hand wall trace off");
+                    g_EngineTrace = nullptr;
+                }
+                else if (!g_EngineTrace)
+                    Log("EngineTraceServer003 unavailable; hand wall trace off");
             }
             if (!g_Engine)
             {

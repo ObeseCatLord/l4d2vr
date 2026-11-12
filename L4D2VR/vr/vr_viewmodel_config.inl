@@ -1621,8 +1621,13 @@ void VR::ParseConfigFileUnlocked()
     m_FirstPersonBodyHideWorldWeapon = getBool(
         "FirstPersonBodyHideWorldWeapon",
         m_FirstPersonBodyHideWorldWeapon);
-    m_HideArms = getBool("HideArms", m_HideArms);
-    m_NativeViewmodelHandsOnly = getBool("NativeViewmodelHandsOnly", m_NativeViewmodelHandsOnly);
+    // Fixed fallbacks: the hands block below rewrites both members.
+    m_HideArms = getBool("HideArms", false);
+    m_NativeViewmodelHandsOnly = getBool("NativeViewmodelHandsOnly", true);
+    // The VR Options "Hide arms" and "Hand mode" rows: the hands block below
+    // used to overwrite both, so the rows changed nothing (2.0.11, review B34).
+    const bool configHideArms = m_HideArms;
+    const bool configNativeViewmodelHandsOnly = m_NativeViewmodelHandsOnly;
     m_NativeViewmodelArmCroppingEnabled = getBool(
         "NativeViewmodelArmCroppingEnabled",
         m_NativeViewmodelArmCroppingEnabled);
@@ -1922,8 +1927,11 @@ void VR::ParseConfigFileUnlocked()
     // Left-handed play turns VR hands on. The separate SteamVR glove models
     // are retired (the survivor's own viewmodel hands are used for everyone):
     // VrHandsGlovesEnabled is ignored.
+    // Hand mode "Game animation" (NativeViewmodelHandsOnly=false) is the
+    // classic viewmodel: the same as VR hands off. Left-handed play keeps the
+    // hands (the left-hand remap needs them).
     const bool vrHandsEntryEnabled =
-        getBool("VrHandsEnabled", true) || m_LeftHanded;
+        (getBool("VrHandsEnabled", true) && configNativeViewmodelHandsOnly) || m_LeftHanded;
     m_VrHandsGlovesEnabled = false;
     m_VrHandsGloveFingerMaxCurl[0] = std::clamp(
         getFloat("VrHandsGloveThumbMaxCurl", m_VrHandsGloveFingerMaxCurl[0]),
@@ -1958,17 +1966,12 @@ void VR::ParseConfigFileUnlocked()
     {
         m_VrHandsGlovesRuntimeFallback = false;
         m_NativeViewmodelHandsOnly = true;
-        m_HideArms = false;
-    }
-    else if (m_NativeViewmodelHandsOnly)
-    {
-        m_VrHandsGlovesRuntimeFallback = false;
-        m_HideArms = false;
+        m_HideArms = configHideArms;
     }
     else
     {
         m_VrHandsGlovesRuntimeFallback = false;
-        m_HideArms = false;
+        m_HideArms = configHideArms;
     }
     m_VrHandsMotionRangeWithoutController = getBool("VrHandsMotionRangeWithoutController", m_VrHandsMotionRangeWithoutController);
     m_VrHandsDebugLog = getBool("VrHandsDebugLog", m_VrHandsDebugLog);

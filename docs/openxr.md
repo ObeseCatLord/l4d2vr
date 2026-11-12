@@ -25,16 +25,21 @@ The game reads the active runtime from
 can differ from the 64-bit one other games use. The installer's `status` command (and the GUI's
 Play tab) shows both.
 
-If SteamVR is the active (64-bit) OpenXR runtime but the 32-bit registration is missing or points to another
-runtime (SteamVR was set as the OpenXR runtime before 2.17 added `steamxr_win32.json`), the mod loads SteamVR's
-`steamxr_win32.json` itself for this game (through `XR_RUNTIME_JSON`, no registry change) and logs it. Pressing
-*Set SteamVR as OpenXR Runtime* in SteamVR's settings again fixes the registration for every 32-bit game.
+If the 32-bit registration is missing or names a manifest that no longer exists, and the active (64-bit)
+runtime has a 32-bit manifest next to its 64-bit one (for example SteamVR's `steamxr_win32.json` or Oculus's
+`oculus_openxr_32.json`), the mod loads that 32-bit manifest itself for this game (through `XR_RUNTIME_JSON`, no
+registry change) and logs it. It does the same when SteamVR is the active runtime and the 32-bit registration
+points to another runtime (SteamVR was set as the OpenXR runtime before 2.17 added `steamxr_win32.json`).
+Pressing *Set SteamVR as OpenXR Runtime* in SteamVR's settings again fixes the registration for every 32-bit
+game.
 
 `vrmod_log.txt` is written next to `left4dead2.exe`. Its first line names the mod version, the `d3d9.dll` that
 was loaded and the render path; a log without that line comes from another VR mod or an older run.
 
 No launch options are needed. Running the game as administrator makes the loader ignore
-`XR_RUNTIME_JSON` and `XR_API_LAYER_PATH`, so do not rely on those variables to pick a runtime.
+`XR_RUNTIME_JSON` and `XR_API_LAYER_PATH`, so do not rely on those variables to pick a runtime. In that case the
+mod does not use the 32-bit manifest described above either, and the reason in the log says to start Steam and
+the game without administrator rights.
 
 ### Linux (Proton)
 
@@ -69,7 +74,9 @@ The mod first checks cheaply, without loading the OpenXR loader:
 * **Windows:** an active runtime with a 32-bit registration whose manifest exists.
 * **Proton:** a 32-bit `wineopenxr.dll` in the prefix.
 
-It then starts the runtime. If any step fails and `DesktopModeAuto=true` (the default):
+It then starts the runtime and, once the game has created its graphics device, the VR session. If any step
+fails (since 2.0.11 also the session, e.g. `xrCreateSession` failing when the game runs on another GPU than
+the headset) and `DesktopModeAuto=true` (the default):
 
 * The game runs in **desktop mode**. You can still play and see VR players' bodies.
 * `vrmod_log.txt` says why, for example:
@@ -79,6 +86,11 @@ It then starts the runtime. If any step fails and `DesktopModeAuto=true` (the de
 * The game console shows the same reason once you are in a map (`[L4D2VR] VR is off, desktop mode: ...`).
 
 With `DesktopModeAuto=false` the game shows the error in a message box and exits instead.
+
+If the runtime stops **during play** (SteamVR crashed or was closed, the Link cable dropped, the session was
+lost), VR stops for the rest of the game: the log names the call and result once (`... returned
+XR_ERROR_INSTANCE_LOST ...; VR stops`) and the game console shows `[L4D2VR] VR stopped: ...`. Restart the game
+to use VR again. Taking a Quest off under Link (the session pauses and resumes) is not a stop.
 
 | Reason in the log | What to do |
 |---|---|
@@ -109,7 +121,9 @@ the instance (runtime name and version, extensions), the session states and fram
 * **Trigger and grip thresholds are the mod's**, not SteamVR's per-binding settings:
   * Index grips click at squeeze 0.85 (right, released below 0.5) and 0.8 (left, released below
     0.45), as in the old SteamVR file. A firm, full-hand squeeze is needed.
-  * Other analog triggers and grips click at 0.25 and release below 0.2.
+  * Analog triggers (Index, Touch, Vive, Cosmos, Focus 3, WMR, Pico 4) and the other analog grips click at
+    0.25 and release below 0.2. Since 2.0.11 the Index, Vive, Cosmos, Focus 3 and Pico 4 triggers read the
+    analog value too (2.0.0-2.0.10 used the trigger's end-of-travel click on them).
   * The Index trackpad press is a force of 0.25.
   * The sticks have a 10% radial deadzone.
 * **Menus use the mod's laser**: point either controller at a menu, the HUD, the config panel or its

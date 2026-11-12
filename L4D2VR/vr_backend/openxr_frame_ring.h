@@ -17,11 +17,15 @@
 //   * The thread that calls IVrCompositor::WaitGetPoses (the pose waiter in
 //     queued mode, the main thread otherwise, the loading pump while the game
 //     is stalled) is the xrWaitFrame thread. Before it waits again it must
-//     close a waited frame nobody began: PlanWait() says EndStaleFirst, and
-//     the backend begins and ends that frame with the last submitted layers
-//     (or none), so the runtime keeps receiving complete frames.
+//     begin a waited frame nobody began (PlanWait() says EndStaleFirst): since
+//     2.0.11 the backend begins it and leaves it begun, so the submit side can
+//     still end it with the image drawn for it while the next wait runs. A
+//     begun frame still open when a newer one must be begun is ended first
+//     with the last submitted layers (NoteStaleEnd), so the runtime keeps
+//     receiving complete frames.
 //   * The submit side (SubmitExplicitTimingData / Submit / PostPresentHandoff,
-//     always under DXVK's queue lock) begins the waited frame and ends it.
+//     always under DXVK's queue lock) begins the waited frame (or uses the
+//     one the wait side began) and ends it.
 //
 // Every rule violation is counted (and reported through the assert hook) and
 // refused, never forwarded to the runtime.
@@ -179,6 +183,10 @@ namespace l4d2vr_openxr
             ++m_Stats.staleEnds;
             return true;
         }
+
+        // The backend ends the begun frame with the last submitted layers
+        // (no new image arrived for it): counted as a stale end.
+        void NoteStaleEnd() { ++m_Stats.staleEnds; }
 
         // Ends the begun frame. False (and a violation) without one.
         bool End(FrameTicket* outTicket = nullptr)

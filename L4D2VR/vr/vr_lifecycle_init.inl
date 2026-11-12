@@ -1105,6 +1105,24 @@ VR::VR(Game* game)
         return;
     }
 
+    // OpenXR: the instance worked but the session (created with DXVK's
+    // device) may not: desktop mode then, instead of a frozen game that waits
+    // for views that never come (2.0.11).
+    {
+        std::string sessionFailure;
+        if (!m_Backend->SessionUsable(sessionFailure))
+        {
+            const std::string text = std::string(l4d2vr_backend::InitFailurePrefix(*m_Backend)) + ": " + sessionFailure;
+            m_Compositor = nullptr;
+            m_System = nullptr;
+            if (L4D2VR_DesktopFallbackAllowed())
+                L4D2VR_EnterDesktopFallback(text.c_str());
+            else
+                Game::errorMsg(text.c_str());
+            return;
+        }
+    }
+
     char currentDir[MAX_STR_LEN];
     GetCurrentDirectory(MAX_STR_LEN, currentDir);
     m_ViewmodelAdjustmentSavePath = std::string(currentDir) + "\\viewmodel_adjustments.txt";

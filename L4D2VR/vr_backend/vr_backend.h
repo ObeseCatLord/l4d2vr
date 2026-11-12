@@ -223,6 +223,16 @@ namespace l4d2vr_backend
         virtual IVrRenderModels* RenderModels() = 0;
         virtual IVrApplications* Applications() = 0;
 
+        // Waits (bounded) until the runtime session exists, then says whether
+        // it could not be created: false with a player-readable reason (e.g.
+        // xrCreateSession failed), so VR::VR falls back to desktop mode
+        // instead of rendering for a session that will never run. True when
+        // the session exists (or the backend has no separate session step).
+        virtual bool SessionUsable(std::string& reason) { (void)reason; return true; }
+        // Why VR stopped during play (runtime crashed or the session was
+        // lost); false while VR runs. Shown once in the game console.
+        virtual bool StoppedReason(std::string& reason) { (void)reason; return false; }
+
         // Debug: saves the next left-eye image the runtime receives (after the
         // backend's own copy) as a BMP at `path`. False when unsupported
         // (OpenVR: the runtime owns that copy).

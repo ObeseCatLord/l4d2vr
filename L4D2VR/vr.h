@@ -1779,7 +1779,7 @@ public:
     // Opus voice chat (vr_opus_voice.h, vr_opus_voice_client.cpp): every
     // OpusVoice* key (OpusVoiceEnabled, OpusVoiceBitrate, OpusVoiceFec,
     // OpusVoiceExpectedLossPercent, OpusVoiceMode, OpusVoiceVadSensitivity,
-    // OpusVoiceMicGain, OpusVoiceVolume, OpusVoicePositional,
+    // OpusVoiceMicGain, OpusVoiceMicAgc, OpusVoiceVolume, OpusVoicePositional,
     // OpusVoiceRadioVolume, OpusVoiceSpatialDistanceMeters, OpusVoiceAgc,
     // OpusVoiceAgcMaxGain, OpusVoiceLoopback, OpusVoicePushToTalkKey and the
     // test keys), handed to the voice runtime on every config parse.

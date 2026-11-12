@@ -3195,6 +3195,10 @@ namespace
         // mic setting (2.0.5-2.0.9 shipped ptt, so open-mic players were heard
         // by no mod player). Only the old shipped ptt changes.
         { "2026-11-09_opus_voice_mode_game", "OpusVoiceMode", "game", false, "ptt" },
+        // 2.0.11 open mic: the voice activation follows the game's microphone
+        // sensitivity slider (voice_threshold) and is retuned for quiet
+        // microphones. Only the old shipped 0.55 changes.
+        { "2026-11-11_opus_voice_vad_sensitivity_game", "OpusVoiceVadSensitivity", "game", false, "0.55" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)
@@ -3377,6 +3381,7 @@ namespace
         sampleKeys.insert("OpusVoiceFec");
         sampleKeys.insert("OpusVoiceExpectedLossPercent");
         sampleKeys.insert("OpusVoiceMicGain");
+        sampleKeys.insert("OpusVoiceMicAgc");
         sampleKeys.insert("OpusVoiceVolume");
         sampleKeys.insert("OpusVoiceAgc");
         sampleKeys.insert("OpusVoiceAgcMaxGain");

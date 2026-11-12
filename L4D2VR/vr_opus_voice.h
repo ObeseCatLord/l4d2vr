@@ -264,8 +264,12 @@ namespace l4d2vr_voice
         bool fec = true;                     // OpusVoiceFec (in-band FEC, upstream is unreliable)
         int expectedLossPercent = 5;         // OpusVoiceExpectedLossPercent (FEC strength)
         TransmitMode mode = TransmitMode::FollowGame;   // OpusVoiceMode = game | ptt | vad
-        float vadSensitivity = 0.55f;        // OpusVoiceVadSensitivity (0..1, higher opens on quieter speech)
+        // OpusVoiceVadSensitivity: game (kVadSensitivityGame, 2.0.11 default) = the
+        // game's microphone sensitivity (voice_threshold) decides; 0..1 = this value
+        // (higher opens on quieter speech). ResolveWithGame turns game into 0..1.
+        float vadSensitivity = -1.0f;
         float micGain = 1.0f;                // OpusVoiceMicGain (0..4)
+        bool micAgc = true;                  // OpusVoiceMicAgc: raise a quiet microphone before sending (2.0.11)
         float volume = 1.0f;                 // OpusVoiceVolume (0..2)
         bool positional = true;              // OpusVoicePositional
         float radioVolume = 0.55f;           // OpusVoiceRadioVolume: distant talkers (0..1)
@@ -329,8 +333,18 @@ namespace l4d2vr_voice
             else if (m == "ptt" || m == "pushtotalk" || m == "push") s.mode = TransmitMode::PushToTalk;
             else if (m == "game" || m == "auto" || m == "follow" || m == "followgame") s.mode = TransmitMode::FollowGame;
         }
-        if (str("OpusVoiceVadSensitivity")) s.vadSensitivity = std::clamp(ParseFloatText(v, s.vadSensitivity), 0.0f, 1.0f);
+        if (str("OpusVoiceVadSensitivity"))
+        {
+            const std::string m = Lower(Trim(v));
+            if (m == "game" || m == "auto" || m == "follow" || m == "followgame") s.vadSensitivity = -1.0f;
+            else
+            {
+                const float f = ParseFloatText(v, s.vadSensitivity);
+                s.vadSensitivity = f < 0.0f ? -1.0f : std::min(f, 1.0f);
+            }
+        }
         if (str("OpusVoiceMicGain")) s.micGain = std::clamp(ParseFloatText(v, s.micGain), 0.0f, 4.0f);
+        if (str("OpusVoiceMicAgc")) s.micAgc = ParseBoolText(v, s.micAgc);
         if (str("OpusVoiceVolume")) s.volume = std::clamp(ParseFloatText(v, s.volume), 0.0f, 2.0f);
         if (str("OpusVoicePositional")) s.positional = ParseBoolText(v, s.positional);
         if (str("OpusVoiceRadioVolume")) s.radioVolume = std::clamp(ParseFloatText(v, s.radioVolume), 0.0f, 1.0f);
@@ -388,19 +402,50 @@ namespace l4d2vr_voice
         bool openMic = false;         // voice_vox ("Open mic" vs "Push to talk")
         float receiveScale = 1.0f;    // voice_scale ("Voice receive volume")
         float masterVolume = 1.0f;    // volume (the game's master volume also scales its voice)
+        float micThreshold = -1.0f;   // voice_threshold ("Microphone sensitivity"; < 0 = not read) (2.0.11)
     };
+
+    // ---- microphone sensitivity (2.0.11) ------------------------------------------------
+    // The game's Options > Audio "Microphone sensitivity" slider is voice_threshold
+    // (resource/ui/l4d360ui/audio.res: SldVoiceVoxThreshold, 1..2000, inverseFill:
+    // a fuller bar = a lower threshold = more sensitive). The engine default is
+    // 2000, the least sensitive end. engine.dll (open mic) treats a captured buffer
+    // as silence when voice_threshold is above both its peak-to-peak range and its
+    // highest sample, so it is a 16-bit sample-level threshold: speech at RMS r
+    // spans roughly 6r peak to peak, so 2000 needs speech of RMS ~330 and 65 opens
+    // on almost anything (the game has no noise tracking at all).
+    // Opus voice keeps its adaptive noise floor and maps the slider onto its
+    // sensitivity instead: the game's default (2000) = kDefaultVadSensitivity, the
+    // most sensitive end (20 and below) = 1, logarithmic in between.
+    constexpr float kVadSensitivityGame = -1.0f;
+    constexpr float kDefaultVadSensitivity = 0.6f;
+    constexpr float kGameMicThresholdMax = 2000.0f;   // engine default, least sensitive
+    constexpr float kGameMicThresholdMin = 20.0f;     // and below: most sensitive
+
+    inline float SensitivityFromGameThreshold(float threshold)
+    {
+        if (!std::isfinite(threshold) || threshold <= 0.0f) return kDefaultVadSensitivity;
+        const float t = std::clamp(threshold, kGameMicThresholdMin, kGameMicThresholdMax);
+        const float frac = std::log(kGameMicThresholdMax / t) / std::log(kGameMicThresholdMax / kGameMicThresholdMin);
+        return kDefaultVadSensitivity + (1.0f - kDefaultVadSensitivity) * frac;
+    }
 
     inline bool SameGameVoice(const GameVoiceSettings& a, const GameVoiceSettings& b)
     {
         return a.known == b.known && a.enabled == b.enabled && a.openMic == b.openMic &&
-            std::fabs(a.receiveScale - b.receiveScale) < 1e-3f && std::fabs(a.masterVolume - b.masterVolume) < 1e-3f;
+            std::fabs(a.receiveScale - b.receiveScale) < 1e-3f && std::fabs(a.masterVolume - b.masterVolume) < 1e-3f &&
+            std::fabs(a.micThreshold - b.micThreshold) < 1e-2f;
     }
 
     // The settings in effect: OpusVoiceEnabled and the game's voice switch,
     // OpusVoiceMode=game resolved from the open-mic setting, and the playback
-    // volume scaled like the game's voice (voice_scale x volume).
+    // volume scaled like the game's voice (voice_scale x volume), and
+    // OpusVoiceVadSensitivity=game from the game's microphone sensitivity (2.0.11).
     inline Settings ResolveWithGame(Settings s, const GameVoiceSettings& g)
     {
+        if (s.vadSensitivity < 0.0f)
+            s.vadSensitivity = (g.known && g.micThreshold > 0.0f) ? SensitivityFromGameThreshold(g.micThreshold)
+                                                                  : kDefaultVadSensitivity;
         if (g.known && !g.enabled) s.enabled = false;
         if (s.mode == TransmitMode::FollowGame)
             s.mode = (g.known && g.openMic) ? TransmitMode::VoiceActivation : TransmitMode::PushToTalk;
@@ -478,55 +523,165 @@ namespace l4d2vr_voice
     // ---- voice activation (energy gate, adaptive noise floor) ------------------------
     // Opens after two loud frames (40 ms), closes after kHangoverFrames quiet
     // frames; the caller keeps kPrerollFrames so the word onset is sent too.
+    // 2.0.11 retune for quiet microphones (Quest over WiVRn into Proton: speech
+    // at RMS ~150-400): the gate opens at 3x (sensitivity 1) .. 5x (0) the noise
+    // floor and above an absolute floor of 400 (0) .. 20 (1) RMS, logarithmic
+    // (66 at the default 0.6). The noise floor follows the minimum frame level of
+    // the last kNoiseWindowFrames (minimum statistics): the short pauses between
+    // words keep it at the room's level while someone talks, and steady noise
+    // (a fan, hum) has no pauses, so the floor rises to it and the gate closes.
     class Vad
     {
     public:
         static constexpr int kOpenFrames = 2;
-        static constexpr int kHangoverFrames = 15;   // 300 ms
-        static constexpr int kPrerollFrames = 3;     // 60 ms
+        static constexpr int kHangoverFrames = 20;     // 400 ms
+        static constexpr int kPrerollFrames = 5;       // 100 ms
+        static constexpr int kNoiseWindowFrames = 60;  // 1.2 s
+        static constexpr float kCloseFraction = 0.55f; // closes below this part of the open level
+        static constexpr float kMinNoise = 5.0f;
+
+        static float OpenRatio(float sensitivity) { return 5.0f - 2.0f * std::clamp(sensitivity, 0.0f, 1.0f); }
+        static float AbsoluteFloor(float sensitivity) { return 400.0f * std::pow(0.05f, std::clamp(sensitivity, 0.0f, 1.0f)); }
 
         void Reset() { *this = Vad{}; }
+
+        static float FrameRms(const std::int16_t* pcm, int n)
+        {
+            double sum = 0.0;
+            for (int i = 0; i < n; ++i) sum += double(pcm[i]) * double(pcm[i]);
+            return n > 0 ? static_cast<float>(std::sqrt(sum / n)) : 0.0f;
+        }
 
         // sensitivity 0..1 (higher opens on quieter speech). Returns the gate.
         bool Update(const std::int16_t* pcm, int n, float sensitivity)
         {
-            double sum = 0.0;
-            for (int i = 0; i < n; ++i) sum += double(pcm[i]) * double(pcm[i]);
-            const float rms = n > 0 ? static_cast<float>(std::sqrt(sum / n)) : 0.0f;
+            const float rms = FrameRms(pcm, n);
+            m_Rms = rms;
             m_Level = m_Level * 0.7f + rms * 0.3f;
-            if (m_Noise < 0.0f) m_Noise = std::max(rms, 30.0f);
-            const float s = std::clamp(sensitivity, 0.0f, 1.0f);
-            // Open at 3.2x (sensitivity 1) .. 10x (0) the noise floor, and above an absolute floor.
-            const float ratio = 10.0f - 6.8f * s;
-            const float floorRms = 400.0f - 330.0f * s;
-            const float openAt = std::max(m_Noise * ratio, floorRms);
-            const float closeAt = openAt * 0.6f;
+            if (m_Noise < 0.0f)
+            {
+                m_Noise = std::max(rms, kMinNoise);
+                m_Window.fill(rms);
+            }
+            m_Window[static_cast<std::size_t>(m_WindowPos)] = rms;
+            m_WindowPos = (m_WindowPos + 1) % kNoiseWindowFrames;
+            float windowMin = rms;
+            for (float w : m_Window) windowMin = std::min(windowMin, w);
+
+            m_OpenAt = std::max(m_Noise * OpenRatio(sensitivity), AbsoluteFloor(sensitivity));
+            m_CloseAt = m_OpenAt * kCloseFraction;
+            m_JustOpened = false;
             if (!m_Active)
             {
-                m_Loud = rms > openAt ? m_Loud + 1 : 0;
-                if (m_Loud >= kOpenFrames) { m_Active = true; m_Quiet = 0; }
-                // The floor follows the quiet signal quickly and loud frames slowly.
-                m_Noise += (rms - m_Noise) * (rms < openAt ? 0.08f : 0.01f);
+                m_Loud = rms > m_OpenAt ? m_Loud + 1 : 0;
+                if (m_Loud >= kOpenFrames) { m_Active = true; m_Quiet = 0; ++m_Talkspurts; m_JustOpened = true; }
             }
             else
             {
-                if (rms < closeAt) { if (++m_Quiet >= kHangoverFrames) { m_Active = false; m_Loud = 0; } }
+                if (rms < m_CloseAt) { if (++m_Quiet >= kHangoverFrames) { m_Active = false; m_Loud = 0; } }
                 else m_Quiet = 0;
-                if (rms < closeAt) m_Noise += (rms - m_Noise) * 0.02f;
             }
-            m_Noise = std::clamp(m_Noise, 10.0f, 8000.0f);
+            // Down at once on a quieter frame, up toward the window minimum (~1 s).
+            if (rms < m_Noise) m_Noise += (rms - m_Noise) * 0.25f;
+            else if (windowMin > m_Noise) m_Noise += (windowMin - m_Noise) * 0.02f;
+            m_Noise = std::clamp(m_Noise, kMinNoise, 8000.0f);
             return m_Active;
         }
 
         bool Active() const { return m_Active; }
         float Level() const { return m_Level; }
         float Noise() const { return m_Noise; }
+        float Rms() const { return m_Rms; }          // the last frame
+        float OpenAt() const { return m_OpenAt; }
+        float CloseAt() const { return m_CloseAt; }
+        std::uint32_t Talkspurts() const { return m_Talkspurts; }
+        bool JustOpened() const { return m_JustOpened; }   // the gate opened on the last frame
+        // The last frame is speech: the gate is open and the frame is above its close level.
+        bool SpeechFrame() const { return m_Active && m_Rms >= m_CloseAt; }
 
     private:
-        float m_Noise = -1.0f, m_Level = 0.0f;
+        float m_Noise = -1.0f, m_Level = 0.0f, m_Rms = 0.0f, m_OpenAt = 0.0f, m_CloseAt = 0.0f;
+        std::array<float, kNoiseWindowFrames> m_Window{};
+        int m_WindowPos = 0;
         int m_Loud = 0, m_Quiet = 0;
-        bool m_Active = false;
+        bool m_Active = false, m_JustOpened = false;
+        std::uint32_t m_Talkspurts = 0u;
     };
+
+    // ---- microphone AGC (sent voice, 2.0.11) ---------------------------------------------
+    // Raises a quiet microphone toward kTarget before encoding (never lowers a
+    // loud one; at most kMaxGain). The level is learnt from speech frames only
+    // (Observe while the VAD calls the frame speech), so background noise never
+    // drives the gain up; Apply is used on frames that are sent, the gain
+    // ramps across the frame and is limited so the peak never clips.
+    class MicAgc
+    {
+    public:
+        static constexpr float kTarget = 3000.0f;   // RMS ~ -21 dBFS speech
+        static constexpr float kMaxGain = 4.0f;     // +12 dB
+
+        void Reset() { *this = MicAgc{}; }
+        void Observe(float speechRms)
+        {
+            if (speechRms <= 1.0f) return;
+            m_Level = m_Level <= 0.0f ? speechRms
+                : m_Level + (speechRms - m_Level) * (speechRms > m_Level ? 0.2f : 0.03f);
+            const float want = std::clamp(kTarget / m_Level, 1.0f, kMaxGain);
+            m_Gain += (want - m_Gain) * (want < m_Gain ? 0.3f : 0.05f);
+        }
+        void Apply(std::int16_t* pcm, int n)
+        {
+            if (n <= 0) return;
+            int peak = 1;
+            for (int i = 0; i < n; ++i) peak = std::max(peak, std::abs(int(pcm[i])));
+            const float limit = std::max(1.0f, 30000.0f / float(peak));
+            const float gain = std::min(m_Gain, limit);
+            const float from = std::min(m_Applied, limit);   // a sudden loud frame is not ramped into clipping
+            for (int i = 0; i < n; ++i)
+            {
+                const float g = from + (gain - from) * float(i + 1) / float(n);
+                pcm[i] = static_cast<std::int16_t>(std::clamp(static_cast<int>(std::lround(pcm[i] * g)), -32768, 32767));
+            }
+            m_Applied = gain;
+        }
+        float Gain() const { return m_Gain; }
+    private:
+        float m_Level = 0.0f, m_Gain = 1.0f, m_Applied = 1.0f;
+    };
+
+    // ---- microphone level statistics (logged every 10 s, 2.0.11) -------------------------
+    struct MicLevelStats
+    {
+        std::uint32_t frames = 0, openFrames = 0, speechFrames = 0, clippedFrames = 0, talkspurts = 0;
+        double rmsSum = 0.0, speechRmsSum = 0.0;
+        float speechPeak = 0.0f;
+        float noise = 0.0f, openAt = 0.0f, sensitivity = 0.0f, agcGain = 1.0f;
+
+        // One captured frame after the VAD ran on it.
+        void Add(const Vad& vad, bool clipped, float sens, float gain)
+        {
+            ++frames;
+            rmsSum += vad.Rms();
+            if (vad.Active()) ++openFrames;
+            if (vad.JustOpened()) ++talkspurts;
+            if (vad.SpeechFrame()) { ++speechFrames; speechRmsSum += vad.Rms(); speechPeak = std::max(speechPeak, vad.Rms()); }
+            if (clipped) ++clippedFrames;
+            noise = vad.Noise();
+            openAt = vad.OpenAt();
+            sensitivity = sens;
+            agcGain = gain;
+        }
+        float AverageRms() const { return frames ? static_cast<float>(rmsSum / frames) : 0.0f; }
+        float SpeechAverageRms() const { return speechFrames ? static_cast<float>(speechRmsSum / speechFrames) : 0.0f; }
+        float OpenPercent() const { return frames ? 100.0f * float(openFrames) / float(frames) : 0.0f; }
+    };
+
+    // A frame that reached (or nearly reached) full scale: the microphone or its gain clips.
+    inline bool FrameClipped(const std::int16_t* pcm, int n)
+    {
+        for (int i = 0; i < n; ++i) if (pcm[i] >= 32700 || pcm[i] <= -32700) return true;
+        return false;
+    }
 
     // ---- transmit state (gate -> frames to send) --------------------------------------
     // Push-to-talk keeps sending kPttTailFrames after the release (the last

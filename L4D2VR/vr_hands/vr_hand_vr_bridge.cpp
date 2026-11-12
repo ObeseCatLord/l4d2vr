@@ -10242,7 +10242,12 @@ bool VR::DrawVrHandsForEyeImmediate(
 
     IDirect3DSurface9* surface = nullptr;
     {
-        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+        // 2.0.11: on the material worker (queued) only try: the main thread can
+        // hold m_TextureMutex while it waits for this worker (texture
+        // recreation); skipping one draw is harmless.
+        std::unique_lock<TextureStateMutex> textureLock(m_TextureMutex, std::defer_lock);
+        if (queueMode != 0) { if (!textureLock.try_lock()) return false; }
+        else textureLock.lock();
         if (m_CreatingTextureID != Texture_None)
             return false;
 
@@ -10613,7 +10618,12 @@ bool VR::DrawVrHandsWorldDepthMaskForEyeImmediate(const CViewSetup& view, int ey
 
     IDirect3DSurface9* surface = nullptr;
     {
-        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+        // 2.0.11: on the material worker (queued) only try: the main thread can
+        // hold m_TextureMutex while it waits for this worker (texture
+        // recreation); skipping one draw is harmless.
+        std::unique_lock<TextureStateMutex> textureLock(m_TextureMutex, std::defer_lock);
+        if (queueMode != 0) { if (!textureLock.try_lock()) return false; }
+        else textureLock.lock();
         if (m_CreatingTextureID != Texture_None)
             return false;
 

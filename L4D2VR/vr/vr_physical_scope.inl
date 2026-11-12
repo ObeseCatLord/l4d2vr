@@ -313,7 +313,12 @@ bool VR::DrawNativeThrowArcForEye(const CViewSetup& view, int eyeIndex, const Na
         ~DeviceLock() { if (locked && g_D3DVR9) g_D3DVR9->UnlockDevice(); }
     } deviceLock(m_Game && m_Game->GetMatQueueMode() != 0);
     if (m_Game && m_Game->GetMatQueueMode() != 0 && !deviceLock.locked) return false;
-    std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+    // 2.0.11: on the material worker (queued) only try: the main thread can hold
+    // m_TextureMutex while it waits for this worker (texture recreation);
+    // skipping one draw is harmless.
+    std::unique_lock<TextureStateMutex> textureLock(m_TextureMutex, std::defer_lock);
+    if (deviceLock.locked) { if (!textureLock.try_lock()) return false; }
+    else textureLock.lock();
     IDirect3DSurface9* surface = eyeIndex == 0 ? m_D9LeftEyeSurface : m_D9RightEyeSurface;
     if (m_CreatingTextureID != Texture_None || !surface) return false;
     IDirect3DDevice9* device = nullptr;
@@ -457,7 +462,12 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
         ~DeviceLock() { if (locked && g_D3DVR9) g_D3DVR9->UnlockDevice(); }
     } deviceLock(m_Game && m_Game->GetMatQueueMode() != 0);
     if (m_Game && m_Game->GetMatQueueMode() != 0 && !deviceLock.locked) return false;
-    std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+    // 2.0.11: on the material worker (queued) only try: the main thread can hold
+    // m_TextureMutex while it waits for this worker (texture recreation);
+    // skipping one draw is harmless.
+    std::unique_lock<TextureStateMutex> textureLock(m_TextureMutex, std::defer_lock);
+    if (deviceLock.locked) { if (!textureLock.try_lock()) return false; }
+    else textureLock.lock();
     IDirect3DSurface9* surface = eyeIndex == 0 ? m_D9LeftEyeSurface : m_D9RightEyeSurface;
     if (m_CreatingTextureID != Texture_None || !surface) return false;
     IDirect3DDevice9* device = nullptr;

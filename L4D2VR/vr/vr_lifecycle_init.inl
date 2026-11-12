@@ -1523,7 +1523,15 @@ void VR::ApplyVrVoiceDefaultsOnce()
         return;
     m_VrVoiceDefaultsChecked = true;
 
-    const std::string statePath = "VR\\config_migrations_applied.txt";
+    // The same file dllmain uses: next to left4dead2.exe, not relative to the
+    // working directory (review B38).
+    std::filesystem::path statePath = L"VR\\config_migrations_applied.txt";
+    {
+        wchar_t exePath[MAX_PATH] = {};
+        const DWORD length = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (length > 0 && length < MAX_PATH)
+            statePath = std::filesystem::path(exePath).parent_path() / L"VR" / L"config_migrations_applied.txt";
+    }
     std::string state;
     {
         std::ifstream in(statePath, std::ios::binary);
@@ -1537,27 +1545,42 @@ void VR::ApplyVrVoiceDefaultsOnce()
     if (l4d2vr_voice::MigrationStateHasId(state, l4d2vr_voice::kVrVoiceDefaultsId))
         return;
 
+    // Recorded before anything changes: if the state cannot be written, the
+    // defaults would be applied again every session over the player's own
+    // Options > Audio choice (review B38).
+    {
+        std::ofstream out(statePath, std::ios::binary | std::ios::trunc);
+        out << l4d2vr_voice::MigrationStateWithId(state, l4d2vr_voice::kVrVoiceDefaultsId);
+        out.flush();
+        if (!out.good())
+        {
+            Game::logMsg("[VR][Voice] VR voice defaults not applied: VR\\config_migrations_applied.txt cannot be written");
+            return;
+        }
+    }
+
+    // "Voice: Disabled" is a deliberate choice (the game's default is on):
+    // keep it, and do not open the microphone (review B38).
+    const int voiceEnable = m_Game->GetConVarInt("voice_enable", 1);
+    if (!l4d2vr_voice::ShouldApplyVrVoiceDefaults(voiceEnable))
+    {
+        Game::logMsg("[VR][Voice] VR voice defaults skipped: voice is disabled in Options > Audio (kept)");
+        return;
+    }
+
     std::string applied;
     for (const l4d2vr_voice::GameCvarDefault& d : l4d2vr_voice::kVrVoiceCvarDefaults)
     {
         if (!m_Game->SetConVarString(d.name, d.value))
-        {
-            Game::logMsg("[VR][Voice] VR voice defaults: %s not set; retrying next session", d.name);
-            return;
-        }
-        applied += std::string(" ") + d.name + "=" + d.value;
-    }
-    if (m_Game->GetConVarInt("voice_vox", 0) != 1)
-    {
-        Game::logMsg("[VR][Voice] VR voice defaults: voice_vox did not take; retrying next session");
-        return;
-    }
-    {
-        std::ofstream out(statePath, std::ios::binary | std::ios::trunc);
-        out << l4d2vr_voice::MigrationStateWithId(state, l4d2vr_voice::kVrVoiceDefaultsId);
+            Game::logMsg("[VR][Voice] VR voice defaults: %s not set", d.name);
+        else
+            applied += std::string(" ") + d.name + "=" + d.value;
     }
     // Save them in config.cfg now (the game otherwise writes it when it quits).
     m_Game->ClientCmd_Unrestricted("host_writeconfig");
+    // Tell the player once: the microphone is now open (it was push to talk).
+    m_Game->ClientCmd_Unrestricted("echo [L4D2VR] Voice chat is now open mic for VR (no button to hold). "
+        "Change it in Options > Audio > Voice; your choice is kept.");
     Game::logMsg("[VR][Voice] VR voice defaults applied once:%s (open mic; change it in Options > Audio, it is kept)",
         applied.c_str());
 }

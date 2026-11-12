@@ -494,6 +494,13 @@ namespace l4d2vr_voice
         { "voice_scale", "1" },       // receive volume at the menu's maximum (the game's voice is quiet)
     };
 
+    // A player with voice_enable 0 chose "Voice: Disabled" (the game's default
+    // is on): the VR defaults leave the voice settings alone (2.0.11).
+    inline bool ShouldApplyVrVoiceDefaults(int voiceEnable)
+    {
+        return voiceEnable != 0;
+    }
+
     // vr/config_migrations_applied.txt: one id per line, '#' comments.
     inline bool MigrationStateHasId(const std::string& text, const std::string& id)
     {

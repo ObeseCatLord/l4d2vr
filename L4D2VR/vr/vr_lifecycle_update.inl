@@ -4123,9 +4123,13 @@ void VR::SubmitVRTextures()
 
     vr::HmdMatrix34_t completedRenderHmdPose{};
     bool useRenderPoseTextureSubmit = false;
+    // OpenXR declares the render pose per layer: always pass the pose the
+    // frame was rendered from (2.0.11), not only with QueuedRenderPoseFromTracking.
+    const bool submitRenderPose = m_QueuedRenderPoseFromTracking ||
+        (m_Backend && m_Backend->Kind() == l4d2vr_backend::RuntimeKind::OpenXR);
     if (queued &&
         sceneReadyForStaleResubmit &&
-        m_QueuedRenderPoseFromTracking &&
+        submitRenderPose &&
         m_QueuedSubmitUseRenderPoseToken)
     {
         std::lock_guard<std::mutex> poseLock(m_RenderCompletedHmdPoseMutex);
@@ -4297,7 +4301,7 @@ void VR::SubmitVRTextures()
                     poseToken = lockedRenderPoseToken;
 
                 if (sceneReadyForStaleResubmit &&
-                    m_QueuedRenderPoseFromTracking)
+                    submitRenderPose)
                 {
                     std::lock_guard<std::mutex> poseLock(m_RenderCompletedHmdPoseMutex);
                     if (m_RenderCompletedHmdPoseValid)

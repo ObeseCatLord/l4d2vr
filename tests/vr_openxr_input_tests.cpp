@@ -222,8 +222,28 @@ int main()
         Check(HasBinding(idx, Action::Flashlight, Hand::Right, "/input/thumbstick/click"), "index flashlight = right stick click");
         Check(HasBinding(idx, Action::Flashlight, Hand::Left, "/input/a/click"), "index flashlight = left A");
         Check(HasBinding(idx, Action::Pause, Hand::Left, "/input/b/click"), "index pause = left B");
-        Check(HasBinding(idx, Action::PrimaryAttack, Hand::Right, "/input/trigger/click"), "index primary = right trigger");
-        Check(HasBinding(idx, Action::SecondaryAttack, Hand::Left, "/input/trigger/click"), "index secondary = left trigger");
+        Check(HasBinding(idx, Action::PrimaryAttack, Hand::Right, "/input/trigger/value"), "index primary = right trigger");
+        Check(HasBinding(idx, Action::SecondaryAttack, Hand::Left, "/input/trigger/value"), "index secondary = left trigger");
+        // 2.0.11: every analog trigger fires at a quarter pull (SteamVR's button
+        // mode on the trigger value), not at the end-of-travel click.
+        for (xi::ProfileId id : { xi::ProfileId::Index, xi::ProfileId::ViveWand, xi::ProfileId::Cosmos, xi::ProfileId::Focus3,
+                 xi::ProfileId::Pico4, xi::ProfileId::Touch, xi::ProfileId::Wmr })
+        {
+            const xi::Profile& p = P(id);
+            for (Action a : { Action::PrimaryAttack, Action::SecondaryAttack })
+            {
+                const Hand h = a == Action::PrimaryAttack ? Hand::Right : Hand::Left;
+                const auto bound = BindingsOf(p, a, h);
+                CheckS(bound.size() == 1 && std::strcmp(bound[0]->input, "/input/trigger/value") == 0,
+                    std::string("trigger on its value on ") + p.key);
+                if (bound.size() == 1)
+                {
+                    float tp = 0.0f, tr = 0.0f;
+                    xi::Thresholds(*bound[0], tp, tr);
+                    CheckS(Near(tp, 0.25f) && Near(tr, 0.20f), std::string("trigger 0.25/0.20 on ") + p.key);
+                }
+            }
+        }
         Check(HasBinding(idx, Action::Use, Hand::Right, "/input/b/click") && HasBinding(idx, Action::MenuBack, Hand::Right, "/input/b/click"),
             "index use/back = right B");
         Check(HasBinding(idx, Action::ActivateVR, Hand::Right, "/input/a/click") && HasBinding(idx, Action::MagazineRelease, Hand::Right, "/input/a/click") &&

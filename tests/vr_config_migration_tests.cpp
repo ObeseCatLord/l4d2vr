@@ -14,7 +14,15 @@ int main()
     CHECK(!ValuesMatch("0.4,0.2,-0.27", "0.4,0.2,-0.28"));
     CHECK(!ValuesMatch("0,0,0", "0,0"));
     CHECK(ValuesMatch("False", "false"));
-    CHECK(!ValuesMatch("false", "0"));     // booleans are not numbers
+    // Booleans compare as the parser reads them (review B70).
+    CHECK(ValuesMatch("false", "0"));
+    CHECK(ValuesMatch("Off", "false"));
+    CHECK(ValuesMatch("1", "TRUE"));
+    CHECK(ValuesMatch("yes", "on"));
+    CHECK(!ValuesMatch("false", "1"));
+    CHECK(!ValuesMatch("true", "1.0"));     // getBool does not read 1.0 as true
+    CHECK(!ValuesMatch("false", "maybe"));
+    CHECK(ValuesMatch("0", "0.0"));         // no bool word: numbers
     CHECK(!ValuesMatch("true", "false"));
     CHECK(ValuesMatch("SecondaryAttack+Use", " SecondaryAttack+Use"));
     CHECK(!ValuesMatch("0.05", "0.0500001x"));

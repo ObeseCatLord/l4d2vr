@@ -110,9 +110,14 @@ def find_call_default(src, key):
     i = m.end()
     depth = 0
     j = i
+    in_str = False
     while j < len(src):
         c = src[j]
-        if c in '({':
+        if c == '"' and src[j - 1] != '\\':
+            in_str = not in_str
+        elif in_str:
+            pass
+        elif c in '({':
             depth += 1
         elif c in ')}':
             if depth == 0:
@@ -238,6 +243,31 @@ class PanelDefaults(unittest.TestCase):
             if normalize(kind, default) != normalize(kind, cfg[key]):
                 bad.append(f'{key}: panel={default!r} config.txt={cfg[key]!r}')
         self.assertEqual(bad, [], '\n'.join(bad))
+
+
+class ShippedKeysAreRead(unittest.TestCase):
+    def test_every_shipped_key_is_read(self):
+        """config.txt must not document keys nothing reads (2.0.11, review B35:
+        26 renamed/retired keys such as ScopeFov did nothing)."""
+        cfg = (ROOT / 'config.txt').read_text(encoding='utf-8')
+        keys = list(dict.fromkeys(re.findall(r'^([A-Za-z][A-Za-z0-9_]*)\s*=', cfg, re.M)))
+        src = ''
+        for path in ROOT.rglob('*'):
+            if path.suffix in ('.cpp', '.h', '.inl') and 'dxvk' not in path.parts:
+                text = path.read_text(encoding='utf-8', errors='replace')
+                start = text.find('kCfgSampleConfigText0')
+                end = text.find('kCfgSampleConfigChunks')
+                if start >= 0 and end > start:
+                    text = text[:start] + text[end:]
+                src += text
+        dead = [k for k in keys if '"' + k + '"' not in src]
+        self.assertEqual(dead, [], 'config.txt keys nothing reads: ' + ', '.join(dead))
+
+    def test_no_duplicate_keys(self):
+        cfg = (ROOT / 'config.txt').read_text(encoding='utf-8')
+        keys = re.findall(r'^([A-Za-z][A-Za-z0-9_]*)\s*=', cfg, re.M)
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        self.assertEqual(dupes, [], 'config.txt defines keys twice (the last line wins): ' + ', '.join(dupes))
 
 
 if __name__ == '__main__':

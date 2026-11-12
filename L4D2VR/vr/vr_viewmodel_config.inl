@@ -834,13 +834,24 @@ void VR::ParseConfigFileUnlocked()
 
     // С   ߣ   Ĭ  ֵ İ ȫ  ȡ
     // Self-test overrides arrive lower-cased: then option names match in any case.
+    // Keys match in any case when the exact spelling is missing ("lefthanded=
+    // true"), as in haptics_config.txt and the start-up reader (review B68).
+    std::unordered_map<std::string, std::string> userConfigLowerKeys;
+    for (const auto& kv : userConfig)
+    {
+        std::string lower = kv.first;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        userConfigLowerKeys.emplace(std::move(lower), kv.first);
+    }
     auto findConfig = [&](const char* k) {
         auto it = userConfig.find(k);
-        if (it == userConfig.end() && !SelfTestConfigOverrides().empty())
+        if (it == userConfig.end())
         {
-            for (auto i2 = userConfig.begin(); i2 != userConfig.end(); ++i2)
-                if (_stricmp(i2->first.c_str(), k) == 0)
-                    return i2;
+            std::string lower(k);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const auto lowerIt = userConfigLowerKeys.find(lower);
+            if (lowerIt != userConfigLowerKeys.end())
+                return userConfig.find(lowerIt->second);
         }
         return it;
     };
@@ -857,6 +868,41 @@ void VR::ParseConfigFileUnlocked()
         if (v == "0" || v == "false" || v == "off" || v == "no")  return false;
         return defVal;
         };
+    // Numbers must be finite and use the whole text (2.0.11, review B68:
+    // "nan"/"inf" passed every std::clamp, "43,2" silently read as 43). A
+    // decimal comma in a single number ("0,3") is read as a decimal point.
+    // Rejected values keep the default and are logged once per key and value.
+    static std::unordered_set<std::string> s_ConfigValueWarnings;
+    auto warnConfigValue = [&](const char* k, const std::string& value, const char* why) {
+        const std::string tag = std::string(k) + "=" + value;
+        if (s_ConfigValueWarnings.size() < 256 && s_ConfigValueWarnings.insert(tag).second)
+            Game::logMsg("[VR][Config] %s: \"%s\" %s", k, value.c_str(), why);
+        };
+    auto parseFiniteFloat = [&](std::string text, float& out)->bool {
+        trim(text);
+        if (text.empty())
+            return false;
+        auto attempt = [&](const std::string& t)->bool {
+            char* end = nullptr;
+            const float value = std::strtof(t.c_str(), &end);
+            if (!end || end == t.c_str())
+                return false;
+            while (*end == ' ' || *end == '\t')
+                ++end;
+            if (*end != '\0' || !std::isfinite(value))
+                return false;
+            out = value;
+            return true;
+            };
+        if (attempt(text))
+            return true;
+        if (std::count(text.begin(), text.end(), ',') == 1 && text.find('.') == std::string::npos)
+        {
+            std::replace(text.begin(), text.end(), ',', '.');
+            return attempt(text);
+        }
+        return false;
+        };
     auto getFloat = [&](const char* k, float defVal)->float {
         auto it = findConfig(k);
         if (it == userConfig.end() || it->second.empty()) return defVal;
@@ -864,8 +910,11 @@ void VR::ParseConfigFileUnlocked()
         std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
         if (v == "true" || v == "on" || v == "yes") return 1.0f;
         if (v == "false" || v == "off" || v == "no") return 0.0f;
-        try { return std::stof(it->second); }
-        catch (...) { return defVal; }
+        float value = defVal;
+        if (parseFiniteFloat(it->second, value))
+            return value;
+        warnConfigValue(k, it->second, "is not a number; the default is used");
+        return defVal;
         };
     auto getInt = [&](const char* k, int defVal)->int {
         auto it = findConfig(k);
@@ -874,8 +923,11 @@ void VR::ParseConfigFileUnlocked()
         std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
         if (v == "true" || v == "on" || v == "yes") return 1;
         if (v == "false" || v == "off" || v == "no") return 0;
-        try { return std::stoi(it->second); }
-        catch (...) { return defVal; }
+        float value = 0.0f;
+        if (parseFiniteFloat(it->second, value) && value > -2.0e9f && value < 2.0e9f)
+            return static_cast<int>(value);   // "3.0" reads as 3, as std::stoi did
+        warnConfigValue(k, it->second, "is not a whole number; the default is used");
+        return defVal;
         };
     auto getColor = [&](const char* k, int defR, int defG, int defB, int defA)->std::array<int, 4> {
         std::array<int, 4> defaults{ defR, defG, defB, defA };
@@ -922,21 +974,22 @@ void VR::ParseConfigFileUnlocked()
         float* components[3] = { &result.x, &result.y, &result.z };
         int index = 0;
 
-        while (std::getline(ss, token, ',') && index < 3)
+        bool bad = false;
+        while (std::getline(ss, token, ','))
         {
             trim(token);
-            if (!token.empty())
+            if (index < 3 && !token.empty())
             {
-                try
-                {
-                    *components[index] = std::stof(token);
-                }
-                catch (...)
-                {
-                }
+                float value = 0.0f;
+                if (parseFiniteFloat(token, value))
+                    *components[index] = value;
+                else
+                    bad = true;
             }
             ++index;
         }
+        if (bad || index != 3)
+            warnConfigValue(k, it->second, "needs three numbers x,y,z (a decimal comma cannot be used here); unreadable parts keep their default");
 
         return result;
         };
@@ -957,13 +1010,11 @@ void VR::ParseConfigFileUnlocked()
                 if (token.empty())
                     continue;
 
-                try
-                {
-                    values.push_back(std::stof(token));
-                }
-                catch (...)
-                {
-                }
+                float value = 0.0f;
+                if (parseFiniteFloat(token, value))
+                    values.push_back(value);
+                else
+                    warnConfigValue(k, source, "contains a part that is not a number; it is skipped");
             }
 
             return values;
@@ -977,6 +1028,16 @@ void VR::ParseConfigFileUnlocked()
         std::string value = it->second;
         trim(value);
 
+        // An emptied override list or custom action means "none" (review B68:
+        // it used to keep the previous value until the game restarted).
+        const std::string key(k);
+        static const std::string overridesSuffix = "Overrides";
+        const bool emptyMeansNone =
+            key.rfind("CustomAction", 0) == 0 ||
+            (key.size() > overridesSuffix.size() &&
+                key.compare(key.size() - overridesSuffix.size(), overridesSuffix.size(), overridesSuffix) == 0);
+        if (value.empty() && emptyMeansNone)
+            return std::string();
         return value.empty() ? defVal : value;
         };
 
@@ -1074,9 +1135,11 @@ void VR::ParseConfigFileUnlocked()
             return std::nullopt;
         };
 
-    auto parseCustomActionBinding = [&](const char* key, CustomActionBinding& binding)
+    // The fallback is the fixed default: the member holds the parsed form
+    // (alias name, "hold:" stripped) and must not feed the next parse.
+    auto parseCustomActionBinding = [&](const char* key, CustomActionBinding& binding, const char* defaultCommand)
         {
-            binding.command = getString(key, binding.command);
+            binding.command = getString(key, defaultCommand);
             binding.holdVirtualKey = false;
             binding.releaseCommand.clear();
             binding.usePressReleaseCommands = false;
@@ -1135,8 +1198,8 @@ void VR::ParseConfigFileUnlocked()
         };
 
 
-    m_SnapTurnAngle = getFloat("SnapTurnAngle", m_SnapTurnAngle);
-    m_TurnSpeed = getFloat("TurnSpeed", m_TurnSpeed);
+    m_SnapTurnAngle = std::clamp(getFloat("SnapTurnAngle", m_SnapTurnAngle), 1.0f, 180.0f);
+    m_TurnSpeed = std::clamp(getFloat("TurnSpeed", m_TurnSpeed), 0.0f, 10.0f);
     // Locomotion direction: default is HMD-yaw-based. Optional hand-yaw-based.
     m_MoveDirectionFromController = getBool("MoveDirectionFromController", m_MoveDirectionFromController);
     m_MoveDirectionFromController = getBool("MovementDirectionFromController", m_MoveDirectionFromController);
@@ -1246,15 +1309,16 @@ void VR::ParseConfigFileUnlocked()
     m_VoiceRecordCombo = parseActionCombo("VoiceRecordCombo", m_VoiceRecordCombo);
     m_QuickTurnCombo = parseActionCombo("QuickTurnCombo", m_QuickTurnCombo);
     m_ViewmodelAdjustCombo = parseActionCombo("ViewmodelAdjustCombo", m_ViewmodelAdjustCombo);
-    parseCustomActionBinding("CustomAction1Command", m_CustomAction1Binding);
-    parseCustomActionBinding("CustomAction2Command", m_CustomAction2Binding);
-    parseCustomActionBinding("CustomAction3Command", m_CustomAction3Binding);
-    parseCustomActionBinding("CustomAction4Command", m_CustomAction4Binding);
-    parseCustomActionBinding("CustomAction5Command", m_CustomAction5Binding);
+    parseCustomActionBinding("CustomAction1Command", m_CustomAction1Binding, "thirdpersonshoulder");
+    parseCustomActionBinding("CustomAction2Command", m_CustomAction2Binding, "");
+    parseCustomActionBinding("CustomAction3Command", m_CustomAction3Binding, "");
+    parseCustomActionBinding("CustomAction4Command", m_CustomAction4Binding, "");
+    parseCustomActionBinding("CustomAction5Command", m_CustomAction5Binding, "");
 
     m_LeftHanded = getBool("LeftHanded", m_LeftHanded);
     m_LeftHandedSwapInputActions = getBool("LeftHandedSwapInputActions", m_LeftHandedSwapInputActions);
-    m_VRScale = getFloat("VRScale", m_VRScale);
+    // A divisor in many places: never 0 or negative (review B68).
+    m_VRScale = std::clamp(getFloat("VRScale", m_VRScale), 10.0f, 200.0f);
     m_VRNearClipAdaptive = getBool("VRNearClipAdaptive", m_VRNearClipAdaptive);
     m_VRNearClipSelfBody = getBool("VRNearClipSelfBody", m_VRNearClipSelfBody);
     m_VRNearClipDebugLog = getBool("VRNearClipDebugLog", m_VRNearClipDebugLog);
@@ -1278,7 +1342,7 @@ void VR::ParseConfigFileUnlocked()
         getFloat("VRNearClipExitDistance", m_VRNearClipExitDistance),
         m_VRNearClipEnterDistance,
         192.0f);
-    m_IpdScale = getFloat("IPDScale", m_IpdScale);
+    m_IpdScale = std::clamp(getFloat("IPDScale", m_IpdScale), 0.1f, 5.0f);
     {
         auto clampVector = [](Vector value, float minValue, float maxValue)
         {
@@ -2945,8 +3009,8 @@ void VR::ParseConfigFileUnlocked()
     m_MagazineInteractionMagazineHandOffsetMeters = getVector3("ManualReloadMagazineHandOffsetMeters", m_MagazineInteractionMagazineHandOffsetMeters);
     m_MagazineInteractionMagazineHandRotationOffsetDeg = getVector3("ManualReloadMagazineHandRotationOffsetDeg", m_MagazineInteractionMagazineHandRotationOffsetDeg);
     m_SplitArmsToControllers = getBool("SplitArmsToControllers", m_SplitArmsToControllers);
-    m_HudDistance = getFloat("HudDistance", m_HudDistance);
-    m_HudSize = getFloat("HudSize", m_HudSize);
+    m_HudDistance = std::clamp(getFloat("HudDistance", m_HudDistance), 0.1f, 20.0f);
+    m_HudSize = std::clamp(getFloat("HudSize", m_HudSize), 0.05f, 20.0f);
     m_FixedHudXOffset = std::clamp(getFloat("FixedHudXOffset", m_FixedHudXOffset), -2.0f, 2.0f);
     m_FixedHudYOffset = std::clamp(getFloat("FixedHudYOffset", m_FixedHudYOffset), -2.0f, 2.0f);
     m_TopHudCurvature = std::clamp(getFloat("TopHudCurvature", m_TopHudCurvature), 0.0f, 1.0f);

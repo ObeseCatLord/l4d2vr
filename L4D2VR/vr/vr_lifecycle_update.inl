@@ -1620,7 +1620,19 @@ extern "C" void __cdecl L4D2VR_ShutdownSystemMouseInputSuppression()
 void VR::Update()
 {
     if (!m_IsInitialized || !g_Game)
+    {
+        // Desktop mode runs no tracking, yet a desktop listen host still serves
+        // VR guests: end the server-side session when leaving the game, as
+        // UpdateTracking does in VR mode (B18).
+        if (g_Game && m_Game)
+        {
+            const bool inGameNow = m_Game->m_EngineClient && m_Game->m_EngineClient->IsInGame();
+            if (m_WasInGamePrev && !inGameNow)
+                m_Game->ResetVRPoseServerSession();
+            m_WasInGamePrev = inGameNow;
+        }
         return;
+    }
 
     // Hold the compositor frame while the game drives it; the loading pump only
     // takes over when this has not run for a while.

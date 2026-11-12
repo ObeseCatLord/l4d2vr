@@ -223,8 +223,10 @@ void Game::ProcessPistolMagazineRequests(int index, int command, unsigned ownerS
         ammo = {reinterpret_cast<uintptr_t>(native.playerObject), reinterpret_cast<uintptr_t>(native.weaponObject),
             ownerSerial, static_cast<unsigned>(native.weapon->m_NetworkSerialNumber), nativeAmmo.clip,
             native.dualPistol, nativeAmmo.capacity};
+    // The guest's own reload setting decides whether it sends requests; the
+    // host's personal MagazineInteractionEnabled must not refuse them (B08).
     const l4d2vr_pistol_reload::Snapshot snapshot{eligible && ammo.Valid() && PistolAmmoBackendReady(this) &&
-        m_VR && m_VR->m_MagazineInteractionEnabled && GetConVarIntDirect("sv_infinite_ammo", -1) == 0,
+        GetConVarIntDirect("sv_infinite_ammo", -1) == 0,
         nativeAmmo.handle, static_cast<uint32_t>(command), ammo, nativeAmmo.reserve, native.infinite};
     int settledClip = nativeAmmo.clip;
     {

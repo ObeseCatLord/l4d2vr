@@ -2573,6 +2573,21 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 		return hkRenderView.fOriginal(ecx, setup, hudViewSetup, nClearFlags, whatToDraw);
 	}
 
+	// Once per process: the VR runtime stopped during play (crashed, was
+	// closed or restarted): say so in the game console (2.0.11, S20).
+	static bool s_vrStoppedShown = false;
+	if (!s_vrStoppedShown && m_VR->m_Backend && m_Game && m_Game->m_EngineClient)
+	{
+		std::string stopped;
+		if (m_VR->m_Backend->StoppedReason(stopped))
+		{
+			s_vrStoppedShown = true;
+			const std::string command = "echo [L4D2VR] VR stopped: " + l4d2vr_openxr::ConsoleSafe(stopped.c_str(), 300) +
+				". Restart the game to use VR again.";
+			m_Game->ClientCmd_Unrestricted(command.c_str());
+		}
+	}
+
 	if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
 		m_VR->CreateVRTextures();
 

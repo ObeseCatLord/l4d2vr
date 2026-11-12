@@ -94,6 +94,35 @@ public:
         CreateInternalLocked();
     }
 
+    // DXVK is destroying its device (vr_backend_openxr.cpp MarkDeviceGone):
+    // stop every upload and free the overlay's own Vulkan objects (S11).
+    void DeviceDestroying()
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        if (!m_Ready)
+            return;
+        m_Ready = false;
+        const VkDevice device = m_Device.device;
+        if (!device || !m_Vk.vkDestroyFence || !m_Vk.vkDestroyCommandPool)
+            return;
+        if (m_CmdPending && m_Vk.vkWaitForFences(device, 1, &m_Fence, VK_TRUE, 100000000ull) != VK_SUCCESS)
+            return;  // still in use by the GPU: leave it
+        if (m_Staging != VK_NULL_HANDLE)
+            m_Vk.vkDestroyBuffer(device, m_Staging, nullptr);
+        if (m_StagingMemory != VK_NULL_HANDLE)
+            m_Vk.vkFreeMemory(device, m_StagingMemory, nullptr);
+        m_Staging = VK_NULL_HANDLE;
+        m_StagingMemory = VK_NULL_HANDLE;
+        m_StagingSize = 0;
+        if (m_Fence != VK_NULL_HANDLE)
+            m_Vk.vkDestroyFence(device, m_Fence, nullptr);
+        if (m_Pool != VK_NULL_HANDLE)
+            m_Vk.vkDestroyCommandPool(device, m_Pool, nullptr);
+        m_Fence = VK_NULL_HANDLE;
+        m_Pool = VK_NULL_HANDLE;
+        m_Cmd = VK_NULL_HANDLE;
+    }
+
     // The HMD pose in the base space (keyboard placement, beam facing).
     std::function<bool(vr::HmdMatrix34_t&)> hmdPose;
 
@@ -391,10 +420,13 @@ public:
                 it.second.dumped = false;
         }
 
-        // Candidates: visible overlays with content and a placement.
-        struct Pending { vr::VROverlayHandle_t handle; ovl::Geometry g; };
-        std::vector<Pending> pending;
-        std::vector<ovl::Candidate> candidates;
+        // Candidates: visible overlays with content and a placement. The
+        // vectors are members (cleared, not reallocated, every frame end).
+        const bool layerInfo = !m_DumpPrefix.empty();  // the layer list is only read by dumps
+        std::vector<PendingLayer>& pending = m_PendingScratch;
+        std::vector<ovl::Candidate>& candidates = m_CandidateScratch;
+        pending.clear();
+        candidates.clear();
         for (auto& it : m_Overlays)
         {
             Overlay& o = it.second;
@@ -417,7 +449,7 @@ public:
             c.serial = o.serial;
             c.priority = o.internal ? ovl::Priority::High : o.priority;
             candidates.push_back(c);
-            pending.push_back(Pending{ it.first, g });
+            pending.push_back(PendingLayer{ it.first, g });
         }
         const uint32_t limit = m_MaxLayersOverride ? m_MaxLayersOverride : m_MaxLayers;
         ovl::Plan plan = ovl::PlanLayers(candidates, limit, projection != nullptr, m_Workaround);
@@ -450,7 +482,8 @@ public:
             q.pose.position.z = -1.0f;
             q.size = { 0.001f, 0.001f };
             m_Quads.push_back(q);
-            m_LayerInfo.push_back(LayerInfo{ 0, 'D', "(wine dummy)" });
+            if (layerInfo)
+                m_LayerInfo.push_back(LayerInfo{ 0, 'D', "(wine dummy)" });
         }
         // The left eye this frame is seen from (dumps: tools/composite.py renders the layers into it).
         if (projection)
@@ -463,6 +496,7 @@ public:
                 m_HaveEye = true;
             }
         }
+        if (layerInfo)
         {
             char eye[256] = "";
             if (m_HaveEye)
@@ -472,11 +506,11 @@ public:
                     m_LastEyeFov.angleRight, m_LastEyeFov.angleUp, m_LastEyeFov.angleDown);
             m_LayerInfo.push_back(LayerInfo{ 0, 'P', std::string(projection ? "(projection)" : "(no projection, last)") + eye });
         }
-        struct Slot { char type; size_t index; };
-        std::vector<Slot> slots;
+        std::vector<LayerSlot>& slots = m_SlotScratch;
+        slots.clear();
         for (size_t idx : plan.order)
         {
-            const Pending& p = pending[idx];
+            const PendingLayer& p = pending[idx];
             Overlay& o = m_Overlays[p.handle];
             const ovl::Geometry& g = p.g;
             XrSwapchainSubImage sub{};
@@ -509,7 +543,7 @@ public:
                 c.centralAngle = g.centralAngle;
                 c.aspectRatio = g.aspectRatio;
                 m_Cylinders.push_back(c);
-                slots.push_back(Slot{ 'C', m_Cylinders.size() - 1 });
+                slots.push_back(LayerSlot{ 'C', m_Cylinders.size() - 1 });
             }
             else
             {
@@ -522,16 +556,17 @@ public:
                 q.pose = ToXrPose(g.pose);
                 q.size = { g.width, g.height };
                 m_Quads.push_back(q);
-                slots.push_back(Slot{ 'Q', m_Quads.size() - 1 });
+                slots.push_back(LayerSlot{ 'Q', m_Quads.size() - 1 });
             }
-            m_LayerInfo.push_back(LayerInfo{ p.handle, g.cylinder ? 'C' : 'Q', o.key, g, flags, o.alpha });
+            if (layerInfo)
+                m_LayerInfo.push_back(LayerInfo{ p.handle, g.cylinder ? 'C' : 'Q', o.key, g, flags, o.alpha });
         }
         // Assemble: dummy, projection, overlays (the vectors no longer grow).
         if (dummy)
             m_Layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&m_Quads[0]));
         if (projection)
             m_Layers.push_back(projection);
-        for (const Slot& slot : slots)
+        for (const LayerSlot& slot : slots)
         {
             if (slot.type == 'C')
                 m_Layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&m_Cylinders[slot.index]));
@@ -605,7 +640,8 @@ public:
             Crumb crumb("laser waiting for the overlay lock");
             lock.lock();
         }
-        std::vector<ovl::Target> targets;
+        std::vector<ovl::Target>& targets = m_TargetScratch;
+        targets.clear();
         for (auto& it : m_Overlays)
         {
             Overlay& o = it.second;
@@ -689,6 +725,9 @@ public:
             m_PointerV = out.hands[out.active].where.v;
         }
         // Log hover changes (the config panel's two alternating copies count as one).
+        if (m_PointerHover == m_LastHoverHandle)
+            return;
+        m_LastHoverHandle = m_PointerHover;
         auto family = [&](vr::VROverlayHandle_t h) {
             auto it = m_Overlays.find(h);
             if (it == m_Overlays.end())
@@ -876,8 +915,12 @@ private:
         int64_t format = 0;
         VkFormat sourceFormat = VK_FORMAT_UNDEFINED;
         std::vector<VkImage> images;
+        int64_t acquired = -1;  // acquired, not yet released (a timed-out wait); B46
         bool released = false;
     };
+
+    struct PendingLayer { vr::VROverlayHandle_t handle; ovl::Geometry g; };
+    struct LayerSlot { char type; size_t index; };
 
     struct QueuedEvent
     {
@@ -1419,17 +1462,27 @@ private:
 
     bool AcquireLocked(Swapchain& sc, uint32_t& index)
     {
-        XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
         XrResult r = XR_SUCCESS;
+        if (sc.acquired >= 0)
         {
-            Crumb crumb("overlay xrAcquireSwapchainImage");
-            r = m_Xr.xrAcquireSwapchainImage(sc.handle, &ai, &index);
+            // An earlier wait timed out: that image is still acquired, and
+            // xrWaitSwapchainImage waits for it (the oldest acquired image).
+            index = static_cast<uint32_t>(sc.acquired);
         }
-        if (XR_FAILED(r))
+        else
         {
-            if (m_AcquireErrors++ < 10)
-                Log("xrAcquireSwapchainImage failed: %d", static_cast<int>(r));
-            return false;
+            XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+            {
+                Crumb crumb("overlay xrAcquireSwapchainImage");
+                r = m_Xr.xrAcquireSwapchainImage(sc.handle, &ai, &index);
+            }
+            if (XR_FAILED(r))
+            {
+                if (m_AcquireErrors++ < 10)
+                    Log("xrAcquireSwapchainImage failed: %d", static_cast<int>(r));
+                return false;
+            }
+            sc.acquired = index;
         }
         XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
         wi.timeout = 100000000;  // 100 ms
@@ -1445,10 +1498,16 @@ private:
             {
                 XrSwapchainImageReleaseInfo ri{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
                 m_Xr.xrReleaseSwapchainImage(sc.handle, &ri);
+                sc.acquired = -1;
             }
             return false;
         }
-        return index < sc.images.size();
+        if (index >= sc.images.size())
+        {
+            ReleaseLocked(sc);
+            return false;
+        }
+        return true;
     }
 
     bool ReleaseLocked(Swapchain& sc)
@@ -1459,6 +1518,7 @@ private:
             Crumb crumb("overlay xrReleaseSwapchainImage");
             r = m_Xr.xrReleaseSwapchainImage(sc.handle, &ri);
         }
+        sc.acquired = -1;
         if (XR_FAILED(r))
             return false;
         sc.released = true;
@@ -1482,6 +1542,8 @@ private:
 
     void BeginCmd()
     {
+        if (m_CmdPending)
+            SettleCmdLocked();
         VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         m_Vk.vkResetCommandBuffer(m_Cmd, 0);
@@ -1502,8 +1564,38 @@ private:
                 Log("overlay copy vkQueueSubmit failed: %d", static_cast<int>(r));
             return false;
         }
+        m_CmdPending = true;
         Crumb crumb("overlay copy fence");
-        return m_Vk.vkWaitForFences(m_Device.device, 1, &m_Fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
+        const bool done = m_Vk.vkWaitForFences(m_Device.device, 1, &m_Fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
+        if (done)
+            m_CmdPending = false;
+        return done;
+    }
+
+    // A copy whose fence wait timed out may still run on the GPU: its command
+    // buffer and fence must not be reset. Wait a little more, else continue
+    // with a fresh pair and leave the old one to the GPU.
+    void SettleCmdLocked()
+    {
+        if (m_Vk.vkWaitForFences(m_Device.device, 1, &m_Fence, VK_TRUE, 100000000ull) == VK_SUCCESS)
+        {
+            m_CmdPending = false;
+            return;
+        }
+        VkCommandBufferAllocateInfo cai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+        cai.commandPool = m_Pool;
+        cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cai.commandBufferCount = 1;
+        VkCommandBuffer cb = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        VkFenceCreateInfo fci{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        if (m_Vk.vkAllocateCommandBuffers(m_Device.device, &cai, &cb) != VK_SUCCESS ||
+            m_Vk.vkCreateFence(m_Device.device, &fci, nullptr, &fence) != VK_SUCCESS)
+            return;
+        Log("overlay copy still running on the GPU; continuing with a new command buffer");
+        m_Cmd = cb;
+        m_Fence = fence;
+        m_CmdPending = false;
     }
 
     bool EnsureStaging(VkDeviceSize size)
@@ -1964,6 +2056,12 @@ private:
     VkCommandPool m_Pool = VK_NULL_HANDLE;
     VkCommandBuffer m_Cmd = VK_NULL_HANDLE;
     VkFence m_Fence = VK_NULL_HANDLE;
+    bool m_CmdPending = false;  // the last copy's fence wait timed out
+    std::vector<PendingLayer> m_PendingScratch;
+    std::vector<ovl::Candidate> m_CandidateScratch;
+    std::vector<LayerSlot> m_SlotScratch;
+    std::vector<ovl::Target> m_TargetScratch;
+    vr::VROverlayHandle_t m_LastHoverHandle = 0;
     VkBuffer m_Staging = VK_NULL_HANDLE;
     VkDeviceMemory m_StagingMemory = VK_NULL_HANDLE;
     VkDeviceSize m_StagingSize = 0;

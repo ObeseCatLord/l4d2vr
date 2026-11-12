@@ -20,7 +20,7 @@ namespace OpusVoiceClient
         bool active = false;          // the server acked the voice relay
         bool transmitAllowed = false;
         bool captureOpen = false;     // microphone (or test tone) running
-        bool outputOpen = false;      // waveOut playing (false = timer clock, no device)
+        bool outputOpen = false;      // waveOut playing (false = timer clock, no device; the game's voice then plays)
         bool transmitting = false;
         std::uint32_t framesSent = 0, bytesSent = 0, talkspurtsSent = 0;
         std::uint32_t framesReceived = 0, framesRejected = 0;
@@ -49,6 +49,9 @@ namespace OpusVoiceClient
         std::function<bool(int player, l4d2vr_voice::Vec3& head)> speakerHead;
         // Sends a string command to the server (unreliable).
         std::function<void(const char* command, bool reliable)> serverCommand;
+        // Runs a client console command (the desktop push-to-talk key keys
+        // the game's +voicerecord / -voicerecord with it, 2.0.11).
+        std::function<void(const char* command)> clientCommand;
     };
 
     void ApplySettings(const l4d2vr_voice::Settings& settings);
@@ -91,5 +94,8 @@ namespace OpusVoiceClient
 
     bool IsTalking(int player);   // 1-based; the local player = transmitting
     Stats GetStats();
+    // Stops the (detached) audio thread and waits up to 1 s for it; from a
+    // game-thread shutdown point only, never from DllMain. Optional: the
+    // process may exit without it.
     void Shutdown();
 }

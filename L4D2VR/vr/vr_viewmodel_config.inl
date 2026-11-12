@@ -2955,16 +2955,20 @@ void VR::ParseConfigFileUnlocked()
             m_HudLiftGestureActive.load(std::memory_order_acquire) != 0);
 
     // Hand HUD background opacity (0..1)
-    m_LeftWristHudBgAlpha = std::clamp(getFloat("LeftWristHudBgAlpha", m_LeftWristHudBgAlpha), 0.0f, 1.0f);
-    m_RightAmmoHudBgAlpha = std::clamp(getFloat("RightAmmoHudBgAlpha", m_RightAmmoHudBgAlpha), 0.0f, 1.0f);
+    // The configured base comes from the key or the fixed default, never from
+    // the member (which holds the product below): every reload used to multiply
+    // it again, so the panel faded out after a few VR Options clicks (review B33).
+    m_LeftWristHudBgAlpha = std::clamp(getFloat("LeftWristHudBgAlpha", 0.85f), 0.0f, 1.0f);
+    m_RightAmmoHudBgAlpha = std::clamp(getFloat("RightAmmoHudBgAlpha", 0.70f), 0.0f, 1.0f);
 
     // Right ammo HUD: crop ratio (U max). Removes unused blank area on the right.
     m_RightAmmoHudUVMaxU = std::clamp(getFloat("RightAmmoHudUVMaxU", m_RightAmmoHudUVMaxU), 0.05f, 1.0f);
 
     // Hand HUD alpha (legacy): used as an extra BACKGROUND opacity multiplier (0..1).
     // We no longer apply IVROverlay::SetOverlayAlpha to the whole overlay because it makes text/bars fade too.
-    const float leftBgMul = std::clamp(getFloat("LeftWristHudAlpha", m_LeftWristHudAlpha), 0.0f, 1.0f);
-    const float rightBgMul = std::clamp(getFloat("RightAmmoHudAlpha", m_RightAmmoHudAlpha), 0.0f, 1.0f);
+    // (Fixed fallbacks: the members are set to 1 below, so they are no default.)
+    const float leftBgMul = std::clamp(getFloat("LeftWristHudAlpha", 0.5f), 0.0f, 1.0f);
+    const float rightBgMul = std::clamp(getFloat("RightAmmoHudAlpha", 0.5f), 0.0f, 1.0f);
     m_LeftWristHudBgAlpha = std::clamp(m_LeftWristHudBgAlpha * leftBgMul, 0.0f, 1.0f);
     m_RightAmmoHudBgAlpha = std::clamp(m_RightAmmoHudBgAlpha * rightBgMul, 0.0f, 1.0f);
     m_LeftWristHudAlpha = 1.0f;

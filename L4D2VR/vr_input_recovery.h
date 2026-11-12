@@ -110,45 +110,63 @@ namespace l4d2vr_input
         std::uint64_t m_LastFailure = 0u;
     };
 
+    // Both controllers fresh and stable for the full-arm IK (both arms are one
+    // render product). 2.0.11: once ready, a stale or lost sample does not hide
+    // the arms at once: readiness is held for kHoldMs since the last good
+    // sample (the lost hand keeps its last usable pose, GetPoseData), and a
+    // fresh sample within that window continues without a new 200 ms
+    // stabilisation (a frame hitch, a hand briefly lost at a holster). Leaving
+    // first-person control still resets at once.
     class ControllerPairReadiness
     {
     public:
+        static constexpr std::uint64_t kMaxAgeMs = 150u;
+        static constexpr std::uint64_t kStableMs = 200u;
+        static constexpr std::uint64_t kHoldMs = 500u;
+
         void Reset() { *this = {}; }
 
         bool Update(bool enabled, bool bothValid, std::uint64_t capturedAtMs,
             std::uint32_t poseToken, std::uint64_t nowMs)
         {
-            constexpr std::uint64_t kMaxAgeMs = 150u;
-            if (!enabled || !bothValid || capturedAtMs == 0u || poseToken == 0u ||
-                nowMs < capturedAtMs || nowMs - capturedAtMs > kMaxAgeMs)
+            if (!enabled)
             {
                 Reset();
                 return false;
             }
-
-            if (m_LastPoseToken != 0u &&
-                (capturedAtMs < m_LastCapturedAtMs || nowMs < m_LastCapturedAtMs ||
-                    nowMs - m_LastCapturedAtMs > kMaxAgeMs))
-            {
-                if (poseToken == m_LastPoseToken)
-                {
-                    m_Ready = false;
-                    m_StableSinceMs = 0u;
-                    return false;
-                }
-                Reset();
-            }
+            const bool sampleFresh = bothValid && capturedAtMs != 0u && poseToken != 0u &&
+                nowMs >= capturedAtMs && nowMs - capturedAtMs <= kMaxAgeMs;
+            const bool sampleOrdered = m_LastPoseToken == 0u || capturedAtMs >= m_LastCapturedAtMs;
+            if (!sampleFresh || !sampleOrdered)
+                return Hold(nowMs, !sampleOrdered);
 
             // Repeated render calls and republished snapshots do not provide a
             // new tracking sample or extend the lifetime of the previous one.
             if (poseToken == m_LastPoseToken)
+            {
+                if (nowMs - m_LastCapturedAtMs > kMaxAgeMs)
+                    return Hold(nowMs, false);
                 return m_Ready;
+            }
 
-            if (m_LastPoseToken == 0u)
+            if (m_LastPoseToken != 0u && capturedAtMs - m_LastCapturedAtMs > kMaxAgeMs)
+            {
+                // A gap between two samples: continue a ready pair within the
+                // hold window, otherwise start a new stability interval.
+                if (!(m_Ready && nowMs - m_LastGoodMs <= kHoldMs))
+                {
+                    m_Ready = false;
+                    m_StableSinceMs = 0u;
+                    m_LastPoseToken = 0u;
+                }
+            }
+
+            if (m_LastPoseToken == 0u || m_StableSinceMs == 0u)
                 m_StableSinceMs = capturedAtMs;
             m_LastPoseToken = poseToken;
             m_LastCapturedAtMs = capturedAtMs;
-            m_Ready = capturedAtMs - m_StableSinceMs >= 200u;
+            m_LastGoodMs = nowMs;
+            m_Ready = m_Ready || capturedAtMs - m_StableSinceMs >= kStableMs;
             return m_Ready;
         }
 
@@ -158,9 +176,18 @@ namespace l4d2vr_input
         }
 
     private:
+        bool Hold(std::uint64_t nowMs, bool hardReset)
+        {
+            if (!hardReset && m_Ready && nowMs >= m_LastGoodMs && nowMs - m_LastGoodMs <= kHoldMs)
+                return true;
+            Reset();
+            return false;
+        }
+
         std::uint32_t m_LastPoseToken = 0u;
         std::uint64_t m_LastCapturedAtMs = 0u;
         std::uint64_t m_StableSinceMs = 0u;
+        std::uint64_t m_LastGoodMs = 0u;
         bool m_Ready = false;
     };
 

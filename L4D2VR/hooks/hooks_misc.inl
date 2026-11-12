@@ -28795,9 +28795,10 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
                         classicArmsMirror) &&
                     !HooksDrawIsHolsteredItem(m_VR, info) &&
                     m_VR->ItemHandMirrorWanted() &&
+                    // 2.0.11: not keyed on the controller-pair readiness: while
+                    // the arms wait for tracking the gun keeps its mirrored shape.
                     (!HooksNativeViewmodelHandsOnlyActive(m_VR) ||
-                        (HooksNativeViewmodelFullArmIkActive(m_VR) &&
-                            HooksNativeViewmodelFullArmControllerPairReady(m_VR))))
+                        HooksNativeViewmodelFullArmIkActive(m_VR)))
                 {
                     int mirrorBoneCount = 0;
                     l4d2vr_hand_mirror::Mat34 gunMirror{};

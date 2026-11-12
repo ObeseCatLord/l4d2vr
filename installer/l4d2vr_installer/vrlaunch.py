@@ -20,6 +20,7 @@ import json
 import os
 import stat
 import subprocess
+import threading
 import sys
 import urllib.parse
 import zipfile
@@ -426,6 +427,7 @@ def launch_monado(config: MonadoConfig, server: Optional[str] = None, password: 
     # Proton creates its prefix inside this folder but needs the folder itself.
     (state / "proton-prefix").mkdir(parents=True, exist_ok=True)
     lock = open(state / "launch.lock", "a+")
+    handed_off = False
     try:
         try:
             import fcntl
@@ -448,11 +450,24 @@ def launch_monado(config: MonadoConfig, server: Optional[str] = None, password: 
                                    stdout=output, stderr=subprocess.STDOUT)
         if not wait:
             output.close()  # the child keeps its own handle
+            # Keep the launch lock until the game exits, so a second click while
+            # Proton is still starting the game is refused.
+            threading.Thread(target=_release_lock_on_exit, args=(process, lock), daemon=True,
+                             name="l4d2vr-launch-lock").start()
+            handed_off = True
             return 0
         code = process.wait()
         output.close()
         log(f"Game exited with code {code}")
         return code
+    finally:
+        if not handed_off:
+            lock.close()
+
+
+def _release_lock_on_exit(process, lock) -> None:
+    try:
+        process.wait()
     finally:
         lock.close()
 

@@ -18,6 +18,12 @@ class InstallerError(Exception):
     """An error with a message that is safe and useful to show to the user."""
 
 
+class NetworkError(InstallerError):
+    """The release source could not be reached (offline, DNS, timeout, rate
+    limit, server error). Unlike other errors (a checksum mismatch, a missing
+    asset) it may fall back to the bundled l4d2vr.zip."""
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

@@ -14,6 +14,7 @@ import re
 import ssl
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from . import CLIENT_ASSET, DEFAULT_REPO, __version__
-from .fsutil import InstallerError, user_cache_dir
+from .fsutil import InstallerError, NetworkError, user_cache_dir
 
 GITHUB_API = "https://api.github.com"
 USER_AGENT = f"l4d2vr-installer/{__version__}"
@@ -103,30 +104,52 @@ def ssl_context() -> ssl.SSLContext:
     return _SSL_CONTEXT
 
 
-def open_url(url: str, accept: Optional[str] = None, timeout: float = 30.0):
-    headers = {"User-Agent": USER_AGENT}
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but never from https to anything else."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlparse(req.full_url).scheme == "https" and \
+                urllib.parse.urlparse(newurl).scheme != "https":
+            raise InstallerError(f"Refusing a redirect from {req.full_url} to a non-HTTPS address ({newurl}).")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _check_scheme(url: str) -> None:
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme not in ("https", "file"):
+        raise InstallerError(f"Refusing to download over {scheme or 'an unknown scheme'}: {url} "
+                             "(only https:// addresses are accepted).")
+
+
+def open_url(url: str, accept: Optional[str] = None, timeout: float = 30.0, headers: Optional[dict] = None):
+    _check_scheme(url)
+    request_headers = {"User-Agent": USER_AGENT}
+    request_headers.update(headers or {})
     if accept:
-        headers["Accept"] = accept
+        request_headers["Accept"] = accept
     host = urllib.parse.urlparse(url).hostname or ""
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     # Only ever send a token to the GitHub API host itself.
     if token and host == "api.github.com":
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(url, headers=headers)
+        request_headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=request_headers)
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context()), _HttpsOnlyRedirects())
     try:
-        return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
+        return opener.open(request, timeout=timeout)
     except urllib.error.HTTPError as error:
-        if error.code == 403 and host == "api.github.com":
-            raise InstallerError(
+        if error.code in (403, 429) and host == "api.github.com":
+            raise NetworkError(
                 "GitHub refused the request (rate limit?). Wait an hour, set GITHUB_TOKEN, "
                 "or install from a downloaded zip with --zip."
             ) from error
         if error.code == 404:
             raise InstallerError(f"Not found: {url}") from error
+        if error.code >= 500 or error.code == 429:
+            raise NetworkError(f"Download failed ({error.code}): {url}") from error
         raise InstallerError(f"Download failed ({error.code}): {url}") from error
     except (urllib.error.URLError, OSError) as error:
         reason = getattr(error, "reason", error)
-        raise InstallerError(f"Cannot reach {url}: {reason}. Check your internet connection.") from error
+        raise NetworkError(f"Cannot reach {url}: {reason}. Check your internet connection.") from error
 
 
 def fetch_json(url: str, accept: Optional[str] = None):
@@ -143,35 +166,64 @@ def fetch_text(url: str, limit: int = 1 << 20) -> str:
         return response.read(limit).decode("utf-8", "replace")
 
 
+DOWNLOAD_ATTEMPTS = 3
+
+
 def download(asset: Asset, dest_dir: Optional[Path] = None,
              progress: Optional[ProgressCallback] = None) -> Path:
     """Download ``asset`` and verify its size and SHA-256 (when known).
 
     The file is written under a temporary name and only renamed into place
-    after verification succeeds.
+    after verification succeeds. A dropped connection is retried (up to
+    DOWNLOAD_ATTEMPTS in all), resuming with an HTTP Range request when the
+    server supports it.
     """
     dest_dir = Path(dest_dir) if dest_dir else user_cache_dir() / "downloads"
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / asset.name
-    hasher = hashlib.sha256()
-    received = 0
     fd, temporary = tempfile.mkstemp(prefix=".part-", dir=str(dest_dir))
+    os.close(fd)
+    received = 0
+    total = asset.size
     try:
-        with os.fdopen(fd, "wb") as out, open_url(asset.url, accept="application/octet-stream",
-                                                   timeout=60.0) as response:
-            total = asset.size
-            if total is None:
-                length = response.headers.get("Content-Length") if hasattr(response, "headers") else None
-                total = int(length) if length and length.isdigit() else None
-            while True:
-                chunk = response.read(256 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-                hasher.update(chunk)
-                received += len(chunk)
-                if progress:
-                    progress(received, total)
+        for attempt in range(DOWNLOAD_ATTEMPTS):
+            try:
+                headers = {"Range": f"bytes={received}-"} if received else None
+                with open_url(asset.url, accept="application/octet-stream", timeout=60.0,
+                              headers=headers) as response:
+                    status = getattr(response, "status", None) or getattr(response, "code", None)
+                    if received and status != 206:
+                        received = 0  # the server ignored the Range: start over
+                    length = response.headers.get("Content-Length") if hasattr(response, "headers") else None
+                    expected_end = received + int(length) if length and length.isdigit() else None
+                    if total is None and not received:
+                        total = expected_end
+                    with open(temporary, "r+b" if received else "wb") as out:
+                        out.seek(received)
+                        out.truncate()
+                        while True:
+                            chunk = response.read(256 * 1024)
+                            if not chunk:
+                                break
+                            out.write(chunk)
+                            received += len(chunk)
+                            if progress:
+                                progress(received, total)
+                if expected_end is not None and received < expected_end:
+                    raise NetworkError(f"Connection closed after {received} of {expected_end} bytes")
+                break
+            except (NetworkError, OSError, urllib.error.URLError) as error:
+                if isinstance(error, InstallerError) and not isinstance(error, NetworkError):
+                    raise
+                if attempt + 1 >= DOWNLOAD_ATTEMPTS:
+                    if isinstance(error, NetworkError):
+                        raise
+                    raise NetworkError(f"Download of {asset.name} failed: {error}") from error
+                time.sleep(1.0 + attempt)
+        hasher = hashlib.sha256()
+        with open(temporary, "rb") as written:
+            for part in iter(lambda: written.read(1024 * 1024), b""):
+                hasher.update(part)
         verify(asset, received, hasher.hexdigest())
         os.replace(temporary, target)
     finally:
@@ -219,8 +271,12 @@ def version_key(version: str):
     text = (version or "").strip().lstrip("vV").lstrip(".")
     main, _, pre = text.partition("-")
     numbers = [int(part) for part in re.findall(r"\d+", main)]
+    # Pre-release parts compare numerically when numeric ("beta.10" > "beta.9");
+    # a numeric part sorts before a text part, as in semver.
+    pre_key = [(0, int(part), "") if part.isdigit() else (1, 0, part)
+               for part in re.split(r"[.\-]", pre) if part]
     # A release sorts after its pre-releases.
-    return numbers, 0 if pre else 1, pre
+    return numbers, 0 if pre else 1, pre_key
 
 
 def is_newer(candidate: Optional[str], current: Optional[str]) -> bool:
@@ -381,6 +437,10 @@ class ManifestSource:
         entry = _manifest_channel(manifest, self.channel)
         if not entry.get("version") or not entry.get("url"):
             raise InstallerError(f"Manifest channel '{self.channel}' needs 'version' and 'url'")
+        if clean_version(str(entry["version"])) in ("0", "0.0", "0.0.0"):
+            raise InstallerError(
+                f"The manifest at {self.url} is still the placeholder (version 0.0.0), so it cannot tell which "
+                "release is current. Use the GitHub releases source instead.")
         sha = entry.get("sha256")
         if sha is not None and not re.match(r"^[0-9a-fA-F]{64}$", str(sha)):
             raise InstallerError(f"Manifest sha256 is not a SHA-256 hex digest: {sha!r}")

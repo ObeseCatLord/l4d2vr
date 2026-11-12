@@ -2366,6 +2366,8 @@ void __fastcall Hooks::dDrawScreenSpaceRectangle(
 
 void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CViewSetup& hudViewSetup, int nClearFlags, int whatToDraw)
 {
+	// No config hot reload while this view reads the settings (review B05).
+	l4d2vr_config_lock::ConfigLock::MaybeReadScope configRead(m_VR ? &m_VR->m_ConfigLock : nullptr);
 	// Source can call RenderView recursively while rendering the world, most visibly for water
 	// reflection/refraction render targets. The VR hook may only hijack the outer scene call.
 	// Nested calls must go straight through, otherwise water RTs can be filled with the VR eye

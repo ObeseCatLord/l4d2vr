@@ -1056,6 +1056,14 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
 VR::VR(Game* game)
 {
     m_Game = game;
+    // Every way out of the constructor (desktop mode, a failed runtime) still
+    // reads config.txt and watches it (2.0.11, review B36: desktop mode used
+    // to ignore the file, while the options window said "saved and applied").
+    struct ConfigWatcherOnExit
+    {
+        VR* vr;
+        ~ConfigWatcherOnExit() { vr->StartConfigWatcher(); }
+    } configWatcherOnExit{ this };
     if (g_L4D2VRDesktopMode)
     {
         // Desktop (receive-only) mode: same state as a failed VR_Init without
@@ -1261,8 +1269,7 @@ VR::VR(Game* game)
 
     InstallApplicationManifest("manifest.vrmanifest");
     SetActionManifest("action_manifest.json");
-    std::thread configParser(&VR::WaitForConfigUpdate, this);
-    configParser.detach();
+    StartConfigWatcher();
 
     while (!g_D3DVR9)
         Sleep(10);

@@ -718,7 +718,7 @@ void VR::SaveScopeAdjustments()
     m_ScopeAdjustmentsDirty = false;
 }
 
-void VR::ParseConfigFile()
+void VR::ParseConfigFileUnlocked()
 {
     //  򵥵  trim
     auto ltrim = [](std::string& s) {
@@ -997,10 +997,23 @@ void VR::ParseConfigFile()
         return values;
         };
 
-    const std::string injectedCmd = getString("cmd", getString("Cmd", "exec cam.cfg"));
-    if (!injectedCmd.empty())
+    // The injected console command runs once, and again only when its text
+    // changes: every VR Options click reparses the config, and re-running it
+    // re-applied the player's cam.cfg over their console changes (2.0.11,
+    // review B68). An empty "cmd=" disables it.
     {
-        m_Game->ClientCmd_Unrestricted(injectedCmd.c_str());
+        auto cmdIt = findConfig("cmd");
+        if (cmdIt == userConfig.end())
+            cmdIt = findConfig("Cmd");
+        std::string injectedCmd = cmdIt == userConfig.end() ? std::string("exec cam.cfg") : cmdIt->second;
+        trim(injectedCmd);
+        if (!m_InjectedConfigCommandRan || injectedCmd != m_LastInjectedConfigCommand)
+        {
+            m_InjectedConfigCommandRan = true;
+            m_LastInjectedConfigCommand = injectedCmd;
+            if (!injectedCmd.empty() && m_Game)
+                m_Game->ClientCmd_Unrestricted(injectedCmd.c_str());
+        }
     }
 
     auto parseVirtualKey = [&](const std::string& rawValue)->std::optional<WORD>
@@ -3854,9 +3867,9 @@ void VR::ParseConfigFile()
         desktopMirrorLegacyCleanPassSafe;
     if (m_DesktopMirrorEnabled && m_DesktopMirrorHidePluginOverlaysRequested && desktopMirrorTexturesReady && !m_DesktopMirrorTexture)
     {
-        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
-        m_CreatedVRTextures.store(false, std::memory_order_release);
-        m_CreatingTextureID = Texture_None;
+        // Done by Update: the parse holds m_ConfigLock and must not wait for
+        // m_TextureMutex (a render functor may hold it).
+        m_DesktopMirrorTextureResetRequested.store(true, std::memory_order_release);
     }
     m_ItemModelLabelPlayerSuppressRadius = std::max(0.0f, getFloat("ItemModelLabelPlayerSuppressRadius", m_ItemModelLabelPlayerSuppressRadius));
     m_ItemModelLabelPlayerSuppressMinZ = getFloat("ItemModelLabelPlayerSuppressMinZ", m_ItemModelLabelPlayerSuppressMinZ);
@@ -5314,32 +5327,100 @@ void VR::AuditLocalVScriptConvarsCurrentValues(const char* reason)
         missingCount);
 }
 
+void VR::ParseConfigFile()
+{
+    // 2.0.11 (review B05): never rewrite the settings while a frame reads them.
+    // Bounded wait: the config overlay calls this while holding its own
+    // state mutex, which a frame may be waiting for.
+    l4d2vr_config_lock::ConfigLock::WriteScope write(m_ConfigLock, std::chrono::milliseconds(250));
+    if (!write.Owns())
+    {
+        // Called from inside a frame (self-test step, overlay code) or the
+        // frames kept the lock: the watcher thread parses (again) shortly.
+        RequestConfigReload();
+        return;
+    }
+    ParseConfigFileUnlocked();
+}
+
+void VR::RequestConfigReload()
+{
+    m_ConfigReloadRequested.store(true, std::memory_order_release);
+    if (m_ConfigReloadEvent)
+        SetEvent(static_cast<HANDLE>(m_ConfigReloadEvent));
+}
+
+void VR::StartConfigWatcher()
+{
+    if (m_ConfigWatcherStarted.exchange(true, std::memory_order_acq_rel))
+        return;
+    m_ConfigReloadEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+    // The first parse runs now, on the caller's thread, so everything after
+    // VR::VR (Hooks, desktop mode) sees the player's settings (review B36).
+    try
+    {
+        ParseConfigFile();
+    }
+    catch (...)
+    {
+        Game::logMsg("[VR][Config] config.txt/config2.txt could not be parsed at start; defaults are used until it is fixed");
+    }
+    std::thread configParser(&VR::WaitForConfigUpdate, this);
+    configParser.detach();
+}
+
 void VR::WaitForConfigUpdate()
 {
     char currentDir[MAX_STR_LEN];
     GetCurrentDirectoryA(MAX_STR_LEN, currentDir);
     char configDir[MAX_STR_LEN];
     sprintf_s(configDir, MAX_STR_LEN, "%s\\VR\\", currentDir);
-    HANDLE fileChangeHandle = FindFirstChangeNotificationA(configDir, false, FILE_NOTIFY_CHANGE_LAST_WRITE);
+    HANDLE fileChangeHandle = FindFirstChangeNotificationA(configDir, false, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME);
 
+    // StartConfigWatcher parsed the files just before this thread started:
+    // remember their times so the first loop does not parse them again.
     FILETIME configLastModified{};
     FILETIME config2LastModified{};
+    {
+        WIN32_FILE_ATTRIBUTE_DATA a{};
+        if (GetFileAttributesExA("VR\\config.txt", GetFileExInfoStandard, &a))
+            configLastModified = a.ftLastWriteTime;
+        if (GetFileAttributesExA("VR\\config2.txt", GetFileExInfoStandard, &a))
+            config2LastModified = a.ftLastWriteTime;
+    }
     FILETIME hapticsLastModified{};
     FILETIME localVScriptLastModified{};
     bool localVScriptMissing = false;
+    bool loggedConfigMissing = false;
+    int parseFailuresLogged = 0;
     while (1)
     {
         WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
         WIN32_FILE_ATTRIBUTE_DATA config2Attributes{};
         const bool hasConfig = GetFileAttributesExA("VR\\config.txt", GetFileExInfoStandard, &fileAttributes) != FALSE;
         const bool hasConfig2 = GetFileAttributesExA("VR\\config2.txt", GetFileExInfoStandard, &config2Attributes) != FALSE;
+        bool configReloadNeeded = m_ConfigReloadRequested.exchange(false, std::memory_order_acq_rel);
         if (!hasConfig && !hasConfig2)
         {
-            m_Game->errorMsg("config.txt/config2.txt not found.");
-            return;
+            // An editor's "safe save" or a sync tool may delete and recreate
+            // the file: keep watching (2.0.11, review B67; this used to end hot
+            // reload for the session with a message box on the desktop).
+            if (!loggedConfigMissing)
+            {
+                Game::logMsg("[VR][Config] VR\\config.txt and VR\\config2.txt are missing; waiting for them to come back");
+                loggedConfigMissing = true;
+            }
+            if (configReloadNeeded)
+                m_ConfigReloadRequested.store(true, std::memory_order_release);
+            Sleep(1000);
+            continue;
+        }
+        if (loggedConfigMissing)
+        {
+            Game::logMsg("[VR][Config] config file is back; reloading");
+            loggedConfigMissing = false;
         }
 
-        bool configReloadNeeded = false;
         if (hasConfig && CompareFileTime(&fileAttributes.ftLastWriteTime, &configLastModified) != 0)
         {
             configLastModified = fileAttributes.ftLastWriteTime;
@@ -5357,13 +5438,14 @@ void VR::WaitForConfigUpdate()
             {
                 ParseConfigFile();
             }
-            catch (const std::invalid_argument&)
-            {
-                m_Game->errorMsg("Failed to parse config.txt/config2.txt");
-            }
             catch (...)
             {
-                m_Game->errorMsg("Failed to parse config.txt/config2.txt");
+                // Logged, never a message box (invisible in the headset; one per reload).
+                if (parseFailuresLogged < 5)
+                {
+                    ++parseFailuresLogged;
+                    Game::logMsg("[VR][Config] failed to parse config.txt/config2.txt; the previous settings stay in use");
+                }
             }
         }
 
@@ -5378,11 +5460,12 @@ void VR::WaitForConfigUpdate()
                 {
                     try
                     {
+                        l4d2vr_config_lock::ConfigLock::WriteScope write(m_ConfigLock);
                         ParseHapticsConfigFile();
                     }
-                    catch (const std::invalid_argument&)
+                    catch (...)
                     {
-                        m_Game->errorMsg("Failed to parse haptics_config.txt");
+                        Game::logMsg("[VR][Config] failed to parse haptics_config.txt");
                     }
                 }
             }
@@ -5390,8 +5473,13 @@ void VR::WaitForConfigUpdate()
 
         if (!m_LocalVScriptConvarsPath.empty())
         {
+            std::string localVScriptPath;
+            {
+                l4d2vr_config_lock::ConfigLock::WriteScope write(m_ConfigLock);
+                localVScriptPath = m_LocalVScriptConvarsPath;
+            }
             WIN32_FILE_ATTRIBUTE_DATA localVScriptAttributes{};
-            if (GetFileAttributesExA(m_LocalVScriptConvarsPath.c_str(), GetFileExInfoStandard, &localVScriptAttributes))
+            if (GetFileAttributesExA(localVScriptPath.c_str(), GetFileExInfoStandard, &localVScriptAttributes))
             {
                 if (localVScriptMissing ||
                     CompareFileTime(&localVScriptAttributes.ftLastWriteTime, &localVScriptLastModified) != 0)
@@ -5409,18 +5497,24 @@ void VR::WaitForConfigUpdate()
             }
         }
 
-        if (fileChangeHandle == INVALID_HANDLE_VALUE)
-        {
-            Sleep(1000);
+        if (m_ConfigReloadRequested.load(std::memory_order_acquire))
             continue;
-        }
 
-        if (!FindNextChangeNotification(fileChangeHandle))
+        HANDLE waitHandles[2];
+        DWORD waitCount = 0;
+        if (fileChangeHandle != INVALID_HANDLE_VALUE && FindNextChangeNotification(fileChangeHandle))
+            waitHandles[waitCount++] = fileChangeHandle;
+        if (m_ConfigReloadEvent)
+            waitHandles[waitCount++] = static_cast<HANDLE>(m_ConfigReloadEvent);
+        if (waitCount == 0)
         {
             Sleep(1000);
             continue;
         }
-        WaitForSingleObject(fileChangeHandle, INFINITE);
-        Sleep(100); // Sometimes the thread tries to read config.txt before it's finished writing
+        // Poll once a second as well: a missed notification (or none at all)
+        // only delays a reload.
+        const DWORD waited = WaitForMultipleObjects(waitCount, waitHandles, FALSE, 1000);
+        if (waited == WAIT_OBJECT_0 && waitHandles[0] == fileChangeHandle)
+            Sleep(100); // Sometimes the thread tries to read config.txt before it's finished writing
     }
 }

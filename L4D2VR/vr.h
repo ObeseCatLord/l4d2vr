@@ -64,6 +64,7 @@
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
 #include "vr_opus_voice.h"
+#include "vr_config_lock.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -5604,7 +5605,24 @@ public:
 	void TriggerMeleeHitHaptics(bool leftHand = false);
 	void TriggerShoveHaptics(bool leftHand = false);
 	void NotifyMeleeHitConfirmed(std::uintptr_t entityTag = 0);
+	// Takes m_ConfigLock exclusively; from a thread inside a read (a frame) the
+	// parse is handed to the watcher thread instead (2.0.11, review B05).
 	void ParseConfigFile();
+	void ParseConfigFileUnlocked();
+	void RequestConfigReload();
+	// Parses config.txt once now and starts the hot-reload watcher (also in
+	// desktop mode, review B36). Safe to call more than once.
+	void StartConfigWatcher();
+	l4d2vr_config_lock::ConfigLock m_ConfigLock;
+	std::atomic<bool> m_ConfigReloadRequested{ false };
+	std::atomic<bool> m_ConfigWatcherStarted{ false };
+	void* m_ConfigReloadEvent = nullptr;
+	// Desktop mirror: the parse asks Update to drop the VR textures (it may not
+	// take m_TextureMutex while it holds m_ConfigLock).
+	std::atomic<bool> m_DesktopMirrorTextureResetRequested{ false };
+	// Last injected config command ("cmd="): run only when it changes (B68).
+	std::string m_LastInjectedConfigCommand;
+	bool m_InjectedConfigCommandRan = false;
 	void ParseHapticsConfigFile();
 	void LoadViewmodelAdjustments();
 	void SaveViewmodelAdjustments();

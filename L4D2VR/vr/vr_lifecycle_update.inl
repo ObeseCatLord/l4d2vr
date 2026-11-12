@@ -1622,6 +1622,15 @@ void VR::Update()
     if (!m_IsInitialized || !g_Game)
         return;
 
+    // No config hot reload while this frame reads the settings (review B05).
+    l4d2vr_config_lock::ConfigLock::ReadScope configRead(m_ConfigLock);
+    if (m_DesktopMirrorTextureResetRequested.exchange(false, std::memory_order_acq_rel))
+    {
+        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+        m_CreatedVRTextures.store(false, std::memory_order_release);
+        m_CreatingTextureID = Texture_None;
+    }
+
     // Hold the compositor frame while the game drives it; the loading pump only
     // takes over when this has not run for a while.
     std::unique_lock<std::mutex> compositorFrameLock(m_CompositorFrameMutex);

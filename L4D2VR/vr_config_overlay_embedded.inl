@@ -3722,6 +3722,10 @@ FlashlightEnhancementEnabled=false
 
     static int CfgSaveCalibrationProfileOverrides(CfgOverlayState& s)
     {
+        // These write the live per-weapon override maps the frame reads (review B05).
+        std::optional<l4d2vr_config_lock::ConfigLock::WriteScope> configWrite;
+        if (g_Game && g_Game->m_VR)
+            configWrite.emplace(g_Game->m_VR->m_ConfigLock, std::chrono::milliseconds(100));
         if (s.panelMode != CfgPanelMode::MagazineCalibration)
             return 0;
 
@@ -4868,6 +4872,10 @@ FlashlightEnhancementEnabled=false
 
     static void CfgApplyMagazineBoxCalibrationRuntimeParams(CfgOverlayState& s)
     {
+        // These write the live per-weapon override maps the frame reads (review B05).
+        std::optional<l4d2vr_config_lock::ConfigLock::WriteScope> configWrite;
+        if (g_Game && g_Game->m_VR)
+            configWrite.emplace(g_Game->m_VR->m_ConfigLock, std::chrono::milliseconds(100));
         if (!g_Game || !g_Game->m_VR)
             return;
 
@@ -4898,6 +4906,10 @@ FlashlightEnhancementEnabled=false
 
     static void CfgApplySocketCaptureCalibrationRuntimeParams(CfgOverlayState& s)
     {
+        // These write the live per-weapon override maps the frame reads (review B05).
+        std::optional<l4d2vr_config_lock::ConfigLock::WriteScope> configWrite;
+        if (g_Game && g_Game->m_VR)
+            configWrite.emplace(g_Game->m_VR->m_ConfigLock, std::chrono::milliseconds(100));
         if (!g_Game || !g_Game->m_VR)
             return;
 
@@ -4940,6 +4952,10 @@ FlashlightEnhancementEnabled=false
 
     static void CfgApplyBoltCalibrationRuntimeParams(CfgOverlayState& s)
     {
+        // These write the live per-weapon override maps the frame reads (review B05).
+        std::optional<l4d2vr_config_lock::ConfigLock::WriteScope> configWrite;
+        if (g_Game && g_Game->m_VR)
+            configWrite.emplace(g_Game->m_VR->m_ConfigLock, std::chrono::milliseconds(100));
         if (!g_Game || !g_Game->m_VR)
             return;
 

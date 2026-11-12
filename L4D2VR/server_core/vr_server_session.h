@@ -13,6 +13,7 @@
 
 #include "../vr_pose_protocol.h"
 #include "../vr_pose_protocol_v3.h"
+#include "vr_server_limits.h"
 #include "vr_server_protocol.h"
 #include "vr_server_transactions.h"
 #include "vr_server_voice.h"
@@ -32,6 +33,9 @@ namespace l4d2vr_server
         // Sender view yaw (degrees) for v3 -> v2 downconversion.
         virtual bool ViewYaw(int playerIndex, float& yaw) const = 0;
         virtual void Log(const char* line) = 0;
+        // False when the host has no view-yaw source at all (relay-only):
+        // v3 hellos are then refused, because v3 -> v2 needs the yaw.
+        virtual bool HasViewYawSource() const { return true; }
         // Opus voice: may `receiver` hear `sender` (1-based)? The game's own
         // voice rules (IVoiceServer::GetClientListening); hosts without one
         // let everyone hear everyone.
@@ -69,7 +73,14 @@ namespace l4d2vr_server
         bool bundleConfirmed = false;
         std::uint32_t requestedFeatures = kFeatureAllMask;
         bool shotgunPattern = false;      // opted in with l4d2vr_shotgun_pattern 1
+        bool shotgunPatternLogged = false;
         TransactionClient txn{};
+        // Newest upload that arrived inside the rate window: relayed when the
+        // window ends (latest wins) instead of being dropped.
+        bool havePendingUpload = false;
+        std::uint16_t pendingSequence = 0u;
+        char pendingPayload[160] = {};
+        LogBudget logBudget{};
     };
 
     class Session
@@ -178,6 +189,8 @@ namespace l4d2vr_server
                 if (c.helloSeen && c.entity && !c.bundleConfirmed && c.bundleAttempts > 0 &&
                     c.bundleAttempts < kBundleMaxAttempts && now >= c.nextBundleMs)
                     SendBundle(index);
+                if (c.havePendingUpload)
+                    FlushPendingUpload(index);
             }
         }
 
@@ -216,13 +229,19 @@ namespace l4d2vr_server
             if (isPattern)
             {
                 std::uint32_t on = 0u;
-                if (argc == 2 && ParseDecimal(argv[1], 1u, on))
+                if (argc == 2 && ParseDecimal(argv[1], 1u, on) && c.helloSeen)
                 {
+                    // Log changes only: the client can repeat this every command.
+                    const bool changed = !c.shotgunPatternLogged || c.shotgunPattern != (on != 0u);
                     c.shotgunPattern = on != 0u;
-                    char log[96];
-                    std::snprintf(log, sizeof(log), "L4D2VR server: player %d uses %s shotgun pellets\n",
-                        index, on ? "Pavlov" : "stock");
-                    m_Host.Log(log);
+                    c.shotgunPatternLogged = true;
+                    if (changed)
+                    {
+                        char log[96];
+                        std::snprintf(log, sizeof(log), "L4D2VR server: player %d uses %s shotgun pellets\n",
+                            index, on ? "Pavlov" : "stock");
+                        m_Host.Log(log);
+                    }
                 }
                 return CommandResult::Stop;
             }
@@ -256,6 +275,23 @@ namespace l4d2vr_server
         void Send(const SessionClient& c, const char* text)
         {
             if (c.entity && text && *text) m_Host.SendToClient(c.entity, text);
+        }
+
+        // Client-driven lines go through the player's log budget.
+        void LogClient(SessionClient& c, int index, const char* line)
+        {
+            switch (c.logBudget.Take(m_Host.NowMs()))
+            {
+            case LogBudget::Verdict::Log: m_Host.Log(line); break;
+            case LogBudget::Verdict::LogSuppressedNote:
+            {
+                char note[112];
+                std::snprintf(note, sizeof(note), "L4D2VR server: player %d: further transaction lines suppressed for 10 s\n", index);
+                m_Host.Log(note);
+                break;
+            }
+            case LogBudget::Verdict::Drop: break;
+            }
         }
 
         void SendAckAttempt(SessionClient& c)
@@ -343,7 +379,7 @@ namespace l4d2vr_server
                 c.ackPending = false;
                 OnHello(index);
             }
-            else if (version == kPoseV3 && (m_Caps.features & kFeaturePoseV3) != 0u)
+            else if (version == kPoseV3 && (m_Caps.features & kFeaturePoseV3) != 0u && m_Host.HasViewYawSource())
             {
                 c.protocolSupported = true;
                 c.v3Supported = true;
@@ -394,12 +430,46 @@ namespace l4d2vr_server
             const auto sequence = static_cast<std::uint16_t>(parsed);
             if (c.haveSequence && !l4d2vr_pose::IsSequenceNewer(sequence, c.lastSequence)) return;
             const std::uint64_t now = m_Host.NowUs();
+            if (c.haveDecodeTime && now - c.lastDecodeUs < kMinimumUploadIntervalUs)
+            {
+                // Two uploads in one client packet: keep the newer one for the
+                // end of the window (GameFrame) rather than dropping it.
+                const std::size_t length = argv[2] ? std::strlen(argv[2]) : 0u;
+                if (length > 0u && length < sizeof(c.pendingPayload) &&
+                    (!c.havePendingUpload || l4d2vr_pose::IsSequenceNewer(sequence, c.pendingSequence)))
+                {
+                    std::memcpy(c.pendingPayload, argv[2], length + 1u);
+                    c.pendingSequence = sequence;
+                    c.havePendingUpload = true;
+                }
+                return;
+            }
+            // A newer upload replaces any pending one.
+            if (c.havePendingUpload && !l4d2vr_pose::IsSequenceNewer(c.pendingSequence, sequence))
+                c.havePendingUpload = false;
+            ProcessUpload(index, sequence, argv[2], now);
+        }
+
+        void FlushPendingUpload(int index)
+        {
+            SessionClient& c = m_Clients[static_cast<std::size_t>(index)];
+            const std::uint64_t now = m_Host.NowUs();
+            if (!c.havePendingUpload || !c.protocolSupported) { c.havePendingUpload = false; return; }
             if (c.haveDecodeTime && now - c.lastDecodeUs < kMinimumUploadIntervalUs) return;
+            c.havePendingUpload = false;
+            if (c.haveSequence && !l4d2vr_pose::IsSequenceNewer(c.pendingSequence, c.lastSequence)) return;
+            char payload[sizeof(c.pendingPayload)];
+            std::memcpy(payload, c.pendingPayload, sizeof(payload));
+            ProcessUpload(index, c.pendingSequence, payload, now);
+        }
+
+        void ProcessUpload(int index, std::uint16_t sequence, const char* payload, std::uint64_t now)
+        {
+            SessionClient& c = m_Clients[static_cast<std::size_t>(index)];
             // Invalid traffic also consumes this validation slot (<= 60 decodes/s).
             c.haveDecodeTime = true;
             c.lastDecodeUs = now;
 
-            const char* payload = argv[2];
             const int version = l4d2vr_pose_v3::PayloadVersionForText(payload);
             if (version == 2)
             {
@@ -438,7 +508,7 @@ namespace l4d2vr_server
             char log[192];
             std::snprintf(log, sizeof(log), "L4D2VR server: shell player=%d seq=%u status=%u weaponId=%d clip=%d reserve=%d\n",
                 index, request.sequence, static_cast<unsigned>(reply.status), request.weaponId, reply.clip, reply.reserve);
-            m_Host.Log(log);
+            LogClient(c, index, log);
         }
 
         void HandleMag(int index, int argc, const char* const* argv, AmmoBackend* ammo)
@@ -456,7 +526,7 @@ namespace l4d2vr_server
             std::snprintf(log, sizeof(log), "L4D2VR server: magazine player=%d seq=%u action=%u status=%u weaponId=%d clip=%d reserve=%d\n",
                 index, request.sequence, static_cast<unsigned>(request.action), static_cast<unsigned>(reply.status),
                 request.weaponId, reply.clip, reply.reserve);
-            m_Host.Log(log);
+            LogClient(c, index, log);
         }
 
         void HandleDual(int index, int argc, const char* const* argv, AmmoBackend* ammo)
@@ -474,7 +544,7 @@ namespace l4d2vr_server
             std::snprintf(log, sizeof(log), "L4D2VR server: dual reload player=%d seq=%u status=%u clip=%d->%d reserve=%d->%d\n",
                 index, request.sequence, static_cast<unsigned>(reply.status), request.clip, reply.clip,
                 request.reserve, reply.reserve);
-            m_Host.Log(log);
+            LogClient(c, index, log);
         }
 
         SessionHost& m_Host;

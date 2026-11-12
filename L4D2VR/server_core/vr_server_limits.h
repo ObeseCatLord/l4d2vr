@@ -236,6 +236,32 @@ namespace l4d2vr_server
         int m_Used = 0;
     };
 
+    // Per-player log budget: client-driven log lines (transactions, throws,
+    // drops, rejected swings) stop after `perWindow` lines per window, with one
+    // note that lines were suppressed.
+    class LogBudget
+    {
+    public:
+        enum class Verdict { Log, LogSuppressedNote, Drop };
+        Verdict Take(std::uint64_t nowMs, int perWindow = 20, std::uint64_t windowMs = 10000u)
+        {
+            if (!m_Have || nowMs < m_Start || nowMs - m_Start >= windowMs)
+            {
+                m_Have = true;
+                m_Start = nowMs;
+                m_Used = 0;
+            }
+            if (m_Used < perWindow) { ++m_Used; return Verdict::Log; }
+            if (m_Used == perWindow) { ++m_Used; return Verdict::LogSuppressedNote; }
+            return Verdict::Drop;
+        }
+        void Reset() { m_Have = false; m_Start = 0u; m_Used = 0; }
+    private:
+        bool m_Have = false;
+        std::uint64_t m_Start = 0u;
+        int m_Used = 0;
+    };
+
     // ---- Instant deploy --------------------------------------------------------
 
     // Fire timers (m_flNextPrimaryAttack / m_flNextSecondaryAttack, curtime) of

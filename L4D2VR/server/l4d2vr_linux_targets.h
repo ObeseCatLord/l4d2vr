@@ -407,6 +407,7 @@ namespace l4d2vr_linux
         if (!has(kGroupBase))
             return out;
         out.usercmdDecoder = true;
+        out.features |= kFeatureExactPitch;   // the shared codec decodes both pitch packings
         const bool status = has(kGroupStatus) && in.netpropStatus;
         out.features |= kFeatureAkimboRays;
         if (has(kGroupEye)) out.features |= kFeatureShoveAim | kFeaturePillGive;

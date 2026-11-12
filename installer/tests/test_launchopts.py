@@ -96,6 +96,45 @@ LOCALCONFIG = '''"UserLocalConfigStore"
 '''
 
 
+class RawPreservationTests(unittest.TestCase):
+    """The user's own words are never re-quoted (review B40)."""
+
+    CASES = [
+        'LD_PRELOAD="$LD_PRELOAD:/usr/lib/libgamemodeauto.so.0" %command%',
+        'PATH="$HOME/bin:$PATH" gamemoderun %command%',
+        '~/bin/wrap %command%',
+        "MANGOHUD_CONFIG='fps_limit=90' mangohud %command% -novid",
+        'gamemoderun %command% -novid | tee "$HOME/l4d2.log"',
+    ]
+
+    def test_user_words_survive_byte_for_byte(self):
+        for text in self.CASES:
+            merged, _ = launchopts.merge_launch_options(text)
+            for word in text.replace("%command%", " ").split():
+                self.assertIn(word, merged, text)
+            self.assertNotIn("\\$", merged)
+            self.assertNotIn("'~", merged)
+
+    def test_apply_twice_and_remove_are_stable(self):
+        for text in self.CASES + ['%command%; echo done']:
+            merged, _ = launchopts.merge_launch_options(text)
+            self.assertEqual(launchopts.merge_launch_options(merged)[0], merged, text)
+            self.assertTrue(launchopts.has_required_options(merged), text)
+            stripped = launchopts.strip_launch_options(merged)
+            self.assertEqual(launchopts.merge_launch_options(stripped)[0], merged, text)
+
+    def test_game_args_go_before_shell_syntax(self):
+        merged, _ = launchopts.merge_launch_options("%command% -novid; echo done")
+        self.assertTrue(merged.endswith("%command% -dx9 -insecure -novid; echo done") or
+                        merged.endswith("%command% -novid -dx9 -insecure; echo done") or
+                        "-dx9 -insecure" in merged.split(";")[0], merged)
+        self.assertIn("%command%", launchopts.strip_launch_options("%command%; echo done"))
+
+    def test_variable_in_overrides_is_kept(self):
+        merged, _ = launchopts.merge_launch_options('WINEDLLOVERRIDES="$WINEDLLOVERRIDES;dxgi=n,b" %command%')
+        self.assertTrue(merged.startswith('WINEDLLOVERRIDES="$WINEDLLOVERRIDES;dxgi=n,b;d3d9=n,b" '), merged)
+
+
 class LocalConfigTests(TempDirTest):
     def setUp(self):
         super().setUp()
@@ -153,3 +192,16 @@ class LocalConfigTests(TempDirTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NonUtf8LocalConfigTests(TempDirTest):
+    def test_invalid_utf8_and_crlf_round_trip(self):
+        config = self.tmp / "localconfig.vdf"
+        raw = LOCALCONFIG.replace("\n", "\r\n").encode().replace(b"-other", b"-other \xff\xfe")
+        config.write_bytes(raw)
+        launchopts.apply_vr_launch_options(config, steam_running=False)
+        data = config.read_bytes()
+        self.assertIn(b"\xff\xfe", data)
+        self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
+        launchopts.remove_vr_launch_options(config, steam_running=False)
+        self.assertEqual(config.read_bytes(), raw)

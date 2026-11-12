@@ -53,6 +53,16 @@ class InstallTests(TempDirTest):
         self.assertEqual(snapshot(self.game), before)
         self.assertFalse((self.game / "vr").exists())
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_new_files_get_umask_mode_not_0600(self):
+        old = os.umask(0o022)
+        try:
+            self.install(self.v1)
+        finally:
+            os.umask(old)
+        self.assertEqual((self.game / "d3d9.dll").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.game / "vr" / "haptics_config.txt").stat().st_mode & 0o777, 0o644)
+
     def test_dry_run_changes_nothing(self):
         before = snapshot(self.game)
         plan = self.install(self.v1, dry_run=True)
@@ -254,11 +264,11 @@ class InstallTests(TempDirTest):
         real_write = install.atomic_write_bytes
         calls = {"n": 0}
 
-        def flaky(path, data):
+        def flaky(path, data, **kwargs):
             calls["n"] += 1
             if calls["n"] == 4:
                 raise InstallerError("disk full")
-            return real_write(path, data)
+            return real_write(path, data, **kwargs)
 
         with mock.patch.object(install, "atomic_write_bytes", side_effect=flaky):
             with self.assertRaises(InstallerError):

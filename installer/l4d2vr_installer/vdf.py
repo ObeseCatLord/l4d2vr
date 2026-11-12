@@ -193,7 +193,7 @@ def loads(text: str) -> VdfNode:
 
 
 def load(path) -> VdfNode:
-    with open(path, "r", encoding="utf-8", errors="surrogateescape") as handle:
+    with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
         return loads(handle.read())
 
 

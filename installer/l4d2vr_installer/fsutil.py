@@ -30,35 +30,58 @@ def sha256_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def atomic_write_bytes(path: Path, data: bytes) -> None:
+def _new_file_mode(executable: bool = False) -> int:
+    """Mode for a file the installer creates: what ``open()`` would give
+    (0666 or 0777 minus the umask), not mkstemp's owner-only 0600."""
+    if sys.platform.startswith("win"):
+        return 0o666
+    current = os.umask(0)
+    os.umask(current)
+    return (0o777 if executable else 0o666) & ~current
+
+
+def atomic_write_bytes(path: Path, data: bytes, *, executable: bool = False) -> None:
     """Write ``data`` to ``path`` via a temporary file and ``os.replace``.
 
     Readers never see a half-written file. Permission bits of an existing file
-    are kept.
+    are kept; a new file gets the usual umask-based mode (``executable`` adds
+    the execute bits).
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else None
-    fd, temporary = tempfile.mkstemp(prefix=".l4d2vr-tmp-", dir=str(path.parent))
+    temporary = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else _new_file_mode(executable)
+        fd, temporary = tempfile.mkstemp(prefix=".l4d2vr-tmp-", dir=str(path.parent))
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        if mode is not None:
-            os.chmod(temporary, mode)
+        os.chmod(temporary, mode)
         os.replace(temporary, path)
     except PermissionError as error:
         raise InstallerError(
-            f"Cannot write {path}: {error}. If the game is running, close it and try again."
+            f"Cannot write {path}: {error}. If the game is running, close it and try again; "
+            "otherwise check that you may write to that folder."
         ) from error
+    except OSError as error:
+        raise InstallerError(f"Cannot write {path}: {error.strerror or error}") from error
     finally:
-        if os.path.exists(temporary):
+        if temporary is not None and os.path.exists(temporary):
             os.unlink(temporary)
 
 
 def atomic_write_text(path: Path, text: str) -> None:
-    atomic_write_bytes(path, text.encode("utf-8"))
+    # surrogateescape: text read with errors="surrogateescape" (Steam VDF files
+    # with stray non-UTF-8 bytes) is written back byte for byte.
+    atomic_write_bytes(path, text.encode("utf-8", "surrogateescape"))
+
+
+def read_text_raw(path: Path) -> str:
+    """Read a text file as UTF-8 without newline translation (CRLF stays
+    CRLF) and without failing on invalid bytes."""
+    with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+        return handle.read()
 
 
 def atomic_write_json(path: Path, value) -> None:

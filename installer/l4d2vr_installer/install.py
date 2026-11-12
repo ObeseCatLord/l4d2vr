@@ -533,7 +533,9 @@ def apply_plan(plan: Plan, dry_run: bool = False, log: Log = _noop) -> Optional[
                 data = item.data if item.data is not None else plan.package.read(item.rel)
                 if sha256_bytes(data) != item.new_sha:
                     raise InstallerError(f"Archive content changed while installing {item.rel}")
-                atomic_write_bytes(item.dest, data)
+                member = plan.package.members.get(item.rel) if plan.package and item.data is None else None
+                executable = bool(member is not None and (member.external_attr >> 16) & 0o111)
+                atomic_write_bytes(item.dest, data, executable=executable)
             elif item.action == "remove":
                 os.remove(item.dest)
                 _remove_empty_parents(target.root, item.dest)

@@ -89,14 +89,19 @@ namespace
     std::atomic<std::uint32_t> g_ToneGeneration{ 0u };
     std::atomic<bool> g_Active{ false }, g_TransmitAllowed{ false }, g_CaptureFailed{ false };
     std::atomic<bool> g_Transmitting{ false };
+    std::atomic<bool> g_OutputPlaying{ false };     // waveOut open and returning buffers (2.0.11)
+    std::atomic<bool> g_StockFilterInstalled{ false };
     std::atomic<std::uint64_t> g_Peers{ 0u };
     std::atomic<int> g_LocalPlayer{ 0 };
     std::atomic<std::uint32_t> g_StockDropped{ 0u };
     std::atomic<std::uint32_t> g_StockPassed{ 0u };
 
-    std::thread g_Thread;
+    // The audio thread is detached (2.0.11): a joinable global std::thread
+    // calls std::terminate() from its destructor when the game exits.
     std::atomic<bool> g_ThreadRun{ false };
     HANDLE g_WakeEvent = nullptr;
+    HANDLE g_ThreadDoneEvent = nullptr;
+    bool g_PttKeyWasDown = false;                   // game thread: desktop key edge -> +/-voicerecord
     std::once_flag g_StartOnce;
 
     // The settings in effect (OpusVoice* keys resolved with the game's voice settings).
@@ -151,7 +156,6 @@ namespace
                 }
                 const double now = NowMs();
                 UpdateEncoder(s);
-                const bool wantCapture = g_TransmitAllowed.load();
                 const double toneHz = ToneHz(s);
                 if (toneHz > 0.0)
                 {
@@ -171,10 +175,33 @@ namespace
                 else
                 {
                     m_ToneActive = false;
-                    if (wantCapture && !m_WaveIn && now >= m_CaptureRetryMs) OpenCapture(now);
-                    if (!wantCapture && m_WaveIn) CloseCapture();
+                    CapturePolicy::Inputs ci;
+                    ci.active = true;
+                    ci.transmitAllowed = g_TransmitAllowed.load();
+                    ci.captureFailed = g_CaptureFailed.load();
+                    ci.pushToTalk = ModeWanted(s) == TransmitMode::PushToTalk;
+                    ci.pttHeld = PushToTalkHeld();
+                    ci.open = m_WaveIn != nullptr;
+                    ci.nowMs = now;
+                    switch (m_CapturePolicy.Update(ci))
+                    {
+                    case CapturePolicy::Action::Open: OpenCapture(now); break;
+                    case CapturePolicy::Action::Close: CloseCapture(); break;
+                    default: break;
+                    }
                 }
-                if (!m_WaveOut && !m_TimerClock && now >= m_OutputRetryMs) OpenOutput(now);
+                // No device (timer clock) is retried every 10 s; a device that
+                // stopped returning buffers is reopened.
+                if (m_WaveOut && OutputStalled(true, now, m_LastOutputDoneMs))
+                {
+                    Game::logMsg("[VR][Voice] playback stalled (no buffer returned for %.0f ms): reopening the device", now - m_LastOutputDoneMs);
+                    CloseOutput();
+                    m_TimerClock = true;
+                    m_TimerMixMs = now;
+                    m_OutputRetryMs = now + 1000.0;
+                }
+                if (!m_WaveOut && now >= m_OutputRetryMs) OpenOutput(now);
+                g_OutputPlaying.store(OutputPlaying(m_WaveOut != nullptr, now, m_LastOutputDoneMs));
 
                 HANDLE handles[3] = { g_WakeEvent, m_CaptureEvent, m_OutputEvent };
                 WaitForMultipleObjects(3, handles, FALSE, 5);
@@ -236,7 +263,6 @@ namespace
         // ---- capture ----
         void OpenCapture(double now)
         {
-            m_CaptureRetryMs = now + 5000.0;
             WAVEFORMATEX format{};
             format.wFormatTag = WAVE_FORMAT_PCM;
             format.nChannels = 1;
@@ -249,8 +275,10 @@ namespace
                 CALLBACK_EVENT);
             if (r != MMSYSERR_NOERROR || !handle)
             {
+                m_CapturePolicy.OpenFailed(now);
                 if (!g_CaptureFailed.exchange(true))
-                    Game::logMsg("[VR][Voice] no microphone (waveInOpen %u); receive only", static_cast<unsigned>(r));
+                    Game::logMsg("[VR][Voice] no microphone (waveInOpen %u); receive only, retrying every %.0f s",
+                        static_cast<unsigned>(r), CapturePolicy::kCaptureFailedRetryMs / 1000.0);
                 return;
             }
             m_WaveIn = handle;
@@ -266,7 +294,12 @@ namespace
             }
             waveInStart(m_WaveIn);
             g_CaptureFailed.store(false);
-            Game::logMsg("[VR][Voice] microphone open (default recording device, 48 kHz mono)");
+            static int s_OpenLogs = 0;
+            if (s_OpenLogs < 12)
+            {
+                ++s_OpenLogs;
+                Game::logMsg("[VR][Voice] microphone open (default recording device, 48 kHz mono)");
+            }
         }
 
         void CloseCapture()
@@ -279,6 +312,8 @@ namespace
             waveInClose(m_WaveIn);
             m_WaveIn = nullptr;
             m_CapturePending.clear();
+            m_Vad.Reset();
+            m_Preroll.clear();
         }
 
         void ProcessCapture(const Settings& s)
@@ -404,7 +439,7 @@ namespace
         // ---- output ----
         void OpenOutput(double now)
         {
-            m_OutputRetryMs = now + 10000.0;
+            m_OutputRetryMs = now + kOutputRetryMs;
             WAVEFORMATEX format{};
             format.wFormatTag = WAVE_FORMAT_PCM;
             format.nChannels = 2;
@@ -417,13 +452,21 @@ namespace
                 CALLBACK_EVENT);
             if (r != MMSYSERR_NOERROR || !handle)
             {
-                // No playback device: mix on a timer (stats, loopback analysis, dumps still work).
-                Game::logMsg("[VR][Voice] no playback device (waveOutOpen %u); mixing on a timer", static_cast<unsigned>(r));
+                // No playback device: mix on a timer (stats, loopback analysis,
+                // dumps still work), retry every 10 s, and let the game's voice
+                // play meanwhile (g_OutputPlaying stays false).
+                if (!m_TimerClock)
+                {
+                    Game::logMsg("[VR][Voice] no playback device (waveOutOpen %u); the game's voice plays, retrying every %.0f s",
+                        static_cast<unsigned>(r), kOutputRetryMs / 1000.0);
+                    m_TimerMixMs = now;
+                }
                 m_TimerClock = true;
-                m_TimerMixMs = now;
                 return;
             }
             m_WaveOut = handle;
+            m_TimerClock = false;
+            m_LastOutputDoneMs = now;
             for (int i = 0; i < kOutputBuffers; ++i)
             {
                 m_OutputData[i].assign(kBlockFrames * 2, 0);
@@ -435,7 +478,12 @@ namespace
                 Mix(SettingsSnapshot(), m_OutputData[i].data());
                 waveOutWrite(m_WaveOut, &h, sizeof(h));
             }
-            Game::logMsg("[VR][Voice] playback open (default device, 48 kHz stereo, %d ms queued)", kOutputBuffers * 10);
+            static int s_OpenLogs = 0;
+            if (s_OpenLogs < 12)
+            {
+                ++s_OpenLogs;
+                Game::logMsg("[VR][Voice] playback open (default device, 48 kHz stereo, %d ms queued)", kOutputBuffers * 10);
+            }
         }
 
         void CloseOutput()
@@ -449,6 +497,7 @@ namespace
                 m_WaveOut = nullptr;
             }
             m_TimerClock = false;
+            g_OutputPlaying.store(false);
         }
 
         void CloseAll()
@@ -465,7 +514,7 @@ namespace
             m_Vad.Reset();
             m_MicAgc.Reset();
             m_Preroll.clear();
-            m_CaptureRetryMs = 0.0;
+            m_CapturePolicy.Reset();
             m_OutputRetryMs = 0.0;
         }
 
@@ -479,7 +528,10 @@ namespace
                     if (!(h.dwFlags & WHDR_DONE)) continue;
                     h.dwFlags &= ~WHDR_DONE;
                     Mix(s, m_OutputData[i].data());
-                    waveOutWrite(m_WaveOut, &h, sizeof(h));
+                    if (waveOutWrite(m_WaveOut, &h, sizeof(h)) == MMSYSERR_NOERROR)
+                        m_LastOutputDoneMs = NowMs();
+                    else
+                        m_LastOutputDoneMs = -1e30;   // device gone: the stall check reopens it
                 }
                 return;
             }
@@ -617,7 +669,7 @@ namespace
         WAVEHDR m_CaptureHeaders[kCaptureBuffers]{};
         std::vector<std::int16_t> m_CaptureData[kCaptureBuffers];
         std::vector<std::int16_t> m_CapturePending;
-        double m_CaptureRetryMs = 0.0;
+        CapturePolicy m_CapturePolicy;
 
         bool m_ToneActive = false;
         std::uint32_t m_ToneGeneration = 0u;
@@ -629,6 +681,7 @@ namespace
         WAVEHDR m_OutputHeaders[kOutputBuffers]{};
         std::vector<std::int16_t> m_OutputData[kOutputBuffers];
         double m_OutputRetryMs = 0.0;
+        double m_LastOutputDoneMs = -1e30;
         bool m_TimerClock = false;
         double m_TimerMixMs = 0.0;
 
@@ -642,11 +695,13 @@ namespace
     {
         std::call_once(g_StartOnce, []() {
             g_WakeEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+            g_ThreadDoneEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
             g_ThreadRun.store(true);
-            g_Thread = std::thread([]() {
+            std::thread([]() {
                 SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
                 g_Audio.Run();
-            });
+                if (g_ThreadDoneEvent) SetEvent(g_ThreadDoneEvent);
+            }).detach();
         });
     }
 
@@ -764,7 +819,7 @@ namespace OpusVoiceClient
         const auto* code = reinterpret_cast<const std::uint8_t*>(target);
         if (!target || code[0x5C] != 0x8B || code[0x5D] != 0x7E || code[0x5E] != kVoiceFromClientOffset)
         {
-            Game::logMsg("[VR][Voice] stock voice filter unavailable (ProcessVoiceData not found): Opus talkers may also be heard through the game's voice");
+            Game::logMsg("[VR][Voice] stock voice filter unavailable (ProcessVoiceData not found): other players' Opus voice is not received (they are heard once, through the game's voice); your own Opus voice still goes out");
             return false;
         }
         if (MH_CreateHook(reinterpret_cast<LPVOID>(target), reinterpret_cast<LPVOID>(&ProcessVoiceDataDetour),
@@ -775,6 +830,7 @@ namespace OpusVoiceClient
             return false;
         }
         installed = true;
+        g_StockFilterInstalled.store(true);
         Game::logMsg("[VR][Voice] stock voice filter installed (engine.dll+0x%X)", static_cast<unsigned>(target - base));
         return true;
     }
@@ -829,10 +885,25 @@ namespace OpusVoiceClient
         g_Peers.store(0u);
     }
 
+    // Voice state of the session (talkers, queued frames, handshake), keeping
+    // the server's feature ack. Used after a client stall (2.0.11).
+    void RestartVoiceSession()
+    {
+        g_Negotiation.Restart();
+        g_Active.store(false);
+        g_TransmitAllowed.store(false);
+        g_Peers.store(0u);
+        std::lock_guard<std::mutex> lock(g_Mutex);
+        for (Speaker& sp : g_Speakers) { sp.jitter.Reset(); sp.used = false; sp.stockHoldUntilMs = -1e30; }
+        g_Outgoing.clear();
+        Wake();
+    }
+
     void OnSessionReset()
     {
         g_ServerFeatures = 0u;
         g_FeaturesValid = false;
+        g_CaptureFailed.store(false);   // a new server: try the microphone again
         g_Negotiation.Reset();
         g_Active.store(false);
         g_TransmitAllowed.store(false);
@@ -905,6 +976,9 @@ namespace OpusVoiceClient
         const int player = senderClientSlot + 1;
         const bool peer = (g_Peers.load() & PlayerBit(player)) != 0u;
         if (!peer || player < 1 || player > kMaxPlayers) return false;
+        // Opus voice that cannot be played (no playback device, stalled
+        // device) never silences the game's voice (2.0.11).
+        if (!g_OutputPlaying.load()) return false;
         // Only while this talker's Opus voice is arriving: a peer that talks
         // through the game's voice alone (open mic while Opus waits for a
         // button, no microphone for Opus, ...) is still heard.
@@ -976,10 +1050,17 @@ namespace OpusVoiceClient
         }
         const Settings s = SettingsSnapshot();
         // CreateMove (and so Frame) stops while not in a game: a long gap with
-        // no feature ack since means a new server or map; wait for its ack.
+        // no feature ack since may be a new map (the relay was reset) or only a
+        // hitch with the connection kept. Say hello again either way and keep
+        // the server's features (2.0.11: dropping them ended voice for the
+        // rest of the map after any 3 s hitch). A real disconnect resets
+        // everything through OnSessionReset.
         const double frameNow = NowMs();
         if (g_LastFrameMs > 0.0 && frameNow - g_LastFrameMs > 3000.0 && g_LastFeatureAckMs < g_LastFrameMs)
-            OnSessionReset();
+        {
+            Game::logMsg("[VR][Voice] no frame for %.1f s: voice handshake again", (frameNow - g_LastFrameMs) / 1000.0);
+            RestartVoiceSession();
+        }
         g_LastFrameMs = frameNow;
         if (!in.inGame)
         {
@@ -991,14 +1072,23 @@ namespace OpusVoiceClient
         g_LocalPlayer.store(in.localPlayer);
 
         // Desktop push-to-talk key (in addition to the game's own voice key).
+        // It also keys the game's voice (+voicerecord), so players without
+        // the mod hear you too (2.0.11).
         const int vk = VirtualKeyFromName(s.pushToTalkKey);
-        g_PttKey.store(vk != 0 && in.gameWindowFocused && (GetAsyncKeyState(vk) & 0x8000) != 0);
+        const bool keyDown = vk != 0 && in.gameWindowFocused && (GetAsyncKeyState(vk) & 0x8000) != 0;
+        g_PttKey.store(keyDown);
+        if (keyDown != g_PttKeyWasDown)
+        {
+            g_PttKeyWasDown = keyDown;
+            if (in.clientCommand) in.clientCommand(keyDown ? "+voicerecord" : "-voicerecord");
+        }
 
         ClientNegotiation::Inputs n;
         n.enabled = s.enabled;
         n.serverFeature = g_FeaturesValid && (in.serverFeatures & 0x2000u) != 0u;   // l4d2vr_features::OpusVoice
         n.transmit = ToneHz(s) > 0.0 || !g_CaptureFailed.load();
         n.loopback = LoopbackWanted(s);
+        n.receive = g_StockFilterInstalled.load();
         n.nowMs = NowMs();
         const int hello = g_Negotiation.Update(n);
         if (hello >= 0 && in.serverCommand)
@@ -1112,12 +1202,15 @@ namespace OpusVoiceClient
         }
     }
 
+    // Orderly stop from a game-thread shutdown point (never from DllMain: the
+    // loader lock would block the thread's exit). The thread is detached, so
+    // the process can also simply exit without calling this.
     void Shutdown()
     {
         if (g_ThreadRun.exchange(false))
         {
             Wake();
-            if (g_Thread.joinable()) g_Thread.join();
+            if (g_ThreadDoneEvent) WaitForSingleObject(g_ThreadDoneEvent, 1000);
         }
     }
 }

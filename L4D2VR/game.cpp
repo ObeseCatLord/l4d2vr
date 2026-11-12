@@ -863,15 +863,31 @@ namespace
     {
         unsigned long version = 0;
         std::uint32_t mask = 0u;
-        if (!g_Game || !g_Game->m_VR || !Hooks::s_ServerUnderstandsVR || command.ArgC() != 3 ||
+        if (!g_Game || !g_Game->m_VR || command.ArgC() != 3 ||
             !l4d2vr_features::ParseMask(command.Arg(1), mask) ||
             !ParseUnsignedCommandArgument(command, 2, 255u, version) || version < l4d2vr_features::kVersion)
             return;
-        const std::uint32_t previous = g_Game->m_VR->m_ServerFeatureMask.exchange(mask, std::memory_order_acq_rel);
-        if (previous != mask)
-            Game::logMsg("[VR][FeatureAck] server features 0x%03X (protocol %lu)", mask, version);
+        if (!Hooks::s_ServerUnderstandsVR)
+        {
+            // 2.0.11: a plugin whose gameplay hooks are unavailable sends no
+            // l4d2vr_server_ack but still relays Opus voice (it needs no game
+            // hooks). Take only that bit; the gameplay features stay off.
+            g_Game->m_VR->m_ServerFeatureMask.fetch_or(mask & l4d2vr_features::OpusVoice, std::memory_order_acq_rel);
+            static int s_VoiceOnlyLogs = 0;
+            if (s_VoiceOnlyLogs < 4)
+            {
+                ++s_VoiceOnlyLogs;
+                Game::logMsg("[VR][FeatureAck] server features 0x%03X before l4d2vr_server_ack: only Opus voice is used", mask);
+            }
+        }
+        else
+        {
+            const std::uint32_t previous = g_Game->m_VR->m_ServerFeatureMask.exchange(mask, std::memory_order_acq_rel);
+            if (previous != mask)
+                Game::logMsg("[VR][FeatureAck] server features 0x%03X (protocol %lu)", mask, version);
+        }
         // Every capability bundle (new map, reconnect) restarts the voice handshake.
-        OpusVoiceClient::OnServerFeatures(mask);
+        OpusVoiceClient::OnServerFeatures(mask & l4d2vr_features::OpusVoice);
     }
 
     void __cdecl OnL4D2VRShellCapability(const SourceCCommand& command)
@@ -2258,6 +2274,26 @@ bool Game::HandleBuiltinVoiceCommand(edict_t* entity, const void* sourceCommand)
     return true;
 }
 
+// 2.0.11: the listen host has no disconnect hook; once a second, forget the
+// voice state of players who left (their talker bit made older clients drop
+// the game's voice of whoever took the slot next).
+void Game::PruneListenVoiceRelay()
+{
+    static ULONGLONG s_LastPruneMs = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (nowMs - s_LastPruneMs < 1000) return;
+    s_LastPruneMs = nowMs;
+    std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+    if (!g_ListenVoiceRelay.Enabled() || !m_ServerPluginHelpers) return;
+    g_ListenVoiceHost.helpers = m_ServerPluginHelpers;
+    g_ListenVoiceRelay.PruneDisconnected(g_ListenVoiceHost);
+    for (int i = 1; i <= l4d2vr_voice::kMaxPlayers; ++i)
+    {
+        const l4d2vr_voice_server::RelayClient* c = g_ListenVoiceRelay.Client(i);
+        if (c && !c->bucketStarted) g_ListenVoiceHost.slots[static_cast<std::size_t>(i)] = ListenVoiceSlot{};
+    }
+}
+
 void Game::ResetListenVoiceRelay()
 {
     std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
@@ -2269,6 +2305,7 @@ void Game::ResetListenVoiceRelay()
 void Game::UpdateOpusVoice()
 {
     if (!m_EngineClient) return;
+    PruneListenVoiceRelay();
     // Main thread, MinHook initialized: hook the stock voice receive once.
     OpusVoiceClient::InstallStockVoiceFilter();
     // VR players: the game's voice to open mic once ever (CreateMove runs in a
@@ -2342,6 +2379,7 @@ void Game::UpdateOpusVoice()
             return true;
         };
         in.serverCommand = [this](const char* text, bool reliable) { ServerCmd(text, reliable); };
+        in.clientCommand = [this](const char* text) { ClientCmd_Unrestricted(text); };
     }
     OpusVoiceClient::Frame(in);
 }

@@ -247,6 +247,60 @@ static void FillNoise(std::int16_t* pcm, int n, int amp, std::uint32_t& rng)
     for (int i = 0; i < n; ++i) { rng = rng * 1664525u + 1013904223u; pcm[i] = static_cast<std::int16_t>(int(rng >> 16) % (2 * amp + 1) - amp); }
 }
 
+// Synthetic speech: a 140 Hz voice with harmonics, in syllables (~5/s) with
+// short gaps between words and a pause between phrases; level = RMS of the
+// voiced syllables. Plus steady noise. Returns per-frame "voiced" flags.
+struct SpeechSynth
+{
+    double level = 300.0;
+    int sample = 0;
+    bool Fill(std::int16_t* pcm, int n, int noiseAmp, std::uint32_t& rng)
+    {
+        bool voicedFrame = false;
+        for (int i = 0; i < n; ++i, ++sample)
+        {
+            const double t = double(sample) / kSampleRate;
+            const double phrase = std::fmod(t, 3.0);              // 2.4 s of words, 0.6 s pause
+            const double syl = std::fmod(t, 0.2);                  // 160 ms syllable, 40 ms gap
+            double env = 0.0;
+            if (phrase < 2.4 && syl < 0.16) env = std::sin(3.14159265358979 * syl / 0.16);
+            if (env > 0.5) voicedFrame = true;
+            double v = 0.0;
+            for (int h = 1; h <= 5; ++h) v += std::sin(2.0 * 3.14159265358979 * 140.0 * h * t) / h;
+            // sum of 1/h harmonics has RMS ~0.86; the envelope's peak part ~1.
+            double x = level / 0.86 * 1.2 * env * v;
+            rng = rng * 1664525u + 1013904223u;
+            x += noiseAmp > 0 ? double(int(rng >> 16) % (2 * noiseAmp + 1) - noiseAmp) : 0.0;
+            pcm[i] = static_cast<std::int16_t>(std::clamp(x, -32768.0, 32767.0));
+        }
+        return voicedFrame;
+    }
+};
+
+struct VadRun { int frames = 0, open = 0, voiced = 0, voicedOpen = 0, spurts = 0; };
+
+// Runs `seconds` of speech at `level` over uniform noise (+-noiseAmp: RMS = amp/sqrt(3)).
+static VadRun RunSpeech(double level, int noiseAmp, float sens, double seconds, int warmupFrames = 100)
+{
+    Vad vad;
+    std::int16_t pcm[kFrameSamples];
+    std::uint32_t rng = 99u;
+    for (int i = 0; i < warmupFrames; ++i) { FillNoise(pcm, kFrameSamples, noiseAmp, rng); vad.Update(pcm, kFrameSamples, sens); }
+    SpeechSynth sp; sp.level = level;
+    VadRun r;
+    bool was = vad.Active();
+    const int frames = static_cast<int>(seconds * 50.0);
+    for (int i = 0; i < frames; ++i)
+    {
+        const bool voiced = sp.Fill(pcm, kFrameSamples, noiseAmp, rng);
+        const bool open = vad.Update(pcm, kFrameSamples, sens);
+        ++r.frames; r.open += open; r.voiced += voiced; r.voicedOpen += voiced && open;
+        if (open && !was) ++r.spurts;
+        was = open;
+    }
+    return r;
+}
+
 static void TestVad()
 {
     std::int16_t pcm[kFrameSamples];
@@ -257,11 +311,12 @@ static void TestVad()
     // Speech-level tone opens after two frames.
     FillTone(pcm, kFrameSamples, 300.0, 6000.0, 0);
     Check(!vad.Update(pcm, kFrameSamples, 0.55f));
-    Check(vad.Update(pcm, kFrameSamples, 0.55f));
-    // Hangover: stays open through 14 quiet frames, closes on the 15th.
+    Check(vad.Update(pcm, kFrameSamples, 0.55f) && vad.Talkspurts() == 1u && vad.SpeechFrame());
+    // Hangover: stays open through kHangoverFrames-1 quiet frames, closes on the next.
     for (int i = 0; i < Vad::kHangoverFrames - 1; ++i) { FillNoise(pcm, kFrameSamples, 150, rng); Check(vad.Update(pcm, kFrameSamples, 0.55f)); }
     FillNoise(pcm, kFrameSamples, 150, rng);
     Check(!vad.Update(pcm, kFrameSamples, 0.55f));
+    Check(Vad::kHangoverFrames * kFrameMs == 400 && Vad::kPrerollFrames * kFrameMs == 100);
     // Quiet speech: a sensitive gate opens, an insensitive one does not.
     Vad sensitive, deaf;
     for (int i = 0; i < 100; ++i)
@@ -278,7 +333,161 @@ static void TestVad()
         openD = deaf.Update(pcm, kFrameSamples, 0.0f);
     }
     Check(openS && !openD);
-    Check(sensitive.Level() > 0.0f && sensitive.Noise() >= 10.0f);
+    Check(sensitive.Level() > 0.0f && sensitive.Noise() >= Vad::kMinNoise);
+    // Tuning range: 3x..5x the floor, 20..400 RMS absolute.
+    Check(std::fabs(Vad::OpenRatio(1.0f) - 3.0f) < 1e-4f && std::fabs(Vad::OpenRatio(0.0f) - 5.0f) < 1e-4f);
+    Check(std::fabs(Vad::AbsoluteFloor(0.0f) - 400.0f) < 0.5f && std::fabs(Vad::AbsoluteFloor(1.0f) - 20.0f) < 0.5f);
+    Check(Vad::AbsoluteFloor(kDefaultVadSensitivity) < 100.0f);
+}
+
+// 2.0.11: quiet microphone speech (RMS ~150-400) opens the gate at the default
+// sensitivity over quiet and moderate room noise, and is not cut mid-sentence.
+static void TestVadQuietSpeech()
+{
+    const float sens = kDefaultVadSensitivity;
+    // noise RMS: amp 15 -> ~9, 40 -> ~23, 70 -> ~40
+    for (int noise : { 0, 15, 40, 70 })
+        for (double level : { 150.0, 250.0, 400.0 })
+        {
+            const VadRun r = RunSpeech(level, noise, sens, 12.0);
+            const double voicedOpen = double(r.voicedOpen) / std::max(1, r.voiced);
+            if (voicedOpen < 0.9 || r.spurts > 6)
+                std::fprintf(stderr, "quiet speech level %.0f noise %d: voiced open %.2f, %d spurts\n", level, noise, voicedOpen, r.spurts);
+            Check(voicedOpen >= 0.9);   // the words are sent
+            Check(r.spurts <= 6);       // one talkspurt per phrase (4), not one per word
+        }
+    // The game's sensitive slider (voice_threshold 65 -> ~0.9) opens on RMS 120 over noise RMS ~23.
+    const VadRun r = RunSpeech(120.0, 40, SensitivityFromGameThreshold(65.0f), 12.0);
+    Check(double(r.voicedOpen) / r.voiced >= 0.9);
+}
+
+// Steady noise alone, at several levels, never keeps the gate open; a loud
+// noise floor (fan next to the mic) needs louder speech.
+static void TestVadNoise()
+{
+    std::int16_t pcm[kFrameSamples];
+    for (float sens : { kDefaultVadSensitivity, 0.9f, 1.0f })
+        for (int amp : { 5, 30, 100, 300, 1500, 5000 })
+        {
+            Vad vad;
+            std::uint32_t rng = 3u + static_cast<std::uint32_t>(amp);
+            int open = 0;
+            for (int i = 0; i < 1500; ++i) { FillNoise(pcm, kFrameSamples, amp, rng); open += vad.Update(pcm, kFrameSamples, sens); }
+            Check(open == 0);
+        }
+    // Noise that grows (a fan turns on, 20 -> ~170 RMS): open at most briefly, then closed for good.
+    for (float sens : { kDefaultVadSensitivity, 1.0f })
+    {
+        Vad vad;
+        std::uint32_t rng = 11u;
+        for (int i = 0; i < 200; ++i) { FillNoise(pcm, kFrameSamples, 35, rng); vad.Update(pcm, kFrameSamples, sens); }
+        int open = 0, openLate = 0;
+        for (int i = 0; i < 1000; ++i)
+        {
+            FillNoise(pcm, kFrameSamples, 300, rng);
+            const bool o = vad.Update(pcm, kFrameSamples, sens);
+            open += o;
+            if (i >= 250) openLate += o;
+        }
+        Check(open < 250 && openLate == 0);   // < 5 s, then never
+    }
+    // Loud noise floor (uniform +-1500, RMS ~870): normal speech at 1500 RMS does
+    // not get through (below 3x), loud speech at 5000 RMS does.
+    const VadRun quiet = RunSpeech(1500.0, 1500, kDefaultVadSensitivity, 9.0);
+    const VadRun loud = RunSpeech(5000.0, 1500, kDefaultVadSensitivity, 9.0);
+    Check(double(quiet.voicedOpen) / quiet.voiced < 0.2);
+    Check(double(loud.voicedOpen) / loud.voiced >= 0.9);
+    // After speech ends the gate closes again (noise only).
+    {
+        Vad vad;
+        std::uint32_t rng = 5u;
+        SpeechSynth sp; sp.level = 250.0;
+        for (int i = 0; i < 300; ++i) { sp.Fill(pcm, kFrameSamples, 40, rng); vad.Update(pcm, kFrameSamples, kDefaultVadSensitivity); }
+        int open = 0;
+        for (int i = 0; i < 500; ++i) { FillNoise(pcm, kFrameSamples, 40, rng); open += vad.Update(pcm, kFrameSamples, kDefaultVadSensitivity); }
+        Check(open <= Vad::kHangoverFrames);
+    }
+}
+
+// 2.0.11: the game's microphone sensitivity (voice_threshold, 1..2000) drives
+// OpusVoiceVadSensitivity=game.
+static void TestGameMicSensitivity()
+{
+    Check(std::fabs(SensitivityFromGameThreshold(2000.0f) - kDefaultVadSensitivity) < 1e-4f);
+    Check(std::fabs(SensitivityFromGameThreshold(5000.0f) - kDefaultVadSensitivity) < 1e-4f);
+    Check(std::fabs(SensitivityFromGameThreshold(20.0f) - 1.0f) < 1e-4f && SensitivityFromGameThreshold(1.0f) == 1.0f);
+    Check(SensitivityFromGameThreshold(-1.0f) == kDefaultVadSensitivity);
+    Check(SensitivityFromGameThreshold(NAN) == kDefaultVadSensitivity);
+    // Lower threshold = more sensitive (monotonic).
+    float last = 0.0f;
+    for (float t : { 2000.0f, 1000.0f, 500.0f, 200.0f, 64.968010f, 30.0f, 20.0f })
+    {
+        const float s = SensitivityFromGameThreshold(t);
+        Check(s >= last);
+        last = s;
+    }
+    const float user = SensitivityFromGameThreshold(64.968010f);
+    Check(user > 0.85f && user < 0.95f);
+    // Settings: game is the default; a number is an explicit override.
+    Check(ParseSettingsText("").vadSensitivity == kVadSensitivityGame);
+    Check(ParseSettingsText("OpusVoiceVadSensitivity=game\n").vadSensitivity == kVadSensitivityGame);
+    Check(ParseSettingsText("OpusVoiceVadSensitivity=-1\n").vadSensitivity == kVadSensitivityGame);
+    Check(ParseSettingsText("OpusVoiceVadSensitivity=2\n").vadSensitivity == 1.0f);
+    Check(std::fabs(ParseSettingsText("OpusVoiceVadSensitivity=0.3\n").vadSensitivity - 0.3f) < 1e-6f);
+    Check(ParseSettingsText("OpusVoiceVadSensitivity=junk\n").vadSensitivity == kVadSensitivityGame);
+    Check(ParseSettingsText("").micAgc && !ParseSettingsText("OpusVoiceMicAgc=false\n").micAgc);
+    Settings s;
+    GameVoiceSettings g;
+    Check(ResolveWithGame(s, g).vadSensitivity == kDefaultVadSensitivity);   // cvars not read
+    g.known = true;
+    Check(ResolveWithGame(s, g).vadSensitivity == kDefaultVadSensitivity);   // voice_threshold not read
+    g.micThreshold = 64.968010f;
+    Check(std::fabs(ResolveWithGame(s, g).vadSensitivity - user) < 1e-6f);
+    Settings fixed = s; fixed.vadSensitivity = 0.3f;
+    Check(std::fabs(ResolveWithGame(fixed, g).vadSensitivity - 0.3f) < 1e-6f);   // the override wins
+    GameVoiceSettings h = g;
+    Check(SameGameVoice(g, h));
+    h.micThreshold = 2000.0f;
+    Check(!SameGameVoice(g, h));
+}
+
+// 2.0.11: the microphone AGC raises quiet speech, leaves loud speech alone,
+// never clips, and learns nothing from noise.
+static void TestMicAgc()
+{
+    std::int16_t pcm[kFrameSamples];
+    MicAgc agc;
+    Check(agc.Gain() == 1.0f);
+    for (int i = 0; i < 200; ++i) agc.Observe(300.0f);   // quiet speech
+    Check(agc.Gain() > 3.9f && agc.Gain() <= MicAgc::kMaxGain);
+    FillTone(pcm, kFrameSamples, 200.0, 425.0, 0);   // RMS ~300
+    agc.Apply(pcm, kFrameSamples);
+    agc.Apply(pcm, kFrameSamples);   // second frame: the ramp has reached the gain
+    FillTone(pcm, kFrameSamples, 200.0, 425.0, 0);
+    agc.Apply(pcm, kFrameSamples);
+    Check(Vad::FrameRms(pcm, kFrameSamples) > 1100.0f);
+    // A loud peak is never clipped.
+    FillTone(pcm, kFrameSamples, 200.0, 20000.0, 0);
+    agc.Apply(pcm, kFrameSamples);
+    agc.Apply(pcm, kFrameSamples);
+    Check(!FrameClipped(pcm, kFrameSamples));
+    // Loud speech: never lowered (gain 1).
+    MicAgc loud;
+    for (int i = 0; i < 200; ++i) loud.Observe(8000.0f);
+    Check(loud.Gain() == 1.0f);
+    // Nothing observed (noise only, gate closed): no gain.
+    MicAgc idle;
+    for (int i = 0; i < 200; ++i) idle.Observe(0.0f);
+    Check(idle.Gain() == 1.0f);
+    // Level statistics.
+    Vad vad;
+    MicLevelStats st;
+    std::uint32_t rng = 1u;
+    for (int i = 0; i < 50; ++i) { FillNoise(pcm, kFrameSamples, 40, rng); vad.Update(pcm, kFrameSamples, 0.6f); st.Add(vad, false, 0.6f, 1.0f); }
+    for (int i = 0; i < 50; ++i) { FillTone(pcm, kFrameSamples, 200.0, 32767.0, i * kFrameSamples); vad.Update(pcm, kFrameSamples, 0.6f); st.Add(vad, FrameClipped(pcm, kFrameSamples), 0.6f, 1.0f); }
+    Check(st.frames == 100 && st.clippedFrames == 50 && st.openFrames == 49 && st.speechFrames == 49 && st.talkspurts == 1);
+    Check(st.OpenPercent() > 48.0f && st.SpeechAverageRms() > 20000.0f && st.speechPeak > 20000.0f && st.AverageRms() > 10000.0f);
+    Check(st.noise > 0.0f && st.openAt > st.noise);
 }
 
 static void TestTransmitter()
@@ -761,6 +970,10 @@ int main()
     TestStockVoiceGate();
     TestVrVoiceDefaultsState();
     TestVad();
+    TestVadQuietSpeech();
+    TestVadNoise();
+    TestGameMicSensitivity();
+    TestMicAgc();
     TestTransmitter();
     TestJitterSteady();
     TestJitterLoss();

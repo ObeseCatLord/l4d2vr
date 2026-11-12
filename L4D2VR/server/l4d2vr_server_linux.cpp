@@ -949,6 +949,77 @@ namespace
 
     Ammo g_Ammo;
 
+    // ---- Hand wall trace (eye -> hand) ---------------------------------------------
+    class HandTraceFilter final : public ITraceFilterLinux
+    {
+    public:
+        explicit HandTraceFilter(void* self) : m_Self(self) {}
+        // Players (and the player's own items) never stop the hand; world,
+        // doors, brushes and props do.
+        bool ShouldHitEntity(void* entity, int) override { return entity && entity != m_Self && !IsTerrorPlayer(entity); }
+        int GetTraceType() const override { return 0; }
+    private:
+        void* m_Self;
+    };
+    constexpr unsigned kHandTraceMask = 0x1u | 0x2u | 0x4000u;   // SOLID | WINDOW | MOVEABLE
+
+    struct HandTraceContext { void* player = nullptr; };
+
+    bool TraceHand(void* context, const Vec3& eye, Vec3& hand)
+    {
+        const auto* ctx = static_cast<const HandTraceContext*>(context);
+        if (!g_EngineTrace || !ctx || !ctx->player || !eye.Finite() || !hand.Finite()) return false;
+        const Vec3 delta = hand - eye;
+        const float length = delta.Length();
+        if (!(length > 1.0f)) return false;
+        TraceRay_t ray{};
+        ray.start = { eye.x, eye.y, eye.z, 0.0f };
+        ray.delta = { delta.x, delta.y, delta.z, 0.0f };
+        ray.isRay = true;
+        ray.isSwept = true;
+        TraceResult trace{};
+        trace.fraction = 1.0f;
+        HandTraceFilter filter(ctx->player);
+        g_EngineTrace->TraceRay(ray, kHandTraceMask, &filter, &trace);
+        if (trace.startsolid || trace.allsolid || !std::isfinite(trace.fraction) || trace.fraction >= 1.0f)
+            return false;
+        // Two units in front of the surface.
+        const float keep = std::max(0.0f, trace.fraction * length - 2.0f) / length;
+        hand = eye + delta * keep;
+        return true;
+    }
+
+    // engine_srv.so's TraceRay must be code inside engine_srv.so before it is called.
+    struct CodeRangeQuery { std::uintptr_t address = 0u; bool inside = false; };
+    int FindEngineCodeCallback(dl_phdr_info* info, std::size_t, void* data)
+    {
+        auto* q = static_cast<CodeRangeQuery*>(data);
+        if (!info || !info->dlpi_name) return 0;
+        const std::string path(info->dlpi_name);
+        const auto slash = path.find_last_of('/');
+        const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
+        if (file != "engine_srv.so" && file != "engine.so") return 0;
+        for (int i = 0; i < info->dlpi_phnum; ++i)
+        {
+            const auto& ph = info->dlpi_phdr[i];
+            const std::uintptr_t begin = static_cast<std::uintptr_t>(info->dlpi_addr) + ph.p_vaddr;
+            if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X) != 0 && q->address >= begin && q->address < begin + ph.p_memsz)
+                q->inside = true;
+        }
+        return 1;
+    }
+
+    bool EngineTraceLooksValid(IEngineTraceLinux* trace)
+    {
+        if (!trace) return false;
+        const auto vtable = *reinterpret_cast<const std::uintptr_t* const*>(trace);
+        if (!vtable) return false;
+        CodeRangeQuery q{};
+        q.address = vtable[5];
+        dl_iterate_phdr(FindEngineCodeCallback, &q);
+        return q.inside;
+    }
+
     // ---- Detours ---------------------------------------------------------------------------
     float DetourProcessUsercmds(void* self, edict_t* edict, void* buf, int numcmds, int totalcmds, int dropped,
         bool ignore, bool paused)
@@ -1074,6 +1145,10 @@ namespace
             {
                 Vec3 hand = p.latestPos;
                 ClampHandReach(ToVec(origin), hand, g_Config.MaxHandReachUnits());
+                edict_t* base = EdictBase();
+                HandTraceContext traceContext{ base ? EntityFromEdict(&base[playerId]) : nullptr };
+                if (g_EngineTrace && g_Config.handTraceEnabled)
+                    TraceHand(&traceContext, ToVec(origin), hand);
                 const Vector position = ToVector(hand);
                 const QAngle aim = ToQAngle(NormalizeAndClampViewAngles(p.latestAngles));
                 return FireBulletsMaybePattern(playerId, position, aim, weaponId, a5, a6, a7);
@@ -1255,77 +1330,6 @@ namespace
             Field<float>(weapon, g_P.nextSecondary));
         p.playerNextAttack = Field<float>(self, g_P.nextAttack);
         p.havePlayerNextAttack = std::isfinite(p.playerNextAttack);
-    }
-
-    // ---- Hand wall trace (eye -> hand) ---------------------------------------------
-    class HandTraceFilter final : public ITraceFilterLinux
-    {
-    public:
-        explicit HandTraceFilter(void* self) : m_Self(self) {}
-        // Players (and the player's own items) never stop the hand; world,
-        // doors, brushes and props do.
-        bool ShouldHitEntity(void* entity, int) override { return entity && entity != m_Self && !IsTerrorPlayer(entity); }
-        int GetTraceType() const override { return 0; }
-    private:
-        void* m_Self;
-    };
-    constexpr unsigned kHandTraceMask = 0x1u | 0x2u | 0x4000u;   // SOLID | WINDOW | MOVEABLE
-
-    struct HandTraceContext { void* player = nullptr; };
-
-    bool TraceHand(void* context, const Vec3& eye, Vec3& hand)
-    {
-        const auto* ctx = static_cast<const HandTraceContext*>(context);
-        if (!g_EngineTrace || !ctx || !ctx->player || !eye.Finite() || !hand.Finite()) return false;
-        const Vec3 delta = hand - eye;
-        const float length = delta.Length();
-        if (!(length > 1.0f)) return false;
-        TraceRay_t ray{};
-        ray.start = { eye.x, eye.y, eye.z, 0.0f };
-        ray.delta = { delta.x, delta.y, delta.z, 0.0f };
-        ray.isRay = true;
-        ray.isSwept = true;
-        TraceResult trace{};
-        trace.fraction = 1.0f;
-        HandTraceFilter filter(ctx->player);
-        g_EngineTrace->TraceRay(ray, kHandTraceMask, &filter, &trace);
-        if (trace.startsolid || trace.allsolid || !std::isfinite(trace.fraction) || trace.fraction >= 1.0f)
-            return false;
-        // Two units in front of the surface.
-        const float keep = std::max(0.0f, trace.fraction * length - 2.0f) / length;
-        hand = eye + delta * keep;
-        return true;
-    }
-
-    // engine_srv.so's TraceRay must be code inside engine_srv.so before it is called.
-    struct CodeRangeQuery { std::uintptr_t address = 0u; bool inside = false; };
-    int FindEngineCodeCallback(dl_phdr_info* info, std::size_t, void* data)
-    {
-        auto* q = static_cast<CodeRangeQuery*>(data);
-        if (!info || !info->dlpi_name) return 0;
-        const std::string path(info->dlpi_name);
-        const auto slash = path.find_last_of('/');
-        const std::string file = slash == std::string::npos ? path : path.substr(slash + 1);
-        if (file != "engine_srv.so" && file != "engine.so") return 0;
-        for (int i = 0; i < info->dlpi_phnum; ++i)
-        {
-            const auto& ph = info->dlpi_phdr[i];
-            const std::uintptr_t begin = static_cast<std::uintptr_t>(info->dlpi_addr) + ph.p_vaddr;
-            if (ph.p_type == PT_LOAD && (ph.p_flags & PF_X) != 0 && q->address >= begin && q->address < begin + ph.p_memsz)
-                q->inside = true;
-        }
-        return 1;
-    }
-
-    bool EngineTraceLooksValid(IEngineTraceLinux* trace)
-    {
-        if (!trace) return false;
-        const auto vtable = *reinterpret_cast<const std::uintptr_t* const*>(trace);
-        if (!vtable) return false;
-        CodeRangeQuery q{};
-        q.address = vtable[5];
-        dl_iterate_phdr(FindEngineCodeCallback, &q);
-        return q.inside;
     }
 
     void DetourPlayerRunCommand(void* self, CUserCmdLinux* ucmd, void* moveHelper)
@@ -1937,6 +1941,8 @@ namespace
         if (!g_GlobalsValidated) features &= ~(kFeatureInstantDeploy | kFeatureHandThrow);
         // v3 -> v2 downconversion needs the sender's view yaw.
         if (!g_Host.HasViewYawSource()) features &= ~kFeaturePoseV3;
+        // The exact-pitch packing restores z around the player's origin.
+        if (!g_N.absOrigin) features &= ~kFeatureExactPitch;
         SessionCapabilities caps{};
         caps.usercmdDecoder = g_Resolved.usercmdDecoder;
         caps.interaction = g_Resolved.interaction;

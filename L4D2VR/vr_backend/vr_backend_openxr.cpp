@@ -1910,9 +1910,9 @@ private:
             }
             if (!m_ViewsReady && m_SessionFailure.empty())
             {
+                // Not a failure: a session created later still works (with the
+                // default FOV already handed to the game), as before.
                 m_ViewsGaveUp = true;
-                if (!m_SessionCreated)
-                    m_SessionFailure = "no VR session after 60 s (DXVK did not create its Vulkan device for the headset)";
                 Game::logMsg("[VR][OpenXR] no located views after 60 s (session %s); using a default view",
                     m_SessionCreated ? "created" : "missing");
             }

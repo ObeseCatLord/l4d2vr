@@ -560,8 +560,10 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         const uint32_t throwBits = GrenadeArcMode() && m_GrenadeFeatureRequestSent == 1
             ? (l4d2vr_features::ThrowVelocity | l4d2vr_features::HandThrow) : 0u;
         // OpusVoice (0x2000) is new in 2.0.5: plugins before it lack the bit.
-        const uint32_t core = (mask | throwBits | l4d2vr_features::OpusVoice) & ~l4d2vr_features::ShotgunPattern;
-        const uint32_t voice = l4d2vr_features::OpusVoice;
+        // ExactPitch (0x4000) is new in 2.0.11: older plugins lack it.
+        const uint32_t core = (mask | throwBits | l4d2vr_features::OpusVoice | l4d2vr_features::ExactPitch) &
+            ~l4d2vr_features::ShotgunPattern;
+        const uint32_t voice = l4d2vr_features::OpusVoice | l4d2vr_features::ExactPitch;
         SelfTestReport("server capabilities", Hooks::s_ServerUnderstandsVR &&
             (core == (l4d2vr_features::kKnownMask & ~l4d2vr_features::ShotgunPattern) ||
                 core == ((l4d2vr_features::kPreDualMagTxnMask | voice) & ~l4d2vr_features::ShotgunPattern) ||

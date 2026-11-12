@@ -534,6 +534,115 @@ namespace
         a = PostExecute(melee, &m2, ctx, Post(weapon::kMelee, 0x2000, 0x2000), c);
         Check(a.melee.sweep && a.melee.newSwing && a.melee.plan.count == SweepSamplesForYaw(90.0f));
     }
+    // 2.0.11 review fixes (B07, B11, B12, S01, S14).
+    void TestReviewFixes()
+    {
+        ServerConfig c{};
+
+        // B07: instant deploy keeps a fire cycle that was running at the switch.
+        WeaponReadyCache cache{};
+        cache.Note(0xA0, 12.0f, 11.0f);
+        float primary = 0.0f, secondary = 0.0f;
+        Check(cache.Find(0xA0, primary, secondary) && primary == 12.0f && secondary == 11.0f);
+        Check(!cache.Find(0xB0, primary, secondary));
+        Check(InstantDeployTimer(10.8f, true, 12.0f, 10.0f) == 10.8f);   // deploy shorter than the cycle
+        Check(InstantDeployTimer(13.0f, true, 12.0f, 10.0f) == 12.0f);   // cycle kept, deploy removed
+        Check(InstantDeployTimer(13.0f, true, 9.0f, 10.0f) == 10.0f);    // old cycle long over
+        Check(InstantDeployTimer(13.0f, false, 0.0f, 10.0f) == 10.0f);   // never seen: deploy removed
+        for (std::uintptr_t w = 1; w <= 20; ++w) cache.Note(w, static_cast<float>(w), 0.0f);
+        Check(cache.Find(20, primary, secondary) && primary == 20.0f && !cache.Find(1, primary, secondary));
+
+        // B11: no eye position -> the hand is not used at all.
+        PlayerVRState blind{};
+        blind.isUsingVR = true;
+        CommandPose pose = Pose(900);
+        ExecInput noEye = Input(1, kFeatureAllMask);
+        noEye.haveEye = false;
+        ExecContext ctx = PreExecute(blind, &pose, 900, 0, noEye, c);
+        Check(ctx.vr && !ctx.poseValid && ctx.aim == AimReason::None);
+
+        // B12: the world trace pulls the hand out of the wall; drops then stay
+        // where Weapon_Drop put them.
+        struct Wall { static bool Trace(void* context, const Vec3& eye, Vec3& hand)
+        {
+            const float wallX = *static_cast<const float*>(context);
+            if (hand.x <= wallX) return false;
+            const float t = (wallX - 1.0f - eye.x) / (hand.x - eye.x);
+            hand = eye + (hand - eye) * t;
+            return true;
+        } };
+        float wallX = 10.0f;
+        PlayerVRState walled{};
+        walled.isUsingVR = true;
+        CommandPose through = Pose(901, Intent::HolsterDrop);
+        through.position = Vec3(30, 0, 64);
+        ExecInput traced = Input(weapon::kPistol, kFeatureAllMask);
+        traced.traceHand = &Wall::Trace;
+        traced.traceContext = &wallX;
+        ctx = PreExecute(walled, &through, 901, 0, traced, c);
+        Check(ctx.poseValid && ctx.handBlocked && ctx.position.x < wallX && walled.handTraceHits == 1u);
+        PostActions a = PostExecute(walled, &through, ctx, Post(weapon::kPistol, 0x2000, 0x2000), c);
+        Check(a.drop && !a.dropRequest.haveOrigin);
+        wallX = 100.0f;
+        CommandPose clear = Pose(902);
+        ctx = PreExecute(walled, &clear, 902, 0, traced, c);
+        Check(ctx.poseValid && !ctx.handBlocked);
+
+        // S01: a spent grenade is never re-armed, and throws need executed
+        // commands in between, not only wall time.
+        auto handThrow = [](int command)
+        {
+            CommandPose h = Pose(command, Intent::HandThrow);
+            h.handThrow.valid = true;
+            h.handThrow.kind = l4d2vr_hand_throw::Kind::Molotov;
+            h.handThrow.velocity = l4d2vr_hand_throw::V3(100.0f, 0.0f, 50.0f);
+            return h;
+        };
+        auto throwInput = [](std::uint64_t nowMs, bool loaded)
+        {
+            ExecInput in = Input(weapon::kMolotov, kFeatureAllMask);
+            in.handThrowBackend = true;
+            in.throwableLoaded = loaded;
+            in.nowMs = nowMs;
+            return in;
+        };
+        PlayerVRState thrower{};
+        thrower.isUsingVR = true;
+        CommandPose t1 = handThrow(1000);
+        Check(!PreExecute(thrower, &t1, 1000, 0, throwInput(50000, false), c).handThrow);   // spent
+        Check(PreExecute(thrower, &t1, 1001, 0, throwInput(50000, true), c).handThrow);
+        CommandPose t2 = handThrow(1002);
+        Check(!PreExecute(thrower, &t2, 1002, 0, throwInput(60000, true), c).handThrow);    // 1 command later
+        for (int i = 0; i < 4; ++i)
+        {
+            CommandPose idle = Pose(1003 + i);
+            PreExecute(thrower, &idle, 1003 + i, 0, throwInput(60000, true), c);
+        }
+        CommandPose t3 = handThrow(1007);
+        Check(PreExecute(thrower, &t3, 1007, 0, throwInput(61000, true), c).handThrow);     // 6 commands later
+
+        // S14: a still hand deals no damage; a swing ends after 1.5 s.
+        MeleeSweepState melee{};
+        const std::uintptr_t owner = 0x10, weapon = 0x20;
+        auto step = melee.Process(owner, weapon, 1, true, false, false, Vec3(), Angles(0, 0, 0), 1000, c);
+        step = melee.Process(owner, weapon, 2, true, true, false, Vec3(), Angles(0, 30, 0), 1033, c);
+        Check(step.newSwing && step.sweep);
+        step = melee.Process(owner, weapon, 3, true, true, false, Vec3(0.1f, 0, 0), Angles(0, 30.5f, 0), 1066, c);
+        Check(!step.sweep);                                               // 0.1 units, 0.5 degrees
+        step = melee.Process(owner, weapon, 4, true, true, false, Vec3(5.0f, 0, 0), Angles(0, 30.5f, 0), 1100, c);
+        Check(step.sweep);                                                // 4.9 units in 1/30 s
+        int command = 5;
+        std::uint64_t now = 1100;
+        float yaw = 30.5f;
+        for (; now < 2600; now += 33) { yaw += 20.0f; step = melee.Process(owner, weapon, command++, true, true, false, Vec3(), Angles(0, yaw, 0), now, c); }
+        Check(!step.sweep);                                               // held past meleeMaxSwingSeconds
+        Check(MeleeMotionSufficient(43.2f * 0.6f / 30.0f, 0.0f, 1.0f / 30.0f, c));
+        Check(!MeleeMotionSufficient(43.2f * 0.3f / 30.0f, 2.0f, 1.0f / 30.0f, c));
+        Check(MeleeMotionSufficient(0.0f, 4.0f, 1.0f / 30.0f, c));
+        Check(ApplyConfigLine(c, "MeleeMaxSwingSeconds=0") && c.meleeMaxSwingSeconds == 0.0f);
+        Check(ApplyConfigLine(c, "HandTraceEnabled=false") && !c.handTraceEnabled);
+        Check(ApplyConfigLine(c, "HandThrowMinCommands=3") && c.handThrowMinCommands == 3);
+    }
 }
 
 int main()
@@ -544,6 +653,7 @@ int main()
     TestMeleePlanner();
     TestExecution();
     TestPostExecution();
+    TestReviewFixes();
     std::printf("vr_server_policy_tests: %d checks passed\n", g_Checks);
     return 0;
 }

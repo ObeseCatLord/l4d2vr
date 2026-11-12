@@ -6,6 +6,9 @@ namespace l4d2vr_shell
 {
     constexpr unsigned kVersion = 1u;
     constexpr std::uint64_t kReplyTimeoutMs = 2500u;
+    // Shells go in one at a time, no faster than this (2.0.11; the stock
+    // shotgun loads one per ~0.45 s).
+    constexpr std::uint64_t kMinShellIntervalMs = 200u;
     inline bool IsShotgun(int id) { return id == 3 || id == 4 || id == 8 || id == 11; }
     inline bool ValidHandle(std::uint32_t handle)
     {
@@ -107,7 +110,8 @@ namespace l4d2vr_shell
                 state.clip != request.clip || state.reserve != request.reserve) reply.status = Status::Stale;
             else if (state.capacity <= 0 || state.capacity > 128 || state.clip < 0 ||
                 state.clip >= state.capacity || state.reserve < 1 || state.reserve > 5000) reply.status = Status::NoSpaceOrAmmo;
-            else if (m_HaveApplied && (now < m_LastApplied || now - m_LastApplied < 100u)) reply.status = Status::RateLimited;
+            else if (m_HaveApplied && (now < m_LastApplied || now - m_LastApplied < kMinShellIntervalMs))
+                reply.status = Status::RateLimited;
             else if (!writer(state.clip + 1, state.reserve - 1)) reply.status = Status::Backend;
             else
             {

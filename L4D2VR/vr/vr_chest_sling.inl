@@ -52,7 +52,10 @@ bool VR::ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId)
         return false;
     Vector handle{}, foregrip{};
     l4d2vr_chest_sling::ReleaseInput in{};
-    in.enabled = m_ChestSlingEnabled && m_IsVREnabled && !m_MouseModeEnabled;
+    // 2.0.11: only where a hand can take it back (the Pavlov holster layout,
+    // like HolsterCatchRelease); otherwise it would hang there for good.
+    in.enabled = m_ChestSlingEnabled && m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled &&
+        m_IsVREnabled && !m_MouseModeEnabled;
     in.dropRequested = true;
     in.weaponId = weaponId;
     in.dropDistanceMeters = m_ChestSlingDropDistanceMeters;
@@ -140,6 +143,21 @@ bool VR::HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& 
     }
     return l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand, occupiedMask | (1u << slot), nullptr, items) ==
         static_cast<l4d2vr_holster::Zone>(slot);
+}
+
+void VR::ForgetStaleStowedWeapon(C_BasePlayer* localPlayer, bool isObserverOrIdle)
+{
+    const uintptr_t slung = m_ChestSlungWeapon.load(std::memory_order_acquire);
+    if (slung == 0u)
+        return;
+    const bool layoutOn = m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled;
+    C_BaseCombatWeapon* const active = (localPlayer && !isObserverOrIdle) ? localPlayer->GetActiveWeapon() : nullptr;
+    const char* why = !m_IsVREnabled ? "VR off" : !layoutOn ? "holster layout off" : !active ? "no player" :
+        reinterpret_cast<uintptr_t>(active) != slung ? "the active weapon changed" : nullptr;
+    if (!why)
+        return;
+    m_ChestSlungWeapon.store(0u, std::memory_order_release);
+    Game::logMsg("[VR][ChestSling] cleared slot%d (%s)", m_StowedSlot.load(std::memory_order_acquire) + 1, why);
 }
 
 // Every frame from the holster block (ProcessInput): forget the stowed weapon

@@ -1308,11 +1308,19 @@ void Game::logMsg(const char* fmt, ...)
         return;
 
     std::lock_guard<std::mutex> lock(logMutex);
+    // One handle for the whole session, flushed per line (it used to reopen the
+    // file for every line). The previous session's log is kept as
+    // vrmod_log.prev.txt: a player whose game crashed usually restarts it
+    // before sending the log (2.0.11, review S24).
+    static FILE* s_LogFile = nullptr;
     std::call_once(logResetOnce, []()
         {
-            FILE* file = _wfopen(VrLogPath().c_str(), L"w");
-            if (file)
-                fclose(file);
+            const std::wstring& path = VrLogPath();
+            std::wstring previous = path;
+            const size_t dot = previous.rfind(L'.');
+            previous = (dot == std::wstring::npos ? previous : previous.substr(0, dot)) + L".prev.txt";
+            MoveFileExW(path.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
+            s_LogFile = _wfopen(path.c_str(), L"w");
         });
 
     auto now = std::chrono::system_clock::now();
@@ -1320,6 +1328,7 @@ void Game::logMsg(const char* fmt, ...)
     char timebuf[20] = {};
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now_c));
 
+#ifdef _DEBUG
     printf("[%s] ", timebuf);
 
     va_list args;
@@ -1328,13 +1337,14 @@ void Game::logMsg(const char* fmt, ...)
     va_end(args);
 
     printf("\n");
+#endif
 
-    const std::wstring* logFiles[] = { &VrLogPath() };
-    for (const std::wstring* logFile : logFiles)
+    if (!s_LogFile)
+        s_LogFile = _wfopen(VrLogPath().c_str(), L"a");
     {
-        FILE* file = _wfopen(logFile->c_str(), L"a");
+        FILE* file = s_LogFile;
         if (!file)
-            continue;
+            return;
 
         fprintf(file, "[%s] ", timebuf);
         va_list args2;
@@ -1342,7 +1352,7 @@ void Game::logMsg(const char* fmt, ...)
         vfprintf(file, fmt, args2);
         va_end(args2);
         fprintf(file, "\n");
-        fclose(file);
+        fflush(file);
     }
 }
 

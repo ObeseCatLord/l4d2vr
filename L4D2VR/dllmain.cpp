@@ -1273,61 +1273,129 @@ namespace
         return value;
     }
 
-    bool AutoexecHasCrosshairOne(const std::filesystem::path& autoexecPath)
-    {
-        std::ifstream input(autoexecPath);
-        if (!input.is_open())
-            return false;
+    bool WriteAsciiFile(const std::filesystem::path& path, const std::string& text);
+    bool ReadAsciiFile(const std::filesystem::path& path, std::string& outText);
 
-        std::string line;
-        while (std::getline(input, line))
-        {
-            const size_t commentPos = line.find("//");
-            if (commentPos != std::string::npos)
-                line = line.substr(0, commentPos);
-
-            std::istringstream iss(line);
-            std::string cmd;
-            std::string value;
-            if (!(iss >> cmd >> value))
-                continue;
-
-            cmd = StripQuotes(cmd);
-            value = StripQuotes(value);
-            if (_stricmp(cmd.c_str(), "crosshair") == 0 && value == "1")
-                return true;
-        }
-
-        return false;
-    }
-
-    void EnsureNoHmdAutoexecCrosshair()
+    // -nohmd: put back the game settings a VR session changed (2.0.11, review
+    // B37). VR sessions keep the player's values in VR\vr_saved_game_cvars.txt
+    // and no longer save theirs into config.cfg; here they are written back
+    // into config.cfg. Configs from VR sessions before 2.0.11 carry crosshair 0
+    // with nothing saved: that is repaired once. autoexec.cfg is no longer
+    // touched (it used to get "crosshair 1" appended, even after the player's
+    // own crosshair line).
+    void RestoreVrChangedGameSettingsForNoHmd()
     {
         const std::filesystem::path gameRootPath = GetGameRootPath();
         if (gameRootPath.empty())
             return;
 
-        const std::filesystem::path autoexecPath = gameRootPath / L"left4dead2" / L"cfg" / L"autoexec.cfg";
+        const std::filesystem::path savedPath = gameRootPath / L"VR" / L"vr_saved_game_cvars.txt";
+        const std::filesystem::path markerPath = gameRootPath / L"VR" / L"desktop_crosshair_repaired.txt";
+        const std::filesystem::path configCfgPath = gameRootPath / L"left4dead2" / L"cfg" / L"config.cfg";
 
-        if (!std::filesystem::exists(autoexecPath))
+        std::vector<std::pair<std::string, std::string>> saved;
         {
-            std::error_code ec;
-            std::filesystem::create_directories(autoexecPath.parent_path(), ec);
-
-            std::ofstream createFile(autoexecPath, std::ios::trunc);
-            if (createFile.is_open())
-                createFile << "crosshair 1\n";
+            std::string text;
+            if (ReadAsciiFile(savedPath, text))
+            {
+                std::istringstream input(text);
+                std::string line;
+                while (std::getline(input, line))
+                {
+                    line = TrimAsciiWhitespace(line);
+                    if (line.empty() || line[0] == '#')
+                        continue;
+                    const size_t space = line.find(' ');
+                    if (space != std::string::npos && space > 0)
+                        saved.emplace_back(line.substr(0, space), TrimAsciiWhitespace(line.substr(space + 1)));
+                }
+            }
+        }
+        const bool repairCrosshair = saved.empty() && !FileExistsNoThrow(markerPath);
+        if (saved.empty() && !repairCrosshair)
             return;
+
+        std::string configText;
+        if (!ReadAsciiFile(configCfgPath, configText))
+            return;
+
+        std::vector<std::string> lines;
+        {
+            std::istringstream input(configText);
+            std::string line;
+            while (std::getline(input, line))
+            {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                lines.push_back(line);
+            }
+        }
+        auto lineCvar = [](const std::string& line) {
+            std::istringstream iss(line);
+            std::string name;
+            iss >> name;
+            return StripQuotes(name);
+        };
+        auto lineValue = [](const std::string& line) {
+            std::istringstream iss(line);
+            std::string name, value;
+            iss >> name >> value;
+            return StripQuotes(value);
+        };
+
+        bool changed = false;
+        if (repairCrosshair)
+        {
+            for (std::string& line : lines)
+            {
+                if (_stricmp(lineCvar(line).c_str(), "crosshair") == 0 && lineValue(line) == "0")
+                {
+                    line = "crosshair \"1\"";
+                    changed = true;
+                }
+            }
+        }
+        for (const auto& entry : saved)
+        {
+            const std::string replacement = entry.first + " \"" + entry.second + "\"";
+            bool found = false;
+            for (std::string& line : lines)
+            {
+                if (_stricmp(lineCvar(line).c_str(), entry.first.c_str()) == 0)
+                {
+                    found = true;
+                    if (line != replacement)
+                    {
+                        line = replacement;
+                        changed = true;
+                    }
+                }
+            }
+            if (!found)
+            {
+                lines.push_back(replacement);
+                changed = true;
+            }
         }
 
-        if (AutoexecHasCrosshairOne(autoexecPath))
-            return;
-
-        std::ofstream appendFile(autoexecPath, std::ios::app);
-        if (!appendFile.is_open())
-            return;
-
-        appendFile << "\ncrosshair 1\n";
+        if (changed)
+        {
+            std::string output;
+            for (const std::string& line : lines)
+                output += line + "\n";
+            if (!WriteAsciiFile(configCfgPath, output))
+            {
+                Game::logMsg("[VR] -nohmd: could not restore your game settings in config.cfg");
+                return;
+            }
+            Game::logMsg("[VR] -nohmd: restored game settings a VR session had changed (%zu saved values%s)",
+                saved.size(), repairCrosshair ? ", crosshair" : "");
+        }
+        std::error_code ec;
+        if (!saved.empty())
+            std::filesystem::remove(savedPath, ec);
+        if (repairCrosshair)
+            WriteAsciiFile(markerPath, "crosshair 1 was restored once after older VR sessions turned it off.\n");
     }
 
     bool TryGetCurrentDisplayResolution(int& width, int& height)
@@ -1592,6 +1660,9 @@ namespace
 
         const std::string line0 = "mat_setvideomode " + std::to_string(width) + " " + std::to_string(height) + " 0";
         const std::string line1 = "mat_setvideomode " + std::to_string(width) + " " + std::to_string(height) + " 1";
+        // Tagged so a later start without -bigfonts removes only these lines
+        // (review B48: it removed every mat_setvideomode line, the player's too).
+        static constexpr const char* kTag = " // l4d2vr -bigfonts";
 
         std::vector<std::string> lines;
         bool foundLine0 = false;
@@ -1606,7 +1677,11 @@ namespace
                 std::string line;
                 while (std::getline(input, line))
                 {
-                    const std::string trimmed = TrimAsciiWhitespace(line);
+                    std::string trimmed = line;
+                    const size_t comment = trimmed.find("//");
+                    if (comment != std::string::npos)
+                        trimmed.erase(comment);
+                    trimmed = TrimAsciiWhitespace(trimmed);
                     if (IsMatSetVideoModeLine(line))
                     {
                         ++matSetVideoModeLineCount;
@@ -1628,8 +1703,8 @@ namespace
         if (!lines.empty() && !TrimAsciiWhitespace(lines.back()).empty())
             lines.push_back(std::string());
 
-        lines.push_back(line0);
-        lines.push_back(line1);
+        lines.push_back(line0 + kTag);
+        lines.push_back(line1 + kTag);
 
         std::error_code ec;
         std::filesystem::create_directories(autoexecPath.parent_path(), ec);
@@ -1646,7 +1721,10 @@ namespace
         }
     }
 
-    void RemoveAutoexecMatSetVideoMode(const std::filesystem::path& autoexecPath)
+    // Removes the mat_setvideomode lines -bigfonts wrote: tagged ones always,
+    // untagged ones (written before 2.0.11) only when the mod's font fix was
+    // installed, i.e. when those lines are the mod's.
+    void RemoveAutoexecMatSetVideoMode(const std::filesystem::path& autoexecPath, bool includeUntaggedLegacyLines)
     {
         if (!FileExistsNoThrow(autoexecPath))
             return;
@@ -1662,7 +1740,8 @@ namespace
         bool changed = false;
         while (std::getline(input, line))
         {
-            if (IsMatSetVideoModeLine(line))
+            if (IsMatSetVideoModeLine(line) &&
+                (includeUntaggedLegacyLines || line.find("// l4d2vr") != std::string::npos))
             {
                 changed = true;
                 continue;
@@ -1695,9 +1774,10 @@ namespace
         const std::filesystem::path left4dead2Path = gameRootPath / L"left4dead2";
         const std::filesystem::path targetVpkPath = left4dead2Path / L"addons" / kUiFontFixFileName;
 
+        const bool modFontFixWasInstalled = FileExistsNoThrow(targetVpkPath);
         DeleteFileNoThrow(targetVpkPath);
         RemoveUiFontFixAddonListEntry(left4dead2Path / L"addonlist.txt");
-        RemoveAutoexecMatSetVideoMode(left4dead2Path / L"cfg" / L"autoexec.cfg");
+        RemoveAutoexecMatSetVideoMode(left4dead2Path / L"cfg" / L"autoexec.cfg", modFontFixWasInstalled);
     }
 
 
@@ -1940,10 +2020,30 @@ namespace
         return true;
     }
 
+    // Writes a temporary file next to the target and renames it over the
+    // target, so a crash, power loss or full disk never leaves a truncated
+    // config.txt (2.0.11, review S25). Falls back to a direct write when the
+    // rename is refused (a file another program holds open).
     bool WriteAsciiFile(const std::filesystem::path& path, const std::string& text)
     {
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
+
+        std::filesystem::path tempPath = path;
+        tempPath += L".l4d2vr-tmp";
+        {
+            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+            if (output.is_open())
+            {
+                output.write(text.data(), static_cast<std::streamsize>(text.size()));
+                output.flush();
+                const bool written = output.good();
+                output.close();
+                if (written && MoveFileExW(tempPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                    return true;
+            }
+        }
+        std::filesystem::remove(tempPath, ec);
 
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         if (!output.is_open())
@@ -3422,17 +3522,27 @@ namespace
                 }
             }
             if (SetConfigParameterValue(configText, migration.key, migration.value))
+            {
                 configChanged = true;
+                Game::logMsg("[VR][Config] migration %s: %s=%s", migration.id, migration.key, migration.value);
+            }
             appliedIds.insert(migration.id);
         }
 
         if (!anyPendingMigration)
             return;
 
-        if (configChanged && !WriteAsciiFile(configPath, configText))
+        // The state first (review S25): if it cannot be written, the migrations
+        // would run again at every start and undo the player's changes, so then
+        // none is applied.
+        if (!WriteAppliedConfigMigrationIds(statePath, appliedIds))
+        {
+            Game::logMsg("[VR][Config] could not write VR\\%ls; config migrations skipped this start", kConfigMigrationsStateFile);
             return;
+        }
 
-        WriteAppliedConfigMigrationIds(statePath, appliedIds);
+        if (configChanged && !WriteAsciiFile(configPath, configText))
+            Game::logMsg("[VR][Config] could not write VR\\config.txt; its migrations were not applied");
     }
 
     void EnsureVrConfigTxtFromSample()
@@ -3501,8 +3611,8 @@ namespace
                 configChanged = true;
         }
 
-        if (configChanged)
-            WriteAsciiFile(configPath, configText);
+        if (configChanged && !WriteAsciiFile(configPath, configText))
+            Game::logMsg("[VR][Config] could not update VR\\config.txt");
     }
 
     void EnsureUiFontFixVpkAndConfig()
@@ -3737,10 +3847,12 @@ static void LogStartupBanner(HMODULE hModule)
     using WineGetVersion = const char* (__cdecl*)();
     const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     const auto wineVersion = ntdll ? reinterpret_cast<WineGetVersion>(GetProcAddress(ntdll, "wine_get_version")) : nullptr;
-    Game::logMsg("[VR] L4D2VR %s (OpenXR build) starting: d3d9.dll %ls, game folder %ls, %s%s; renderer: the mod's DXVK "
-        "(Direct3D 9 -> Vulkan) inside d3d9.dll, VR through OpenXR (XR_KHR_vulkan_enable) with %ls (%s)",
-        version.c_str(), modulePath, gameRootPath.c_str(), wineVersion ? "Wine/Proton " : "Windows",
-        wineVersion ? wineVersion() : "", loader.c_str(), loaderPresent ? "present" : "MISSING");
+    // Paths as UTF-8 with %s: %ls stops at the first character the "C" locale
+    // cannot convert, which cut the banner for non-ASCII install paths (B49).
+    Game::logMsg("[VR] L4D2VR %s (OpenXR build) starting: d3d9.dll %s, game folder %s, %s%s; renderer: the mod's DXVK "
+        "(Direct3D 9 -> Vulkan) inside d3d9.dll, VR through OpenXR (XR_KHR_vulkan_enable) with %s (%s)",
+        version.c_str(), WideToUtf8(modulePath).c_str(), WideToUtf8(gameRootPath.wstring()).c_str(), wineVersion ? "Wine/Proton " : "Windows",
+        wineVersion ? wineVersion() : "", WideToUtf8(loader.wstring()).c_str(), loaderPresent ? "present" : "MISSING");
 }
 
 DWORD WINAPI InitL4D2VR(HMODULE hModule)
@@ -3767,13 +3879,18 @@ DWORD WINAPI InitL4D2VR(HMODULE hModule)
     }
     LocalFree(szArglist);
 
-    MigrateExistingConfigOnce();
-    EnsureVrConfigTxtFromSample();
+    // -nohmd (desktop, no VR): no VR config migrations or sample fill-in
+    // (review B48). The font fix only removes what the mod installed.
     EnsureUiFontFixVpkAndConfig();
-    L4D2VR_SelectedVrRuntime();
+    if (!IsNoHmdLaunchArgPresent())
+    {
+        MigrateExistingConfigOnce();
+        EnsureVrConfigTxtFromSample();
+        L4D2VR_SelectedVrRuntime();
+    }
     if (IsNoHmdLaunchArgPresent())
     {
-        EnsureNoHmdAutoexecCrosshair();
+        RestoreVrChangedGameSettingsForNoHmd();
 		// The normal Game constructor immediately initializes OpenVR, so -nohmd
 		// intentionally skips it.  Keep a passive, material-only Neko probe alive
 		// for desktop/VR output comparison without changing desktop rendering.

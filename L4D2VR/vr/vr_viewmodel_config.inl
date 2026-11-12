@@ -3180,10 +3180,11 @@ void VR::ParseConfigFileUnlocked()
     m_MotionGesturePushEnabled = getBool("MotionGesturePushEnabled", m_MotionGesturePushEnabled);
     m_MotionGestureDownSwingEnabled = getBool("MotionGestureDownSwingEnabled", m_MotionGestureDownSwingEnabled);
     m_MotionGestureJumpEnabled = getBool("MotionGestureJumpEnabled", m_MotionGestureJumpEnabled);
-    m_MotionGestureSwingThreshold = std::max(0.0f, getFloat("MotionGestureSwingThreshold", m_MotionGestureSwingThreshold));
-    m_MotionGesturePushThreshold = std::max(0.0f, getFloat("MotionGesturePushThreshold", m_MotionGesturePushThreshold));
-    m_MotionGestureDownSwingThreshold = std::max(0.0f, getFloat("MotionGestureDownSwingThreshold", m_MotionGestureDownSwingThreshold));
-    m_MotionGestureJumpThreshold = std::max(0.0f, getFloat("MotionGestureJumpThreshold", m_MotionGestureJumpThreshold));
+    // Fixed fallbacks: a disabled gesture stores 999 below (review B69).
+    m_MotionGestureSwingThreshold = std::max(0.0f, getFloat("MotionGestureSwingThreshold", 2.0f));
+    m_MotionGesturePushThreshold = std::max(0.0f, getFloat("MotionGesturePushThreshold", 1.5f));
+    m_MotionGestureDownSwingThreshold = std::max(0.0f, getFloat("MotionGestureDownSwingThreshold", 2.0f));
+    m_MotionGestureJumpThreshold = std::max(0.0f, getFloat("MotionGestureJumpThreshold", 2.0f));
     if (!m_MotionGestureSwingEnabled)
         m_MotionGestureSwingThreshold = 999.0f;
     if (!m_MotionGesturePushEnabled)
@@ -3699,7 +3700,9 @@ void VR::ParseConfigFileUnlocked()
     m_ScopePhysicalLensEnabled = getBool("ScopePhysicalLensEnabled", m_ScopePhysicalLensEnabled);
     m_ScopeBaseMagnification = std::clamp(getFloat("ScopeBaseMagnification", m_ScopeBaseMagnification), 1.0f, 16.0f);
     m_ScopeRTTSize = std::clamp(getInt("ScopeRTTSize", m_ScopeRTTSize), 128, 4096);
-    m_DefaultScopeAdjust.fov = std::clamp(getFloat("ScopeDefaultFov", m_DefaultScopeAdjust.fov), 1.0f, 179.0f);
+    // Fixed fallbacks (ScopeAdjustment defaults): the members are clamped into
+    // the ranges below, which must not leak into the next parse (review B69).
+    m_DefaultScopeAdjust.fov = std::clamp(getFloat("ScopeDefaultFov", ScopeAdjustment{}.fov), 1.0f, 179.0f);
     {
         const auto fovRange = getFloatList("ScopeMagnificationFovRange", "3,20");
         if (fovRange.size() >= 2 && std::isfinite(fovRange[0]) && std::isfinite(fovRange[1]))
@@ -3728,8 +3731,8 @@ void VR::ParseConfigFileUnlocked()
     m_ScopeCameraOffset = getVector3("ScopeCameraOffset", m_ScopeCameraOffset);
     { Vector tmp = getVector3("ScopeCameraAngleOffset", Vector{ m_ScopeCameraAngleOffset.x, m_ScopeCameraAngleOffset.y, m_ScopeCameraAngleOffset.z }); m_ScopeCameraAngleOffset = QAngle{ tmp.x, tmp.y, tmp.z }; }
 
-    m_DefaultScopeAdjust.widthMeters = std::clamp(getFloat("ScopeDefaultOverlayWidthMeters", m_DefaultScopeAdjust.widthMeters), m_ScopeSizeMin, m_ScopeSizeMax);
-    m_DefaultScopeAdjust.overlayOffset = getVector3("ScopeDefaultOverlayOffset", m_DefaultScopeAdjust.overlayOffset);
+    m_DefaultScopeAdjust.widthMeters = std::clamp(getFloat("ScopeDefaultOverlayWidthMeters", ScopeAdjustment{}.widthMeters), m_ScopeSizeMin, m_ScopeSizeMax);
+    m_DefaultScopeAdjust.overlayOffset = getVector3("ScopeDefaultOverlayOffset", ScopeAdjustment{}.overlayOffset);
     m_ScopeFov = m_DefaultScopeAdjust.fov;
     m_ScopeOverlayWidthMeters = m_DefaultScopeAdjust.widthMeters;
     m_ScopeOverlayXOffset = m_DefaultScopeAdjust.overlayOffset.x;

@@ -164,6 +164,7 @@ def install_client(game_dir: Path, *, zip_path: Optional[Path] = None, options: 
                 state.get("archive_sha256") == release.client.sha256.lower()
             if not force and state.get("tag") == release.tag and same_archive:
                 current = install.status(target)
+                current.modified = [rel for rel in current.modified if not install.is_user_tunable(rel)]
                 if not current.missing and not current.modified:
                     log(f"Already up to date ({release.tag}). Use --force (or Repair in the window) to reinstall.")
                     return install.Plan(target, None)

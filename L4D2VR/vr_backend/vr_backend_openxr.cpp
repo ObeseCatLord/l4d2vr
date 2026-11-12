@@ -776,6 +776,7 @@ private:
             view.swapchain = m_Swapchain[e].handle;
             view.valid = true;
             ++m_SubmittedEyes;
+            ++m_EyesSinceWaitBegin;
             if (m_Ring.HasBegun())
                 ++m_EyesInBegunFrame;
 
@@ -1622,15 +1623,23 @@ private:
 
         // Wait side, before the next xrWaitFrame: the waited frame must be
         // begun first. Close an older begun frame nobody ended, then begin
-        // the waited one and leave it open for the submit side.
+        // the waited one and leave it open for the submit side - only while
+        // the game is submitting eyes (queued rendering). Without submits since
+        // the last wait (loading stall, menus without a scene) the frame is
+        // closed at once with the last layers, as before 2.0.11, so the runtime
+        // never sees a frame left open across a wait nobody will end.
         void BeginWaitedForNextWaitLocked()
         {
             if (m_Ring.HasBegun())
                 EndStaleBegunLocked();
+            const bool gameSubmitting = m_EyesSinceWaitBegin > 0;
+            m_EyesSinceWaitBegin = 0;
             xrm::FrameTicket ticket;
             if (m_Ring.Begin(&ticket) != xrm::FrameRing::BeginResult::Begun)
                 return;
             CallBeginFrameLocked();
+            if (!gameSubmitting && m_Ring.HasBegun())
+                EndStaleBegunLocked();
         }
 
         void CallBeginFrameLocked()
@@ -2339,6 +2348,7 @@ private:
 
         xrm::FrameRing m_Ring;
         uint32_t m_EyesInBegunFrame = 0;  // eyes submitted into the begun frame (m_Mutex)
+        uint32_t m_EyesSinceWaitBegin = 0;  // eyes submitted since the wait side last began a frame (m_Mutex)
         bool m_CopyPending = false;       // the eye copy's fence wait timed out (m_Mutex)
         XrResult m_LastWaitError = XR_SUCCESS;
         uint64_t m_WaitErrorLogs = 0, m_BeginErrorLogs = 0, m_SwapchainErrorLogs = 0, m_CopyErrorLogs = 0, m_PollErrorLogs = 0;

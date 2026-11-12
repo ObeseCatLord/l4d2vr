@@ -18,8 +18,10 @@
 //     queued mode, the main thread otherwise, the loading pump while the game
 //     is stalled) is the xrWaitFrame thread. Before it waits again it must
 //     begin a waited frame nobody began (PlanWait() says EndStaleFirst): since
-//     2.0.11 the backend begins it and leaves it begun, so the submit side can
-//     still end it with the image drawn for it while the next wait runs. A
+//     2.0.11 the backend begins it and, while the game is submitting eyes,
+//     leaves it begun, so the submit side can still end it with the image
+//     drawn for it while the next wait runs (without submits it is ended at
+//     once with the last layers, as before). A
 //     begun frame still open when a newer one must be begun is ended first
 //     with the last submitted layers (NoteStaleEnd), so the runtime keeps
 //     receiving complete frames.

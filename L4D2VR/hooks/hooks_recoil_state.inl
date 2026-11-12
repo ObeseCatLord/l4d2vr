@@ -17,9 +17,14 @@ namespace
     struct RecoilShotPose
     {
         int command = 0;
+        std::uint64_t storedMs = 0u;
         Vector position{};
         QAngle angles{};
     };
+    // A pose is looked up within a frame or two of its command; an older slot
+    // with the same number belongs to an earlier session (command numbers
+    // restart per level) and must not be used.
+    constexpr std::uint64_t kRecoilShotPoseMaxAgeMs = 2000u;
     constexpr size_t kRecoilShotPoseCount = 128;
     RecoilShotPose g_RecoilShotPoses[kRecoilShotPoseCount]{};
     std::mutex g_RecoilShotPoseMutex;
@@ -30,6 +35,7 @@ namespace
         std::lock_guard<std::mutex> lock(g_RecoilShotPoseMutex);
         RecoilShotPose& slot = g_RecoilShotPoses[static_cast<size_t>(command) % kRecoilShotPoseCount];
         slot.command = command;
+        slot.storedMs = GetTickCount64();
         slot.position = position;
         slot.angles = angles;
     }
@@ -40,6 +46,8 @@ namespace
         std::lock_guard<std::mutex> lock(g_RecoilShotPoseMutex);
         const RecoilShotPose& slot = g_RecoilShotPoses[static_cast<size_t>(command) % kRecoilShotPoseCount];
         if (slot.command != command) return false;
+        const std::uint64_t now = GetTickCount64();
+        if (now < slot.storedMs || now - slot.storedMs > kRecoilShotPoseMaxAgeMs) return false;
         position = slot.position;
         angles = slot.angles;
         return true;

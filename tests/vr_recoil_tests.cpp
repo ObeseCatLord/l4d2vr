@@ -309,6 +309,12 @@ static void TestShotGate()
     Check(g.Accept(0));       // unknown command numbers still count
     g.Reset();
     Check(g.Accept(5));
+    // A new level restarts command numbers: after 20 minutes (36000) the
+    // next map's commands still kick; a replay within the window does not.
+    Check(g.Accept(36000));
+    Check(!g.Accept(35900));
+    Check(g.Accept(12));
+    Check(g.Accept(13) && !g.Accept(13));
 }
 
 int main()

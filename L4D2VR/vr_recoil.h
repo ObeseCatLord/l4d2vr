@@ -457,11 +457,17 @@ namespace l4d2vr_recoil
     // one and must not kick again.
     struct ShotGate
     {
+        // Prediction never replays further back than the CUserCmd history.
+        static constexpr int kReplayWindow = 150;
         int lastCommand = 0;
         bool Accept(int commandNumber)
         {
             if (commandNumber <= 0)
                 return true; // unknown command: count it
+            // Command numbers restart with a new level or connection: a jump
+            // back past the replay window is a new session, not a replay.
+            if (commandNumber + kReplayWindow < lastCommand)
+                lastCommand = 0;
             if (commandNumber <= lastCommand)
                 return false;
             lastCommand = commandNumber;

@@ -18,6 +18,7 @@ class C_WeaponCSBase;
 #include "vr_pistol_ammo_sync.h"
 #include "vr_pistol_reload.h"
 #include "vr_throw_lifecycle.h"
+#include "server_core/vr_server_limits.h"
 
 #include "vector.h"
 
@@ -161,6 +162,8 @@ struct Player
 {
     C_BasePlayer* pPlayer = nullptr;
     bool isUsingVR = false;
+    // Listen host: the newest VR usercmd carried a finite, sane pose (B17).
+    bool decodedPoseValid = false;
 
     Vector controllerPos = { 0.f, 0.f, 0.f };
     QAngle controllerAngle = { 0.f, 0.f, 0.f };
@@ -177,6 +180,12 @@ struct Player
 
     bool isMeleeing = false;
     bool isNewSwing = false;
+    // Listen host: the dedicated plugin's swing policy (cooldown, burst,
+    // pinned/incapacitated block, motion, maximum swing time) (B10).
+    l4d2vr_server::MeleeSwingGate meleeSwingGate{};
+    bool meleeSwingAllowed = false;
+    std::uint64_t meleeSwingStartMs = 0u;
+    int meleeSweepLastCommand = 0;
     l4d2vr_physical::MeleeCommand packetMeleeCommand{};
     l4d2vr_physical::MeleeSweepHistory meleeSweepHistory;
     std::uint32_t lastDecodedUsercmd = 0u;
@@ -218,6 +227,7 @@ struct Player
     // Observer-side VR world-model pose history. Positions and rotations remain
     // in sender body-yaw-local space; DrawModelExecute resolves them against the
     // current rendered player origin/yaw before applying IK.
+    VRPoseFrame olderWorldPose{};
     VRPoseFrame previousWorldPose{};
     VRPoseFrame latestWorldPose{};
     float worldPoseBlendWeight = 0.0f;
@@ -238,6 +248,16 @@ struct VRPoseRelayServerClient
     std::uint64_t lastUploadTickMs = 0u;
     std::uint64_t lastAckTickMs = 0u;
     int ackAttempts = 0;
+    // A VR-encoded usercmd from this client was decoded: it has the ack.
+    // Until then the bundle is re-offered a few more times even while pose
+    // uploads flow (S17).
+    bool vrUsercmdSeen = false;
+    int unconfirmedOffers = 0;
+    // Newest pose upload that arrived inside the rate window, relayed when
+    // the window ends (latest wins, B60).
+    bool havePendingUpload = false;
+    std::uint16_t pendingSequence = 0u;
+    char pendingPayload[160] = {};
 };
 
 // === Main Game System ===
@@ -423,6 +443,10 @@ public:
 
     // === Multiplayer VR world-model poses ===
     void ResetVRPoseServerSession();
+    // Listen host: a reused player slot starts with fresh server state (B04).
+    void ResetServerPlayerSlot(int index);
+    void ObserveServerSlotOccupant(int index, edict_t* entity);
+    std::array<int, kMaxPlayers> m_ServerSlotUserIds{};
     void RefreshVRPosePlayerIdentitiesMainThread();
     void HandleVRPoseServerAck(int protocolVersion);
     void ObserveBuiltinVRPoseRelayClient(
@@ -431,6 +455,9 @@ public:
     bool HandleBuiltinVRPoseRelayCommand(
         edict_t* entity,
         const void* sourceCommand);
+    void FlushPendingVRPoseUpload(int playerIndex, VRPoseRelayServerClient& client);
+    void RelayVRPoseUpload(int playerIndex, VRPoseRelayServerClient& client, std::uint16_t sequence,
+        const char* payload, std::uint64_t nowUs);
     void PublishLocalVRPose(VR* vr, C_BasePlayer* localPlayer);
     bool ReceiveVRPosePayload(
         int playerIndex,

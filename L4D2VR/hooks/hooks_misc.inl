@@ -19454,7 +19454,10 @@ namespace
 
         static std::mutex s_Mutex;
         static std::unordered_map<std::string, int> s_HandBone;
-        static std::unordered_map<std::string, l4d2vr_gun_hand_anchor::Anchor> s_Anchors;
+        // 2.0.11: one stored translation per holding hand: the target differs
+        // between the right hand and the mirrored left hold (per-hand offsets).
+        static std::unordered_map<std::string, l4d2vr_gun_hand_anchor::Anchor> s_Anchors[2];
+        const int holdIndex = vr->ItemHandIsPhysicalLeft() ? 1 : 0;
         int hand = -1;
         {
             std::lock_guard<std::mutex> lock(s_Mutex);
@@ -19500,7 +19503,7 @@ namespace
         l4d2vr_gun_hand_anchor::Anchor anchor{};
         {
             std::lock_guard<std::mutex> lock(s_Mutex);
-            anchor = s_Anchors[weaponModel];
+            anchor = s_Anchors[holdIndex][weaponModel];
         }
         if (!armsModel)
         {
@@ -19547,7 +19550,7 @@ namespace
                 if (l4d2vr_gun_hand_anchor::Blend(anchor, estimate, 0.25f, 0.5f * vr->m_VRScale))
                 {
                     std::lock_guard<std::mutex> lock(s_Mutex);
-                    s_Anchors[weaponModel] = anchor;
+                    s_Anchors[holdIndex][weaponModel] = anchor;
                 }
             }
             vr->SetGunHandAnchor(weaponId, anchor);

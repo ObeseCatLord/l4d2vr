@@ -1930,10 +1930,13 @@ namespace
         // SteamVR glove models are retired: the survivor's own hands always.
         const bool vrHandsGlovesEnabled = false;
         s.values["VrHandsGlovesEnabled"] = "false";
-        const bool nativeHandsOnly = vrHandsEntryEnabled && !vrHandsGlovesEnabled;
+        // Same rule as the parser: "Game animation" (NativeViewmodelHandsOnly=
+        // false) is kept unless left-handed play needs the hands; HideArms is
+        // the player's choice (review B34: both used to be overwritten).
+        const bool nativeHandsOnly = vrHandsEntryEnabled && !vrHandsGlovesEnabled &&
+            (leftHanded || CfgIsEnabled(s, "NativeViewmodelHandsOnly", true));
 
         s.values["NativeViewmodelHandsOnly"] = nativeHandsOnly ? "true" : "false";
-        s.values["HideArms"] = vrHandsGlovesEnabled ? "true" : "false";
         // The player's physical-reload choice is kept when VR hands are off
         // (the game turns reloads off at run time then): it used to be
         // overwritten with false and was lost when hands came back on (B34).

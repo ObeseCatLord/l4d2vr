@@ -13,6 +13,10 @@
 //   viewangles.z    controller position x
 //   upmove          controller position y
 //   viewangles.x    (int)(pos.z * 10) * 10000 +- (int)((pitch + 360) * 10)
+//                   or, when the server advertises ExactPitch (2.0.11),
+//                   PackPitchZ: (pos.z * 5 mod 1678) * 10000 + 5000 + pitch
+//                   tenths, an integer below 2^24 (exact in the float), with
+//                   pos.z restored around the player's server origin.
 //   impulse         234..243 interaction intents (vr_server_protocol.h)
 //   weaponselect    object-pull entity index (impulse 240..243 only)
 //   weaponsubtype   object-pull target hint (impulse 240..243 only)
@@ -73,6 +77,7 @@ namespace l4d2vr_server
         bool vr = false;              // the command carried the VR flag (and was stripped)
         bool poseValid = false;       // controller pose decoded to finite values
         bool meleeSwing = false;      // negative command_number
+        bool exactPitch = false;      // viewangles.x used PackPitchZ
         Vec3 controllerPos{};
         Angles controllerAngles{};    // as decoded (pitch, yaw, roll); not clamped
         std::uint8_t incomingImpulse = 0u;
@@ -105,12 +110,68 @@ namespace l4d2vr_server
         }
     }
 
+    // ---- Exact-pitch packing (ExactPitch, 2.0.11) ------------------------------
+    // The legacy packing grows with |pos.z| and passes 2^24 above |z| = 168
+    // units, where the float rounds away the pitch digits (0.2..12.8 degrees).
+    // This one keeps z modulo a 335.6-unit window (0.2-unit steps) so the whole
+    // integer stays below 2^24. Its low four digits are 5000..6800, never the
+    // legacy 2700..4500, so a server tells the two apart per command.
+    namespace pitch_pack
+    {
+        constexpr int kZModulus = 1678;          // (1677 * 10000 + 6800) < 2^24
+        constexpr float kZStepsPerUnit = 5.0f;   // 0.2-unit z steps
+        constexpr int kPitchBase = 5000;
+        constexpr int kPitchTenths = 1800;       // -90..90 degrees
+        // Hand height relative to the player's origin the window is centred on
+        // (the hand is 0..~116 units above the feet; window +-167.8 units).
+        constexpr float kReferenceAboveOrigin = 56.0f;
+    }
+
+    inline float PackPitchZ(float z, float pitch)
+    {
+        using namespace pitch_pack;
+        if (!std::isfinite(pitch)) pitch = 0.0f;
+        if (!std::isfinite(z) || std::fabs(z) > 1.0e6f) z = 0.0f;
+        const int pitchTenths = static_cast<int>(std::lround(std::fmax(-90.0f, std::fmin(90.0f, pitch)) * 10.0f)) + 900;
+        long zSteps = std::lround(z * kZStepsPerUnit) % kZModulus;
+        if (zSteps < 0) zSteps += kZModulus;
+        return static_cast<float>(static_cast<int>(zSteps) * 10000 + kPitchBase + pitchTenths);
+    }
+
+    inline bool IsPitchZPacked(float packed)
+    {
+        using namespace pitch_pack;
+        if (!std::isfinite(packed) || packed < 0.0f || packed >= 16777216.0f) return false;
+        const int value = static_cast<int>(packed);
+        if (static_cast<float>(value) != packed) return false;
+        const int low = value % 10000;
+        return value / 10000 < kZModulus && low >= kPitchBase && low <= kPitchBase + kPitchTenths;
+    }
+
+    // Unpacks PackPitchZ. The z steps are restored to the copy nearest to
+    // `referenceZ` (the player's origin + kReferenceAboveOrigin on the server).
+    inline bool UnpackPitchZ(float packed, float referenceZ, float& z, float& pitch)
+    {
+        using namespace pitch_pack;
+        if (!IsPitchZPacked(packed) || !std::isfinite(referenceZ) || std::fabs(referenceZ) > 1.0e6f) return false;
+        const int value = static_cast<int>(packed);
+        const long zSteps = value / 10000;
+        pitch = static_cast<float>(value % 10000 - kPitchBase - 900) / 10.0f;
+        const long reference = std::lround(referenceZ * kZStepsPerUnit);
+        long base = reference - ((reference % kZModulus) + kZModulus) % kZModulus;   // multiple of the modulus
+        long candidate = base + zSteps;
+        if (candidate - reference > kZModulus / 2) candidate -= kZModulus;
+        else if (reference - candidate > kZModulus / 2) candidate += kZModulus;
+        z = static_cast<float>(candidate) / kZStepsPerUnit;
+        return std::isfinite(z) && std::isfinite(pitch);
+    }
+
     // Client encoder (test oracle and future shared use). Mirrors the arithmetic
     // in Hooks::dWriteUsercmd after the pose was chosen. `cmd` must hold the
     // outgoing gameplay command with impulse/weaponselect/weaponsubtype/carry
     // word already set by the caller.
     inline void EncodeVRUsercmd(UsercmdData& cmd, const Vec3& controllerPos,
-        const Angles& controllerAngles, bool meleeSwing)
+        const Angles& controllerAngles, bool meleeSwing, bool exactPitch = false)
     {
         cmd.tick_count *= -1;
         cmd.mousedx = static_cast<std::int16_t>(static_cast<int>(controllerAngles.x * 10.0f));
@@ -123,6 +184,11 @@ namespace l4d2vr_server
         const float xAngleOrig = cmd.viewangles[0];
         cmd.viewangles[2] = controllerPos.x;
         cmd.upmove = controllerPos.y;
+        if (exactPitch)
+        {
+            cmd.viewangles[0] = PackPitchZ(controllerPos.z, xAngleOrig);
+            return;
+        }
         const int encodedAngle = static_cast<int>((xAngleOrig + 360.0f) * 10.0f);
         int encoding = static_cast<int>(controllerPos.z * 10.0f) * 10000;
         encoding += (encoding < 0) ? -encodedAngle : encodedAngle;
@@ -133,7 +199,10 @@ namespace l4d2vr_server
     // controller pose and the interaction intents and strips every VR-only field
     // so the game sees an ordinary command. A command without the VR flag is
     // returned untouched with vr == false.
-    inline DecodedUsercmd DecodeVRUsercmd(UsercmdData& cmd)
+    // `referenceZ` (optional): the player's server origin z +
+    // pitch_pack::kReferenceAboveOrigin, needed for the exact-pitch packing;
+    // without it such a command keeps its exact pitch but no valid pose.
+    inline DecodedUsercmd DecodeVRUsercmd(UsercmdData& cmd, const float* referenceZ = nullptr)
     {
         DecodedUsercmd out{};
         if (cmd.tick_count >= 0)
@@ -163,7 +232,16 @@ namespace l4d2vr_server
         float decodedAngle = 0.0f;
         float decodedZ = 0.0f;
         bool packedValid = false;
-        if (codec_detail::FloatFitsInt(packed / 10000.0f))
+        if (IsPitchZPacked(packed))
+        {
+            float unusedZ = 0.0f;
+            // Exact pitch whatever the reference; z only with one.
+            UnpackPitchZ(packed, 0.0f, unusedZ, decodedAngle);
+            packedValid = referenceZ && UnpackPitchZ(packed, *referenceZ, decodedZ, decodedAngle);
+            out.exactPitch = true;
+            cmd.viewangles[0] = decodedAngle;
+        }
+        else if (codec_detail::FloatFitsInt(packed / 10000.0f))
         {
             const int decodedZInt = static_cast<int>(packed / 10000);
             if (decodedZInt >= -214748 && decodedZInt <= 214748)
@@ -175,7 +253,8 @@ namespace l4d2vr_server
             }
         }
         out.controllerPos.z = decodedZ;
-        cmd.viewangles[0] = packedValid ? decodedAngle : 0.0f;
+        if (!out.exactPitch)
+            cmd.viewangles[0] = packedValid ? decodedAngle : 0.0f;
         cmd.viewangles[2] = 0.0f;
         cmd.upmove = 0.0f;
         out.poseValid = packedValid && out.controllerPos.Finite() && out.controllerAngles.Finite();

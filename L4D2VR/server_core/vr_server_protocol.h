@@ -67,8 +67,11 @@ namespace l4d2vr_server
         kFeatureShotgunPattern = 0x800u,
         kFeatureDualMagTxn = 0x1000u,
         kFeatureOpusVoice = 0x2000u,   // Opus voice relay (vr_server_voice.h)
+        // The server decodes the exact-pitch usercmd packing (2.0.11,
+        // vr_usercmd_codec.h PackPitchZ): clients send it only when advertised.
+        kFeatureExactPitch = 0x4000u,
     };
-    constexpr std::uint32_t kFeatureAllMask = 0x3FFFu;
+    constexpr std::uint32_t kFeatureAllMask = 0x7FFFu;
     constexpr unsigned kFeatureAckVersion = 1u;
 
     inline const char* FeatureName(std::uint32_t bit)
@@ -89,6 +92,7 @@ namespace l4d2vr_server
         case kFeatureShotgunPattern: return "ShotgunPattern";
         case kFeatureDualMagTxn: return "DualMagTxn";
         case kFeatureOpusVoice: return "OpusVoice";
+        case kFeatureExactPitch: return "ExactPitch";
         default: return "?";
         }
     }

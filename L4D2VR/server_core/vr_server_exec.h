@@ -35,6 +35,13 @@ namespace l4d2vr_server
         bool handThrowBackend = false;     // grenade netprops + Create hooks resolved
         bool havePlayerVelocity = false;
         Vec3 playerVelocity{};             // the body's own velocity (units/s)
+        // The active grenade can still be thrown (m_bRedraw clear and ammo
+        // left); a spent grenade is never re-armed by a hand throw.
+        bool throwableLoaded = true;
+        // Optional world trace eye -> hand: pulls `hand` back in front of the
+        // first solid surface and returns true when the line was blocked.
+        bool (*traceHand)(void* context, const Vec3& eye, Vec3& hand) = nullptr;
+        void* traceContext = nullptr;
     };
 
     struct ExecContext
@@ -47,6 +54,7 @@ namespace l4d2vr_server
         AimReason aim = AimReason::None;   // eye override for this command
         int addButtons = 0;
         bool reachClamped = false;
+        bool handBlocked = false;          // the eye -> hand line hit the world
         bool throwPrepared = false;
         bool handThrow = false;            // throw the grenade inside this command
         bool shoveStarted = false;
@@ -63,16 +71,25 @@ namespace l4d2vr_server
     {
         ExecContext ctx{};
         ctx.command = command;
+        if (p.isUsingVR)
+            ++p.executedCommands;
         if (!p.isUsingVR || !pose || !pose->poseValid)
             return ctx;
         ctx.vr = true;
-        ctx.poseValid = true;
         ctx.position = pose->position;
         ctx.aimAngles = NormalizeAndClampViewAngles(pose->angles);
-        if (in.haveEye && ClampHandReach(in.eye, ctx.position, c.MaxHandReachUnits()))
+        // Without the real eye the hand cannot be held to the reach limit:
+        // fail closed (no hand-origin shots, throws, drops or sweeps).
+        ctx.poseValid = in.haveEye && in.eye.Finite();
+        if (ctx.poseValid && ClampHandReach(in.eye, ctx.position, c.MaxHandReachUnits()))
         {
             ctx.reachClamped = true;
             ++p.reachClamps;
+        }
+        if (ctx.poseValid && in.traceHand && in.traceHand(in.traceContext, in.eye, ctx.position))
+        {
+            ctx.handBlocked = true;
+            ++p.handTraceHits;
         }
         if (command > p.lastExecutedCommand)
             p.lastExecutedCommand = command;
@@ -91,7 +108,7 @@ namespace l4d2vr_server
         const int released = p.throwTracker.Update(in.weaponTag, in.weaponId, attackDown, throwable);
         if (released != 0 && in.liveSurvivor)
         {
-            if ((in.features & kFeatureThrowVelocity) != 0u)
+            if ((in.features & kFeatureThrowVelocity) != 0u && ctx.poseValid)
             {
                 PendingThrow pending{};
                 pending.release = ComputeThrowRelease(p.throwRing, pose->tick, ctx.position, ctx.aimAngles,
@@ -108,12 +125,16 @@ namespace l4d2vr_server
 
         // Hand throw: the projectile leaves the hand inside this very command,
         // at the (reach-clamped) hand, with the client-measured hand velocity.
-        if (pose->intent == Intent::HandThrow && pose->handThrow.valid && in.handThrowBackend &&
+        const bool handThrowPaced = !p.haveHandThrowExecuted ||
+            p.executedCommands - p.lastHandThrowExecuted >= c.handThrowMinCommands;
+        if (pose->intent == Intent::HandThrow && pose->handThrow.valid && in.handThrowBackend && ctx.poseValid &&
             (in.features & kFeatureHandThrow) != 0u && in.liveSurvivor && !in.incapacitated && !in.controlled &&
-            !in.usingMounted && weapon::IsThrowable(in.weaponId) &&
-            in.weaponId == l4d2vr_hand_throw::WeaponIdFromKind(pose->handThrow.kind) &&
+            !in.usingMounted && weapon::IsThrowable(in.weaponId) && in.throwableLoaded &&
+            in.weaponId == l4d2vr_hand_throw::WeaponIdFromKind(pose->handThrow.kind) && handThrowPaced &&
             p.handThrowLimiter.Allow(in.nowMs, c.handThrowMinIntervalMs))
         {
+            p.haveHandThrowExecuted = true;
+            p.lastHandThrowExecuted = p.executedCommands;
             const l4d2vr_hand_throw::V3& h = pose->handThrow.velocity;
             const Vec3 player = in.havePlayerVelocity && in.playerVelocity.Finite() ? in.playerVelocity : Vec3{};
             const l4d2vr_hand_throw::V3 v = l4d2vr_hand_throw::ComposeVelocity(h,
@@ -155,7 +176,8 @@ namespace l4d2vr_server
         }
 
         // Eye override reason, strongest first.
-        if (in.eyeHooks)
+        // Only a live survivor's own command, with a reach-checked hand.
+        if (in.eyeHooks && ctx.poseValid && in.liveSurvivor)
         {
             const bool useAim = (c.useAimMode == 2 && pose->useDown) ||
                 (c.useAimMode >= 1 && in.interaction && pose->intent == Intent::GripPickup && pose->useDown);
@@ -222,11 +244,12 @@ namespace l4d2vr_server
         // Physical melee sweep on the newest pose of this command.
         if (in.meleeBackend && (in.features & kFeatureMeleeSweepV2) != 0u)
         {
-            const bool eligible = in.liveSurvivor && in.weaponIdAfter == weapon::kMelee && in.weaponTagAfter != 0u;
+            const bool eligible = ctx.poseValid && in.liveSurvivor && in.weaponIdAfter == weapon::kMelee &&
+                in.weaponTagAfter != 0u;
             const bool blocked = (c.meleeBlockWhileIncapacitated && in.incapacitated) ||
                 (c.meleeBlockWhileControlled && in.controlled);
             a.melee = p.melee.Process(in.owner, in.weaponTagAfter, ctx.command, eligible, pose->meleeSwing, blocked,
-                ctx.position, ctx.aimAngles, in.nowMs, c);
+                ctx.position, ctx.aimAngles, in.nowMs, c, in.tickSeconds);
         }
 
         // Drops run after the command, through the game's own Weapon_Drop.
@@ -241,7 +264,8 @@ namespace l4d2vr_server
                 in.tickSeconds, velocity, angular);
             ClampMagnitude(velocity, c.dropMaxSpeed);
             a.drop = true;
-            a.dropRequest = { true, true, false, in.weaponIdAfter, ctx.command, velocity, ctx.position, ctx.position.Finite() };
+            a.dropRequest = { true, true, false, in.weaponIdAfter, ctx.command, velocity, ctx.position,
+                ctx.poseValid && !ctx.handBlocked && ctx.position.Finite() };
         }
         else if (canDrop && pose->inventoryRelease && in.interaction && (in.features & kFeatureHolsterDrop) != 0u &&
             pose->carryWeaponId == in.weaponIdAfter && pose->dropHand == l4d2vr_dual::Hand::None &&
@@ -262,8 +286,9 @@ namespace l4d2vr_server
                     in.tickSeconds, velocity, angular);
                 ClampMagnitude(velocity, c.dropMaxSpeed);
             }
+            // A hand in a wall leaves the item where Weapon_Drop put it.
             a.dropRequest = { true, false, grip, in.weaponIdAfter, ctx.command, velocity, ctx.position,
-                ctx.position.Finite() };
+                ctx.poseValid && !ctx.handBlocked && ctx.position.Finite() };
         }
 
         // Instant deploy after a weapon switch made by this VR command.

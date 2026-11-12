@@ -47,7 +47,8 @@ changed by the mod; since 2.0.11 Opus voice activation follows it (below).
     Valve Index (WMR and Vive wands have no free button: use the combo);
   * an extra desktop key (`OpusVoicePushToTalkKey`, for example `V`, `CAPSLOCK`, `MOUSE4`).
 
-  Every push-to-talk also keys the game's own voice, so players without the mod hear you. Opus
+  Every push-to-talk also keys the game's own voice, so players without the mod hear you (the
+  `OpusVoicePushToTalkKey` key does so since 2.0.11 by running `+voicerecord` / `-voicerecord`). Opus
   keeps sending 160 ms after you let go, so the last syllable is not cut off.
 * **Voice activation** (`OpusVoiceMode=vad`, or `game` with the game on Open mic): you are sent
   whenever you speak (`OpusVoiceVadSensitivity`), with 100 ms of pre-roll and a 400 ms hangover
@@ -59,6 +60,14 @@ changed by the mod; since 2.0.11 Opus voice activation follows it (below).
 
 The microphone is the Windows default recording device (Proton: the PulseAudio/PipeWire default
 source). Playback uses the default output device, which is also the one the game plays on.
+
+Devices (2.0.11): with push to talk the microphone is opened on the first press and closed 45 s
+after the last one (Windows no longer shows it in use all game, and a Bluetooth headset keeps its
+stereo profile); with open mic it stays open. A microphone that cannot be opened is tried again
+every 15 s (a headset microphone that appears later is picked up). Without a working playback
+device (none, or one that stopped returning audio) other players' game voice is not dropped, and
+the device is tried again every 10 s. If the stock voice filter cannot be installed (engine.dll
+changed), the client does not ask for other players' Opus voice, so nobody is heard twice.
 
 ## Open mic sensitivity and quiet microphones (2.0.11)
 
@@ -163,9 +172,12 @@ server -> client   l4d2vr_voice_peers <lo> <hi>      players who send Opus
 `<frame>` is base64url of a 6-byte header (version, Start/End flags, 16-bit sequence, talkspurt
 id, length) and up to 160 Opus bytes; a whole `voice_up` stays under the 250 characters that
 `IVEngineClient::ServerCmd` allows. The server never decodes Opus: it checks each frame, limits a
-talker to 60 frames/s (30 burst), and forwards it only to mod clients that opted in **and that the
+talker to 60 frames/s (bursts of 50), and forwards it only to mod clients that opted in **and that the
 game lets hear the talker** (`IVoiceServer::GetClientListening`: team voice in versus, alltalk,
-player mutes). A talker costs each listener about 5 KB/s at 32 kbit/s.
+player mutes). A talker costs each listener about 5 KB/s at 32 kbit/s. Since 2.0.11 one listener
+receives at most 250 frames/s (five talkers at full rate; more are cut, the jitter buffer conceals
+the gaps), hellos are limited to one per second (bursts of 4) and an opt-out hello no longer
+resets a talker's rate limit.
 
 Each player is heard once: a mod client drops the game's own voice packets of a player listed in
 `l4d2vr_voice_peers` (a hook on engine.dll `CClientState::ProcessVoiceData`) **only while that
@@ -229,4 +241,5 @@ since 2.0.10, was 30), and once per talker when Opus listeners exist but the gam
 The dedicated plugin advertises `OpusVoice` (0x2000) whenever it loads; clear the bit with
 `FeatureMask` in `addons/l4d2vr_server_config.txt` to keep everyone on the game's voice. It uses
 `VoiceServer002` from the engine (no server_srv.so offsets), so it also works when the gameplay
-hooks are unavailable.
+hooks are unavailable (clients before 2.0.11 ignored the feature ack in that case and used the
+game's voice).

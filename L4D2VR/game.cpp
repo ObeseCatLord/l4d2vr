@@ -3041,9 +3041,13 @@ bool Game::GetInterpolatedVRPose(
     // Play back between the two samples that bracket (now - delay): with a
     // delay longer than the packet interval that is often the older pair, and
     // switching pairs when a packet arrives would otherwise jump (B25).
+    // Only while nothing changed between the two newer samples (tracker
+    // validity, features, hand states): a change shows from the newest one.
     if (older.valid && previous.valid &&
         previous.receivedTickMs > older.receivedTickMs &&
         latest.receivedTickMs > previous.receivedTickMs &&
+        latest.validMask == previous.validMask && latest.featureMask == previous.featureMask &&
+        latest.handStateFlags == previous.handStateFlags && latest.bodyYawValid == previous.bodyYawValid &&
         (nowMs > interpolationDelay ? nowMs - interpolationDelay : 0u) < previous.receivedTickMs)
     {
         latest = previous;

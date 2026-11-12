@@ -4966,6 +4966,9 @@ namespace
 uint32_t Hooks::ListenHostFeatureMask()
 {
     uint32_t mask = l4d2vr_features::kListenHostMask;
+    // The exact-pitch packing restores z around the player's server origin.
+    if (!m_Game || !m_Game->m_Offsets || !m_Game->m_Offsets->CBaseEntity_GetAbsOrigin_Server.valid)
+        mask &= ~l4d2vr_features::ExactPitch;
     if (HandThrowListenBackendReady())
         mask |= l4d2vr_features::HandThrow;
     if (ListenHostShotgunPatternReady())

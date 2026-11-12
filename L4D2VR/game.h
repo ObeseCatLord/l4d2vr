@@ -227,9 +227,9 @@ struct Player
     // Observer-side VR world-model pose history. Positions and rotations remain
     // in sender body-yaw-local space; DrawModelExecute resolves them against the
     // current rendered player origin/yaw before applying IK.
-    VRPoseFrame olderWorldPose{};
     VRPoseFrame previousWorldPose{};
     VRPoseFrame latestWorldPose{};
+    VRPoseFrame olderWorldPose{};      // the sample before previousWorldPose (B25)
     float worldPoseBlendWeight = 0.0f;
     std::uint64_t worldPoseBlendTickMs = 0u;
     C_BasePlayer* worldPoseEntity = nullptr;

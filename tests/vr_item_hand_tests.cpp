@@ -55,6 +55,8 @@ static void TestOnlyTakesChangeHands()
     CHECK(AdoptsGrip(Reason::SlingTake));             // the squeezing hand keeps the slung gun
     CHECK(!AdoptsGrip(Reason::HolsterDraw));          // a draw presses afresh next frame
     CHECK(!AdoptsGrip(Reason::Reset));
+    CHECK(ChangesHands(Reason::DrawCancel));          // 2.0.11: undo of a draw that never drew
+    CHECK(AdoptsGrip(Reason::DrawCancel));            // ... the old hand keeps its grip state
 }
 
 static Under At(bool takeable, bool ownHolster, bool foregrip, bool heldItem)
@@ -168,8 +170,31 @@ static void TestToggleAdopt()
     CHECK(!loose.Update(in2));                  // no press edge from the taking squeeze
 }
 
+// 2.0.11 (review F1): a free-hand draw that never draws is undone.
+static void TestDrawWatch()
+{
+    DrawWatch watch;
+    CHECK(!watch.Update(1u, 10u, false, 0u));       // idle
+    watch.Start(5u, 10u, false, true, 1000u);
+    CHECK(watch.Active() && !watch.PreviousPhysicalLeft() && watch.PreviousHeld());
+    CHECK(!watch.Update(5u, 10u, true, 2000u));     // the hand change is still pending
+    CHECK(!watch.Update(5u, 10u, false, 1100u));    // within the window
+    CHECK(watch.Update(5u, 10u, false, 1300u));     // no draw: undo once
+    CHECK(!watch.Active() && !watch.Update(5u, 10u, false, 1400u));
+    watch.Start(5u, 10u, true, false, 1000u);
+    CHECK(!watch.Update(6u, 10u, false, 1050u));    // the draw happened
+    CHECK(!watch.Active() && !watch.Update(6u, 10u, false, 2000u));
+    watch.Start(5u, 10u, true, false, 1000u);
+    CHECK(!watch.Update(5u, 11u, false, 1050u));    // another item became active (not this draw's business)
+    CHECK(!watch.Active());
+    watch.Start(5u, 10u, true, false, 1000u);
+    watch.Cancel();                                 // a reset / sling take
+    CHECK(!watch.Update(5u, 10u, false, 5000u));
+}
+
 int main()
 {
+    TestDrawWatch();
     TestMapping();
     TestSwitchCommitsOnce();
     TestOnlyTakesChangeHands();

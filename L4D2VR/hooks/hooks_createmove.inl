@@ -2089,6 +2089,20 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                 Game::logMsg("[VR][GripDrop] the dropped item is back in the hand weaponId=%d; the grip owns it again",
                     activeWeaponId);
             }
+            // 2.0.11: the toggle grip still holds the item it took (published by
+            // ProcessInput once it settled) but the latch forgot it (a pause or
+            // menu, Use with a grenade, a mounted gun, the runtime dashboard):
+            // the grip owns it again, so the next squeeze lets it go.
+            {
+                const uint32_t toggleHeldTag = m_VR->m_GripToggleHeldTag.load(std::memory_order_acquire);
+                if (gripDropEligible && !pistolGripMode && !s_weaponGripRelease.Owns() && toggleHeldTag != 0u &&
+                    toggleHeldTag == static_cast<uint32_t>(activeWeaponTag) && weaponGripActionActive && weaponGripDown)
+                {
+                    s_weaponGripRelease.AdoptWeapon(activeWeaponTag);
+                    if (m_VR->m_VrHandsDebugLog)
+                        Game::logMsg("[VR][GripToggle] held item re-adopted by the grip weaponId=%d", activeWeaponId);
+                }
+            }
             // Diagnostics: did the grip own the held item before this sample's release?
             const bool gripOwnedBeforeRelease = s_weaponGripRelease.Owns() ||
                 (pistolGripMode && s_pistolOwnership.Owns(l4d2vr_dual::Hand::Right));
@@ -2549,7 +2563,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
             reinterpret_cast<uintptr_t>(localPlayerForAutoActions), reinterpret_cast<uintptr_t>(routingPistol));
     }
     // A gun on the chest sling cannot fire, aim-shove or reload.
-    if (m_VR && m_VR->ChestSlingActive())
+    // 2.0.11: only while the stowed gun is still the active weapon.
+    if (m_VR && localPlayerForAutoActions &&
+        m_VR->ChestSlingHolds(reinterpret_cast<uintptr_t>(localPlayerForAutoActions->GetActiveWeapon())))
         cmd->buttons = l4d2vr_chest_sling::FilterButtons(cmd->buttons, true);
     // The pose this firing command is fired along (sent with it, and used by
     // the listen host when it runs the command).

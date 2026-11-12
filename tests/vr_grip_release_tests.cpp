@@ -166,6 +166,24 @@ int main()
     Check(grip.WaitingForRelease(), "A switched weapon cannot inherit an unrelated held grip");
     Check(!grip.Update(true, true, false, 5), "Inherited release after a switch must be ignored");
 
+    {
+        // 2.0.11 (review F3): a pause / menu ends the latch's session while the
+        // toggle grip still holds the item (virtual grip down). CreateMove
+        // re-adopts it from the toggle's held tag; the toggle's next squeeze
+        // (virtual grip up) then lets it go.
+        ReleaseLatch paused;
+        paused.AdoptWeapon(9u);
+        Check(!paused.Update(true, true, true, 9u, 0u), "Toggle-held item stays owned");
+        paused.ObserveSession(false, 9u);                 // ESC menu: not gameplay
+        Check(!paused.Owns(), "The paused session forgets the owner");
+        paused.ObserveSession(true, 9u);
+        Check(!paused.Update(true, true, true, 9u, 0u), "Back in game, still held");
+        paused.AdoptWeapon(9u);                           // re-adopted from the toggle
+        Check(paused.Owns(), "The toggle-held item is owned again");
+        Check(!paused.Update(true, true, true, 9u, 0u), "Held");
+        Check(paused.Update(true, true, false, 9u, 0u), "The next squeeze (virtual up) lets it go");
+    }
+
     using l4d2vr_magazine::ShouldEject;
     using l4d2vr_magazine::ChamberRoundsAfterEject;
     Check(!ShouldEject(true, false, true, 0, true), "Empty ammunition must not automatically eject a magazine in button mode");

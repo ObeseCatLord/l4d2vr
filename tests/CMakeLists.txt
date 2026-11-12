@@ -616,14 +616,15 @@ set(native_reload_config "")
 foreach(function_name IN ITEMS TrimAsciiWhitespace TrimAsciiLeftWhitespace IsValidConfigParameterKey
     ConfigParameterValueAllowsSemicolon ConfigParameterValueAllowsHash FindConfigCommentStart
     TryExtractConfigParameterAssignment TryExtractConfigParameterKey ExtractConfigParameterKeys
-    RemoveConfigParametersNotInSample)
+    RetiredConfigParameterKeys RemoveConfigParameters RemoveDuplicateConfigParameters
+    SetConfigParameterValue TryGetConfigParameterValue MigrateRenamedConfigParameters CleanupExistingConfigText)
     extract_throw_lifecycle_function("${native_reload_config_text}" "${function_name}" function_text)
     string(APPEND native_reload_config "${function_text}\n")
 endforeach()
 extract_mirrored_analog_fixture("${native_reload_config_text}"
-    "        std::unordered_set<std::string> sampleKeys ="
+    "        {\n            std::vector<std::string> removedKeys;"
     "        std::istringstream sampleStream(sampleText);" native_reload_cleanup)
-string(APPEND native_reload_config "\nbool CleanupNativeReloadConfig(std::string& configText, const std::string& sampleText) { bool configChanged = false;\n${native_reload_cleanup}\nreturn configChanged; }\n")
+string(APPEND native_reload_config "\nbool CleanupNativeReloadConfig(std::string& configText, const std::string& sampleText) { (void)sampleText; bool configChanged = false;\n${native_reload_cleanup}\nreturn configChanged; }\n")
 extract_mirrored_analog_fixture("${native_reload_embedded_text}"
     "    static constexpr char kCfgSampleConfigText2[]"
     "    static constexpr const char* kCfgSampleConfigChunks[]" native_reload_embedded)

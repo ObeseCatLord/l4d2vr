@@ -8,7 +8,8 @@
 // never one the player tuned. Old values reached players' configs from the
 // shipped sample, from the code default the config panel wrote when a key was
 // missing, and from upstream builds, in their own spelling ("1" vs "1.0",
-// "-1" vs "-1.0"), so values compare by meaning: booleans case-insensitively,
+// "-1" vs "-1.0"), so values compare by meaning: booleans as the parser reads
+// them (true/1/on/yes, case-insensitive),
 // numbers and number lists within 1e-4, anything else as trimmed text.
 namespace l4d2vr_config_migration
 {
@@ -56,12 +57,34 @@ namespace l4d2vr_config_migration
         return !out.empty();
     }
 
+    // The parser's boolean spellings (getBool): 1/true/on/yes and 0/false/off/no.
+    // Returns -1 for anything else.
+    inline int BoolValue(const std::string& lower)
+    {
+        if (lower == "1" || lower == "true" || lower == "on" || lower == "yes")
+            return 1;
+        if (lower == "0" || lower == "false" || lower == "off" || lower == "no")
+            return 0;
+        return -1;
+    }
+
+    inline bool IsBoolWord(const std::string& lower)
+    {
+        return lower == "true" || lower == "false" || lower == "on" || lower == "off" || lower == "yes" || lower == "no";
+    }
+
     inline bool ValuesMatch(const std::string& a, const std::string& b)
     {
         const std::string ta = Trim(a), tb = Trim(b);
         const std::string la = Lower(ta), lb = Lower(tb);
-        if ((la == "true" || la == "false") || (lb == "true" || lb == "false"))
-            return la == lb;
+        // A boolean on either side: compare as the parser reads booleans, so a
+        // hand-edited "0" or "off" still matches an old shipped "false"
+        // (2.0.11, review B70).
+        if (IsBoolWord(la) || IsBoolWord(lb))
+        {
+            const int va = BoolValue(la), vb = BoolValue(lb);
+            return va >= 0 && va == vb;
+        }
         std::vector<double> na, nb;
         if (ParseNumbers(ta, na) && ParseNumbers(tb, nb))
         {

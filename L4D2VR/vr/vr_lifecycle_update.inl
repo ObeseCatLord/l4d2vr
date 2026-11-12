@@ -1667,11 +1667,19 @@ void VR::Update()
     // fields directly and must not consume a stale queued snapshot after a mode switch.
     if (m_Game->GetMatQueueMode() != 0)
     {
-        for (int attempt = 0; attempt < 4; ++attempt)
+        // 2.0.11: yield and retry while the writer is mid-update (up to 32
+        // times, like the view-params reader) instead of four back-to-back
+        // attempts that keep the previous frame's origin.
+        for (int attempt = 0; attempt < 32; ++attempt)
         {
             const uint32_t s1 = m_RenderSetupCameraSeq.load(std::memory_order_acquire);
-            if (s1 == 0u || (s1 & 1u) != 0u)
+            if (s1 == 0u)
+                break; // nothing published yet
+            if ((s1 & 1u) != 0u)
+            {
+                SwitchToThread();
                 continue;
+            }
 
             const float originX = m_RenderSetupOriginX.load(std::memory_order_relaxed);
             const float originY = m_RenderSetupOriginY.load(std::memory_order_relaxed);
@@ -1689,6 +1697,7 @@ void VR::Update()
                 m_SetupAngles.Init(anglesX, anglesY, anglesZ);
                 break;
             }
+            SwitchToThread();
         }
     }
 

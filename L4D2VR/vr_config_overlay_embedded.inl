@@ -1934,12 +1934,9 @@ namespace
 
         s.values["NativeViewmodelHandsOnly"] = nativeHandsOnly ? "true" : "false";
         s.values["HideArms"] = vrHandsGlovesEnabled ? "true" : "false";
-
-        if (!vrHandsEntryEnabled)
-        {
-            s.values["MagazineInteractionEnabled"] = "false";
-            s.values["MagazineInteractionQuickReloadMode"] = "false";
-        }
+        // The player's physical-reload choice is kept when VR hands are off
+        // (the game turns reloads off at run time then): it used to be
+        // overwritten with false and was lost when hands came back on (B34).
     }
 
     static void CfgSetBoolValue(CfgOverlayState& s, const CfgOptionSpec& spec, bool next)

@@ -77,10 +77,12 @@ namespace l4d2vr_options_menu
         { nullptr, RowKind::Action, "Recenter and set height", "Stand or sit the way you play and press this: your head height becomes the survivor's eye height (seated play: press it seated). Same as the recenter button.", 0, 0, 0, "", nullptr, nullptr, false, "", RowAction::Recenter },
     };
 
+    // 2.0.11 (review B34): "Hand mode" and "Hide arms" are gone: the hands
+    // always follow the controllers since the glove models were retired, and
+    // the parser overrode both keys, so the rows changed nothing.
     inline const Row kBodyRows[] = {
         { "FirstPersonBodyEnabled", RowKind::Toggle, "Full body", "Show your survivor's body below you.", 0, 0, 0, "false" },
         { "FirstPersonBodyArmIK", RowKind::Toggle, "Body arms reach your hands", "The body's arms follow your VR hands.", 0, 0, 0, "true", nullptr, "FirstPersonBodyEnabled" },
-        { "NativeViewmodelHandsOnly", RowKind::Choice, "Hand mode", "How the survivor's arms are shown in first person.", 0, 0, 0, "true", "true:Follow your hands|false:Game animation" },
         { "NativeViewmodelArmCroppingEnabled", RowKind::Toggle, "Hands only (cropped arms)", "Show only the hands, not the arms.", 0, 0, 0, "false" },
         { "AmbidextrousItemHands", RowKind::Toggle, "Either hand takes items", "The hand that draws an item holds and uses it.", 0, 0, 0, "true" },
         { "ChestSlingEnabled", RowKind::Toggle, "Chest sling", "Let go of a long gun near your body to hang it on your chest.", 0, 0, 0, "true" },
@@ -88,7 +90,6 @@ namespace l4d2vr_options_menu
         { "HolsterItemsVisible", RowKind::Toggle, "Show holstered items", "Draw the items that sit in your holsters.", 0, 0, 0, "true" },
         { "GrabHoverHapticEnabled", RowKind::Toggle, "Touch tick on grabbable things", "A light buzz when an empty hand first touches something it can grab.", 0, 0, 0, "true" },
         { "HandPosesEnabled", RowKind::Toggle, "Finger poses", "Fingers wrap around what you hold.", 0, 0, 0, "true" },
-        { "HideArms", RowKind::Toggle, "Hide arms", "Hide the first-person arms completely.", 0, 0, 0, "false" },
     };
 
     inline const Row kWeaponRows[] = {

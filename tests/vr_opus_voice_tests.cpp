@@ -224,6 +224,9 @@ static void TestVrVoiceDefaultsState()
     Check(MigrationStateHasId("  " + id + "  # note\r\n", id));
     Check(!MigrationStateHasId("# " + id + "\n", id));
     Check(!MigrationStateHasId(id + "_other\n", id));
+    // 2.0.11: "Voice: Disabled" is kept (no open mic for a player who turned voice off).
+    Check(!ShouldApplyVrVoiceDefaults(0));
+    Check(ShouldApplyVrVoiceDefaults(1));
     // Open mic, voice on, full receive volume.
     bool vox = false, scale = false, enable = false;
     for (const GameCvarDefault& d : kVrVoiceCvarDefaults)

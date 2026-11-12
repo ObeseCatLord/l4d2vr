@@ -2295,6 +2295,9 @@ void Game::UpdateOpusVoice()
             const int vox = GetConVarInt("voice_vox", -1);
             const float scale = GetConVarFloat("voice_scale", -1.0f);
             const float volume = GetConVarFloat("volume", -1.0f);
+            // Options > Audio "Microphone sensitivity" (1..2000, lower = more sensitive):
+            // drives OpusVoiceVadSensitivity=game (2.0.11).
+            const float threshold = GetConVarFloat("voice_threshold", -1.0f);
             if (enable >= 0 && vox >= 0 && std::isfinite(scale) && scale >= 0.0f)
             {
                 s_GameVoice.known = true;
@@ -2302,6 +2305,7 @@ void Game::UpdateOpusVoice()
                 s_GameVoice.openMic = vox != 0;
                 s_GameVoice.receiveScale = scale;
                 s_GameVoice.masterVolume = (std::isfinite(volume) && volume >= 0.0f) ? volume : 1.0f;
+                s_GameVoice.micThreshold = (std::isfinite(threshold) && threshold > 0.0f) ? threshold : -1.0f;
             }
         }
         in.gameVoice = s_GameVoice;

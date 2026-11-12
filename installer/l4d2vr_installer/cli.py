@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -21,6 +22,8 @@ def _add_source_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--source", choices=("github", "manifest"), help="where to look for releases (default github)")
     group.add_argument("--manifest-url", help="manifest JSON URL (with --source manifest)")
     group.add_argument("--channel", choices=("stable", "beta"), help="beta includes pre-releases")
+    group.add_argument("--allow-unverified", action="store_true",
+                       help="accept a download whose release publishes no SHA-256")
     group.add_argument("--api-base", default=sources.GITHUB_API, help=argparse.SUPPRESS)
 
 
@@ -149,6 +152,7 @@ def _source_options(args, saved: dict) -> actions.SourceOptions:
         channel=getattr(args, "channel", None) or saved.get("channel") or "stable",
         manifest_url=getattr(args, "manifest_url", None) or saved.get("manifest_url") or None,
         api_base=getattr(args, "api_base", sources.GITHUB_API),
+        allow_unverified=bool(getattr(args, "allow_unverified", False)),
     )
 
 
@@ -433,7 +437,8 @@ def cmd_xrizer(args, saved) -> int:
             raise InstallerError(
                 "The latest release has no xrizer-l4d2-runtime.zip. Point the installer at an XRizer "
                 "runtime folder you built or received (launch --xrizer-dir ... --save).")
-        zip_path = actions.download_asset(release.xrizer, print)
+        zip_path = actions.download_asset(release.xrizer, print,
+                                          allow_unverified=bool(getattr(args, "allow_unverified", False)))
     if dest.exists() and any(dest.iterdir()) and not args.dry_run:
         raise InstallerError(f"{dest} is not empty; remove it first or choose --dest.")
     vrlaunch.install_xrizer_zip(zip_path, dest, dry_run=args.dry_run)
@@ -504,6 +509,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     except KeyboardInterrupt:
         print("Cancelled.", file=sys.stderr)
         return 130
+    except zipfile.BadZipFile as error:
+        print(f"ERROR: the zip file is damaged or was replaced while installing ({error}). "
+              "Download it again.", file=sys.stderr)
+        return 1
+    except UnicodeError as error:
+        print(f"ERROR: a file contains text the installer cannot handle ({error}).", file=sys.stderr)
+        return 1
+    except OSError as error:
+        where = f": {error.filename}" if getattr(error, "filename", None) else ""
+        print(f"ERROR: {error.strerror or error}{where}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

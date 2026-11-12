@@ -390,7 +390,7 @@ def list_backups(target: Target, include_restored: bool = True) -> List[Backup]:
     root = target.backup_root
     if not root.is_dir():
         return out
-    for child in sorted(root.iterdir(), reverse=True):
+    for child in root.iterdir():
         index_path = child / "index.json"
         if not child.is_dir() or not index_path.is_file():
             continue
@@ -403,6 +403,9 @@ def list_backups(target: Target, include_restored: bool = True) -> List[Backup]:
         backup = Backup(child, index)
         if include_restored or not backup.restored:
             out.append(backup)
+    # Newest first by the UTC creation time in the index, not by the folder
+    # name (local time: a DST change or clock correction would reorder it).
+    out.sort(key=lambda b: (str(b.index.get("created_at") or ""), b.name), reverse=True)
     return out
 
 
@@ -680,13 +683,18 @@ def _restore_entries(target: Target, backup: Backup, force: bool, log: Log) -> L
         raise InstallerError(
             "These files changed after the install, so restoring would lose your edits:\n  "
             + "\n  ".join(step.path for step in conflicts)
-            + "\nRe-run with --force to restore anyway (your current copies are saved in the backup folder)."
+            + "\nRe-run with --force (command line) to restore anyway (your current copies are saved in the "
+              "backup folder)."
         )
     entries = {entry["path"]: entry for entry in backup.index.get("entries", [])}
     for step in steps:
         dest = target.root / step.path
         if step.action == "delete":
-            os.remove(dest)
+            try:
+                os.remove(dest)
+            except PermissionError as error:
+                raise InstallerError(f"Cannot remove {dest}: {error}. If the game is running, close it and "
+                                     "try again (the rest is finished then).") from error
         elif step.action == "restore":
             entry = entries[step.path]
             source = backup.path / "files" / step.path

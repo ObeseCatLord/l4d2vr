@@ -2304,6 +2304,21 @@ void Game::PruneListenVoiceRelay()
     }
 }
 
+// One slot's occupant changed (B04 slot reset on the listen host, B62): the
+// new player starts with no voice state and the others get the new talker list.
+void Game::ResetListenVoiceSlot(int index)
+{
+    if (index < 1 || index > l4d2vr_voice::kMaxPlayers)
+        return;
+    std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+    g_ListenVoiceHost.slots[static_cast<std::size_t>(index)] = ListenVoiceSlot{};
+    if (g_ListenVoiceRelay.Enabled() && m_ServerPluginHelpers)
+    {
+        g_ListenVoiceHost.helpers = m_ServerPluginHelpers;
+        g_ListenVoiceRelay.Reset(g_ListenVoiceHost, index);
+    }
+}
+
 void Game::ResetListenVoiceRelay()
 {
     std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
@@ -2326,8 +2341,8 @@ void Game::UpdateOpusVoice()
     in.inGame = m_EngineClient->IsInGame();
     in.localPlayer = in.inGame ? m_EngineClient->GetLocalPlayer() : 0;
     // The feature mask is cleared with the server session (ResetVRPoseServerSession);
-    // s_ServerUnderstandsVR is also reset when the map finishes loading, after
-    // the ack may already have arrived, so it is not a gate here.
+    // s_ServerUnderstandsVR is not a gate here: the voice feature ack can come
+    // without l4d2vr_server_ack (plugin without the usercmd decoder, B27).
     in.serverFeatures = m_VR ? m_VR->m_ServerFeatureMask.load(std::memory_order_acquire) : 0u;
     // The game's own voice settings (Options > Audio): Opus voice follows them
     // live, read twice a second.

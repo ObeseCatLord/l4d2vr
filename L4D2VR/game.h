@@ -316,6 +316,7 @@ public:
     // Opus voice (vr_opus_voice.h): the listen host's relay and the client side.
     bool HandleBuiltinVoiceCommand(edict_t* entity, const void* command);
     void ResetListenVoiceRelay();
+    void ResetListenVoiceSlot(int index);
     void PruneListenVoiceRelay();
     void UpdateOpusVoice();
     bool PlayerUsesShotgunPattern(int playerIndex) const;

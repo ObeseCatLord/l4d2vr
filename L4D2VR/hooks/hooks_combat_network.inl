@@ -2156,6 +2156,9 @@ float __fastcall Hooks::dProcessUsercmds(void* ecx, void* edx, edict_t* player,
 	void* buf, int numcmds, int totalcmds,
 	int dropped_packets, bool ignore, bool paused)
 {
+	// The entindex signature is gone after a game update: no VR decoding (B39).
+	if (!m_Game || !m_Game->m_Offsets || !m_Game->m_Offsets->CBaseEntity_entindex.valid)
+		return hkProcessUsercmds.fOriginal(ecx, player, buf, numcmds, totalcmds, dropped_packets, ignore, paused);
 	// ★ 进入该钩子，说明本进程正在跑“服务器”逻辑（listen/dedicated）
 	m_ServerCommandControllerAimOverride = false;
 	m_ServerCommandControllerAimPlayer = nullptr;
@@ -3117,7 +3120,8 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
     // Until the local decoder or an explicit server ACK proves capability,
     // preserve the ordinary command exactly, including startup/reconnect.
     const bool canEncode = m_VR && m_VR->m_IsVREnabled && m_VR->m_EncodeVRUsercmd &&
-        !m_VR->m_ForceNonVRServerMovement && s_ServerUnderstandsVR;
+        !m_VR->m_ForceNonVRServerMovement && s_ServerUnderstandsVR &&
+        m_Game->m_Offsets->g_pppInput.valid;   // B39: no CInput after a game update
     if (!canEncode)
         return hkWriteUsercmd.fOriginal(buf, to, from);
 	const bool localUsingMountedWeapon = m_VR &&

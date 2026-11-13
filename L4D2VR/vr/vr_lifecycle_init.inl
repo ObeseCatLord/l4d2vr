@@ -1056,6 +1056,14 @@ inline const wchar_t* PickHudFontFaceForText(const std::wstring& ws)
 VR::VR(Game* game)
 {
     m_Game = game;
+    // Every way out of the constructor (desktop mode, a failed runtime) still
+    // reads config.txt and watches it (2.0.11, review B36: desktop mode used
+    // to ignore the file, while the options window said "saved and applied").
+    struct ConfigWatcherOnExit
+    {
+        VR* vr;
+        ~ConfigWatcherOnExit() { vr->StartConfigWatcher(); }
+    } configWatcherOnExit{ this };
     if (g_L4D2VRDesktopMode)
     {
         // Desktop (receive-only) mode: same state as a failed VR_Init without
@@ -1103,6 +1111,24 @@ VR::VR(Game* game)
         else
             Game::errorMsg("Compositor initialization failed.");
         return;
+    }
+
+    // OpenXR: the instance worked but the session (created with DXVK's
+    // device) may not: desktop mode then, instead of a frozen game that waits
+    // for views that never come (2.0.11).
+    {
+        std::string sessionFailure;
+        if (!m_Backend->SessionUsable(sessionFailure))
+        {
+            const std::string text = std::string(l4d2vr_backend::InitFailurePrefix(*m_Backend)) + ": " + sessionFailure;
+            m_Compositor = nullptr;
+            m_System = nullptr;
+            if (L4D2VR_DesktopFallbackAllowed())
+                L4D2VR_EnterDesktopFallback(text.c_str());
+            else
+                Game::errorMsg(text.c_str());
+            return;
+        }
     }
 
     char currentDir[MAX_STR_LEN];
@@ -1243,8 +1269,7 @@ VR::VR(Game* game)
 
     InstallApplicationManifest("manifest.vrmanifest");
     SetActionManifest("action_manifest.json");
-    std::thread configParser(&VR::WaitForConfigUpdate, this);
-    configParser.detach();
+    StartConfigWatcher();
 
     while (!g_D3DVR9)
         Sleep(10);
@@ -1498,7 +1523,15 @@ void VR::ApplyVrVoiceDefaultsOnce()
         return;
     m_VrVoiceDefaultsChecked = true;
 
-    const std::string statePath = "VR\\config_migrations_applied.txt";
+    // The same file dllmain uses: next to left4dead2.exe, not relative to the
+    // working directory (review B38).
+    std::filesystem::path statePath = L"VR\\config_migrations_applied.txt";
+    {
+        wchar_t exePath[MAX_PATH] = {};
+        const DWORD length = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (length > 0 && length < MAX_PATH)
+            statePath = std::filesystem::path(exePath).parent_path() / L"VR" / L"config_migrations_applied.txt";
+    }
     std::string state;
     {
         std::ifstream in(statePath, std::ios::binary);
@@ -1512,29 +1545,136 @@ void VR::ApplyVrVoiceDefaultsOnce()
     if (l4d2vr_voice::MigrationStateHasId(state, l4d2vr_voice::kVrVoiceDefaultsId))
         return;
 
+    // Recorded before anything changes: if the state cannot be written, the
+    // defaults would be applied again every session over the player's own
+    // Options > Audio choice (review B38).
+    {
+        std::ofstream out(statePath, std::ios::binary | std::ios::trunc);
+        out << l4d2vr_voice::MigrationStateWithId(state, l4d2vr_voice::kVrVoiceDefaultsId);
+        out.flush();
+        if (!out.good())
+        {
+            Game::logMsg("[VR][Voice] VR voice defaults not applied: VR\\config_migrations_applied.txt cannot be written");
+            return;
+        }
+    }
+
+    // "Voice: Disabled" is a deliberate choice (the game's default is on):
+    // keep it, and do not open the microphone (review B38).
+    const int voiceEnable = m_Game->GetConVarInt("voice_enable", 1);
+    if (!l4d2vr_voice::ShouldApplyVrVoiceDefaults(voiceEnable))
+    {
+        Game::logMsg("[VR][Voice] VR voice defaults skipped: voice is disabled in Options > Audio (kept)");
+        return;
+    }
+
     std::string applied;
     for (const l4d2vr_voice::GameCvarDefault& d : l4d2vr_voice::kVrVoiceCvarDefaults)
     {
         if (!m_Game->SetConVarString(d.name, d.value))
-        {
-            Game::logMsg("[VR][Voice] VR voice defaults: %s not set; retrying next session", d.name);
-            return;
-        }
-        applied += std::string(" ") + d.name + "=" + d.value;
-    }
-    if (m_Game->GetConVarInt("voice_vox", 0) != 1)
-    {
-        Game::logMsg("[VR][Voice] VR voice defaults: voice_vox did not take; retrying next session");
-        return;
-    }
-    {
-        std::ofstream out(statePath, std::ios::binary | std::ios::trunc);
-        out << l4d2vr_voice::MigrationStateWithId(state, l4d2vr_voice::kVrVoiceDefaultsId);
+            Game::logMsg("[VR][Voice] VR voice defaults: %s not set", d.name);
+        else
+            applied += std::string(" ") + d.name + "=" + d.value;
     }
     // Save them in config.cfg now (the game otherwise writes it when it quits).
     m_Game->ClientCmd_Unrestricted("host_writeconfig");
+    // Tell the player once: the microphone is now open (it was push to talk).
+    m_Game->ClientCmd_Unrestricted("echo [L4D2VR] Voice chat is now open mic for VR (no button to hold). "
+        "Change it in Options > Audio > Voice; your choice is kept.");
     Game::logMsg("[VR][Voice] VR voice defaults applied once:%s (open mic; change it in Options > Audio, it is kept)",
         applied.c_str());
+}
+
+namespace
+{
+    constexpr const char* kSavedGameCvarsPath = "VR\\vr_saved_game_cvars.txt";
+    constexpr int kFcvarArchive = 1 << 7;   // FCVAR_ARCHIVE: saved to config.cfg
+
+    std::vector<std::pair<std::string, std::string>> ReadSavedGameCvars()
+    {
+        std::vector<std::pair<std::string, std::string>> out;
+        std::ifstream input(kSavedGameCvarsPath);
+        std::string line;
+        while (std::getline(input, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            if (line.empty() || line[0] == '#')
+                continue;
+            const size_t space = line.find(' ');
+            if (space == std::string::npos || space == 0)
+                continue;
+            out.emplace_back(line.substr(0, space), line.substr(space + 1));
+        }
+        return out;
+    }
+}
+
+void VR::ProtectGameCvarForVr(const char* name)
+{
+    if (!m_Game || !name || !m_VrProtectedGameCvars.insert(name).second)
+        return;
+
+    // Keep the player's own value once: the first VR session's value is the
+    // one from before VR (later sessions find the name already saved).
+    bool alreadySaved = false;
+    for (const auto& saved : ReadSavedGameCvars())
+        alreadySaved |= saved.first == name;
+    if (!alreadySaved)
+    {
+        std::string value = m_Game->GetConVarString(name);
+        // Before 2.0.11 every VR session saved crosshair 0 into config.cfg, so
+        // a 0 found now is almost always the mod's, not the player's.
+        if (std::strcmp(name, "crosshair") == 0 && value == "0")
+            value = "1";
+        if (!value.empty())
+        {
+            const bool newFile = GetFileAttributesA(kSavedGameCvarsPath) == INVALID_FILE_ATTRIBUTES;
+            std::ofstream output(kSavedGameCvarsPath, std::ios::app);
+            if (output.is_open())
+            {
+                if (newFile)
+                    output << "# L4D2VR: your game settings from before VR; the next start without VR puts them back.\n";
+                output << name << ' ' << value << '\n';
+            }
+            if (!output.good())
+                Game::logMsg("[VR] could not save %s to %s; it may stay at the VR value", name, kSavedGameCvarsPath);
+        }
+    }
+
+    // The VR value is not written into config.cfg (desktop sessions and an
+    // uninstalled mod keep the player's settings).
+    const int flags = m_Game->GetConVarFlags(name);
+    if (flags != -1 && (flags & kFcvarArchive) != 0)
+        m_Game->SetConVarFlags(name, flags & ~kFcvarArchive);
+}
+
+void VR::RestoreGameCvarsAfterVrOnce()
+{
+    if (m_GameCvarsRestoreDone || m_IsVREnabled || !m_Game || !m_Game->m_Initialized)
+        return;
+    m_GameCvarsRestoreDone = true;
+
+    const auto saved = ReadSavedGameCvars();
+    for (const auto& entry : saved)
+    {
+        if (m_Game->SetConVarString(entry.first.c_str(), entry.second.c_str()))
+            Game::logMsg("[VR] restored your game setting %s %s (changed by a VR session)", entry.first.c_str(), entry.second.c_str());
+    }
+    if (!saved.empty())
+        DeleteFileA(kSavedGameCvarsPath);
+
+    // VR sessions before 2.0.11 saved crosshair 0 into config.cfg with nothing
+    // to restore it (only -nohmd repaired it): repair it once in desktop mode.
+    constexpr const char* kCrosshairRepairMarker = "VR\\desktop_crosshair_repaired.txt";
+    if (saved.empty() && GetFileAttributesA(kCrosshairRepairMarker) == INVALID_FILE_ATTRIBUTES &&
+        m_Game->GetConVarIntDirect("crosshair", 1) == 0)
+    {
+        m_Game->SetConVarInt("crosshair", 1);
+        std::ofstream marker(kCrosshairRepairMarker, std::ios::trunc);
+        marker << "crosshair 1 was restored once after older VR sessions turned it off.\n";
+        Game::logMsg("[VR] crosshair turned back on once (older VR sessions saved crosshair 0)");
+    }
 }
 
 void VR::UpdateAutoMatQueueMode()
@@ -1552,6 +1692,11 @@ void VR::UpdateAutoMatQueueMode()
     // Use the same direct ConVar path as ShadowTweaks instead of injecting console commands.
     if (!inGame && !m_MainMenuOneShotVisualCvarsInjected)
     {
+        for (const char* name : { "crosshair", "mat_grain_scale_override", "engine_no_focus_sleep",
+                 "mat_motion_blur_enabled", "mat_motion_blur_forward_enabled", "mat_motion_blur_strength",
+                 "mat_motion_blur_percent_of_screen_max", "mat_motion_blur_rotation_intensity",
+                 "mat_motion_blur_falling_intensity" })
+            ProtectGameCvarForVr(name);
         m_Game->SetConVarInt("crosshair", 0);
         m_Game->SetConVarFloat("mat_grain_scale_override", 0.0f);
         m_Game->SetConVarInt("engine_no_focus_sleep", 0);
@@ -1581,6 +1726,7 @@ void VR::UpdateAutoMatQueueMode()
                 // Only issue the command if the target changed. fps_max persists across map loads.
                 if (m_MenuFpsMaxLastHz != targetHz)
                 {
+                    ProtectGameCvarForVr("fps_max");
                     std::string cmd = std::string("fps_max ") + std::to_string(targetHz);
                     m_Game->ClientCmd_Unrestricted(cmd.c_str());
                     m_MenuFpsMaxLastHz = targetHz;
@@ -1613,6 +1759,7 @@ void VR::UpdateAutoMatQueueMode()
         if (m_AutoMatQueueModeLastRequested == 0)
             return;
 
+        ProtectGameCvarForVr("mat_queue_mode");
         m_Game->ClientCmd_Unrestricted("mat_queue_mode 0");
         m_AutoMatQueueModeLastRequested = 0;
         m_AutoMatQueueModeLastCmdTime = std::chrono::steady_clock::now();
@@ -1637,6 +1784,7 @@ void VR::UpdateAutoMatQueueMode()
         if (m_AutoMatQueueModeLastRequested == 0)
             return;
 
+        ProtectGameCvarForVr("mat_queue_mode");
         m_Game->ClientCmd_Unrestricted("mat_queue_mode 0");
         m_AutoMatQueueModeLastRequested = 0;
         m_AutoMatQueueModeLastCmdTime = std::chrono::steady_clock::now();
@@ -1678,6 +1826,7 @@ void VR::UpdateAutoMatQueueMode()
     if (m_AutoMatQueueModeLastRequested == desiredMode && secondsSinceCmd < 0.5f)
         return;
 
+    ProtectGameCvarForVr("mat_queue_mode");
     std::string cmd = std::string("mat_queue_mode ") + std::to_string(desiredMode);
     m_Game->ClientCmd_Unrestricted(cmd.c_str());
 

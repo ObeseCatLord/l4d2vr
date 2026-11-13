@@ -826,14 +826,25 @@ int Hooks::initSourceHooks()
 	LPVOID PrePushRenderTargetAddr = (LPVOID)(m_Game->m_Offsets->PrePushRenderTarget.address);
 	hkPrePushRenderTarget.createHook(PrePushRenderTargetAddr, &dPrePushRenderTarget);
 
-	LPVOID SayTextAddr = reinterpret_cast<LPVOID>(m_Game->m_BaseClient + kClientSayTextHandlerOffset);
-	hkSayText.createHook(SayTextAddr, &dSayText);
-
-	LPVOID SayText2Addr = reinterpret_cast<LPVOID>(m_Game->m_BaseClient + kClientSayText2HandlerOffset);
-	hkSayText2.createHook(SayText2Addr, &dSayText2);
-
-	LPVOID TextMsgAddr = reinterpret_cast<LPVOID>(m_Game->m_BaseClient + kClientTextMsgHandlerOffset);
-	hkTextMsg.createHook(TextMsgAddr, &dTextMsg);
+	// Fixed client.dll offsets without a signature: hooked only when each
+	// still looks like a function start in executable code, so a rebuilt
+	// client.dll is not patched blindly (2.0.11, review B39).
+	{
+		const HMODULE clientModule = reinterpret_cast<HMODULE>(m_Game->m_BaseClient);
+		auto chatHandler = [&](uintptr_t offset, const char* name) -> LPVOID {
+			if (SigScanner::LooksLikeFunctionStart(clientModule, offset))
+				return reinterpret_cast<LPVOID>(m_Game->m_BaseClient + offset);
+			Game::logMsg("[VR][Hooks] client.dll+0x%X (%s) is not a function start any more; that chat hook is skipped",
+				static_cast<unsigned>(offset), name);
+			return nullptr;
+		};
+		if (LPVOID SayTextAddr = chatHandler(kClientSayTextHandlerOffset, "SayText"))
+			hkSayText.createHook(SayTextAddr, &dSayText);
+		if (LPVOID SayText2Addr = chatHandler(kClientSayText2HandlerOffset, "SayText2"))
+			hkSayText2.createHook(SayText2Addr, &dSayText2);
+		if (LPVOID TextMsgAddr = chatHandler(kClientTextMsgHandlerOffset, "TextMsg"))
+			hkTextMsg.createHook(TextMsgAddr, &dTextMsg);
+	}
 
 	// alliedmodders/hl2sdk l4d2 public/engine/IEngineSound.h defines:
 	//   #5 EmitSound(... float flAttenuation ...)

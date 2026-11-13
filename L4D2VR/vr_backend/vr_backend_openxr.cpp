@@ -120,7 +120,7 @@ namespace
     X(vkResetCommandBuffer) X(vkCmdPipelineBarrier) X(vkCmdCopyImage) X(vkCmdCopyImageToBuffer) \
     X(vkQueueSubmit) X(vkCreateFence) X(vkWaitForFences) X(vkResetFences) X(vkCreateBuffer) X(vkDestroyBuffer) \
     X(vkGetBufferMemoryRequirements) X(vkAllocateMemory) X(vkFreeMemory) X(vkBindBufferMemory) X(vkMapMemory) \
-    X(vkUnmapMemory) X(vkCmdCopyBufferToImage)
+    X(vkUnmapMemory) X(vkCmdCopyBufferToImage) X(vkDestroyCommandPool) X(vkDestroyFence)
 
     struct VkApi
     {
@@ -361,7 +361,7 @@ private:
             m_Ring.SetAssertHook(&OpenXrRuntime::OnRingViolation, this);
             m_Input.SetPointerHook(&m_Overlays);
             m_Overlays.hmdPose = [this](vr::HmdMatrix34_t& out) {
-                std::lock_guard<std::mutex> lock(m_Mutex);
+                std::lock_guard<std::mutex> lock(m_StateMutex);
                 if (!m_LastHmdPose.bPoseIsValid)
                     return false;
                 out = m_LastHmdPose.mDeviceToAbsoluteTracking;
@@ -451,7 +451,10 @@ private:
             }
             m_Device = info;
             if (!LoadVulkan())
+            {
+                SessionFailed("DXVK's Vulkan device could not be used for OpenXR");
                 return;
+            }
 
             const VkPhysicalDevice physical = static_cast<VkPhysicalDevice>(info.physicalDevice);
             VkPhysicalDeviceProperties props{};
@@ -466,6 +469,7 @@ private:
             if (XR_FAILED(r))
             {
                 Game::logMsg("[VR][OpenXR] xrGetVulkanGraphicsRequirementsKHR failed: %s", ResultName(r).c_str());
+                SessionFailed("xrGetVulkanGraphicsRequirementsKHR failed: " + ResultName(r));
                 return;
             }
             const XrVersion dxvkApi = XR_MAKE_VERSION(1, 3, 0);
@@ -490,6 +494,10 @@ private:
             {
                 m_Session = XR_NULL_HANDLE;
                 Game::logMsg("[VR][OpenXR] xrCreateSession failed: %s", ResultName(r).c_str());
+                std::string why = "the VR session could not be created (xrCreateSession " + ResultName(r) + ")";
+                if (m_RuntimePhysicalDevice != VK_NULL_HANDLE && m_RuntimePhysicalDevice != physical)
+                    why += "; the game runs on another GPU than the headset (set the game to the GPU the headset uses)";
+                SessionFailed(why);
                 return;
             }
             CreateSpacesLocked();
@@ -512,6 +520,23 @@ private:
             od.memory = m_MemoryProperties;
             od.formats = m_SwapchainFormats;
             m_Overlays.SessionCreated(od);
+            {
+                std::lock_guard<std::mutex> state(m_StateMutex);
+                m_SessionCreated = true;
+            }
+            m_SessionCv.notify_all();
+        }
+
+        // DeviceCreated could not create the session: nothing will ever locate
+        // views, so WaitForViews and SessionUsable return at once (B30).
+        void SessionFailed(const std::string& why)
+        {
+            {
+                std::lock_guard<std::mutex> state(m_StateMutex);
+                if (m_SessionFailure.empty())
+                    m_SessionFailure = why;
+            }
+            Game::logMsg("[VR][OpenXR] no VR session: %s", why.c_str());
             m_SessionCv.notify_all();
         }
 
@@ -524,9 +549,11 @@ private:
         {
             if (!m_InitOk || m_Session == XR_NULL_HANDLE || device != m_Device.device)
                 return;
+            m_AppExiting.store(true, std::memory_order_release);
             if (!Running())
             {
                 Game::logMsg("[VR][OpenXR] D3D9 device destroyed; session not running (state %s)", SessionStateName(m_State));
+                MarkDeviceGone();
                 return;
             }
             XrResult r = XR_SUCCESS;
@@ -536,14 +563,55 @@ private:
             }
             Game::logMsg("[VR][OpenXR] D3D9 device destroyed: xrRequestExitSession %s", ResultName(r).c_str());
             if (XR_FAILED(r))
+            {
+                MarkDeviceGone();
                 return;
+            }
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
             while (!m_SessionEnded.load(std::memory_order_acquire) && !m_Lost.load(std::memory_order_acquire) &&
                 std::chrono::steady_clock::now() < deadline)
                 Sleep(10);
             Game::logMsg("[VR][OpenXR] session %s at device destruction",
                 m_SessionEnded.load(std::memory_order_acquire) ? "ended cleanly" : "did not end in 1.5 s");
+            MarkDeviceGone();
         }
+
+        // DXVK destroys its device right after DeviceDestroying returns: from
+        // now on nothing may touch DXVK's queue lock, VkDevice or VkQueue. Set
+        // under both locks, so every frame/submit/session path that takes them
+        // later sees it and returns (S11). The mod's own Vulkan objects on that
+        // device are freed here (they are not runtime handles).
+        void MarkDeviceGone()
+        {
+            {
+                QueueLock queue(*this);
+                std::lock_guard<std::mutex> lock(m_Mutex);
+                m_Running.store(false, std::memory_order_release);
+                m_DeviceGone.store(true, std::memory_order_release);
+                m_Ring.Reset();
+                const VkDevice vkDevice = static_cast<VkDevice>(m_Device.device);
+                if (vkDevice && m_Vk.vkDestroyFence && m_Vk.vkDestroyCommandPool)
+                {
+                    // Only objects whose last submission has completed.
+                    const bool idle = m_Fence == VK_NULL_HANDLE || !m_CopyPending ||
+                        m_Vk.vkWaitForFences(vkDevice, 1, &m_Fence, VK_TRUE, 100000000ull) == VK_SUCCESS;
+                    if (idle)
+                    {
+                        if (m_Fence != VK_NULL_HANDLE)
+                            m_Vk.vkDestroyFence(vkDevice, m_Fence, nullptr);
+                        if (m_CommandPool != VK_NULL_HANDLE)
+                            m_Vk.vkDestroyCommandPool(vkDevice, m_CommandPool, nullptr);
+                        m_Fence = VK_NULL_HANDLE;
+                        m_CommandPool = VK_NULL_HANDLE;
+                        m_CommandBuffer = VK_NULL_HANDLE;
+                    }
+                }
+            }
+            m_Overlays.DeviceDestroying();
+            Game::logMsg("[VR][OpenXR] DXVK device gone: frames, submits and session calls stop");
+        }
+
+        bool DeviceGone() const { return m_DeviceGone.load(std::memory_order_acquire); }
 
         // ---- Frames: wait ---------------------------------------------------
         vr::EVRCompositorError WaitGetPoses(vr::TrackedDevicePose_t* renderPoses, uint32_t renderCount,
@@ -558,26 +626,33 @@ private:
                 return vr::VRCompositorError_DoNotHaveFocus;
             }
 
-            bool needStale = false;
+            bool needBegin = false;
             {
                 std::unique_lock<std::mutex> lock(m_Mutex);
                 if (m_Ring.WaitInFlight())
                     return JoinInFlightWait(lock, renderPoses, renderCount, gamePoses, gameCount);
-                needStale = m_Ring.HasWaited();
-                if (!needStale)
+                needBegin = m_Ring.HasWaited();
+                if (!needBegin)
                     m_Ring.BeginWait();
             }
-            if (needStale)
+            if (needBegin)
             {
+                // The frame this thread waited last is not begun yet (queued
+                // mode: the render thread is still drawing it). Begin it and
+                // leave it begun, so the submit side can end it with the image
+                // drawn for it during the whole next wait; a frame begun earlier
+                // that nobody ended is closed first with the last layers (S04).
                 QueueLock queue(*this);
                 std::unique_lock<std::mutex> lock(m_Mutex);
+                if (DeviceGone())
+                    return vr::VRCompositorError_DoNotHaveFocus;
                 if (m_Ring.WaitInFlight())
                 {
                     queue.Release();
                     return JoinInFlightWait(lock, renderPoses, renderCount, gamePoses, gameCount);
                 }
                 if (m_Ring.HasWaited())
-                    EndStaleLocked();
+                    BeginWaitedForNextWaitLocked();
                 if (!m_Ring.BeginWait())
                     return vr::VRCompositorError_RequestFailed;
             }
@@ -594,12 +669,17 @@ private:
             {
                 std::lock_guard<std::mutex> lock(m_Mutex);
                 const bool ok = XR_SUCCEEDED(r);
-                m_Ring.CompleteWait(ok, frameState.predictedDisplayTime, frameState.predictedDisplayPeriod,
+                const uint64_t ticket = m_Ring.CompleteWait(ok, frameState.predictedDisplayTime, frameState.predictedDisplayPeriod,
                     frameState.shouldRender == XR_TRUE);
                 if (ok)
                 {
-                    m_LastDisplayTime = frameState.predictedDisplayTime;
-                    m_LastDisplayPeriod = frameState.predictedDisplayPeriod;
+                    {
+                        std::lock_guard<std::mutex> state(m_StateMutex);
+                        m_LastDisplayTime = frameState.predictedDisplayTime;
+                        m_LastDisplayPeriod = frameState.predictedDisplayPeriod;
+                        if (ticket)
+                            m_LastTicketId = ticket;
+                    }
                     m_WaitMsSum += waitMs;
                     m_WaitMsMax = (std::max)(m_WaitMsMax, waitMs);
                 }
@@ -611,6 +691,10 @@ private:
             m_WaitCv.notify_all();
             if (XR_FAILED(r))
             {
+                if (IsLossResult(r))
+                    MarkLost("xrWaitFrame", r);
+                else if (ThrottledError(m_WaitErrorLogs))
+                    Game::logMsg("[VR][OpenXR] xrWaitFrame failed: %s", ResultName(r).c_str());
                 Sleep(5);
                 return vr::VRCompositorError_RequestFailed;
             }
@@ -626,6 +710,8 @@ private:
             if (!Running())
                 return vr::VRCompositorError_None;
             std::lock_guard<std::mutex> lock(m_Mutex);
+            if (DeviceGone())
+                return vr::VRCompositorError_None;
             BeginForGameLocked();
             return vr::VRCompositorError_None;
         }
@@ -652,6 +738,11 @@ private:
                 Crumb crumb("Submit waiting for the frame lock");
                 lock.lock();
             }
+            if (DeviceGone() || !Running())
+            {
+                ++m_DroppedSubmits;
+                return vr::VRCompositorError_None;
+            }
             BeginForGameLocked();
             if (!EnsureSwapchainLocked(e, data->m_nWidth, data->m_nHeight, static_cast<VkFormat>(data->m_nFormat)))
                 return vr::VRCompositorError_RequestFailed;
@@ -661,7 +752,15 @@ private:
 
             // The pose the eye was rendered from: the render pose the mod passes
             // with the texture, else the HMD pose WaitGetPoses last returned.
-            vr::HmdMatrix34_t head = m_LastHmdPose.mDeviceToAbsoluteTracking;
+            vr::HmdMatrix34_t head{};
+            vr::HmdMatrix34_t eyeToHead{};
+            xrm::Fov fov;
+            {
+                std::lock_guard<std::mutex> state(m_StateMutex);
+                head = m_LastHmdPose.mDeviceToAbsoluteTracking;
+                eyeToHead = m_EyeToHead[e];
+                fov = m_RenderFovValid[e] ? m_RenderFov[e] : m_CurrentFov[e];
+            }
             if ((flags & vr::Submit_TextureWithPose) != 0)
                 head = static_cast<const vr::VRTextureWithPose_t*>(texture)->mDeviceToAbsoluteTracking;
             LayerView& view = m_Layer[e];
@@ -672,11 +771,14 @@ private:
                 m_LoggedFlippedBounds = true;
                 Game::logMsg("[VR][OpenXR] flipped texture bounds are not supported by OpenXR image rects; submitted unflipped");
             }
-            view.pose = xrm::EyePoseFromHead(head, m_EyeToHead[e], true);
-            view.fov = m_RenderFovValid[e] ? m_RenderFov[e] : m_CurrentFov[e];
+            view.pose = xrm::EyePoseFromHead(head, eyeToHead, true);
+            view.fov = fov;
             view.swapchain = m_Swapchain[e].handle;
             view.valid = true;
             ++m_SubmittedEyes;
+            ++m_EyesSinceWaitBegin;
+            if (m_Ring.HasBegun())
+                ++m_EyesInBegunFrame;
 
             if (!m_ExplicitTiming && e == 1)
                 EndForGameLocked();
@@ -688,6 +790,8 @@ private:
             if (!Running())
                 return;
             std::lock_guard<std::mutex> lock(m_Mutex);
+            if (DeviceGone())
+                return;
             EndForGameLocked();
         }
 
@@ -707,8 +811,9 @@ private:
         {
             if (!timing || timing->m_nSize < offsetof(vr::Compositor_FrameTiming, m_HmdPose) + sizeof(vr::TrackedDevicePose_t))
                 return false;
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            const uint64_t id = m_Ring.LastTicketId();
+            // State mutex only: never waits behind a Submit's eye copy (S05).
+            std::lock_guard<std::mutex> lock(m_StateMutex);
+            const uint64_t id = m_LastTicketId;
             if (id == 0)
                 return false;
             timing->m_nFrameIndex = static_cast<uint32_t>(id);
@@ -728,7 +833,7 @@ private:
         {
             int64_t displayTime = 0;
             {
-                std::lock_guard<std::mutex> lock(m_Mutex);
+                std::lock_guard<std::mutex> lock(m_StateMutex);
                 displayTime = m_LastDisplayTime;
             }
             XrTime now = 0;
@@ -743,7 +848,7 @@ private:
         {
             const int e = eye == vr::Eye_Right ? 1 : 0;
             WaitForViews();
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard<std::mutex> lock(m_StateMutex);
             xrm::Fov fov = m_CurrentFov[e];
             if (!xrm::FovUsable(fov))
             {
@@ -768,7 +873,7 @@ private:
         vr::HmdMatrix34_t EyeToHead(vr::EVREye eye)
         {
             WaitForViews();
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard<std::mutex> lock(m_StateMutex);
             return m_EyeToHead[eye == vr::Eye_Right ? 1 : 0];
         }
 
@@ -782,7 +887,7 @@ private:
                 time += static_cast<XrTime>(std::clamp(secondsFromNow, 0.0f, 0.5f) * 1e9f);
             else
             {
-                std::lock_guard<std::mutex> lock(m_Mutex);
+                std::lock_guard<std::mutex> lock(m_StateMutex);
                 time = m_LastDisplayTime;
             }
             if (time <= 0)
@@ -801,9 +906,10 @@ private:
 
         float DisplayHz()
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            if (m_RefreshRateHz > 1.0f)
-                return m_RefreshRateHz;
+            std::lock_guard<std::mutex> lock(m_StateMutex);
+            const float refresh = m_RefreshRateHz.load(std::memory_order_relaxed);
+            if (refresh > 1.0f)
+                return refresh;
             return xrm::DisplayHzFromPeriod(m_LastDisplayPeriod, 90.0f);
         }
 
@@ -858,7 +964,7 @@ private:
         public:
             explicit QueueLock(OpenXrRuntime& rt) : m_Rt(rt)
             {
-                if (m_Rt.m_Device.lockQueue)
+                if (m_Rt.m_Device.lockQueue && !m_Rt.DeviceGone())
                 {
                     Crumb crumb("waiting for DXVK's queue lock");
                     m_Rt.m_Device.lockQueue(m_Rt.m_Device.queueContext);
@@ -888,8 +994,74 @@ private:
                     static_cast<unsigned long long>(count));
         }
 
+        // The runtime is gone (crashed, killed, instance or session lost):
+        // treated like LOSS_PENDING (B31).
+        static bool IsLossResult(XrResult r)
+        {
+            return r == XR_ERROR_INSTANCE_LOST || r == XR_ERROR_SESSION_LOST || r == XR_ERROR_RUNTIME_FAILURE;
+        }
+
+        // Per-frame error logs: the first 10, then every 500th.
+        static bool ThrottledError(uint64_t& counter)
+        {
+            ++counter;
+            return counter <= 10 || (counter % 500) == 0;
+        }
+
+        // VR stops for the rest of the session; one log line, and the reason
+        // is shown once in the game console (StoppedReason, S20).
+        void MarkLost(const char* where, XrResult r)
+        {
+            m_Running.store(false, std::memory_order_release);
+            if (m_Lost.exchange(true, std::memory_order_acq_rel))
+                return;
+            const std::string why = std::string(where) + " returned " + ResultName(r) +
+                (r == XR_ERROR_SESSION_LOST ? ": the VR session was lost" : ": the VR runtime stopped or crashed");
+            SetStoppedReason(why);
+            Game::logMsg("[VR][OpenXR] %s; VR stops (restart the game to use VR again)", why.c_str());
+        }
+
+        void SetStoppedReason(const std::string& why)
+        {
+            std::lock_guard<std::mutex> lock(m_StateMutex);
+            if (m_StoppedReason.empty())
+                m_StoppedReason = why;
+        }
+
+    public:
+        bool StoppedReason(std::string& out)
+        {
+            if (!m_Lost.load(std::memory_order_acquire) || m_AppExiting.load(std::memory_order_acquire))
+                return false;
+            std::lock_guard<std::mutex> lock(m_StateMutex);
+            out = m_StoppedReason.empty() ? std::string("the VR runtime stopped") : m_StoppedReason;
+            return true;
+        }
+
+        // Waits for the session like GetProjectionRaw does; false with the
+        // reason when it could not be created (B30).
+        bool SessionUsable(std::string& reason)
+        {
+            WaitForViews();
+            std::lock_guard<std::mutex> lock(m_StateMutex);
+            if (m_SessionFailure.empty())
+                return true;
+            reason = m_SessionFailure;
+            return false;
+        }
+
+    private:
         std::string ResultName(XrResult r) const
         {
+            if (IsLossResult(r) || m_Lost.load(std::memory_order_acquire))
+            {
+                // Do not call into a runtime that crashed or lost the instance.
+                const char* name = r == XR_ERROR_INSTANCE_LOST ? "XR_ERROR_INSTANCE_LOST"
+                    : r == XR_ERROR_SESSION_LOST ? "XR_ERROR_SESSION_LOST"
+                    : r == XR_ERROR_RUNTIME_FAILURE ? "XR_ERROR_RUNTIME_FAILURE" : "";
+                return *name ? std::string(name) + " (" + std::to_string(static_cast<int>(r)) + ")"
+                    : std::to_string(static_cast<int>(r));
+            }
             char buffer[XR_MAX_RESULT_STRING_SIZE] = {};
             if (m_Instance != XR_NULL_HANDLE && m_Xr.xrResultToString &&
                 XR_SUCCEEDED(m_Xr.xrResultToString(m_Instance, r, buffer)))
@@ -997,21 +1169,30 @@ private:
             // view): load the active runtime's own 32-bit manifest in this
             // process (openxr_runtime_diagnosis.h Choose32BitRuntimeOverride).
             const xrm::RuntimeOverride runtimeOverride = xrm::Choose32BitRuntimeOverride(facts);
-            if (!runtimeOverride.manifest.empty())
+            // An elevated process: the OpenXR loader ignores XR_RUNTIME_JSON, so
+            // the override would only make the failure name the wrong runtime.
+            std::string adminNote;
+            if (!runtimeOverride.manifest.empty() && xrm::ProcessIsElevated())
+            {
+                adminNote = ". The game runs as administrator, so the 32-bit runtime " +
+                    xrm::ManifestFileName(runtimeOverride.manifest) + " cannot be used for it: start Steam and the game "
+                    "without administrator rights (or set SteamVR as the OpenXR runtime in SteamVR Settings > OpenXR)";
+                Game::logMsg("[VR][OpenXR] %s; not using %s because the game runs as administrator (the OpenXR loader "
+                    "ignores XR_RUNTIME_JSON then)", runtimeOverride.why.c_str(), runtimeOverride.manifest.c_str());
+            }
+            else if (!runtimeOverride.manifest.empty())
             {
                 SetEnvironmentVariableA("XR_RUNTIME_JSON", runtimeOverride.manifest.c_str());
                 facts.runtimeJsonEnv = runtimeOverride.manifest;
                 Game::logMsg("[VR][OpenXR] %s: using %s for this game (XR_RUNTIME_JSON in this process; the registry is "
                     "not changed; SteamVR Settings > OpenXR > Set SteamVR as OpenXR Runtime fixes the registration "
-                    "for every 32-bit game)%s",
-                    runtimeOverride.why.c_str(), runtimeOverride.manifest.c_str(),
-                    xrm::ProcessIsElevated() ? ". WARNING: the game runs as administrator, and the OpenXR loader then ignores "
-                        "XR_RUNTIME_JSON: do not run Steam or the game as administrator" : "");
+                    "for every 32-bit game)",
+                    runtimeOverride.why.c_str(), runtimeOverride.manifest.c_str());
             }
             const xrm::Preflight preflight = xrm::CheckPreflight(facts);
             if (!preflight.tryRuntime)
             {
-                reason = preflight.reason;
+                reason = preflight.reason + adminNote;
                 return false;
             }
             const int wineVrState = wine ? WaitForWineVrState() : xrm::kWineVrStateUnknown;
@@ -1019,7 +1200,7 @@ private:
             xrm::LoaderProbe probe;
             if (!xrm::ProbeLoader(dir + "\\openxr_loader.dll", wine, probe, &facts, wineVrState))
             {
-                reason = probe.reason;
+                reason = probe.reason + adminNote;
                 return false;
             }
             m_Loader = probe.module;
@@ -1256,16 +1437,28 @@ private:
                     return;
                 if (XR_FAILED(r))
                 {
-                    Game::logMsg("[VR][OpenXR] xrPollEvent failed: %s", ResultName(r).c_str());
+                    if (IsLossResult(r))
+                        MarkLost("xrPollEvent", r);
+                    else if (ThrottledError(m_PollErrorLogs))
+                        Game::logMsg("[VR][OpenXR] xrPollEvent failed: %s", ResultName(r).c_str());
                     return;
                 }
                 switch (event.type)
                 {
                 case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
-                    OnSessionState(reinterpret_cast<const XrEventDataSessionStateChanged&>(event).state);
+                {
+                    const auto& changed = reinterpret_cast<const XrEventDataSessionStateChanged&>(event);
+                    if (changed.time > 0)
+                    {
+                        std::lock_guard<std::mutex> state(m_StateMutex);
+                        m_LastEventTime = changed.time;
+                    }
+                    OnSessionState(changed.state);
                     break;
+                }
                 case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
                     Game::logMsg("[VR][OpenXR] instance loss pending: VR stops (restart the game to recover)");
+                    SetStoppedReason("the VR runtime is shutting down (instance loss pending)");
                     m_Running.store(false, std::memory_order_release);
                     m_Lost.store(true, std::memory_order_release);
                     break;
@@ -1294,12 +1487,21 @@ private:
                 m_LoggedFocused = true;
                 Game::logMsg("[VR][OpenXR] session FOCUSED");
             }
+            if (DeviceGone())
+            {
+                // DXVK's device is gone: no queue lock, no session calls.
+                if (state == XR_SESSION_STATE_LOSS_PENDING || state == XR_SESSION_STATE_EXITING)
+                    m_Lost.store(true, std::memory_order_release);
+                return;
+            }
             switch (state)
             {
             case XR_SESSION_STATE_READY:
             {
                 QueueLock queue(*this);
                 std::lock_guard<std::mutex> lock(m_Mutex);
+                if (DeviceGone())
+                    break;
                 XrSessionBeginInfo bi{ XR_TYPE_SESSION_BEGIN_INFO };
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                 const XrResult r = m_Xr.xrBeginSession(m_Session, &bi);
@@ -1317,6 +1519,8 @@ private:
                 m_Running.store(false, std::memory_order_release);
                 QueueLock queue(*this);
                 std::unique_lock<std::mutex> lock(m_Mutex);
+                if (DeviceGone())
+                    break;
                 // Let a wait in flight return before ending the session.
                 m_WaitCv.wait_for(lock, std::chrono::milliseconds(200), [this]() { return !m_Ring.WaitInFlight(); });
                 const XrResult r = m_Xr.xrEndSession(m_Session);
@@ -1327,6 +1531,8 @@ private:
             }
             case XR_SESSION_STATE_LOSS_PENDING:
             case XR_SESSION_STATE_EXITING:
+                SetStoppedReason(std::string("the VR session ended (") + SessionStateName(state) +
+                    "; the VR runtime was closed or restarted)");
                 m_Running.store(false, std::memory_order_release);
                 m_Lost.store(true, std::memory_order_release);
                 Game::logMsg("[VR][OpenXR] session %s: VR stops (restart the game to recover)", SessionStateName(state));
@@ -1360,6 +1566,9 @@ private:
                 lastEndError = m_LastEndError;
                 eyes = m_SubmittedEyes;
                 dropped = m_DroppedSubmits;
+            }
+            {
+                std::lock_guard<std::mutex> state(m_StateMutex);
                 hz = xrm::DisplayHzFromPeriod(m_LastDisplayPeriod, 0.0f);
                 hmd = m_LastHmdPose;
                 hands[0] = m_LastHandPose[0];
@@ -1393,16 +1602,49 @@ private:
         }
 
         // ---- Frame helpers (m_Mutex held) -----------------------------------
+        // Submit side. A frame the wait thread began early (S04) is the game's
+        // frame while it is still open; once a newer frame has been waited, the
+        // older one is closed with the last layers and the newer one begun -
+        // unless this game frame already put an eye into the older one (keep
+        // both eyes of one image in one frame).
         void BeginForGameLocked()
         {
+            if (m_Ring.HasBegun() && m_Ring.HasWaited())
+            {
+                if (m_EyesInBegunFrame > 0)
+                    return;
+                EndStaleBegunLocked();
+            }
             xrm::FrameTicket ticket;
             if (m_Ring.Begin(&ticket) != xrm::FrameRing::BeginResult::Begun)
                 return;
             CallBeginFrameLocked();
         }
 
+        // Wait side, before the next xrWaitFrame: the waited frame must be
+        // begun first. Close an older begun frame nobody ended, then begin
+        // the waited one and leave it open for the submit side - only while
+        // the game is submitting eyes (queued rendering). Without submits since
+        // the last wait (loading stall, menus without a scene) the frame is
+        // closed at once with the last layers, as before 2.0.11, so the runtime
+        // never sees a frame left open across a wait nobody will end.
+        void BeginWaitedForNextWaitLocked()
+        {
+            if (m_Ring.HasBegun())
+                EndStaleBegunLocked();
+            const bool gameSubmitting = m_EyesSinceWaitBegin > 0;
+            m_EyesSinceWaitBegin = 0;
+            xrm::FrameTicket ticket;
+            if (m_Ring.Begin(&ticket) != xrm::FrameRing::BeginResult::Begun)
+                return;
+            CallBeginFrameLocked();
+            if (!gameSubmitting && m_Ring.HasBegun())
+                EndStaleBegunLocked();
+        }
+
         void CallBeginFrameLocked()
         {
+            m_EyesInBegunFrame = 0;
             XrFrameBeginInfo bi{ XR_TYPE_FRAME_BEGIN_INFO };
             XrResult r = XR_SUCCESS;
             {
@@ -1412,9 +1654,20 @@ private:
             if (XR_FAILED(r))
             {
                 // The runtime refused the frame: forget it so we never end it.
-                Game::logMsg("[VR][OpenXR] xrBeginFrame failed: %s", ResultName(r).c_str());
+                if (IsLossResult(r))
+                    MarkLost("xrBeginFrame", r);
+                else if (ThrottledError(m_BeginErrorLogs))
+                    Game::logMsg("[VR][OpenXR] xrBeginFrame failed: %s", ResultName(r).c_str());
                 m_Ring.End();
             }
+        }
+
+        // Ends the begun frame with the layers last submitted (no new image
+        // arrived for it in time).
+        void EndStaleBegunLocked()
+        {
+            m_Ring.NoteStaleEnd();
+            EndBegunLocked();
         }
 
         void EndForGameLocked()
@@ -1431,15 +1684,6 @@ private:
                     return;
             }
             EndBegunLocked();
-        }
-
-        void EndStaleLocked()
-        {
-            if (!m_Ring.BeginStale())
-                return;
-            CallBeginFrameLocked();
-            if (m_Ring.HasBegun())
-                EndBegunLocked();
         }
 
         void EndBegunLocked()
@@ -1487,10 +1731,13 @@ private:
             }
             m_Overlays.FrameEnded(r);
             ++m_EndCalls;
+            m_EyesInBegunFrame = 0;
             if (XR_FAILED(r))
             {
                 ++m_EndErrors;
                 m_LastEndError = r;
+                if (IsLossResult(r))
+                    MarkLost("xrEndFrame", r);
                 if (m_EndErrors <= 10 || (m_EndErrors % 500) == 0)
                     Game::logMsg("[VR][OpenXR] xrEndFrame failed: %s (frame %llu, %u layers)", ResultName(r).c_str(),
                         static_cast<unsigned long long>(ticket.id), layerCount);
@@ -1572,9 +1819,17 @@ private:
                 XR_SUCCEEDED(m_Xr.xrLocateViews(m_Session, &li, &vs, 2, &n, views)) && n == 2 &&
                 (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) != 0;
 
+            float refreshRate = 0.0f;
+            if (m_Xr.xrGetDisplayRefreshRateFB && m_RefreshRateHz.load(std::memory_order_relaxed) <= 0.0f)
+            {
+                if (XR_FAILED(m_Xr.xrGetDisplayRefreshRateFB(m_Session, &refreshRate)))
+                    refreshRate = 0.0f;
+            }
             bool notify = false;
             {
-                std::lock_guard<std::mutex> lock(m_Mutex);
+                std::lock_guard<std::mutex> lock(m_StateMutex);
+                if (refreshRate > 0.0f)
+                    m_RefreshRateHz.store(refreshRate, std::memory_order_relaxed);
                 if (haveHmd)
                     m_LastHmdPose = hmd;
                 m_LastHandPose[0] = hands[0];
@@ -1597,12 +1852,6 @@ private:
                             views[1].pose.position.x, views[1].pose.position.y, views[1].pose.position.z);
                     }
                 }
-                if (m_Xr.xrGetDisplayRefreshRateFB && m_RefreshRateHz <= 0.0f)
-                {
-                    float rate = 0.0f;
-                    if (XR_SUCCEEDED(m_Xr.xrGetDisplayRefreshRateFB(m_Session, &rate)))
-                        m_RefreshRateHz = rate;
-                }
             }
             if (notify)
                 m_SessionCv.notify_all();
@@ -1611,7 +1860,7 @@ private:
         void CopyLatestPoses(vr::TrackedDevicePose_t* renderPoses, uint32_t renderCount,
             vr::TrackedDevicePose_t* gamePoses, uint32_t gameCount)
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard<std::mutex> lock(m_StateMutex);
             if (renderPoses && renderCount > kHmd)
                 renderPoses[kHmd] = m_LastHmdPose;
             if (gamePoses && gameCount > kHmd)
@@ -1631,30 +1880,42 @@ private:
         // GetProjectionRaw / GetEyeToHeadTransform need a located view, which
         // needs the session (DXVK's device). VR::VR asks for them on its own
         // thread before the D3D9 device exists, so wait here (bounded).
+        // Returns at once when the session could not be created, and after one
+        // 60 s timeout every later call returns at once too (B30).
         void WaitForViews()
         {
-            std::unique_lock<std::mutex> lock(m_Mutex);
-            if (m_ViewsReady)
+            std::unique_lock<std::mutex> lock(m_StateMutex);
+            if (m_ViewsReady || m_ViewsGaveUp || !m_SessionFailure.empty())
                 return;
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-            while (!m_ViewsReady && std::chrono::steady_clock::now() < deadline)
+            while (!m_ViewsReady && m_SessionFailure.empty() && std::chrono::steady_clock::now() < deadline)
             {
-                if (m_Session != XR_NULL_HANDLE && m_ViewSpace != XR_NULL_HANDLE)
+                if (m_SessionCreated)
                 {
-                    // Views can be located before the first frame: ask at "now"
-                    // (or any recent time) directly.
+                    // Views can be located before the first frame: ask at "now",
+                    // else (no performance-counter time conversion) at the last
+                    // runtime time seen (frame or session event).
+                    XrTime time = m_LastDisplayTime > 0 ? m_LastDisplayTime : m_LastEventTime;
                     lock.unlock();
                     XrTime now = 0;
                     if (NowXrTime(now))
-                        LocateHmdAndViews(now);
+                        time = now;
+                    if (time > 0)
+                        LocateHmdAndViews(time);
                     lock.lock();
                     if (m_ViewsReady)
                         break;
                 }
                 m_SessionCv.wait_for(lock, std::chrono::milliseconds(50));
             }
-            if (!m_ViewsReady)
-                Game::logMsg("[VR][OpenXR] no located views after 60 s (session %s)", m_Session != XR_NULL_HANDLE ? "created" : "missing");
+            if (!m_ViewsReady && m_SessionFailure.empty())
+            {
+                // Not a failure: a session created later still works (with the
+                // default FOV already handed to the game), as before.
+                m_ViewsGaveUp = true;
+                Game::logMsg("[VR][OpenXR] no located views after 60 s (session %s); using a default view",
+                    m_SessionCreated ? "created" : "missing");
+            }
         }
 
         // ---- Swapchains and the eye copy (queue lock + m_Mutex held) --------
@@ -1800,7 +2061,10 @@ private:
                 r = m_Xr.xrAcquireSwapchainImage(sc.handle, &ai, &acquiredIndex);
                 if (XR_FAILED(r))
                 {
-                    Game::logMsg("[VR][OpenXR] xrAcquireSwapchainImage(eye %d) failed: %s", eye, ResultName(r).c_str());
+                    if (IsLossResult(r))
+                        MarkLost("xrAcquireSwapchainImage", r);
+                    else if (ThrottledError(m_SwapchainErrorLogs))
+                        Game::logMsg("[VR][OpenXR] xrAcquireSwapchainImage(eye %d) failed: %s", eye, ResultName(r).c_str());
                     return false;
                 }
                 sc.acquired = acquiredIndex;
@@ -1814,7 +2078,10 @@ private:
             }
             if (r != XR_SUCCESS)
             {
-                Game::logMsg("[VR][OpenXR] xrWaitSwapchainImage(eye %d) returned %s", eye, ResultName(r).c_str());
+                if (IsLossResult(r))
+                    MarkLost("xrWaitSwapchainImage", r);
+                else if (ThrottledError(m_SwapchainErrorLogs))
+                    Game::logMsg("[VR][OpenXR] xrWaitSwapchainImage(eye %d) returned %s", eye, ResultName(r).c_str());
                 if (r == XR_TIMEOUT_EXPIRED)
                     return false;  // stays acquired; the next submit waits for it again
                 XrSwapchainImageReleaseInfo ri{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
@@ -1823,6 +2090,14 @@ private:
                 return false;
             }
             const VkImage target = sc.images[index % sc.images.size()];
+            if (!SettleCopyLocked())
+            {
+                // The previous copy never finished: no command buffer to record.
+                XrSwapchainImageReleaseInfo ri{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+                m_Xr.xrReleaseSwapchainImage(sc.handle, &ri);
+                sc.acquired = -1;
+                return false;
+            }
 
             // Optional debug readback of what the runtime receives (self-test shots).
             const bool dump = eye == 0 && !m_DumpPath.empty();
@@ -1881,11 +2156,15 @@ private:
             bool copied = vr == VK_SUCCESS;
             if (copied)
             {
+                m_CopyPending = true;
                 Crumb crumb("eye copy fence");
                 copied = m_Vk.vkWaitForFences(device, 1, &m_Fence, VK_TRUE, 1000000000ull) == VK_SUCCESS;
+                if (copied)
+                    m_CopyPending = false;
             }
-            if (!copied)
-                Game::logMsg("[VR][OpenXR] eye %d copy failed (vkQueueSubmit %d)", eye, static_cast<int>(vr));
+            if (!copied && ThrottledError(m_CopyErrorLogs))
+                Game::logMsg("[VR][OpenXR] eye %d copy failed (vkQueueSubmit %d%s)", eye, static_cast<int>(vr),
+                    m_CopyPending ? ", GPU copy did not finish in 1 s" : "");
 
             if (dumpReady)
             {
@@ -1902,11 +2181,45 @@ private:
             sc.acquired = -1;
             if (XR_FAILED(r))
             {
-                Game::logMsg("[VR][OpenXR] xrReleaseSwapchainImage(eye %d) failed: %s", eye, ResultName(r).c_str());
+                if (IsLossResult(r))
+                    MarkLost("xrReleaseSwapchainImage", r);
+                else if (ThrottledError(m_SwapchainErrorLogs))
+                    Game::logMsg("[VR][OpenXR] xrReleaseSwapchainImage(eye %d) failed: %s", eye, ResultName(r).c_str());
                 return false;
             }
             sc.released = true;
             return copied;
+        }
+
+        // The copy command buffer and fence may be reused only once their last
+        // submission finished. After a 1 s fence timeout the GPU may still own
+        // them: wait a little more, else leave them to the GPU and continue with
+        // a fresh pair (resetting a pending command buffer is undefined).
+        bool SettleCopyLocked()
+        {
+            if (!m_CopyPending)
+                return m_CommandBuffer != VK_NULL_HANDLE;
+            const VkDevice device = static_cast<VkDevice>(m_Device.device);
+            if (m_Vk.vkWaitForFences(device, 1, &m_Fence, VK_TRUE, 100000000ull) == VK_SUCCESS)
+            {
+                m_CopyPending = false;
+                return true;
+            }
+            VkCommandBufferAllocateInfo cai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            cai.commandPool = m_CommandPool;
+            cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            cai.commandBufferCount = 1;
+            VkCommandBuffer cb = VK_NULL_HANDLE;
+            VkFence fence = VK_NULL_HANDLE;
+            VkFenceCreateInfo fci{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            if (m_Vk.vkAllocateCommandBuffers(device, &cai, &cb) != VK_SUCCESS ||
+                m_Vk.vkCreateFence(device, &fci, nullptr, &fence) != VK_SUCCESS)
+                return false;
+            Game::logMsg("[VR][OpenXR] eye copy still running on the GPU; continuing with a new command buffer");
+            m_CommandBuffer = cb;
+            m_Fence = fence;
+            m_CopyPending = false;
+            return true;
         }
 
         bool CreateHostBuffer(VkDeviceSize size, VkBuffer& buffer, VkDeviceMemory& memory)
@@ -2012,7 +2325,13 @@ private:
 
         std::mutex m_Mutex;
         std::condition_variable m_WaitCv;
-        std::condition_variable m_SessionCv;
+        // Leaf lock for the values the per-frame getters read (poses, eye
+        // transforms, display time, views, session status). Never held while
+        // calling the runtime or Vulkan and never waits for m_Mutex, so the
+        // getters do not wait behind a Submit's eye copy (S05). Order:
+        // DXVK queue lock -> m_Mutex -> m_StateMutex.
+        std::mutex m_StateMutex;
+        std::condition_variable m_SessionCv;  // with m_StateMutex
         XrSession m_Session = XR_NULL_HANDLE;
         XrSpace m_BaseSpace = XR_NULL_HANDLE;
         XrSpace m_ViewSpace = XR_NULL_HANDLE;
@@ -2022,14 +2341,28 @@ private:
         std::atomic<bool> m_Running{ false };
         std::atomic<bool> m_Lost{ false };
         std::atomic<bool> m_SessionEnded{ false };  // xrEndSession after the last STOPPING
+        std::atomic<bool> m_DeviceGone{ false };    // DXVK destroyed its device (S11)
+        std::atomic<bool> m_AppExiting{ false };    // the game is destroying its D3D9 device
         bool m_LoggedFocused = false;
         bool m_ExplicitTiming = false;
 
         xrm::FrameRing m_Ring;
+        uint32_t m_EyesInBegunFrame = 0;  // eyes submitted into the begun frame (m_Mutex)
+        uint32_t m_EyesSinceWaitBegin = 0;  // eyes submitted since the wait side last began a frame (m_Mutex)
+        bool m_CopyPending = false;       // the eye copy's fence wait timed out (m_Mutex)
+        XrResult m_LastWaitError = XR_SUCCESS;
+        uint64_t m_WaitErrorLogs = 0, m_BeginErrorLogs = 0, m_SwapchainErrorLogs = 0, m_CopyErrorLogs = 0, m_PollErrorLogs = 0;
+        std::atomic<float> m_RefreshRateHz{ 0.0f };
+
+        // m_StateMutex:
         int64_t m_LastDisplayTime = 0;
         int64_t m_LastDisplayPeriod = 0;
-        XrResult m_LastWaitError = XR_SUCCESS;
-        float m_RefreshRateHz = 0.0f;
+        int64_t m_LastEventTime = 0;      // XrTime of the last session state event
+        uint64_t m_LastTicketId = 0;
+        bool m_SessionCreated = false;
+        bool m_ViewsGaveUp = false;
+        std::string m_SessionFailure;     // why no session exists (B30)
+        std::string m_StoppedReason;      // why VR stopped during play (S20)
 
         vr::TrackedDevicePose_t m_LastHmdPose{};
         vr::TrackedDevicePose_t m_LastHandPose[2]{};
@@ -2264,6 +2597,8 @@ private:
         IVrRenderModels* RenderModels() override { return Runtime().InstanceReady() ? Runtime().RenderModelsFacade() : nullptr; }
         IVrApplications* Applications() override { return Runtime().InstanceReady() ? Runtime().ApplicationsFacade() : nullptr; }
         bool RequestSubmittedEyeDump(const char* path) override { return Runtime().RequestEyeDump(path); }
+        bool SessionUsable(std::string& reason) override { return !Runtime().InstanceReady() || Runtime().SessionUsable(reason); }
+        bool StoppedReason(std::string& reason) override { return Runtime().InstanceReady() && Runtime().StoppedReason(reason); }
         bool SetFakeInput(const char* spec, std::string& error) override
         {
             if (!Runtime().InstanceReady())

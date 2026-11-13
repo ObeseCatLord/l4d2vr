@@ -176,10 +176,11 @@ int main()
         const std::string rot = std::string("NativeViewmodelLeftHandPoseRotationOffsetDeg=") + op::kDefaultRotationText + "\n";
         const std::string off = std::string("NativeViewmodelLeftHandPoseOffsetMeters=") + op::kDefaultOffsetText + "\n";
         const std::string config = ReadFile(L4D2VR_SOURCE_DIR "/config.txt");
-        const std::string sample = ReadFile(L4D2VR_SOURCE_DIR "/vr_config_overlay_embedded.inl");
+        // (The config panel's defaults are checked against config.txt by
+        // tests/test_config_code_defaults.py; its stale embedded copy of
+        // config.txt was removed in 2.0.11.)
         const std::string header = ReadFile(L4D2VR_SOURCE_DIR "/vr.h");
         CHECK(!config.empty() && config.find(rot) != std::string::npos && config.find(off) != std::string::npos);
-        CHECK(!sample.empty() && sample.find(rot) != std::string::npos && sample.find(off) != std::string::npos);
         CHECK(header.find("m_NativeViewmodelLeftHandPoseRotationOffsetDeg = { -90.0f, 90.0f, 0.0f };") != std::string::npos);
         CHECK(header.find("m_NativeViewmodelLeftHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };") != std::string::npos);
     }
@@ -187,9 +188,8 @@ int main()
     {
         const std::string off = std::string("NativeViewmodelRightHandPoseOffsetMeters=") + op::kDefaultRightOffsetText + "\n";
         const std::string config = ReadFile(L4D2VR_SOURCE_DIR "/config.txt");
-        const std::string sample = ReadFile(L4D2VR_SOURCE_DIR "/vr_config_overlay_embedded.inl");
         const std::string header = ReadFile(L4D2VR_SOURCE_DIR "/vr.h");
-        CHECK(config.find(off) != std::string::npos && sample.find(off) != std::string::npos);
+        CHECK(config.find(off) != std::string::npos);
         CHECK(header.find("m_NativeViewmodelRightHandPoseOffsetMeters = { 0.0f, -0.08f, 0.1f };") != std::string::npos);
         CHECK(op::kDefaultRightOffsetMeters[0] == -op::kDefaultOffsetMeters[0] &&
             op::kDefaultRightOffsetMeters[1] == op::kDefaultOffsetMeters[1] &&

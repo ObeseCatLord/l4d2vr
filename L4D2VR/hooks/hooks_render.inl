@@ -2366,6 +2366,8 @@ void __fastcall Hooks::dDrawScreenSpaceRectangle(
 
 void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CViewSetup& hudViewSetup, int nClearFlags, int whatToDraw)
 {
+	// No config hot reload while this view reads the settings (review B05).
+	l4d2vr_config_lock::ConfigLock::MaybeReadScope configRead(m_VR ? &m_VR->m_ConfigLock : nullptr);
 	// Source can call RenderView recursively while rendering the world, most visibly for water
 	// reflection/refraction render targets. The VR hook may only hijack the outer scene call.
 	// Nested calls must go straight through, otherwise water RTs can be filled with the VR eye
@@ -2571,6 +2573,21 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			}
 		}
 		return hkRenderView.fOriginal(ecx, setup, hudViewSetup, nClearFlags, whatToDraw);
+	}
+
+	// Once per process: the VR runtime stopped during play (crashed, was
+	// closed or restarted): say so in the game console (2.0.11, S20).
+	static bool s_vrStoppedShown = false;
+	if (!s_vrStoppedShown && m_VR->m_Backend && m_Game && m_Game->m_EngineClient)
+	{
+		std::string stopped;
+		if (m_VR->m_Backend->StoppedReason(stopped))
+		{
+			s_vrStoppedShown = true;
+			const std::string command = "echo [L4D2VR] VR stopped: " + l4d2vr_openxr::ConsoleSafe(stopped.c_str(), 300) +
+				". Restart the game to use VR again.";
+			m_Game->ClientCmd_Unrestricted(command.c_str());
+		}
 	}
 
 	if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
@@ -4010,6 +4027,14 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			if (l4d2vr_controller_identity::UsablePose(renderPoses[vr::k_unTrackedDeviceIndex_Hmd]))
 			{
 				TrackedDevicePoseData hmdPose{};
+				// 2.0.11: the queued submit carries the HMD pose this frame is
+				// rendered from (pose waiter snapshot or tracking prediction), so
+				// the OpenXR projection layer never claims the waiter's newer pose.
+				if (queueMode != 0)
+				{
+					renderHmdPoseForSubmit = renderPoses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
+					renderHmdPoseForSubmitValid = true;
+				}
 				m_VR->GetPoseData(renderPoses[vr::k_unTrackedDeviceIndex_Hmd], hmdPose);
 				QAngle hmdAngLocal = hmdPose.TrackedDeviceAng;
 				Vector hmdPosLocal = hmdPose.TrackedDevicePos;

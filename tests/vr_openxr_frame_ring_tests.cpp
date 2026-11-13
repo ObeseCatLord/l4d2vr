@@ -109,6 +109,90 @@ struct Driver
     }
 };
 
+// The 2.0.11 backend policy (S04): the wait side begins a waited frame
+// before waiting again and leaves it open; the submit side ends it. A begun
+// frame still open when a newer one must be begun is ended stale first,
+// unless the game already put an eye into it.
+struct DriverV2
+{
+    FrameRing ring;
+    FakeRuntime rt;
+    int eyesInBegun = 0;
+    int eyesSinceWaitBegin = 0;
+
+    void CallBegin()
+    {
+        if (ring.Begin() == FrameRing::BeginResult::Begun)
+        {
+            rt.Begin();
+            eyesInBegun = 0;
+        }
+    }
+    void EndBegun(bool stale)
+    {
+        FrameTicket t;
+        if (stale)
+            ring.NoteStaleEnd();
+        if (ring.End(&t))
+            rt.End(t.displayTime);
+        eyesInBegun = 0;
+    }
+    // WaitGetPoses, first half (under the locks): begin the waited frame.
+    bool WaitBegin()
+    {
+        if (ring.WaitInFlight())
+            return false;
+        if (ring.HasWaited())
+        {
+            if (ring.HasBegun())
+                EndBegun(true);
+            const bool gameSubmitting = eyesSinceWaitBegin > 0;
+            eyesSinceWaitBegin = 0;
+            CallBegin();
+            if (!gameSubmitting && ring.HasBegun())
+                EndBegun(true);  // no game submits: close at once (loading stall)
+        }
+        return ring.BeginWait();
+    }
+    // WaitGetPoses, second half: xrWaitFrame returns.
+    bool WaitComplete()
+    {
+        int64_t display = 0;
+        const bool ok = rt.Wait(display);
+        return ring.CompleteWait(ok, display, 16, true) != 0;
+    }
+    bool WaitGetPoses() { return WaitBegin() && WaitComplete(); }
+    void BeginForGame()
+    {
+        if (ring.HasBegun() && ring.HasWaited())
+        {
+            if (eyesInBegun > 0)
+                return;
+            EndBegun(true);
+        }
+        CallBegin();
+    }
+    void SubmitEye(int)
+    {
+        BeginForGame();
+        ++eyesSinceWaitBegin;
+        if (ring.HasBegun())
+            ++eyesInBegun;
+    }
+    void EndForGame()
+    {
+        if (!ring.HasBegun())
+        {
+            if (!ring.HasWaited())
+                return;
+            BeginForGame();
+            if (!ring.HasBegun())
+                return;
+        }
+        EndBegun(false);
+    }
+};
+
 int main()
 {
     // ---- Basic ordering ------------------------------------------------------
@@ -268,6 +352,90 @@ int main()
         ring.BeginStale();
         Check(seen.count == 2 && seen.last == RingViolation::BeginWithoutWait, "assert hook reports violations");
         Check(std::string(l4d2vr_openxr::Name(RingViolation::DoubleWait)) == "double xrWaitFrame", "violation names");
+    }
+
+    // ---- 2.0.11 policy (S04): the wait side begins its frame early ----------
+    {
+        // Queued mode: the pose waiter waits frame k, begins it at once and
+        // waits k+1; the render thread's image for k (drawn from pose k)
+        // arrives during that wait and ends frame k itself.
+        DriverV2 d;
+        Check(d.WaitGetPoses(), "v2: first wait");
+        d.SubmitEye(0);   // the game is rendering: its first frame ends normally
+        d.SubmitEye(1);
+        d.EndForGame();
+        Check(d.WaitGetPoses(), "v2: second wait");
+        for (int frame = 0; frame < 60; ++frame)
+        {
+            const int64_t poseDisplay = d.ring.Waited().displayTime;
+            // The waiter loops: begins its frame (left open) and starts the next wait.
+            Check(d.WaitBegin(), "v2: the waiter begins its frame and claims the next wait");
+            // While xrWaitFrame blocks, the game's image for that pose lands.
+            d.SubmitEye(0);
+            d.SubmitEye(1);
+            d.EndForGame();
+            Check(!d.rt.endedTimes.empty() && d.rt.endedTimes.back() == poseDisplay,
+                "v2: the image ends the frame of the pose it was drawn from (no extra period)");
+            Check(d.WaitComplete(), "v2: the next wait completes");
+        }
+        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.ring.Stats().violations == 0, "v2: queued flow keeps the frame rules");
+        Check(d.ring.Stats().staleEnds == 0, "v2: no stale ends when every image is in time");
+    }
+    {
+        // A late image (after the next wait completed): the open frame is
+        // closed with the last layers, the image goes into the newer frame.
+        DriverV2 d;
+        Check(d.WaitGetPoses(), "v2 late: first wait");
+        d.eyesSinceWaitBegin = 2;  // the game has been submitting
+        Check(d.WaitBegin() && d.WaitComplete(), "v2 late: frame 1 begun early, frame 2 waited");
+        d.SubmitEye(0);   // begin side: closes frame 1 stale, begins frame 2
+        d.SubmitEye(1);   // same game frame: stays in frame 2
+        d.EndForGame();
+        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.rt.ends == 2 && d.ring.Stats().staleEnds == 1,
+            "v2 late: the open frame ends stale, the late image ends the newer frame");
+        Check(d.WaitGetPoses(), "v2 late: the waiter goes on");
+    }
+    {
+        // Left eye submitted, then the next wait completes before the right
+        // eye: both eyes stay in one frame.
+        DriverV2 d;
+        Check(d.WaitGetPoses(), "v2 split: first wait");
+        d.eyesSinceWaitBegin = 2;  // the game has been submitting
+        Check(d.WaitBegin(), "v2 split: begin early");
+        d.SubmitEye(0);
+        Check(d.WaitComplete(), "v2 split: next wait done between the eyes");
+        d.SubmitEye(1);
+        d.EndForGame();
+        Check(d.rt.ends == 1 && d.ring.Stats().staleEnds == 0 && d.ring.HasWaited(), "v2 split: the pair ends frame 1, frame 2 stays waited");
+        // The waiter begins frame 2 for the next wait.
+        Check(d.WaitBegin() && d.WaitComplete(), "v2 split: the waiter continues");
+        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.ring.Stats().violations == 0, "v2 split: frame rules kept");
+    }
+    {
+        // Main-thread mode (no pose waiter): wait, submit, end - unchanged.
+        DriverV2 d;
+        for (int frame = 0; frame < 30; ++frame)
+        {
+            Check(d.WaitGetPoses(), "v2 main: wait");
+            d.SubmitEye(0);
+            d.SubmitEye(1);
+            d.EndForGame();
+        }
+        Check(d.rt.ends == 30 && d.rt.errors == 0 && d.rt.discards == 0 && d.ring.Stats().staleEnds == 0, "v2 main: one end per frame");
+    }
+    {
+        // Loading stall: only the pump waits; every waited frame is begun
+        // and ended (stale) once the next is waited.
+        DriverV2 d;
+        Check(d.WaitGetPoses(), "v2 pump: first wait");
+        for (int pumped = 0; pumped < 100; ++pumped)
+            Check(d.WaitGetPoses(), "v2 pump: wait");
+        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.rt.ends == 100, "v2 pump: whole frames keep flowing");
+        Check(!d.ring.HasBegun(), "v2 pump: without game submits no frame is left open across a wait");
+        d.SubmitEye(0);
+        d.SubmitEye(1);
+        d.EndForGame();
+        Check(d.rt.errors == 0 && d.rt.discards == 0 && d.ring.Stats().violations == 0, "v2 pump: the resumed game frame ends cleanly");
     }
 
     std::printf("vr_openxr_frame_ring: %d checks passed\n", checks);

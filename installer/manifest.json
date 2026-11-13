@@ -18,7 +18,7 @@
   "channels": {},
   "preserve": [],
   "installer": {
-    "version": "1.0.0",
+    "version": "1.1.4",
     "assets": {
       "windows": {"url": "https://github.com/ObeseCatLord/l4d2vr/releases/latest/download/l4d2vr-installer-windows.exe"},
       "linux": {"url": "https://github.com/ObeseCatLord/l4d2vr/releases/latest/download/l4d2vr-installer-linux"}

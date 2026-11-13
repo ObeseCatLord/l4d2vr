@@ -22,6 +22,7 @@
 #include <cstring>
 #include <limits>
 #include <unordered_set>
+#include <unordered_map>
 #include <mutex>
 #include <atomic>
 #include "game.h"
@@ -1041,8 +1042,10 @@ namespace
         return value == "1" || value == "true" || value == "yes" || value == "on";
     }
 
-    // Raw value of the first "key=value" line for configKey in VR/config.txt
-    // (comments stripped, value untrimmed). False when the file or key is missing.
+    // Raw value of the last "key=value" line for configKey in VR/config.txt
+    // (comments stripped, value untrimmed), as the config parser reads it (it
+    // used to return the first one, so with a duplicated line the options menu
+    // edited one line and start-up read the other). False when missing.
     bool ReadConfigValueFromFile(const char* configKey, std::string& outValue)
     {
         const std::filesystem::path gameRootPath = GetGameRootPath();
@@ -1054,6 +1057,7 @@ namespace
         if (!input.is_open())
             return false;
 
+        bool found = false;
         std::string line;
         while (std::getline(input, line))
         {
@@ -1075,15 +1079,17 @@ namespace
             if (equals == std::string::npos)
                 continue;
 
-            const std::string key = TrimAsciiWhitespace(line.substr(0, equals));
+            std::string key = TrimAsciiWhitespace(line.substr(0, equals));
+            if (key.size() >= 3 && key.compare(0, 3, "\xEF\xBB\xBF") == 0)
+                key = TrimAsciiWhitespace(key.substr(3));
             if (_stricmp(key.c_str(), configKey) != 0)
                 continue;
 
             outValue = line.substr(equals + 1);
-            return true;
+            found = true;
         }
 
-        return false;
+        return found;
     }
 
     bool ReadConfigBoolFromFile(const char* configKey, bool defaultValue)
@@ -1267,61 +1273,129 @@ namespace
         return value;
     }
 
-    bool AutoexecHasCrosshairOne(const std::filesystem::path& autoexecPath)
-    {
-        std::ifstream input(autoexecPath);
-        if (!input.is_open())
-            return false;
+    bool WriteAsciiFile(const std::filesystem::path& path, const std::string& text);
+    bool ReadAsciiFile(const std::filesystem::path& path, std::string& outText);
 
-        std::string line;
-        while (std::getline(input, line))
-        {
-            const size_t commentPos = line.find("//");
-            if (commentPos != std::string::npos)
-                line = line.substr(0, commentPos);
-
-            std::istringstream iss(line);
-            std::string cmd;
-            std::string value;
-            if (!(iss >> cmd >> value))
-                continue;
-
-            cmd = StripQuotes(cmd);
-            value = StripQuotes(value);
-            if (_stricmp(cmd.c_str(), "crosshair") == 0 && value == "1")
-                return true;
-        }
-
-        return false;
-    }
-
-    void EnsureNoHmdAutoexecCrosshair()
+    // -nohmd: put back the game settings a VR session changed (2.0.11, review
+    // B37). VR sessions keep the player's values in VR\vr_saved_game_cvars.txt
+    // and no longer save theirs into config.cfg; here they are written back
+    // into config.cfg. Configs from VR sessions before 2.0.11 carry crosshair 0
+    // with nothing saved: that is repaired once. autoexec.cfg is no longer
+    // touched (it used to get "crosshair 1" appended, even after the player's
+    // own crosshair line).
+    void RestoreVrChangedGameSettingsForNoHmd()
     {
         const std::filesystem::path gameRootPath = GetGameRootPath();
         if (gameRootPath.empty())
             return;
 
-        const std::filesystem::path autoexecPath = gameRootPath / L"left4dead2" / L"cfg" / L"autoexec.cfg";
+        const std::filesystem::path savedPath = gameRootPath / L"VR" / L"vr_saved_game_cvars.txt";
+        const std::filesystem::path markerPath = gameRootPath / L"VR" / L"desktop_crosshair_repaired.txt";
+        const std::filesystem::path configCfgPath = gameRootPath / L"left4dead2" / L"cfg" / L"config.cfg";
 
-        if (!std::filesystem::exists(autoexecPath))
+        std::vector<std::pair<std::string, std::string>> saved;
         {
-            std::error_code ec;
-            std::filesystem::create_directories(autoexecPath.parent_path(), ec);
-
-            std::ofstream createFile(autoexecPath, std::ios::trunc);
-            if (createFile.is_open())
-                createFile << "crosshair 1\n";
+            std::string text;
+            if (ReadAsciiFile(savedPath, text))
+            {
+                std::istringstream input(text);
+                std::string line;
+                while (std::getline(input, line))
+                {
+                    line = TrimAsciiWhitespace(line);
+                    if (line.empty() || line[0] == '#')
+                        continue;
+                    const size_t space = line.find(' ');
+                    if (space != std::string::npos && space > 0)
+                        saved.emplace_back(line.substr(0, space), TrimAsciiWhitespace(line.substr(space + 1)));
+                }
+            }
+        }
+        const bool repairCrosshair = saved.empty() && !FileExistsNoThrow(markerPath);
+        if (saved.empty() && !repairCrosshair)
             return;
+
+        std::string configText;
+        if (!ReadAsciiFile(configCfgPath, configText))
+            return;
+
+        std::vector<std::string> lines;
+        {
+            std::istringstream input(configText);
+            std::string line;
+            while (std::getline(input, line))
+            {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                lines.push_back(line);
+            }
+        }
+        auto lineCvar = [](const std::string& line) {
+            std::istringstream iss(line);
+            std::string name;
+            iss >> name;
+            return StripQuotes(name);
+        };
+        auto lineValue = [](const std::string& line) {
+            std::istringstream iss(line);
+            std::string name, value;
+            iss >> name >> value;
+            return StripQuotes(value);
+        };
+
+        bool changed = false;
+        if (repairCrosshair)
+        {
+            for (std::string& line : lines)
+            {
+                if (_stricmp(lineCvar(line).c_str(), "crosshair") == 0 && lineValue(line) == "0")
+                {
+                    line = "crosshair \"1\"";
+                    changed = true;
+                }
+            }
+        }
+        for (const auto& entry : saved)
+        {
+            const std::string replacement = entry.first + " \"" + entry.second + "\"";
+            bool found = false;
+            for (std::string& line : lines)
+            {
+                if (_stricmp(lineCvar(line).c_str(), entry.first.c_str()) == 0)
+                {
+                    found = true;
+                    if (line != replacement)
+                    {
+                        line = replacement;
+                        changed = true;
+                    }
+                }
+            }
+            if (!found)
+            {
+                lines.push_back(replacement);
+                changed = true;
+            }
         }
 
-        if (AutoexecHasCrosshairOne(autoexecPath))
-            return;
-
-        std::ofstream appendFile(autoexecPath, std::ios::app);
-        if (!appendFile.is_open())
-            return;
-
-        appendFile << "\ncrosshair 1\n";
+        if (changed)
+        {
+            std::string output;
+            for (const std::string& line : lines)
+                output += line + "\n";
+            if (!WriteAsciiFile(configCfgPath, output))
+            {
+                Game::logMsg("[VR] -nohmd: could not restore your game settings in config.cfg");
+                return;
+            }
+            Game::logMsg("[VR] -nohmd: restored game settings a VR session had changed (%zu saved values%s)",
+                saved.size(), repairCrosshair ? ", crosshair" : "");
+        }
+        std::error_code ec;
+        if (!saved.empty())
+            std::filesystem::remove(savedPath, ec);
+        if (repairCrosshair)
+            WriteAsciiFile(markerPath, "crosshair 1 was restored once after older VR sessions turned it off.\n");
     }
 
     bool TryGetCurrentDisplayResolution(int& width, int& height)
@@ -1586,6 +1660,9 @@ namespace
 
         const std::string line0 = "mat_setvideomode " + std::to_string(width) + " " + std::to_string(height) + " 0";
         const std::string line1 = "mat_setvideomode " + std::to_string(width) + " " + std::to_string(height) + " 1";
+        // Tagged so a later start without -bigfonts removes only these lines
+        // (review B48: it removed every mat_setvideomode line, the player's too).
+        static constexpr const char* kTag = " // l4d2vr -bigfonts";
 
         std::vector<std::string> lines;
         bool foundLine0 = false;
@@ -1600,7 +1677,11 @@ namespace
                 std::string line;
                 while (std::getline(input, line))
                 {
-                    const std::string trimmed = TrimAsciiWhitespace(line);
+                    std::string trimmed = line;
+                    const size_t comment = trimmed.find("//");
+                    if (comment != std::string::npos)
+                        trimmed.erase(comment);
+                    trimmed = TrimAsciiWhitespace(trimmed);
                     if (IsMatSetVideoModeLine(line))
                     {
                         ++matSetVideoModeLineCount;
@@ -1622,8 +1703,8 @@ namespace
         if (!lines.empty() && !TrimAsciiWhitespace(lines.back()).empty())
             lines.push_back(std::string());
 
-        lines.push_back(line0);
-        lines.push_back(line1);
+        lines.push_back(line0 + kTag);
+        lines.push_back(line1 + kTag);
 
         std::error_code ec;
         std::filesystem::create_directories(autoexecPath.parent_path(), ec);
@@ -1640,7 +1721,10 @@ namespace
         }
     }
 
-    void RemoveAutoexecMatSetVideoMode(const std::filesystem::path& autoexecPath)
+    // Removes the mat_setvideomode lines -bigfonts wrote: tagged ones always,
+    // untagged ones (written before 2.0.11) only when the mod's font fix was
+    // installed, i.e. when those lines are the mod's.
+    void RemoveAutoexecMatSetVideoMode(const std::filesystem::path& autoexecPath, bool includeUntaggedLegacyLines)
     {
         if (!FileExistsNoThrow(autoexecPath))
             return;
@@ -1656,7 +1740,8 @@ namespace
         bool changed = false;
         while (std::getline(input, line))
         {
-            if (IsMatSetVideoModeLine(line))
+            if (IsMatSetVideoModeLine(line) &&
+                (includeUntaggedLegacyLines || line.find("// l4d2vr") != std::string::npos))
             {
                 changed = true;
                 continue;
@@ -1689,9 +1774,10 @@ namespace
         const std::filesystem::path left4dead2Path = gameRootPath / L"left4dead2";
         const std::filesystem::path targetVpkPath = left4dead2Path / L"addons" / kUiFontFixFileName;
 
+        const bool modFontFixWasInstalled = FileExistsNoThrow(targetVpkPath);
         DeleteFileNoThrow(targetVpkPath);
         RemoveUiFontFixAddonListEntry(left4dead2Path / L"addonlist.txt");
-        RemoveAutoexecMatSetVideoMode(left4dead2Path / L"cfg" / L"autoexec.cfg");
+        RemoveAutoexecMatSetVideoMode(left4dead2Path / L"cfg" / L"autoexec.cfg", modFontFixWasInstalled);
     }
 
 
@@ -1934,10 +2020,30 @@ namespace
         return true;
     }
 
+    // Writes a temporary file next to the target and renames it over the
+    // target, so a crash, power loss or full disk never leaves a truncated
+    // config.txt (2.0.11, review S25). Falls back to a direct write when the
+    // rename is refused (a file another program holds open).
     bool WriteAsciiFile(const std::filesystem::path& path, const std::string& text)
     {
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
+
+        std::filesystem::path tempPath = path;
+        tempPath += L".l4d2vr-tmp";
+        {
+            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+            if (output.is_open())
+            {
+                output.write(text.data(), static_cast<std::streamsize>(text.size()));
+                output.flush();
+                const bool written = output.good();
+                output.close();
+                if (written && MoveFileExW(tempPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                    return true;
+            }
+        }
+        std::filesystem::remove(tempPath, ec);
 
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         if (!output.is_open())
@@ -2034,6 +2140,10 @@ namespace
         std::string line = rawLine;
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
+        // A config saved with a UTF-8 BOM: the first key is still a key (review
+        // B70; it used to look missing, so the sample default was appended and won).
+        if (line.size() >= 3 && line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+            line.erase(0, 3);
 
         line = TrimAsciiLeftWhitespace(line);
         if (line.empty())
@@ -2150,32 +2260,87 @@ namespace
         return false;
     }
 
-    bool RemoveConfigParametersNotInSample(std::string& text, const std::unordered_set<std::string>& sampleKeys)
+    // Keys no build reads any more (renamed or retired). Start-up removes only
+    // these from a player's config.txt; every other line is kept, including
+    // keys the shipped sample does not list (2.0.11, review B03: start-up used
+    // to delete every key that was not in the sample or a hand-kept list, so
+    // settings saved by the config panel were gone after a restart).
+    const std::unordered_set<std::string>& RetiredConfigParameterKeys()
+    {
+        static const std::unordered_set<std::string> keys = {
+            // Renamed (MigrateRenamedConfigParameters carries tuned values over).
+            "ScopeFov", "ScopeMagnification", "ScopeOverlayWidthMeters",
+            "ScopeOverlayXOffset", "ScopeOverlayYOffset", "ScopeOverlayZOffset",
+            // Read by nothing (review B35).
+            "AimLineTimingAligned", "AimLineMinHitDistance", "SingleHandPushAngleTolerance",
+            "ScopeAimSensitivityScale", "MouseModeScopeSensitivityScale", "MouseModeScopeMagnificationKey",
+            "AutoFastMeleeShoveEcho", "AutoFastMeleePushWaitTicks", "AutoFastMeleePostWaitTicks",
+            "AutoFlashlightSampleInterval", "AutoFlashlightForwardNearDistance", "AutoFlashlightForwardFarDistance",
+            "AutoFlashlightLateralOffset", "AutoFlashlightVerticalOffset", "AutoFlashlightSmoothingTime",
+            "AutoFlashlightMinOnTime", "AutoFlashlightMinOffTime", "AutoFlashlightManualOverrideSeconds",
+            "AutoFlashlightDebugLogHz", "AutoFlashlightHighConfidenceSamples", "AutoFlashlightLowConfidenceSamples",
+        };
+        return keys;
+    }
+
+    bool RemoveConfigParameters(std::string& text, const std::unordered_set<std::string>& keys, std::vector<std::string>& removed)
     {
         std::istringstream input(text);
         std::ostringstream output;
         std::string line;
         bool changed = false;
-        bool wroteAnyLine = false;
 
         while (std::getline(input, line))
         {
             std::string key;
-            if (TryExtractConfigParameterKey(line, key) && sampleKeys.find(key) == sampleKeys.end())
+            if (TryExtractConfigParameterKey(line, key) && keys.find(key) != keys.end())
             {
+                removed.push_back(key);
                 changed = true;
                 continue;
             }
-
             output << line << '\n';
-            wroteAnyLine = true;
         }
 
         if (changed)
-        {
-            text = wroteAnyLine ? output.str() : std::string();
-        }
+            text = output.str();
+        return changed;
+    }
 
+    // Only the last line of a key counts (as the parser and the options menu
+    // read it): earlier copies are removed so nothing edits or reads a dead
+    // line (review B66: the sample shipped VRNearClip twice).
+    bool RemoveDuplicateConfigParameters(std::string& text, std::vector<std::string>& removed)
+    {
+        std::vector<std::string> lines;
+        {
+            std::istringstream input(text);
+            std::string line;
+            while (std::getline(input, line))
+                lines.push_back(line);
+        }
+        std::unordered_map<std::string, size_t> lastLine;
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            std::string key;
+            if (TryExtractConfigParameterKey(lines[i], key))
+                lastLine[key] = i;
+        }
+        std::ostringstream output;
+        bool changed = false;
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            std::string key;
+            if (TryExtractConfigParameterKey(lines[i], key) && lastLine[key] != i)
+            {
+                removed.push_back(key);
+                changed = true;
+                continue;
+            }
+            output << lines[i] << '\n';
+        }
+        if (changed)
+            text = output.str();
         return changed;
     }
 
@@ -2216,6 +2381,90 @@ namespace
         if (changed)
             text = output.str();
 
+        return changed;
+    }
+
+    bool TryGetConfigParameterValue(const std::string& text, const std::string& targetKey, std::string& outValue)
+    {
+        std::istringstream input(text);
+        std::string line;
+        bool found = false;
+        while (std::getline(input, line))
+        {
+            std::string key;
+            std::string value;
+            if (TryExtractConfigParameterAssignment(line, key, value, false) && key == targetKey)
+            {
+                outValue = value;  // the last assignment wins, as when the config is read
+                found = true;
+            }
+        }
+        return found;
+    }
+
+    // Renamed scope keys: a tuned old value moves to the new name (the old
+    // names were documented in config.txt but read by nothing since the
+    // per-weapon scope rework, review B35). Old keys are removed afterwards
+    // by RetiredConfigParameterKeys.
+    bool MigrateRenamedConfigParameters(std::string& text)
+    {
+        bool changed = false;
+        std::string value;
+        auto present = [&](const char* key) { std::string ignored; return TryGetConfigParameterValue(text, key, ignored); };
+        if (!present("ScopeDefaultFov") && TryGetConfigParameterValue(text, "ScopeFov", value) && !value.empty())
+            changed |= SetConfigParameterValue(text, "ScopeDefaultFov", value);
+        if (!present("ScopeDefaultOverlayWidthMeters") && TryGetConfigParameterValue(text, "ScopeOverlayWidthMeters", value) && !value.empty())
+            changed |= SetConfigParameterValue(text, "ScopeDefaultOverlayWidthMeters", value);
+        if (!present("ScopeMagnificationFovRange") && TryGetConfigParameterValue(text, "ScopeMagnification", value))
+        {
+            // The old list held the per-step FOVs ("20,15,5,3"): the range is its extent.
+            std::vector<double> fovs;
+            if (l4d2vr_config_migration::ParseNumbers(value, fovs) && fovs.size() >= 2)
+            {
+                const auto [lo, hi] = std::minmax_element(fovs.begin(), fovs.end());
+                std::ostringstream range;
+                range << *lo << ',' << *hi;
+                changed |= SetConfigParameterValue(text, "ScopeMagnificationFovRange", range.str());
+            }
+        }
+        if (!present("ScopeDefaultOverlayOffset"))
+        {
+            const char* axes[3] = { "ScopeOverlayXOffset", "ScopeOverlayYOffset", "ScopeOverlayZOffset" };
+            const char* defaults[3] = { "0.02", "0.04", "-0.06" };
+            std::string parts[3];
+            bool any = false;
+            for (int i = 0; i < 3; ++i)
+            {
+                std::vector<double> number;
+                if (TryGetConfigParameterValue(text, axes[i], value) && l4d2vr_config_migration::ParseNumbers(value, number) && number.size() == 1)
+                {
+                    parts[i] = l4d2vr_config_migration::Trim(value);
+                    any = true;
+                }
+                else
+                {
+                    parts[i] = defaults[i];
+                }
+            }
+            if (any)
+                changed |= SetConfigParameterValue(text, "ScopeDefaultOverlayOffset", parts[0] + "," + parts[1] + "," + parts[2]);
+        }
+        return changed;
+    }
+
+    // Start-up cleanup of an existing config.txt: renamed keys, retired keys,
+    // duplicate lines. Each removed line is reported for the log.
+    bool CleanupExistingConfigText(std::string& text, std::vector<std::string>& removed)
+    {
+        bool changed = false;
+        if (text.size() >= 3 && text.compare(0, 3, "\xEF\xBB\xBF") == 0)
+        {
+            text.erase(0, 3);
+            changed = true;
+        }
+        changed |= MigrateRenamedConfigParameters(text);
+        changed |= RemoveConfigParameters(text, RetiredConfigParameterKeys(), removed);
+        changed |= RemoveDuplicateConfigParameters(text, removed);
         return changed;
     }
 
@@ -3045,24 +3294,6 @@ namespace
         const char* onlyIfValue = nullptr;
     };
 
-    bool TryGetConfigParameterValue(const std::string& text, const std::string& targetKey, std::string& outValue)
-    {
-        std::istringstream input(text);
-        std::string line;
-        bool found = false;
-        while (std::getline(input, line))
-        {
-            std::string key;
-            std::string value;
-            if (TryExtractConfigParameterAssignment(line, key, value, false) && key == targetKey)
-            {
-                outValue = value;  // the last assignment wins, as when the config is read
-                found = true;
-            }
-        }
-        return found;
-    }
-
     constexpr OneShotConfigMigration kOneShotConfigMigrations[] =
     {
         { "2026-05-23_auto_mat_queue_mode_default_false", "AutoMatQueueMode", "false" },
@@ -3291,17 +3522,27 @@ namespace
                 }
             }
             if (SetConfigParameterValue(configText, migration.key, migration.value))
+            {
                 configChanged = true;
+                Game::logMsg("[VR][Config] migration %s: %s=%s", migration.id, migration.key, migration.value);
+            }
             appliedIds.insert(migration.id);
         }
 
         if (!anyPendingMigration)
             return;
 
-        if (configChanged && !WriteAsciiFile(configPath, configText))
+        // The state first (review S25): if it cannot be written, the migrations
+        // would run again at every start and undo the player's changes, so then
+        // none is applied.
+        if (!WriteAppliedConfigMigrationIds(statePath, appliedIds))
+        {
+            Game::logMsg("[VR][Config] could not write VR\\%ls; config migrations skipped this start", kConfigMigrationsStateFile);
             return;
+        }
 
-        WriteAppliedConfigMigrationIds(statePath, appliedIds);
+        if (configChanged && !WriteAsciiFile(configPath, configText))
+            Game::logMsg("[VR][Config] could not write VR\\config.txt; its migrations were not applied");
     }
 
     void EnsureVrConfigTxtFromSample()
@@ -3341,141 +3582,12 @@ namespace
             return;
 
         bool configChanged = false;
-        std::unordered_set<std::string> sampleKeys = ExtractConfigParameterKeys(sampleText, true);
-        // An older workshop sample must not remove supported interaction
-        // settings added by this DLL when the game starts.
-        sampleKeys.insert("GripReleaseDropEnabled");
-        sampleKeys.insert("VrHandsRightFreePoseOffsetMeters");
-        sampleKeys.insert("VrHandsRightFreePoseRotationOffsetDeg");
-        sampleKeys.insert("MagazineReleaseButtonRequired");
-        sampleKeys.insert("BodyGripInventoryEnabled");
-        sampleKeys.insert("ManualPumpEnabled");
-        sampleKeys.insert("ManualPumpTravelMeters");
-        sampleKeys.insert("ManualPumpCockFraction");
-        sampleKeys.insert("ManualPumpChamberFraction");
-        sampleKeys.insert("ManualPumpGrabPaddingMeters");
-        sampleKeys.insert("ManualPumpForegripRacks");
-        sampleKeys.insert("ManualPumpEveryShot");
-        sampleKeys.insert("DualPistolsIndependentHandsEnabled");
-        sampleKeys.insert("DualPistolsNativeReloadFallbackEnabled");
-        sampleKeys.insert("DualPistolsPhysicalReloadEnabled");
-        sampleKeys.insert("DualPistolsStackDistanceMeters");
-        sampleKeys.insert("DualPistolsStackMaxAngleDeg");
-        sampleKeys.insert("ScopePhysicalLensEnabled");
-        sampleKeys.insert("ScopeBaseMagnification");
-        sampleKeys.insert("HolsterPavlovLayoutEnabled");
-        sampleKeys.insert("HolsterItemsVisible");
-        sampleKeys.insert("WristHudStyle");
-        sampleKeys.insert("WristHudNativeHideOnFloatingHud");
-        sampleKeys.insert("LeftWristHudNativeWidthMeters");
-        sampleKeys.insert("RightAmmoHudNativeWidthMeters");
-        sampleKeys.insert("HolsterInstantDraw");
-        sampleKeys.insert("AmbidextrousItemHands");
-        sampleKeys.insert("ItemHandLeftArmModel");
-        sampleKeys.insert("ChestSlingEnabled");
-        sampleKeys.insert("HolsterEmptyHands");
-        sampleKeys.insert("OpusVoiceEnabled");
-        sampleKeys.insert("OpusVoiceMode");
-        sampleKeys.insert("OpusVoiceVadSensitivity");
-        sampleKeys.insert("OpusVoiceBitrate");
-        sampleKeys.insert("OpusVoiceFec");
-        sampleKeys.insert("OpusVoiceExpectedLossPercent");
-        sampleKeys.insert("OpusVoiceMicGain");
-        sampleKeys.insert("OpusVoiceMicAgc");
-        sampleKeys.insert("OpusVoiceVolume");
-        sampleKeys.insert("OpusVoiceAgc");
-        sampleKeys.insert("OpusVoiceAgcMaxGain");
-        sampleKeys.insert("OpusVoicePositional");
-        sampleKeys.insert("OpusVoiceRadioVolume");
-        sampleKeys.insert("OpusVoiceSpatialDistanceMeters");
-        sampleKeys.insert("OpusVoiceLoopback");
-        sampleKeys.insert("OpusVoicePushToTalkKey");
-        sampleKeys.insert("ChestSlingDropDistanceMeters");
-        sampleKeys.insert("ChestSlingGrabRadiusMeters");
-        sampleKeys.insert("VrHandsTwoHandedAimShortGunsRearHandOnly");
-        sampleKeys.insert("MenuLaserPointerEnabled");
-        sampleKeys.insert("HolsterYawFollowSpeed");
-        sampleKeys.insert("HolsterHeightScale");
-        sampleKeys.insert("HolsterHoverHapticAmplitude");
-        sampleKeys.insert("HolsterGrabHapticAmplitude");
-        sampleKeys.insert("GrabHoverHapticEnabled");
-        sampleKeys.insert("GrabHoverHapticAmplitude");
-        sampleKeys.insert("GrabHoverHapticDurationMs");
-        sampleKeys.insert("MagazineInteractionAutoEjectWhenEmpty");
-        sampleKeys.insert("MagazineEmptyGlowEnabled");
-        sampleKeys.insert("ManualReloadMagazineHandRotationOffsetDeg");
-        sampleKeys.insert("MagazineDropEnabled");
-        sampleKeys.insert("MagazineDropLifetimeSeconds");
-        sampleKeys.insert("PhysicalReloadOnUnsupportedServers");
-        sampleKeys.insert("CrosshairEnabled");
-        sampleKeys.insert("CrosshairStyle");
-        sampleKeys.insert("CrosshairArmPixels");
-        sampleKeys.insert("CrosshairThicknessPixels");
-        sampleKeys.insert("CrosshairMinGapPixels");
-        sampleKeys.insert("CrosshairColorRGB");
-        sampleKeys.insert("CrosshairAlpha");
-        sampleKeys.insert("SightAutoAlignEnabled");
-        sampleKeys.insert("RecoilEnabled");
-        sampleKeys.insert("RecoilScale");
-        sampleKeys.insert("RecoilStanceEnabled");
-        sampleKeys.insert("RecoilStanceCrouchScale");
-        sampleKeys.insert("RecoilStanceAirScale");
-        sampleKeys.insert("RecoilStanceMovementScale");
-        sampleKeys.insert("SpreadDisabled");
-        sampleKeys.insert("ShotgunPavlovPattern");
-        sampleKeys.insert("RecoilDebugLog");
-        sampleKeys.insert("IronSightAimEnabled");
-        sampleKeys.insert("GunRigidInHand");
-        sampleKeys.insert("GunHandOnController");
-        sampleKeys.insert("VanillaLaserPlacement");
-        sampleKeys.insert("MeleeInertiaEnabled");
-        sampleKeys.insert("MeleeSwingMinTipSpeed");
-        sampleKeys.insert("MeleeSwingMinHandSpeedLong");
-        sampleKeys.insert("MeleeSwingMinHandSpeedShort");
-        sampleKeys.insert("MeleeSwingMinTipTravel");
-        sampleKeys.insert("MeleeSwingMinHandTravel");
-        sampleKeys.insert("MeleeSwingStartHaptics");
-        sampleKeys.insert("PhysicalShoveEnabled");
-        sampleKeys.insert("GunBashSweepEnabled");
-        sampleKeys.insert("ConsumableGesturesEnabled");
-        sampleKeys.insert("LoadingFramePumpEnabled");
-        sampleKeys.insert("LoadingFramePumpStallMs");
-        sampleKeys.insert("IntermissionHudEnabled");
-        sampleKeys.insert("BackgroundAudio");
-        sampleKeys.insert("VrRuntime");
-        sampleKeys.insert("ScopePictureInPictureLens");
-        sampleKeys.insert("ScopeParallaxStrength");
-        sampleKeys.insert("ScopeEyeboxDeg");
-        sampleKeys.insert("ScopeVignetteExponent");
-        sampleKeys.insert("DualPistolsAkimboOnAnyServer");
-        sampleKeys.insert("VrHandsTwoHandedStabilizerEnabled");
-        sampleKeys.insert("HandPosesEnabled");
-        sampleKeys.insert("HandPoseBlendSeconds");
-        sampleKeys.insert("HandPoseTriggerFingerScale");
-        sampleKeys.insert("HandPoseDebugLog");
-        sampleKeys.insert("VrHandsTwoHandedStabilizerMinCutoffHz");
-        sampleKeys.insert("VrHandsTwoHandedStabilizerBeta");
-        sampleKeys.insert("HolsterReleaseDrop");
-        sampleKeys.insert("GripToggle");
-        sampleKeys.insert("ReloadPavlovTuning");
-        sampleKeys.insert("MagazineSlapEnabled");
-        sampleKeys.insert("MagazineInteractionTriggerInteractions");
-        sampleKeys.insert("StickJumpCrouch");
-        sampleKeys.insert("StickCrouchToggle");
-        sampleKeys.insert("MotionOnlyMeleeAndShove");
-        sampleKeys.insert("MeleeGripReachMeters");
-        sampleKeys.insert("ConsumableGiveEnabled");
-        sampleKeys.insert("ManualThrowPinRequired");
-        sampleKeys.insert("GrenadeThrowMode");
-        sampleKeys.insert("ManualThrowHandVelocityScale");
-        sampleKeys.insert("ThrowableHoldAngleOffsetDeg");
-        sampleKeys.insert("ManualThrowVelocityWindowMs");
-        sampleKeys.insert("GrenadeThrowAssist");
-        sampleKeys.insert("GrenadeThrowAssistStrength");
-        sampleKeys.insert("VrOptionsMenuHoldSeconds");
-        for (const auto key : l4d2vr_calibration::kConfigKeys)
-            sampleKeys.insert(std::string(key));
-        configChanged |= RemoveConfigParametersNotInSample(configText, sampleKeys);
+        {
+            std::vector<std::string> removedKeys;
+            configChanged |= CleanupExistingConfigText(configText, removedKeys);
+            for (const std::string& key : removedKeys)
+                Game::logMsg("[VR][Config] removed retired or duplicate config.txt line: %s", key.c_str());
+        }
 
         std::istringstream sampleStream(sampleText);
         std::string line;
@@ -3499,8 +3611,8 @@ namespace
                 configChanged = true;
         }
 
-        if (configChanged)
-            WriteAsciiFile(configPath, configText);
+        if (configChanged && !WriteAsciiFile(configPath, configText))
+            Game::logMsg("[VR][Config] could not update VR\\config.txt");
     }
 
     void EnsureUiFontFixVpkAndConfig()
@@ -3735,15 +3847,25 @@ static void LogStartupBanner(HMODULE hModule)
     using WineGetVersion = const char* (__cdecl*)();
     const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     const auto wineVersion = ntdll ? reinterpret_cast<WineGetVersion>(GetProcAddress(ntdll, "wine_get_version")) : nullptr;
-    Game::logMsg("[VR] L4D2VR %s (OpenXR build) starting: d3d9.dll %ls, game folder %ls, %s%s; renderer: the mod's DXVK "
-        "(Direct3D 9 -> Vulkan) inside d3d9.dll, VR through OpenXR (XR_KHR_vulkan_enable) with %ls (%s)",
-        version.c_str(), modulePath, gameRootPath.c_str(), wineVersion ? "Wine/Proton " : "Windows",
-        wineVersion ? wineVersion() : "", loader.c_str(), loaderPresent ? "present" : "MISSING");
+    // Paths as UTF-8 with %s: %ls stops at the first character the "C" locale
+    // cannot convert, which cut the banner for non-ASCII install paths (B49).
+    Game::logMsg("[VR] L4D2VR %s (OpenXR build) starting: d3d9.dll %s, game folder %s, %s%s; renderer: the mod's DXVK "
+        "(Direct3D 9 -> Vulkan) inside d3d9.dll, VR through OpenXR (XR_KHR_vulkan_enable) with %s (%s)",
+        version.c_str(), WideToUtf8(modulePath).c_str(), WideToUtf8(gameRootPath.wstring()).c_str(), wineVersion ? "Wine/Proton " : "Windows",
+        wineVersion ? wineVersion() : "", WideToUtf8(loader.wstring()).c_str(), loaderPresent ? "present" : "MISSING");
 }
 
 DWORD WINAPI InitL4D2VR(HMODULE hModule)
 {
     timeBeginPeriod(1);
+    // Never unloaded (2.0.11, review S26): MinHook detours, the tier0 Msg IAT
+    // hook and the detached worker threads point into this module, and the
+    // engine may release d3d9.dll before the process ends.
+    {
+        HMODULE pinned = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(&InitL4D2VR), &pinned);
+    }
     LogStartupBanner(hModule);
     StartForcedIndexBufferPolicy();
 
@@ -3765,13 +3887,18 @@ DWORD WINAPI InitL4D2VR(HMODULE hModule)
     }
     LocalFree(szArglist);
 
-    MigrateExistingConfigOnce();
-    EnsureVrConfigTxtFromSample();
+    // -nohmd (desktop, no VR): no VR config migrations or sample fill-in
+    // (review B48). The font fix only removes what the mod installed.
     EnsureUiFontFixVpkAndConfig();
-    L4D2VR_SelectedVrRuntime();
+    if (!IsNoHmdLaunchArgPresent())
+    {
+        MigrateExistingConfigOnce();
+        EnsureVrConfigTxtFromSample();
+        L4D2VR_SelectedVrRuntime();
+    }
     if (IsNoHmdLaunchArgPresent())
     {
-        EnsureNoHmdAutoexecCrosshair();
+        RestoreVrChangedGameSettingsForNoHmd();
 		// The normal Game constructor immediately initializes OpenVR, so -nohmd
 		// intentionally skips it.  Keep a passive, material-only Neko probe alive
 		// for desktop/VR output comparison without changing desktop rendering.

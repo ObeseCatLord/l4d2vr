@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from . import DEFAULT_REPO, __version__, install, launchopts, openxr, sources, steam
-from .fsutil import InstallerError, sha256_file
+from .fsutil import InstallerError, NetworkError, sha256_file
 
 Log = Callable[[str], None]
 
@@ -24,11 +24,18 @@ def _print(message: str) -> None:
 def detect_game_dir(explicit: Optional[str] = None, remembered: Optional[str] = None) -> Optional[Path]:
     """Choose the game folder: explicit argument, remembered setting, then
     the first Windows-depot install found in the Steam libraries."""
-    for value in (explicit, remembered):
-        if value:
-            return Path(value).expanduser()
+    if explicit:
+        return Path(explicit).expanduser()
+    # A remembered folder can go stale (game moved to another library, SD card
+    # mounted elsewhere): then detect again instead of failing.
+    if remembered:
+        path = Path(remembered).expanduser()
+        if path.is_dir() and steam.game_depot(path) != "missing":
+            return path
     installs = steam.find_game_installs()
-    return installs[0].path if installs else None
+    if installs:
+        return installs[0].path
+    return Path(remembered).expanduser() if remembered else None
 
 
 def require_game_dir(explicit: Optional[str] = None, remembered: Optional[str] = None) -> Path:
@@ -53,6 +60,7 @@ class SourceOptions:
     channel: str = "stable"
     manifest_url: Optional[str] = None
     api_base: str = sources.GITHUB_API
+    allow_unverified: bool = False  # accept a download with no published SHA-256
 
     def make(self):
         return sources.make_source(self.kind, self.repo, self.channel, self.manifest_url, self.api_base)
@@ -113,8 +121,12 @@ def _metadata(release: Optional[sources.Release], options: Optional[SourceOption
     }
 
 
-def download_asset(asset: sources.Asset, log: Log, progress=None) -> Path:
+def download_asset(asset: sources.Asset, log: Log, progress=None, allow_unverified: bool = False) -> Path:
     if not asset.sha256:
+        if not allow_unverified:
+            raise InstallerError(
+                f"The release publishes no SHA-256 for {asset.name}, so the download cannot be verified. "
+                "Download it yourself and use --zip, or pass --allow-unverified to accept it anyway.")
         log(f"Warning: the release publishes no SHA-256 for {asset.name}; only the size can be checked.")
     log(f"Downloading {asset.describe()} ...")
     path = sources.download(asset, progress=progress)
@@ -146,24 +158,38 @@ def install_client(game_dir: Path, *, zip_path: Optional[Path] = None, options: 
             if release.client is None:
                 raise InstallerError(f"The latest release ({release.tag}) has no {sources.CLIENT_ASSET} asset.")
             state = target.read_state() or {}
-            same_archive = (not release.client.sha256
-                            or state.get("archive_sha256") == release.client.sha256.lower())
+            # Only a known archive hash proves the installed build is this release
+            # (a manifest without sha256 reuses one tag for every build).
+            same_archive = bool(release.client.sha256) and \
+                state.get("archive_sha256") == release.client.sha256.lower()
             if not force and state.get("tag") == release.tag and same_archive:
-                log(f"Already up to date ({release.tag}). Use --force to reinstall.")
-                return install.Plan(target, None)
+                current = install.status(target)
+                current.modified = [rel for rel in current.modified if not install.is_user_tunable(rel)]
+                if not current.missing and not current.modified:
+                    log(f"Already up to date ({release.tag}). Use --force (or Repair in the window) to reinstall.")
+                    return install.Plan(target, None)
+                log(f"{release.tag} is installed but {len(current.missing)} file(s) are missing and "
+                    f"{len(current.modified)} changed; repairing them.")
             for pattern in release.preserve:
                 if pattern not in target.preserve:
                     target.preserve.append(pattern)
-            zip_path = download_asset(release.client, log, progress)
+            zip_path = download_asset(release.client, log, progress, options.allow_unverified)
             log(f"Installing {release.tag} into {game_dir}")
-        except InstallerError as error:
+        except NetworkError as error:
             # Offline: the full release archive ships l4d2vr.zip next to the installer.
             bundled = bundled_client_zip()
             if bundled is None:
                 raise
+            installed = (target.read_state() or {}).get("version")
+            bundled_version = install.open_package(bundled, target).mod_version
+            if installed and (not bundled_version or sources.is_newer(installed, bundled_version)):
+                raise InstallerError(
+                    f"{error} The installed {installed} is newer than the bundled {bundled.name} "
+                    f"({bundled_version or 'unknown version'}), so nothing was changed.") from error
             release = None
             zip_path = bundled
-            log(f"Could not get the latest release ({error}); installing the bundled {bundled.name} instead.")
+            log(f"Could not get the latest release ({error}); installing the bundled {bundled.name} "
+                f"({bundled_version or 'unknown version'}) instead.")
             log(f"Installing {bundled.name} into {game_dir}")
     else:
         log(f"Installing {Path(zip_path).name} into {game_dir}")
@@ -203,7 +229,7 @@ def install_server(server_dir: Path, *, platform: Optional[str] = None, zip_path
         asset = release.servers.get(platform)
         if asset is None:
             raise InstallerError(f"The latest release ({release.tag}) has no {platform} server plugin.")
-        zip_path = download_asset(asset, log)
+        zip_path = download_asset(asset, log, allow_unverified=options.allow_unverified)
     plan = install.install_package(target, Path(zip_path), _metadata(release, options, Path(zip_path).name),
                                    dry_run=dry_run, log=log)
     if not dry_run:

@@ -34,7 +34,8 @@ struct Hook
 	{
 		if (!targetFunc)
 		{
-			Game::errorMsg("Failed to create hook: targetFunc is NULL (offset/signature scan failed?)");
+			// The missing signature was already logged and summarised once (B39).
+			Game::logMsg("[VR][Hooks] hook %s skipped: its signature was not found", typeid(T).name());
 			return 1;
 		}
 

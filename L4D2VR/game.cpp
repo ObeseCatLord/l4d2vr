@@ -1272,6 +1272,20 @@ Game::Game()
         s_DataCacheMsgIatSlot);
 
     m_Offsets = new Offsets();
+    // A game update moved required code: one summary, and desktop mode when
+    // allowed, instead of a half-hooked VR game (review B39).
+    if (!OffsetRequiredFailures().empty())
+    {
+        std::string summary = std::to_string(OffsetRequiredFailures().size()) +
+            " required game signature(s) not found (a game update?):";
+        for (const std::string& failure : OffsetRequiredFailures())
+            summary += " " + failure;
+        Game::logMsg("[VR][Offsets] %s", summary.c_str());
+        if (L4D2VR_DesktopFallbackAllowed())
+            L4D2VR_EnterDesktopFallback(summary.c_str());
+        else
+            Game::errorMsg((summary + "\nVR features that need them stay off.").c_str());
+    }
     m_VR = new VR(this);
     L4D2VRConfigOverlay_StartWorker();
 

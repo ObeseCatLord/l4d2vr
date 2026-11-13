@@ -27,6 +27,7 @@ namespace l4d2vr_item_hand
         SlingTake,        // the free hand took the stowed item (chest sling, its holster) back
         SelfTest,         // -l4d2vrselftest itemhand= / heldhand= (puts the item where a photo needs it)
         Reset,            // death, spectating, VR off, mouse mode, option off
+        DrawCancel,       // 2.0.11: a free-hand holster draw that never drew: the item returns to its hand
     };
 
     inline const char* ReasonName(Reason reason)
@@ -37,6 +38,7 @@ namespace l4d2vr_item_hand
         case Reason::SlingTake: return "sling take";
         case Reason::SelfTest: return "self-test";
         case Reason::Reset: return "reset";
+        case Reason::DrawCancel: return "draw cancelled";
         default: return "none";
         }
     }
@@ -45,13 +47,69 @@ namespace l4d2vr_item_hand
     inline bool ChangesHands(Reason reason)
     {
         return reason == Reason::HolsterDraw || reason == Reason::SlingTake ||
-            reason == Reason::SelfTest || reason == Reason::Reset;
+            reason == Reason::SelfTest || reason == Reason::Reset || reason == Reason::DrawCancel;
     }
 
     // The new item hand already squeezes what it took (the slung or stowed
     // gun): its grip adopts the item instead of reading the squeeze as a
     // fresh press. A holster draw starts with a fresh press next frame.
-    inline bool AdoptsGrip(Reason reason) { return reason == Reason::SlingTake || reason == Reason::SelfTest; }
+    // A cancelled draw gives the item back to the hand that held it, in the
+    // grip state it had.
+    inline bool AdoptsGrip(Reason reason)
+    {
+        return reason == Reason::SlingTake || reason == Reason::SelfTest || reason == Reason::DrawCancel;
+    }
+
+    // 2.0.11: a free-hand holster draw moves the item hand first and draws one
+    // or two frames later through the weapon-hand holster logic. If that draw
+    // never happens (the hand left the holster, the draw was refused), the
+    // hands would stay swapped with the old item in the other hand: a held
+    // item switching hands. DrawWatch notices and asks for the change to be
+    // undone. Any draw (the draw serial moves) or another active item ends
+    // the watch.
+    class DrawWatch
+    {
+    public:
+        static constexpr std::uint64_t kTimeoutMs = 300u;
+        void Start(std::uint32_t drawSerial, std::uintptr_t activeItem, bool previousPhysicalLeft,
+            bool previousHeld, std::uint64_t nowMs)
+        {
+            m_Active = true;
+            m_Serial = drawSerial;
+            m_Item = activeItem;
+            m_PreviousLeft = previousPhysicalLeft;
+            m_PreviousHeld = previousHeld;
+            m_StartMs = nowMs;
+        }
+        void Cancel() { m_Active = false; }
+        bool Active() const { return m_Active; }
+        bool PreviousPhysicalLeft() const { return m_PreviousLeft; }
+        bool PreviousHeld() const { return m_PreviousHeld; }
+        // Returns true once when the hand change has to be undone.
+        bool Update(std::uint32_t drawSerial, std::uintptr_t activeItem, bool switchPending, std::uint64_t nowMs,
+            std::uint64_t timeoutMs = kTimeoutMs)
+        {
+            if (!m_Active)
+                return false;
+            if (drawSerial != m_Serial || activeItem != m_Item)
+            {
+                m_Active = false;
+                return false;
+            }
+            if (switchPending || nowMs < m_StartMs || nowMs - m_StartMs < timeoutMs)
+                return false;
+            m_Active = false;
+            return true;
+        }
+
+    private:
+        bool m_Active = false;
+        bool m_PreviousLeft = false;
+        bool m_PreviousHeld = false;
+        std::uint32_t m_Serial = 0u;
+        std::uintptr_t m_Item = 0u;
+        std::uint64_t m_StartMs = 0u;
+    };
 
     // Physical hand that holds the active item.
     inline bool ItemHandIsPhysicalLeft(bool leftHanded, bool swapped) { return leftHanded != swapped; }

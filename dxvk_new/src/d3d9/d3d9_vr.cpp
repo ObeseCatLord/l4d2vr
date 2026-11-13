@@ -11,6 +11,8 @@
 #include "L4D2VR/vr.h"
 
 #include <cstring>
+#include <utility>
+#include <vector>
 
 namespace dxvk {
 
@@ -112,13 +114,20 @@ namespace dxvk {
       return D3D_OK;
     }
 
+    // L4D2VR 2.0.11: the guards are kept per thread (a stack, LIFO): nested
+    // LockDevice/UnlockDevice pairs on one thread keep the outer lock, and two
+    // threads handing the lock over never release each other's guard (one
+    // shared member did both).
     HRESULT STDMETHODCALLTYPE LockDevice() {
-      m_lock = m_device->LockDeviceExclusive();
+      D3D9DeviceLock lock = m_device->LockDeviceExclusive();
+      ThreadLocks().push_back(std::move(lock));
       return D3D_OK;
     }
 
     HRESULT STDMETHODCALLTYPE UnlockDevice() {
-      m_lock = D3D9DeviceLock();
+      std::vector<D3D9DeviceLock>& locks = ThreadLocks();
+      if (!locks.empty())
+        locks.pop_back();
       return D3D_OK;
     }
 
@@ -219,8 +228,12 @@ namespace dxvk {
 
   private:
 
+    static std::vector<D3D9DeviceLock>& ThreadLocks() {
+      static thread_local std::vector<D3D9DeviceLock> locks;
+      return locks;
+    }
+
     D3D9DeviceEx* m_device;
-    D3D9DeviceLock m_lock;
 
   };
 

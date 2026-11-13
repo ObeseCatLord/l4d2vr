@@ -191,19 +191,34 @@ static void TestControllerReadiness()
     Require(gate.Update(true, true, 1400u, 5u, 1400u), "Advancing fresh samples enable the pair after 200 ms");
     Require(gate.StableDurationMs() == 200u, "Stable duration comes from advancing samples");
     Require(gate.Update(true, true, 1450u, 5u, 1450u), "Repeated draws may use a still-fresh ready pair");
-    Require(!gate.Update(true, true, 1551u, 5u, 1551u), "Republishing cannot keep a stalled ready pair alive");
-    Require(!gate.Update(true, false, 1550u, 5u, 1550u), "Losing either controller resets readiness");
-    Require(!gate.Update(true, true, 1560u, 6u, 1560u), "Controller recovery does not reuse old stability");
-    Require(!gate.Update(true, true, 1660u, 7u, 1660u), "Recovery still requires the full interval");
-    Require(gate.Update(true, true, 1760u, 8u, 1760u), "A recovered pair becomes ready");
-    Require(!gate.Update(false, true, 1761u, 9u, 1761u), "Leaving first-person control resets readiness");
-    Require(!gate.Update(true, true, 1762u, 10u, 1762u), "Returning to first person starts fresh");
-    Require(!gate.Update(true, true, 2000u, 11u, 2151u), "Expired tracking snapshots are rejected");
-    Require(!gate.Update(true, true, 2200u, 12u, 2199u), "Future timestamps are rejected");
-    Require(!gate.Update(true, true, 0u, 13u, 2200u), "Missing capture timestamps are rejected");
-    Require(!gate.Update(true, true, 2200u, 0u, 2200u), "Missing pose tokens are rejected");
-    Require(!gate.Update(true, true, 2300u, 14u, 2300u), "Valid tracking restarts after invalid metadata");
-    Require(!gate.Update(true, true, 2290u, 15u, 2300u), "Timestamp regression resets stability");
+    // 2.0.11: a ready pair survives a hitch or a briefly lost controller.
+    Require(gate.Update(true, true, 1551u, 5u, 1551u), "A frame hitch holds a ready pair");
+    Require(gate.Update(true, false, 1600u, 6u, 1600u), "A briefly lost controller holds a ready pair");
+    Require(gate.Update(true, true, 1700u, 7u, 1700u), "A fresh sample within the hold continues without re-stabilising");
+    Require(gate.Update(true, true, 1720u, 8u, 1720u), "... and stays ready");
+    Require(gate.Update(true, false, 2200u, 9u, 2200u), "Still held 480 ms after the last good sample");
+    Require(!gate.Update(true, false, 2221u, 9u, 2221u), "A controller lost longer than the hold hides the arms");
+    Require(!gate.Update(true, true, 2230u, 10u, 2230u), "Recovery after the hold does not reuse old stability");
+    Require(!gate.Update(true, true, 2330u, 11u, 2330u), "Recovery still requires the full interval");
+    Require(gate.Update(true, true, 2430u, 12u, 2430u), "A recovered pair becomes ready");
+    Require(gate.Update(true, true, 2900u, 13u, 2900u), "A 470 ms gap between samples continues a ready pair");
+    Require(!gate.Update(true, true, 3500u, 14u, 3500u), "A gap longer than the hold re-stabilises");
+    Require(!gate.Update(true, true, 3600u, 15u, 3600u), "... for the full interval");
+    Require(gate.Update(true, true, 3700u, 16u, 3700u), "Ready again");
+    Require(!gate.Update(false, true, 3701u, 17u, 3701u), "Leaving first-person control resets readiness at once");
+    Require(!gate.Update(true, true, 3702u, 18u, 3702u), "Returning to first person starts fresh");
+    Require(!gate.Update(true, true, 4000u, 19u, 4151u), "Expired tracking snapshots are rejected");
+    Require(!gate.Update(true, true, 4200u, 20u, 4199u), "Future timestamps are rejected");
+    Require(!gate.Update(true, true, 0u, 21u, 4200u), "Missing capture timestamps are rejected");
+    Require(!gate.Update(true, true, 4200u, 0u, 4200u), "Missing pose tokens are rejected");
+    Require(!gate.Update(true, true, 4300u, 22u, 4300u), "Valid tracking restarts after invalid metadata");
+    Require(!gate.Update(true, true, 4290u, 23u, 4300u), "Timestamp regression resets stability");
+    // A timestamp regression resets even a ready pair.
+    l4d2vr_input::ControllerPairReadiness ready;
+    ready.Update(true, true, 1000u, 1u, 1000u);
+    ready.Update(true, true, 1100u, 2u, 1100u);
+    Require(ready.Update(true, true, 1200u, 3u, 1200u), "Ready");
+    Require(!ready.Update(true, true, 1150u, 4u, 1210u), "A regressed capture time resets a ready pair");
 }
 
 int main()

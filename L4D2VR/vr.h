@@ -1027,6 +1027,18 @@ public:
 	ViewmodelAdjustment m_DefaultViewmodelAdjust{ {0,0,0}, {0,0,0} };
 	std::unordered_map<std::string, ViewmodelAdjustment> m_ViewmodelAdjustments{};
 	std::string m_CurrentViewmodelKey;
+	// Per-weapon key cache (2.0.11, review S23): rebuilt only when the active
+	// weapon entity or its id changes (melee keys depend on the model: not cached).
+	struct AdjustKeyCache
+	{
+		const void* weapon = nullptr;
+		int weaponId = -1;
+		bool valid = false;
+		std::string key;
+		uint32_t hash = 0u;
+	};
+	AdjustKeyCache m_ViewmodelAdjustKeyCache;
+	AdjustKeyCache m_ScopeAdjustKeyCache;
 	// Crosshair-to-sights alignment (see vr_sight_correction.h).
 	bool m_SightAutoAlignEnabled = true;
 	mutable std::mutex m_SightBoreMutex;

@@ -41,6 +41,9 @@ namespace l4d2vr_dual_reload
     // How far the request's command may be from the newest command the host
     // decoded, either way (a stalled host or a long frame queue).
     constexpr std::int64_t kCommandWindow = 64;
+    // One whole dual reload per this interval (2.0.11): both magazines have
+    // to come out and go back in, which no hand does in under a second.
+    constexpr std::uint64_t kMinReloadIntervalMs = 1000u;
 
     // ---- Vectors ----------------------------------------------------------------------------------
     struct V3 { float x = 0.0f, y = 0.0f, z = 0.0f; };
@@ -511,7 +514,7 @@ namespace l4d2vr_dual_reload
                 reply.status = Status::Stale;
             else if (!NativeReload(state.clip, state.reserve, state.infinite, state.capacity, result) || result.added <= 0)
                 reply.status = Status::NoSpaceOrAmmo;
-            else if (m_HaveApplied && (now < m_LastApplied || now - m_LastApplied < 100u))
+            else if (m_HaveApplied && (now < m_LastApplied || now - m_LastApplied < kMinReloadIntervalMs))
                 reply.status = Status::RateLimited;
             else if (!writer(result.clip, result.reserve))
                 reply.status = Status::Backend;

@@ -28,7 +28,12 @@ namespace l4d2vr_features
     // Opus voice chat relayed between mod clients (vr_opus_voice.h); players
     // and servers without it keep the game's own voice.
     constexpr std::uint32_t OpusVoice = 0x2000u;
-    constexpr std::uint32_t kKnownMask = 0x3FFFu;
+    // 2.0.11: the server decodes the exact-pitch usercmd packing
+    // (l4d2vr_server::PackPitchZ); clients send it only when advertised.
+    constexpr std::uint32_t ExactPitch = 0x4000u;
+    constexpr std::uint32_t kKnownMask = 0x7FFFu;
+    // Everything a dedicated plugin built before ExactPitch advertises.
+    constexpr std::uint32_t kPreExactPitchMask = 0x3FFFu;
     // Everything a dedicated plugin built before OpusVoice advertises.
     constexpr std::uint32_t kPreOpusVoiceMask = 0x1FFFu;
     // Everything a dedicated plugin built before DualMagTxn advertises.
@@ -40,8 +45,8 @@ namespace l4d2vr_features
     // ShotgunPattern are added at run time when their server.dll hooks
     // resolved: Hooks::ListenHostFeatureMask).
     constexpr std::uint32_t kListenHostMask =
-        MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | PoseV3 | DualMagTxn |
-        OpusVoice;
+        MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | DualMagTxn |
+        OpusVoice | ExactPitch;
 
     inline bool ParseMask(const char* text, std::uint32_t& mask)
     {

@@ -154,7 +154,16 @@ namespace l4d2vr_server
         MinIntervalLimiter handThrowLimiter{};
         IntentBudget intentBudget{};
         std::uint32_t reachClamps = 0u;
+        std::uint32_t handTraceHits = 0u;
         std::uintptr_t lastActiveWeapon = 0u; // active item after the last executed command
+        // Instant deploy (B07): fire timers noted while each weapon was held.
+        WeaponReadyCache weaponReady{};
+        bool havePlayerNextAttack = false;
+        float playerNextAttack = 0.0f;
+        // Executed VR commands; hand throws need handThrowMinCommands in between.
+        int executedCommands = 0;
+        int lastHandThrowExecuted = 0;
+        bool haveHandThrowExecuted = false;
 
         void Reset() { *this = PlayerVRState{}; }
 

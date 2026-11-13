@@ -256,10 +256,60 @@ namespace
         const DecodedUsercmd d3 = DecodeVRUsercmd(inf);
         Check(d3.vr && !d3.poseValid && inf.upmove == 0.0f);
     }
+    // ExactPitch (2.0.11): pitch survives at any map height; z comes back
+    // around the server's reference within the 335.6-unit window.
+    void TestExactPitch()
+    {
+        const float heights[] = { -9000.0f, -2684.3f, -168.0f, -0.1f, 0.0f, 37.7f, 168.0f, 1342.6f, 3000.2f, 10737.0f, 21000.0f };
+        const float pitches[] = { -89.0f, -45.3f, -0.1f, 0.0f, 12.4f, 89.0f };
+        for (float z : heights)
+            for (float pitch : pitches)
+            {
+                UsercmdData cmd{};
+                cmd.command_number = 4321;
+                cmd.tick_count = 999;
+                cmd.viewangles[0] = pitch;
+                cmd.viewangles[1] = 33.0f;
+                EncodeVRUsercmd(cmd, Vec3(10.0f, -20.0f, z), Angles(5.0f, 90.0f, 0.0f), false, true);
+                Check(IsPitchZPacked(cmd.viewangles[0]));
+                // Hand 0..116 units above the origin; the reference is origin + 56.
+                for (float handAboveOrigin : { 0.0f, 58.0f, 116.0f })
+                {
+                    UsercmdData copy = cmd;
+                    const float reference = z - handAboveOrigin + pitch_pack::kReferenceAboveOrigin + 30.0f;  // +30 desync
+                    const DecodedUsercmd d = DecodeVRUsercmd(copy, &reference);
+                    Check(d.vr && d.exactPitch && d.poseValid);
+                    Check(std::fabs(copy.viewangles[0] - pitch) <= 0.051f);
+                    Check(std::fabs(d.controllerPos.z - z) <= 0.11f);
+                    Check(copy.command_number == 4321 && copy.tick_count == 999);
+                }
+                // No reference: exact pitch, no pose.
+                UsercmdData blind = cmd;
+                const DecodedUsercmd d = DecodeVRUsercmd(blind, nullptr);
+                Check(d.exactPitch && !d.poseValid && std::fabs(blind.viewangles[0] - pitch) <= 0.051f);
+            }
+        // Legacy packings are never mistaken for the exact one.
+        for (float z : heights)
+            for (float pitch : pitches)
+            {
+                UsercmdData cmd{};
+                cmd.command_number = 7;
+                cmd.tick_count = 8;
+                cmd.viewangles[0] = pitch;
+                EncodeVRUsercmd(cmd, Vec3(0.0f, 0.0f, z), Angles(0.0f, 0.0f, 0.0f), false, false);
+                Check(!IsPitchZPacked(cmd.viewangles[0]));
+            }
+        Check(!IsPitchZPacked(NAN) && !IsPitchZPacked(-5000.0f) && !IsPitchZPacked(16777216.0f) && !IsPitchZPacked(5000.5f));
+        float z = 0.0f, pitch = 0.0f;
+        Check(!UnpackPitchZ(PackPitchZ(10.0f, 0.0f), NAN, z, pitch));
+        // Non-finite inputs pack to something sane.
+        Check(IsPitchZPacked(PackPitchZ(NAN, NAN)) && IsPitchZPacked(PackPitchZ(1e30f, 1000.0f)));
+    }
 }
 
 int main()
 {
+    TestExactPitch();
     TestDesktopPassthrough();
     TestRoundTripAgainstOracle();
     TestImpulsesAndCarryWord();

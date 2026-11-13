@@ -166,7 +166,8 @@ int main()
     assert(plugin->Load(&InterfaceFactory, nullptr));
     // No server_srv.so in this process: relay only, never the usercmd ack.
     assert(!g_Session.Capabilities().usercmdDecoder);
-    assert(g_Session.Capabilities().features == (kFeaturePoseV3 | kFeatureOpusVoice));
+    // No view-yaw source either: v3 (which needs it for v2 peers) is not offered.
+    assert(g_Session.Capabilities().features == kFeatureOpusVoice);
 
     std::array<edict_t, 5> edicts{};
     plugin->ServerActivate(edicts.data(), static_cast<int>(edicts.size()), 3);
@@ -186,8 +187,10 @@ int main()
     engine.sent.clear();
     assert(Dispatch(*plugin, &edicts[1], { "l4d2vr_pose_hello", "2" }) == PLUGIN_STOP);
     assert(Dispatch(*plugin, &edicts[2], { "l4d2vr_pose_hello", "3" }) == PLUGIN_STOP);
-    assert(engine.To(&edicts[1]) == std::vector<std::string>{ "l4d2vr_feature_ack 2100 1\n" });
-    assert(engine.To(&edicts[2]) == std::vector<std::string>{ "l4d2vr_feature_ack 2100 1\n" });
+    assert(engine.To(&edicts[2]).empty());   // v3 refused without a yaw source
+    assert(Dispatch(*plugin, &edicts[2], { "l4d2vr_pose_hello", "2" }) == PLUGIN_STOP);
+    assert(engine.To(&edicts[1]) == std::vector<std::string>{ "l4d2vr_feature_ack 2000 1\n" });
+    assert(engine.To(&edicts[2]) == std::vector<std::string>{ "l4d2vr_feature_ack 2000 1\n" });
     assert(engine.To(&edicts[3]).empty());
 
     // Ordinary commands pass through; private ones are consumed silently.

@@ -9,8 +9,9 @@
 # 0x80 PillGive, 0x100 PoseV3, 0x200 InstantDeploy, 0x400 HandThrow,
 # 0x800 ShotgunPattern, 0x1000 DualMagTxn, 0x2000 OpusVoice (relays Opus voice
 # chat between mod clients under the game's voice rules; clear it to keep
-# everyone on the game's own voice).
-FeatureMask=0x3fff
+# everyone on the game's own voice), 0x4000 ExactPitch (2.0.11 clients send the
+# view pitch exactly at any map height).
+FeatureMask=0x7fff
 
 # Physical melee (same meaning as the previous dedicated plugin).
 MeleeSwingBlockWhileControlled=true
@@ -18,10 +19,18 @@ MeleeSwingBlockWhileIncapacitated=true
 MeleeSwingCooldownSeconds=0.35
 MeleeSwingBurstWindowSeconds=2.0
 MeleeSwingBurstMax=4
+# A swing only deals damage while the hand really moves (m/s along the sweep
+# or deg/s of the blade), and for at most MeleeMaxSwingSeconds (0 = no limit).
+MeleeMinHandSpeed=0.5
+MeleeMinAngularSpeed=90
+MeleeMaxSwingSeconds=1.5
 
 # Pose sanity: a hand farther than this from the eye is pulled back (max 1.2).
 UnitsPerMeter=43.2
 MaxHandReachMeters=1.2
+# Pull the hand back in front of walls, doors and props on the line from the
+# eye (shots, throws, drops and melee never start inside or behind them).
+HandTraceEnabled=true
 
 # Manual throws (client ManualThrow* defaults). ThrowMaxSpeed is the hard
 # anti-abuse clamp in units/s; slower releases than ThrowMinSpeed keep the
@@ -40,9 +49,11 @@ DropMaxSpeed=450
 # itself. The client measures the hand velocity at headset rate; the
 # projectile gets hand velocity * ThrowHandVelocityScale + the player's own
 # velocity, clamped to ThrowMaxSpeed (2.5: the hand's peak speed, so a natural
-# throw carries about as far as the game's own). One throw per HandThrowMinIntervalMs.
+# throw carries about as far as the game's own). One throw per
+# HandThrowMinIntervalMs and per HandThrowMinCommands executed commands.
 ThrowHandVelocityScale=2.5
 HandThrowMinIntervalMs=250
+HandThrowMinCommands=6
 
 # Eye-override windows in executed commands, and the use aim mode
 # (0 off, 1 grip pickup only, 2 every +use of a VR player).

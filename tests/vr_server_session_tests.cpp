@@ -175,6 +175,21 @@ namespace
         Dispatch(s, 1, &e[1], { "l4d2vr_pose_upload", "11", payload.c_str() });
         Dispatch(s, 1, &e[1], { "l4d2vr_pose_upload", "12", payload.c_str() });   // < 16.667 ms later
         Check(host.sent.size() == 1u && host.sent[0].text == Receive(1, 11, payload));
+        // The newer upload of the burst is relayed when the window ends (latest wins).
+        host.sent.clear();
+        s.GameFrame();
+        Check(host.sent.empty());
+        host.Advance(20);
+        s.GameFrame();
+        {
+            int receives = 0;
+            for (const auto& m : host.sent)
+                if (m.text.rfind("l4d2vr_pose_receive", 0) == 0) { ++receives; Check(m.text == Receive(1, 12, payload)); }
+            Check(receives == 1);
+        }
+        host.sent.clear();
+        s.GameFrame();
+        Check(host.sent.empty());
         // Wrap-around.
         for (const char* step : { "20000", "40000", "60000" })
         {
@@ -249,7 +264,7 @@ namespace
         Check(bundle[1] == "l4d2vr_interaction_ack 1\n");
         Check(bundle[2] == "l4d2vr_shell_capability 1 41\n");
         Check(bundle[3] == "l4d2vr_mag_capability 3 42\n");
-        Check(bundle[4] == "l4d2vr_feature_ack 3fff 1\n");
+        Check(bundle[4] == "l4d2vr_feature_ack 7fff 1\n");
         Check(s.EffectiveFeatures(2) == kFeatureAllMask);
         // The client answers server_ack with another hello: no duplicate bundle.
         host.sent.clear();
@@ -394,7 +409,7 @@ namespace
         host.sent.clear();
         Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "1", "12290", "300", "5", "30", "100", "0" }, &ammo);
         Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 1 12290 300 5 30 100 0 0 1 129\n" });
-        host.Advance(200);
+        host.Advance(300);
         host.sent.clear();
         Dispatch(s, 1, &vr, { "l4d2vr_mag_action_v2", "1002", "2", "12290", "301", "5", "1", "129", "1" }, &ammo);
         Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_result 1002 2 12290 301 5 1 129 1 0 50 80\n" });
@@ -415,7 +430,7 @@ namespace
         Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "1002", "1", "12291", "400", "0", "0" }, &ammo);
         Check(host.To(&vr) == std::vector<std::string>{ "l4d2vr_mag_dual_result 1002 1 12291 400 0 0 0 30 0\n" });
         Check(ammo.state.clip == 30);
-        host.Advance(200);
+        host.Advance(1000);   // one dual reload per second
         host.sent.clear();
         ammo.dualState = AmmoState{ true, 0x3003u, 410u, 1, 4, 12, 30, false, nullptr, nullptr, 1 };
         Dispatch(s, 1, &vr, { "l4d2vr_mag_dual_v1", "1002", "2", "12291", "410", "4", "12" }, &ammo);

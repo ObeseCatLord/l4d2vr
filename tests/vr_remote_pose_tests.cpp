@@ -171,6 +171,39 @@ static void TrackerRecovery()
         "latest invalid hand never borrows older validity or pose");
 }
 
+// B25: with packets every 40 ms (and 33 ms) and a 50 ms delay, the played
+// back pose moves continuously: no hold, then a jump, when a packet arrives.
+static void ContinuousPlayback()
+{
+    for (const unsigned spacing : {40u, 33u})
+    {
+        Fixture f;
+        float maxStep = 0.0f, lastX = -1.0f;
+        std::uint16_t sequence = 1u;
+        for (unsigned t = 1000u; t <= 1400u; ++t)
+        {
+            scriptedTick = t;
+            if ((t - 1000u) % spacing == 0u)
+            {
+                auto wire = Packet(l4d2vr_pose::kValidHmd);
+                // The head moves 1 unit per ms of sender time.
+                SetPoint(wire.hmd, static_cast<float>(t - 1000u) * 0.2f, 0, 70);
+                Check(f.Receive(wire, sequence++), "steady stream accepted");
+            }
+            VRPoseFrame pose{};
+            if (t < 1000u + 2u * spacing || !f.Pose(pose))
+                continue;
+            if (lastX >= 0.0f)
+                maxStep = std::max(maxStep, std::fabs(pose.hmd.position.x - lastX));
+            lastX = pose.hmd.position.x;
+        }
+        // 0.2 units per ms of motion: a continuous playback never steps by
+        // much more than that per 1 ms query (the old two-sample playback
+        // jumped by a quarter to half of a packet's motion).
+        Check(maxStep < 0.6f, "remote pose playback is continuous across packet arrivals");
+    }
+}
+
 static void OwnerLifecycle()
 {
     Fixture f;
@@ -244,6 +277,7 @@ static void ConcurrentOwnerRefresh()
 
 int main()
 {
+    ContinuousPlayback();
     TrackerRecovery();
     OwnerLifecycle();
     ConcurrentOwnerRefresh();

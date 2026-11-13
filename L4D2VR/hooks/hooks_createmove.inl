@@ -1,3 +1,22 @@
+// Replaces the command's view angles and re-expresses forwardmove/sidemove in
+// the new yaw, so the stick keeps its world direction (B44). The angles are
+// normalized, pitch clamped and roll cleared like every other override.
+static void SetCmdViewAnglesKeepMove(CUserCmd* cmd, QAngle angles)
+{
+	NormalizeAndClampViewAngles(angles);
+	angles.z = 0.0f;
+	QAngle oldYawOnly(0.f, cmd->viewangles.y, 0.f);
+	Vector oldForward, oldRight, oldUp;
+	QAngle::AngleVectors(oldYawOnly, &oldForward, &oldRight, &oldUp);
+	const Vector worldMove = oldForward * cmd->forwardmove + oldRight * cmd->sidemove;
+	cmd->viewangles = angles;
+	QAngle newYawOnly(0.f, cmd->viewangles.y, 0.f);
+	Vector newForward, newRight, newUp;
+	QAngle::AngleVectors(newYawOnly, &newForward, &newRight, &newUp);
+	cmd->forwardmove = DotProduct(worldMove, newForward);
+	cmd->sidemove = DotProduct(worldMove, newRight);
+}
+
 static bool IsClientAttachedToLadder(Game* game, C_BasePlayer* player)
 {
     if (!game || !player) return false;
@@ -1189,8 +1208,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		{
 			QAngle giveAngles{};
 			QAngle::VectorAngles(toTarget, giveAngles);
-			NormalizeAndClampViewAngles(giveAngles);
-			cmd->viewangles = giveAngles;
+			SetCmdViewAnglesKeepMove(cmd, giveAngles);
 		}
 		cmd->buttons |= (1 << 11); // IN_ATTACK2
 	}
@@ -1201,7 +1219,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		std::chrono::steady_clock::now() < m_VR->m_PhysicalShoveHoldUntil &&
 		!m_VR->m_AdjustingViewmodel && !m_VR->m_AdjustingScope)
 	{
-		cmd->viewangles = m_VR->m_PhysicalShoveAngles;
+		SetCmdViewAnglesKeepMove(cmd, m_VR->m_PhysicalShoveAngles);
 	}
 
 	// GrenadeThrowMode=arc: while a grenade is in the hand, the view angles are
@@ -2426,12 +2444,14 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
     C_WeaponCSBase* routingPistol = localPlayerForAutoActions
         ? reinterpret_cast<C_WeaponCSBase*>(localPlayerForAutoActions->GetActiveWeapon()) : nullptr;
     if (m_VR) m_VR->UpdatePistolAmmoSnapshot(localPlayerForAutoActions, routingPistol);
-    const bool dualNegotiated = m_VR &&
+    // Per-hand triggers exist only with VR controllers: desktop mode and mouse
+    // mode keep the stock IN_ATTACK (B06).
+    const bool dualNegotiated = m_VR && m_VR->m_IsVREnabled && !m_VR->m_MouseModeEnabled &&
         l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire));
     // Without the server protocol, akimbo still routes each trigger to its own
     // pistol; the command's view angles carry that hand's aim instead.
     const bool dualClientOnly = m_VR && !dualNegotiated && m_VR->m_DualPistolsAkimboOnAnyServer &&
-        m_VR->m_IsVREnabled && routingPistol && m_Game->IsDualPistolWeapon(routingPistol);
+        m_VR->m_IsVREnabled && !m_VR->m_MouseModeEnabled && routingPistol && m_Game->IsDualPistolWeapon(routingPistol);
     const bool dualEquipped = m_VR && routingPistol &&
         (dualNegotiated || dualClientOnly) &&
         routingPistol->GetWeaponID() == C_WeaponCSBase::WeaponID::PISTOL &&
@@ -2468,11 +2488,12 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                 m_VR->GetHandAimViewAngles(leftShot, localPlayerForAutoActions->EyePosition(), handAim))
             {
                 // The server fires from the eye: aim the eye at where this hand points.
-                cmd->viewangles = handAim;
+                SetCmdViewAnglesKeepMove(cmd, handAim);
             }
             else
             {
-                cmd->viewangles = leftShot ? m_VR->GetLeftControllerAbsAngle() : m_VR->GetRightControllerAbsAngle();
+                SetCmdViewAnglesKeepMove(cmd,
+                    leftShot ? m_VR->GetLeftControllerAbsAngle() : m_VR->GetRightControllerAbsAngle());
             }
         }
     }

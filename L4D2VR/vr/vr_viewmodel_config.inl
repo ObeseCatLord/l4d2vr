@@ -356,6 +356,10 @@ std::string VR::BuildViewmodelAdjustKey(C_WeaponCSBase* weapon) const
 
 ViewmodelAdjustment& VR::EnsureViewmodelAdjustment(const std::string& key)
 {
+    // find first: emplace builds a node even when the key exists (per frame).
+    const auto found = m_ViewmodelAdjustments.find(key);
+    if (found != m_ViewmodelAdjustments.end())
+        return found->second;
     auto [it, inserted] = m_ViewmodelAdjustments.emplace(key, m_DefaultViewmodelAdjust);
     return it->second;
 }
@@ -363,7 +367,19 @@ ViewmodelAdjustment& VR::EnsureViewmodelAdjustment(const std::string& key)
 void VR::RefreshActiveViewmodelAdjustment(C_BasePlayer* localPlayer)
 {
     C_WeaponCSBase* activeWeapon = localPlayer ? (C_WeaponCSBase*)localPlayer->GetActiveWeapon() : nullptr;
-    std::string adjustKey = BuildViewmodelAdjustKey(activeWeapon);
+    const int activeWeaponId = activeWeapon ? static_cast<int>(activeWeapon->GetWeaponID()) : -1;
+    AdjustKeyCache& keyCache = m_ViewmodelAdjustKeyCache;
+    const bool keyCached = keyCache.valid && keyCache.weapon == activeWeapon && keyCache.weaponId == activeWeaponId &&
+        activeWeaponId != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE);
+    if (!keyCached)
+    {
+        keyCache.key = BuildViewmodelAdjustKey(activeWeapon);
+        keyCache.weapon = activeWeapon;
+        keyCache.weaponId = activeWeaponId;
+        keyCache.valid = true;
+        keyCache.hash = 0u;
+    }
+    const std::string& adjustKey = keyCache.key;
 
     auto hashAdjustKey = [](const std::string& key)
         {
@@ -376,9 +392,12 @@ void VR::RefreshActiveViewmodelAdjustment(C_BasePlayer* localPlayer)
             return hash == 0u ? 1u : hash;
         };
 
-    const uint32_t currentAdjustKeyHash = activeWeapon ? hashAdjustKey(adjustKey) : 0u;
+    if (!keyCached)
+        keyCache.hash = hashAdjustKey(adjustKey);
+    const uint32_t currentAdjustKeyHash = activeWeapon ? keyCache.hash : 0u;
 
-    m_CurrentViewmodelKey = adjustKey;
+    if (m_CurrentViewmodelKey != adjustKey)
+        m_CurrentViewmodelKey = adjustKey;
 
     if (m_LastLoggedViewmodelKey != m_CurrentViewmodelKey)
     {
@@ -581,6 +600,9 @@ std::string VR::BuildScopeAdjustKey(C_WeaponCSBase* weapon) const
 
 ScopeAdjustment& VR::EnsureScopeAdjustment(const std::string& key)
 {
+    const auto found = m_ScopeAdjustments.find(key);
+    if (found != m_ScopeAdjustments.end())
+        return found->second;
     auto [it, inserted] = m_ScopeAdjustments.emplace(key, m_DefaultScopeAdjust);
     return it->second;
 }
@@ -588,9 +610,20 @@ ScopeAdjustment& VR::EnsureScopeAdjustment(const std::string& key)
 void VR::RefreshActiveScopeAdjustment(C_BasePlayer* localPlayer)
 {
     C_WeaponCSBase* activeWeapon = localPlayer ? (C_WeaponCSBase*)localPlayer->GetActiveWeapon() : nullptr;
-    std::string adjustKey = BuildScopeAdjustKey(activeWeapon);
+    const int activeWeaponId = activeWeapon ? static_cast<int>(activeWeapon->GetWeaponID()) : -1;
+    AdjustKeyCache& keyCache = m_ScopeAdjustKeyCache;
+    if (!(keyCache.valid && keyCache.weapon == activeWeapon && keyCache.weaponId == activeWeaponId &&
+            activeWeaponId != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE)))
+    {
+        keyCache.key = BuildScopeAdjustKey(activeWeapon);
+        keyCache.weapon = activeWeapon;
+        keyCache.weaponId = activeWeaponId;
+        keyCache.valid = true;
+    }
+    const std::string& adjustKey = keyCache.key;
 
-    m_CurrentScopeAdjustmentKey = adjustKey;
+    if (m_CurrentScopeAdjustmentKey != adjustKey)
+        m_CurrentScopeAdjustmentKey = adjustKey;
 
     if (m_LastLoggedScopeAdjustmentKey != m_CurrentScopeAdjustmentKey)
     {

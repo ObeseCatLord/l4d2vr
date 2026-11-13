@@ -133,6 +133,26 @@ CHANGES = [
     "2.0.11: open mic picks up quiet microphones (a Quest over WiVRn, any mic speaking at RMS ~150-400): the voice activation opens at 3-5x the room's noise level instead of 3.2-10x and from a much lower absolute level, keeps 100 ms before a word and 400 ms after it, and learns steady background noise (fans, hum) from the pauses between words, so that noise never holds the microphone open.",
     "2.0.11: the game's Options > Audio Microphone sensitivity slider (voice_threshold) now sets how sensitive open mic is for the high-quality voice too (OpusVoiceVadSensitivity=game, the new default; a number 0..1 still fixes it; the old shipped 0.55 is migrated once).",
     "2.0.11: a quiet microphone is raised up to 4x before it is sent, learnt from your speech only so the noise between words is not pumped up (OpusVoiceMicAgc), and vrmod_log.txt shows your microphone every 10 s ([VR][OpusVoice] mic: level, speech level, noise floor, open threshold, how often the microphone was open, talkspurts, clipped frames).",
+    "2.0.11: settings saved by the config panel (desktop mirror, HUD curvature, scope options and about 190 others) or added by hand are no longer deleted from vr/config.txt at the next start; only retired keys are removed (logged), renamed scope keys (ScopeFov, ScopeMagnification, ScopeOverlay*) carry your value to their new names, and a duplicated line keeps the one that counts.",
+    "2.0.11: changing VR Options during play no longer risks a crash: the config is reloaded only between frames, the reload keeps working when the file is briefly missing (no more desktop message box), and the injected cmd= runs once instead of on every click.",
+    "2.0.11: desktop mode (no headset) now reads vr/config.txt, so settings like BackgroundAudio apply there too.",
+    "2.0.11: the wrist HUD background no longer fades away after a few VR Options clicks; the Hand mode and Hide arms rows work again.",
+    "2.0.11: config values that are not numbers (nan, a typo) keep the default and are logged; a decimal comma (TurnSpeed=0,3) is read as a decimal point; an emptied ...Overrides or CustomActionNCommand line clears it; keys are found in any case; a config saved with a BOM keeps its first line.",
+    "2.0.11: VR sessions no longer save their crosshair, film grain, motion blur, fps_max and multicore settings into your config.cfg: your own values are kept and put back the next time you start without VR (desktop mode or -nohmd). -nohmd no longer edits autoexec.cfg, and -bigfonts only removes the mat_setvideomode lines it wrote.",
+    "2.0.11: the VR voice defaults keep Voice: Disabled and say in the game console that voice is open mic; if the migration file cannot be written they are not applied (instead of every session).",
+    "2.0.11: after a game update that moves the mod's hooks, the game starts in desktop mode with one log summary instead of a message box per signature and a half-hooked game; vr/config.txt is written safely (temp file + rename); vrmod_log.txt keeps the previous session as vrmod_log.prev.txt and shows non-ASCII install paths; the zip ships vr/disable_workshop_updates.txt so the upstream Workshop build is never offered over this fork.",
+    "2.0.11: voice chat no longer goes quiet for the rest of the map after a hitch of 3 s or more (loading stall, dragging the window); the voice handshake simply restarts.",
+    "2.0.11: a microphone that was not there at the start (headset microphone that appears when streaming starts, USB headset plugged in later) is picked up within 15 s; with push to talk the microphone is opened on the first press and closed 45 s after the last one.",
+    "2.0.11: without a working playback device, other mod players are heard through the game's voice instead of not at all, and the device is tried again every 10 s.",
+    "2.0.11: Opus voice also works on servers whose gameplay hooks are unavailable after a game update; if the mod cannot hook the game's voice receive, other players are heard once through the game's voice instead of twice. OpusVoicePushToTalkKey also keys the game's own voice, so players without the mod hear you.",
+    "2.0.11: server and listen host: voice hellos are rate limited and opting out no longer resets a player's voice rate limit; each listener receives at most five talkers' worth of voice frames per second; a listen host forgets the voice state of players who left.",
+    "2.0.11: OpenXR: on Index, Vive wands, Vive Cosmos, Focus 3 and Pico 4 the trigger fires at about a quarter pull again (it needed a full pull since 2.0.0).",
+    "2.0.11: OpenXR with multicore rendering (mat_queue_mode): each frame reaches the headset one display frame earlier and carries the head pose it was drawn from, so the view no longer swims slightly when you turn your head.",
+    "2.0.11: OpenXR: if the VR session cannot be created (for example the game runs on another GPU than the headset), the game starts in desktop mode with the reason in the log instead of freezing for minutes; if SteamVR or another runtime crashes or closes during play, VR stops cleanly with one log line and a note in the game console.",
+    "2.0.11: OpenXR: menus and wrist panels no longer show the state before your last click after a short compositor hitch, and quitting the game while VR runs no longer touches DXVK's device after it is gone; when the game runs as administrator, the log says to start Steam and the game without administrator rights.",
+    "2.0.11: installer 1.1.4: \"Write to Steam\" keeps your own launch options exactly as written ($VAR, ~, gamemoderun, extra commands); Steam files with unusual characters no longer stop it, and installed files are readable by other users and server processes.",
+    "2.0.11: installer 1.1.4: Install / Update repairs missing or damaged mod files instead of saying \"already up to date\" (new Repair checkbox), never replaces a newer install with the older bundled l4d2vr.zip when offline, and keeps your edited haptics_config.txt / local_client_convars.nut (the new default is saved next to it as .new).",
+    "2.0.11: installer 1.1.4: downloads are https-only and must have a published SHA-256 (or --allow-unverified) and resume after a dropped connection; Restore/Uninstall in the window wait for the game to be closed.",
 ]
 
 
@@ -230,6 +250,13 @@ def main() -> None:
         files[f"vr/{name}"] = (src / name).read_bytes()
     files["vr/config.sample"] = commented_sample((src / "config.txt").read_text(encoding="utf-8")).encode("utf-8")
     files["vr/version.txt"] = args.version.encode("ascii")
+    # Zip installs must not offer the upstream (OpenVR) Workshop build over this
+    # fork either (2.0.11, review S27); the installer writes the same pin.
+    files["vr/disable_workshop_updates.txt"] = (
+        "Shipped with L4D2VR (OpenXR fork).\n"
+        "While this file exists the mod does not offer to replace itself with the Steam Workshop\n"
+        "build. Use the installer or a release zip to update. Delete this file to re-enable Workshop updates.\n"
+    ).encode("ascii")
     for resource in sorted((REPO / "resources").rglob("*")):
         if resource.is_file():
             files[resource.relative_to(REPO / "resources").as_posix()] = resource.read_bytes()

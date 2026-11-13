@@ -3858,6 +3858,14 @@ static void LogStartupBanner(HMODULE hModule)
 DWORD WINAPI InitL4D2VR(HMODULE hModule)
 {
     timeBeginPeriod(1);
+    // Never unloaded (2.0.11, review S26): MinHook detours, the tier0 Msg IAT
+    // hook and the detached worker threads point into this module, and the
+    // engine may release d3d9.dll before the process ends.
+    {
+        HMODULE pinned = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(&InitL4D2VR), &pinned);
+    }
     LogStartupBanner(hModule);
     StartForcedIndexBufferPolicy();
 

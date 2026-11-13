@@ -137,6 +137,9 @@ struct WireFixture
     VR vr;
     VR* m_VR=&vr;
     bool s_ServerUnderstandsVR=false;
+    struct GameOffsets { struct { bool valid=true; } g_pppInput; } gameOffsets;
+    struct GameStub { GameOffsets* m_Offsets; } gameStub{&gameOffsets};
+    GameStub* m_Game=&gameStub;
     struct Writer
     {
         Command emitted{};

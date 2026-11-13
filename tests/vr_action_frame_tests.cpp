@@ -210,6 +210,7 @@ struct VR
     void EndSpeechToTextCapture(bool) {}
     void StopVoiceRecordCommandNow() {}
     void ResetObjectPullInput(bool) {}
+    void ForgetStaleStowedWeapon(C_BasePlayer*, bool) {}
     void CancelMagazineInteractionManual() { ++cancellations; pendingMagazine = pendingShell = false; chamberRequired = false; }
     struct DualReloadButtons { bool release = false; bool grab[2] = {}; bool grip[2] = {}; };
     int dualReloadCancels = 0;

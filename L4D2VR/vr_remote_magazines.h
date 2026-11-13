@@ -10,6 +10,11 @@ namespace l4d2vr_remote_mag
     constexpr unsigned kVersion = 3u;
     constexpr int kMaxClip = 512;
     constexpr int kMaxReserve = 5000;
+    // A fresh magazine goes in no sooner than this after the old one came
+    // out (2.0.11; a hand needs far longer to fetch and seat one). Too early is
+    // RateLimited: the client keeps the magazine in the hand to seat again.
+    // Reinserting the caught magazine only returns its own rounds.
+    constexpr std::uint64_t kMinEjectToInsertMs = 300u;
     using Status = l4d2vr_shell::Status;
     enum class Action : unsigned { Eject = 0, Insert = 1, Reinsert = 2 };
     inline bool RetainsRejectedHeldMagazine(Status status, Action action, bool held,
@@ -103,6 +108,9 @@ namespace l4d2vr_remote_mag
                 reply.status = Status::NoSpaceOrAmmo;
             else if (m_HaveApplied && (now < m_LastApplied || now - m_LastApplied < 100u))
                 reply.status = Status::RateLimited;
+            else if (request.action == Action::Insert && m_HaveEject &&
+                (now < m_LastEject || now - m_LastEject < kMinEjectToInsertMs))
+                reply.status = Status::RateLimited;
             else
             {
                 const bool eject = request.action == Action::Eject;
@@ -130,6 +138,7 @@ namespace l4d2vr_remote_mag
                     else *detached = {};
                     reply.status = Status::Applied; reply.clip = clip; reply.reserve = reserve;
                     m_LastApplied = now; m_HaveApplied = true;
+                    if (eject) { m_LastEject = now; m_HaveEject = true; }
                 }
             }
             m_Memo = reply; m_HaveMemo = true; return reply;
@@ -154,8 +163,8 @@ namespace l4d2vr_remote_mag
         std::array<Detached, 16> m_Detached{};
         std::size_t m_NextEviction = 0;
         std::uint32_t m_Token = 0, m_HighSequence = 0;
-        bool m_HaveMemo = false, m_HaveApplied = false;
-        std::uint64_t m_LastApplied = 0;
+        bool m_HaveMemo = false, m_HaveApplied = false, m_HaveEject = false;
+        std::uint64_t m_LastApplied = 0, m_LastEject = 0;
         Reply m_Memo{};
     };
     class ClientRequest

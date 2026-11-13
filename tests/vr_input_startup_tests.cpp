@@ -1,6 +1,8 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <array>
+#include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <cstdarg>
@@ -16,6 +18,8 @@
 #include <vector>
 #include "openvr.h"
 #include "../L4D2VR/vr_input_recovery.h"
+#include "../L4D2VR/vr_server_features.h"
+#include "../L4D2VR/server_core/vr_usercmd_codec.h"
 
 static unsigned checks = 0u;
 static void Require(bool value, const char* message)
@@ -109,6 +113,7 @@ struct VR
     uint64_t m_InputActionStateFrameSerial=0u;
     vr::EVRInputError m_LastInputActionStateError=vr::VRInputError_None;
     bool m_IsVREnabled=true, m_EncodeVRUsercmd=true, m_ForceNonVRServerMovement=false;
+    std::atomic<uint32_t> m_ServerFeatureMask{0u};
     void RefreshLeftHandedInputActionSwapMaps(bool) {}
     int SetActionManifest(const char*);
     void UpdateInputActionState(const l4d2vr_input::ActionFrame::Attempt&);
@@ -260,6 +265,17 @@ static void NativeWireTests()
     Require(f.Write(&confirmed)==123 && f.hkWriteUsercmd.emitted.tick_count==-200 &&
         f.hkWriteUsercmd.emitted.viewangles.x>89 && f.hkWriteUsercmd.emitted.viewangles.z==20,
         "confirmed capability retains established private VR encoding");
+    // ExactPitch servers (2.0.11) get the packing a server tells apart and
+    // decodes exactly: pitch 0 at z 70.
+    f.vr.m_ServerFeatureMask.store(l4d2vr_features::ExactPitch); Command exact;
+    Require(f.Write(&exact)==123 && l4d2vr_server::IsPitchZPacked(f.hkWriteUsercmd.emitted.viewangles.x),
+        "exact-pitch server receives the exact packing");
+    {
+        float z=0.0f, pitch=1.0f;
+        Require(l4d2vr_server::UnpackPitchZ(f.hkWriteUsercmd.emitted.viewangles.x, 60.0f, z, pitch) &&
+            std::fabs(z-70.0f)<0.11f && std::fabs(pitch)<0.051f, "exact packing round-trips pose z and pitch");
+    }
+    f.vr.m_ServerFeatureMask.store(0u);
     f.vr.m_ForceNonVRServerMovement=true; Command forced; const Command forcedOriginal=forced;
     Require(f.Write(&forced)==123 && std::memcmp(&forcedOriginal,&f.hkWriteUsercmd.emitted,sizeof(forced))==0,
         "explicit native-server override remains byte preserving after confirmation");

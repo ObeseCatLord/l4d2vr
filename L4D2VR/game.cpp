@@ -850,8 +850,9 @@ namespace
     void __cdecl OnL4D2VRInteractionAckCommand(const SourceCCommand& command)
     {
         unsigned long version = 0;
-        if (!g_Game || !g_Game->m_VR || !Hooks::s_ServerUnderstandsVR || command.ArgC() != 2 ||
-            !ParseUnsignedCommandArgument(command, 1, 255u, version) ||
+        // Desktop mode has no physical interaction to negotiate (B06).
+        if (!g_Game || !g_Game->m_VR || !g_Game->m_VR->m_IsVREnabled || !Hooks::s_ServerUnderstandsVR ||
+            command.ArgC() != 2 || !ParseUnsignedCommandArgument(command, 1, 255u, version) ||
             !l4d2vr_wire::SupportsPhysicalVersion(static_cast<unsigned>(version))) return;
         const unsigned previous = g_Game->m_VR->m_ServerPhysicalInteractionVersion.exchange(
             static_cast<unsigned>(version), std::memory_order_acq_rel);
@@ -1442,6 +1443,112 @@ void Game::ResetAllPlayerVRInfo()
     ResetListenVoiceRelay();
 }
 
+namespace
+{
+    // Server-side half of a Player entry: everything except the observer-side
+    // world-pose fields (those belong to this process's own view of the slot).
+    void ResetServerPlayerFields(Player& player)
+    {
+        Player fresh{};
+        fresh.pPlayer = player.pPlayer;
+        fresh.olderWorldPose = player.olderWorldPose;
+        fresh.previousWorldPose = player.previousWorldPose;
+        fresh.latestWorldPose = player.latestWorldPose;
+        fresh.worldPoseBlendWeight = player.worldPoseBlendWeight;
+        fresh.worldPoseBlendTickMs = player.worldPoseBlendTickMs;
+        fresh.worldPoseEntity = player.worldPoseEntity;
+        fresh.worldPoseUserID = player.worldPoseUserID;
+        fresh.worldPoseRevision = player.worldPoseRevision;
+        player = fresh;
+    }
+
+    // IVEngineServer::GetPlayerUserId (VEngineServer022 slot 16, between the
+    // verified ClientCommand slot 39 and the interface start).
+    int ReadServerUserIdSafe(void* engineServer, const edict_t* entity)
+    {
+        if (!engineServer || !entity)
+            return -1;
+        using GetUserId = int(__thiscall*)(void*, const edict_t*);
+#ifdef _MSC_VER
+        __try
+        {
+#endif
+            const auto module = reinterpret_cast<std::uintptr_t>(GetModuleHandleA("engine.dll"));
+            if (!module) return -1;
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module);
+            if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 0x100000) return -1;
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(module + dos->e_lfanew);
+            if (nt->Signature != IMAGE_NT_SIGNATURE) return -1;
+            const auto target = (*reinterpret_cast<const std::uintptr_t* const*>(engineServer))[16];
+            if (target < module || target >= module + nt->OptionalHeader.SizeOfImage) return -1;
+            return reinterpret_cast<GetUserId>(target)(engineServer, entity);
+#ifdef _MSC_VER
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return -1;
+        }
+#endif
+    }
+
+    void* ServerEngineForUserIds();
+}
+
+// A slot's occupant changed (disconnect + another client, crash + rejoin):
+// none of the previous occupant's server state may survive (B04).
+void Game::ResetServerPlayerSlot(int index)
+{
+    if (!IsValidPlayerIndex(index))
+        return;
+    {
+        std::lock_guard<std::mutex> lock(m_VRPoseMutex);
+        ResetServerPlayerFields(m_PlayersVRInfo[static_cast<std::size_t>(index)]);
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_ServerPistolCommandsMutex);
+        m_ServerPistolCommands[static_cast<std::size_t>(index)].Reset();
+        m_ServerReloadCommands[static_cast<std::size_t>(index)].Reset();
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_PistolAmmoMutex);
+        m_PistolAmmo[static_cast<std::size_t>(index)].Reset();
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_PistolAmmoServerMutex);
+        m_PistolAmmoServerClients[static_cast<std::size_t>(index)] = PistolAmmoServerClient{};
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_RemoteShellServerMutex);
+        m_RemoteShellServerClients[static_cast<std::size_t>(index)] = RemoteShellServerClient{};
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_RemoteMagazineServerMutex);
+        m_RemoteMagazineServerClients[static_cast<std::size_t>(index)] = RemoteMagazineServerClient{};
+    }
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_BuiltinVRPoseRelayMutex);
+        m_BuiltinVRPoseRelayClients[static_cast<std::size_t>(index)] = VRPoseRelayServerClient{};
+    }
+}
+
+// Called for every client packet on the listen host, before its commands
+// are decoded: the engine userid tells a new occupant of a reused slot.
+void Game::ObserveServerSlotOccupant(int index, edict_t* entity)
+{
+    if (!IsValidPlayerIndex(index) || !entity)
+        return;
+    const int userId = ReadServerUserIdSafe(ServerEngineForUserIds(), entity);
+    if (userId <= 0)
+        return;
+    int& known = m_ServerSlotUserIds[static_cast<std::size_t>(index)];
+    if (known != 0 && known != userId)
+    {
+        Game::logMsg("[VR][Server] slot %d has a new player (userid %d -> %d): server state reset", index, known, userId);
+        ResetServerPlayerSlot(index);
+    }
+    known = userId;
+}
+
 void Game::ResetVRPoseServerSession()
 {
     ResetPistolAmmoServerClients();
@@ -1456,10 +1563,18 @@ void Game::ResetVRPoseServerSession()
     if (m_VR) m_VR->m_ServerFeatureMask.store(0u, std::memory_order_release);
     if (m_VR) m_VR->m_ShotgunPatternSent = -1;
     if (m_VR) m_VR->m_GrenadeFeatureRequestSent = -1;
+    // The session ended: the next server must acknowledge VR again. Reset
+    // here (session end), never when the next map is already in game, where
+    // it raced the new server's acknowledgement (S17).
+    Hooks::s_ServerUnderstandsVR = false;
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         for (Player& player : m_PlayersVRInfo)
         {
+            // A new level: command numbers restart, so no watermark, ledger or
+            // entity pointer of the previous level may survive (B04).
+            ResetServerPlayerFields(player);
+            player.olderWorldPose = VRPoseFrame{};
             player.previousWorldPose = VRPoseFrame{};
             player.latestWorldPose = VRPoseFrame{};
             player.worldPoseBlendWeight = 0.0f;
@@ -1491,6 +1606,7 @@ namespace
     constexpr std::uint64_t kVRPoseRelayAckIntervalMs = 1000u;
     constexpr std::uint64_t kVRPoseRelayUploadSilenceForAckMs = 1500u;
     constexpr std::uint64_t kVRPoseRelayMinimumDecodeIntervalUs = 16667u;
+    constexpr int kVRPoseRelayMaxUnconfirmedOffers = 3;
     constexpr int kSourceEdictFreeFlag = (1 << 1);
     constexpr char kVRPoseRelayHelloCommand[] = "l4d2vr_pose_hello";
     constexpr char kVRPoseRelayUploadCommand[] = "l4d2vr_pose_upload";
@@ -1562,6 +1678,8 @@ namespace
         static void* engineServer = TryInterfaceNoError("engine.dll", "VEngineServer022");
         return engineServer;
     }
+
+    void* ServerEngineForUserIds() { return VRPoseCommandEngine(); }
 
     bool VRPoseRelaySendClientCommand(
         void* serverPluginHelpers,
@@ -1956,12 +2074,21 @@ void Game::ObserveBuiltinVRPoseRelayClient(
             m_PlayersVRInfo[playerIndex].shotgunPattern = false;
     }
 
+    if (Hooks::m_ServerPacketSawVRUsercmd)
+        client.vrUsercmdSeen = true;
+    // A pose upload that waited for the end of its rate window goes out now.
+    FlushPendingVRPoseUpload(playerIndex, client);
+
     const std::uint64_t nowMs = VRPoseTickMs();
     const bool uploadIsSilent =
         client.lastUploadTickMs == 0u ||
         nowMs - client.lastUploadTickMs >=
             kVRPoseRelayUploadSilenceForAckMs;
-    if (!uploadIsSilent ||
+    // A VR client whose uploads flow but whose usercmds are not VR-encoded may
+    // have lost the acknowledgement: offer it again a few times (S17).
+    const bool unconfirmed = client.protocolSupported && !client.vrUsercmdSeen &&
+        client.unconfirmedOffers < kVRPoseRelayMaxUnconfirmedOffers;
+    if ((!uploadIsSilent && !unconfirmed) ||
         client.ackAttempts >= kVRPoseRelayMaxAckAttempts ||
         (client.lastAckTickMs != 0u &&
          nowMs - client.lastAckTickMs < kVRPoseRelayAckIntervalMs))
@@ -1971,6 +2098,8 @@ void Game::ObserveBuiltinVRPoseRelayClient(
 
     client.lastAckTickMs = nowMs;
     ++client.ackAttempts;
+    if (!uploadIsSilent)
+        ++client.unconfirmedOffers;
     const bool poseAckSent = VRPoseRelaySendClientCommand(
             m_ServerPluginHelpers,
             entity,
@@ -2109,17 +2238,56 @@ bool Game::HandleBuiltinVRPoseRelayCommand(
         nowUs - client.lastDecodeTickUs <
             kVRPoseRelayMinimumDecodeIntervalUs)
     {
+        // Two uploads in one client packet: keep the newer one for the end of
+        // the window instead of dropping it (B60, latest wins).
+        const std::size_t length = command.argument2 ? std::strlen(command.argument2) : 0u;
+        if (length > 0u && length < sizeof(client.pendingPayload) &&
+            (!client.havePendingUpload || l4d2vr_pose::IsSequenceNewer(sequence, client.pendingSequence)))
+        {
+            std::memcpy(client.pendingPayload, command.argument2, length + 1u);
+            client.pendingSequence = sequence;
+            client.havePendingUpload = true;
+        }
         return true;
     }
+    if (client.havePendingUpload && !l4d2vr_pose::IsSequenceNewer(client.pendingSequence, sequence))
+        client.havePendingUpload = false;
+    RelayVRPoseUpload(playerIndex, client, sequence, command.argument2, nowUs);
+    return true;
+}
+
+void Game::FlushPendingVRPoseUpload(int playerIndex, VRPoseRelayServerClient& client)
+{
+    if (!client.havePendingUpload)
+        return;
+    const std::uint64_t nowUs = VRPoseTickUs();
+    if (!client.protocolSupported)
+    {
+        client.havePendingUpload = false;
+        return;
+    }
+    if (client.lastDecodeTickUs != 0u && nowUs - client.lastDecodeTickUs < kVRPoseRelayMinimumDecodeIntervalUs)
+        return;
+    client.havePendingUpload = false;
+    if (client.haveSequence && !l4d2vr_pose::IsSequenceNewer(client.pendingSequence, client.lastSequence))
+        return;
+    char payload[sizeof(client.pendingPayload)];
+    std::memcpy(payload, client.pendingPayload, sizeof(payload));
+    RelayVRPoseUpload(playerIndex, client, client.pendingSequence, payload, nowUs);
+}
+
+void Game::RelayVRPoseUpload(int playerIndex, VRPoseRelayServerClient& client, std::uint16_t sequence,
+    const char* payload, std::uint64_t nowUs)
+{
     // Invalid payloads consume the rate-limit slot too.
     client.lastDecodeTickUs = nowUs;
 
     l4d2vr_pose::WirePacket packet{};
     if (!l4d2vr_pose::DecodePayload(
-            command.argument2,
+            payload,
             packet))
     {
-        return true;
+        return;
     }
 
     client.haveSequence = true;
@@ -2134,11 +2302,11 @@ bool Game::HandleBuiltinVRPoseRelayCommand(
         "l4d2vr_pose_receive %d %u %s\n",
         playerIndex,
         static_cast<unsigned int>(sequence),
-        command.argument2);
+        payload);
     if (commandLength <= 0 ||
         commandLength >= static_cast<int>(sizeof(relayCommand)))
     {
-        return true;
+        return;
     }
 
     for (int recipientIndex = 1;
@@ -2171,8 +2339,6 @@ bool Game::HandleBuiltinVRPoseRelayCommand(
             recipient.entity,
             relayCommand);
     }
-
-    return true;
 }
 
 
@@ -2404,8 +2570,10 @@ void Game::PublishLocalVRPose(VR* vr, C_BasePlayer* localPlayer)
         vr->m_WorldModelVRPoseSendHz,
         10.0f,
         60.0f);
+    // Never faster than the relays' per-sender window (16.667 ms): at 60 Hz
+    // floor(1000/60) = 16 ms put every other upload inside it (B60).
     const std::uint64_t intervalMs = static_cast<std::uint64_t>(
-        std::max(1.0f, std::floor(1000.0f / sendHz)));
+        std::max(17.0f, std::ceil(1000.0f / sendHz)));
     if (m_VRPoseLastLocalPublishTickMs != 0u &&
         nowMs - m_VRPoseLastLocalPublishTickMs < intervalMs)
     {
@@ -2681,6 +2849,7 @@ bool Game::ReceiveVRPosePayload(
             observedUserID != player.worldPoseUserID;
         if (playerIdentityChanged)
         {
+            player.olderWorldPose = VRPoseFrame{};
             player.previousWorldPose = VRPoseFrame{};
             player.latestWorldPose = VRPoseFrame{};
             player.worldPoseBlendWeight = 0.0f;
@@ -2706,12 +2875,16 @@ bool Game::ReceiveVRPosePayload(
                     1000u;
             if (!mayRebaseAfterSilence)
                 return false;
+            player.olderWorldPose = VRPoseFrame{};
             player.previousWorldPose = VRPoseFrame{};
             player.latestWorldPose = VRPoseFrame{};
             player.worldPoseBlendWeight = 0.0f;
             player.worldPoseBlendTickMs = 0u;
         }
 
+        // Three samples: the delayed playback point usually lies between the
+        // two older ones when a packet arrives (B25).
+        player.olderWorldPose = player.previousWorldPose;
         player.previousWorldPose = player.latestWorldPose.valid
             ? player.latestWorldPose
             : frame;
@@ -2722,17 +2895,19 @@ bool Game::ReceiveVRPosePayload(
     if (fromServer)
         m_VRPoseServerCapable.store(true, std::memory_order_release);
 
+    if (fromServer)
     {
-        // One line per sender every 10 s: confirms the relay without debug logging.
-        static std::uint64_t s_LastReceiveLogMs[65] = {};
-        static unsigned s_ReceivedSinceLog[65] = {};
-        if (playerIndex < 65 && ++s_ReceivedSinceLog[playerIndex] > 0u &&
-            frame.receivedTickMs - s_LastReceiveLogMs[playerIndex] >= 10000u)
+        // Relayed poses only (not the local loop-back), and only when a
+        // sender starts or resumes after a second of silence: confirms the
+        // relay without a line every 10 s for the whole session (B61).
+        static std::uint64_t s_LastReceiveMs[65] = {};
+        if (playerIndex < 65)
         {
-            Game::logMsg("[VR][WorldPose] receiving VR pose from player %d: %u packets, seq %u, head z %.2f",
-                playerIndex, s_ReceivedSinceLog[playerIndex], static_cast<unsigned>(sequence), frame.hmd.position.z);
-            s_LastReceiveLogMs[playerIndex] = frame.receivedTickMs;
-            s_ReceivedSinceLog[playerIndex] = 0u;
+            const std::uint64_t last = s_LastReceiveMs[playerIndex];
+            if (last == 0u || frame.receivedTickMs < last || frame.receivedTickMs - last >= 1000u)
+                Game::logMsg("[VR][WorldPose] receiving VR pose from player %d (seq %u)%s",
+                    playerIndex, static_cast<unsigned>(sequence), last == 0u ? "" : " after a gap");
+            s_LastReceiveMs[playerIndex] = frame.receivedTickMs;
         }
     }
 
@@ -2806,6 +2981,7 @@ void Game::RefreshVRPosePlayerIdentitiesMainThread()
         {
             continue;
         }
+        player.olderWorldPose = VRPoseFrame{};
         player.previousWorldPose = VRPoseFrame{};
         player.latestWorldPose = VRPoseFrame{};
         player.worldPoseBlendWeight = 0.0f;
@@ -2828,6 +3004,7 @@ bool Game::GetInterpolatedVRPose(
     if (!IsValidPlayerIndex(playerIndex) || playerIndex <= 0)
         return false;
 
+    VRPoseFrame older{};
     VRPoseFrame previous{};
     VRPoseFrame latest{};
     {
@@ -2836,6 +3013,7 @@ bool Game::GetInterpolatedVRPose(
             m_PlayersVRInfo[static_cast<std::size_t>(playerIndex)];
         if (!player.worldPoseEntity || player.worldPoseUserID < 0)
             return false;
+        older = player.olderWorldPose;
         previous = player.previousWorldPose;
         latest = player.latestWorldPose;
     }
@@ -2858,11 +3036,27 @@ bool Game::GetInterpolatedVRPose(
         return false;
 
     float fraction = 1.0f;
+    const std::uint64_t interpolationDelay = static_cast<std::uint64_t>(
+        std::clamp(interpolationDelayMs, 0.0f, 250.0f));
+    // Play back between the two samples that bracket (now - delay): with a
+    // delay longer than the packet interval that is often the older pair, and
+    // switching pairs when a packet arrives would otherwise jump (B25).
+    // Only while nothing changed between the two newer samples (tracker
+    // validity, features, hand states): a change shows from the newest one.
+    if (older.valid && previous.valid &&
+        previous.receivedTickMs > older.receivedTickMs &&
+        latest.receivedTickMs > previous.receivedTickMs &&
+        latest.validMask == previous.validMask && latest.featureMask == previous.featureMask &&
+        latest.handStateFlags == previous.handStateFlags && latest.bodyYawValid == previous.bodyYawValid &&
+        (nowMs > interpolationDelay ? nowMs - interpolationDelay : 0u) < previous.receivedTickMs)
+    {
+        latest = previous;
+        previous = older;
+    }
     if (previous.valid &&
         latest.receivedTickMs > previous.receivedTickMs)
     {
-        const std::uint64_t delay = static_cast<std::uint64_t>(
-            std::clamp(interpolationDelayMs, 0.0f, 250.0f));
+        const std::uint64_t delay = interpolationDelay;
         const std::uint64_t targetTick =
             (nowMs > delay) ? (nowMs - delay) : 0u;
         const float denominator = static_cast<float>(

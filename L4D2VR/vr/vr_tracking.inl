@@ -772,7 +772,9 @@ void VR::UpdateTracking()
     if (!m_WasInGamePrev && inGameNow){
         m_FirstPersonControlReady.store(false, std::memory_order_release);
         m_ThirdPersonMapLoadCooldownPending = true;
-        Hooks::s_ServerUnderstandsVR = false;
+        // Hooks::s_ServerUnderstandsVR is reset when the session ends
+        // (Game::ResetVRPoseServerSession): clearing it here raced the new
+        // server's acknowledgement on the main thread.
         m_ServerHookFallbackPending = true;
         m_ServerHookFallbackForcedNonVRServerMovement = false;
         m_ServerHookFallbackCheckTime = {};

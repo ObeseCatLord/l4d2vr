@@ -117,8 +117,11 @@ int main()
     eject = {11u, 1u, handle, 200u, 1, 0, 0, Action::Eject};
     Check(server.Apply(eject, state, 2000u, writer).status == Status::Applied && state.clip == 0);
     insert = {11u, 2u, handle, 200u, 1, 0, 0, Action::Insert};
-    Check(server.Apply(insert, state, 2200u, writer).status == Status::NoSpaceOrAmmo && state.clip == 0);
-    state.infinite = true; insert.sequence = 3;
+    // Too soon after the ejection: the hand keeps the magazine to seat again.
+    Check(server.Apply(insert, state, 2200u, writer).status == Status::RateLimited && state.clip == 0);
+    insert.sequence = 13;
+    Check(server.Apply(insert, state, 2300u, writer).status == Status::NoSpaceOrAmmo && state.clip == 0);
+    state.infinite = true; insert.sequence = 14;
     out = server.Apply(insert, state, 2400u, writer);
     Check(out.status == Status::Applied && state.clip == 15 && state.reserve == 0);
 
@@ -127,7 +130,7 @@ int main()
     eject = {12u, 1u, handle, 200u, 5, 120, 149, Action::Eject};
     Check(server.Apply(eject, state, 3000u, writer).status == Status::Applied && state.reserve == 268);
     insert = {12u, 2u, handle, 200u, 5, 1, 268, Action::Insert};
-    Check(server.Apply(insert, state, 3200u, writer).status == Status::Applied && state.clip == 150 && state.reserve == 119);
+    Check(server.Apply(insert, state, 3300u, writer).status == Status::Applied && state.clip == 150 && state.reserve == 119);
 
     // Native changes, stale commands, recycled handles and invalid owners
     // cannot be overwritten by an insertion from an earlier physical gesture.
@@ -161,7 +164,9 @@ int main()
     insert.sequence = 11; insert.clip = 1; insert.reserve = 14;
     Check(server.Apply(insert, state, 5350u, writer).status == Status::RateLimited);
     insert.sequence = 12;
-    Check(server.Apply(insert, state, 5500u, writer).status == Status::Applied && state.clip == 8 && state.reserve == 7);
+    Check(server.Apply(insert, state, 5500u, writer).status == Status::RateLimited);
+    insert.sequence = 13;
+    Check(server.Apply(insert, state, 5600u, writer).status == Status::Applied && state.clip == 8 && state.reserve == 7);
 
     // ACK delivery and Source replication can arrive in either order. Neither
     // one alone advances the physical reload to its next phase.
@@ -223,7 +228,9 @@ int main()
     eject = {30u, 19u, handle, 300u, 2, 0, 10, Action::Eject};
     Check(server.Apply(eject, state, 15200u, writer).status == Status::Applied);
     insert.sequence = 20u;
-    Check(server.Apply(insert, state, 15400u, writer).status == Status::Applied && state.clip == 10 && state.reserve == 0);
+    Check(server.Apply(insert, state, 15400u, writer).status == Status::RateLimited);
+    insert.sequence = 21u;
+    Check(server.Apply(insert, state, 15500u, writer).status == Status::Applied && state.clip == 10 && state.reserve == 0);
     // Catch and reinsert takes the removed rounds back out of the reserve,
     // never more than the old magazine held.
     server.Reset(50u); state = {true, handle, 400u, 2, 18, 7, 50, false};
@@ -283,7 +290,7 @@ int main()
     eject = {53u, 1u, handle, 400u, 2, 18, 7, Action::Eject};
     Check(server.Apply(eject, state, 20000u, writer).status == Status::Applied);
     insert = {53u, 2u, handle, 400u, 2, 1, 24, Action::Insert};
-    Check(server.Apply(insert, state, 20200u, writer).status == Status::Applied && state.clip == 25 && state.reserve == 0);
+    Check(server.Apply(insert, state, 20300u, writer).status == Status::Applied && state.clip == 25 && state.reserve == 0);
     insert = {53u, 3u, handle, 400u, 2, 25, 0, Action::Reinsert};
     Check(server.Apply(insert, state, 20400u, writer).status == Status::Weapon);
     // A new ejection gesture after cancellation cannot recreate the old item;

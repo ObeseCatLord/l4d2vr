@@ -248,7 +248,7 @@ public:
 	static inline Hook<tHudUserMessage> hkTextMsg;
 	static inline Hook<tEmitSoundAttenuation> hkEmitSoundAttenuation;
 	static inline Hook<tEmitSoundLevel> hkEmitSoundLevel;
-	static bool s_ServerUnderstandsVR;
+	static std::atomic<bool> s_ServerUnderstandsVR;   // main thread (acks) and Present thread (tracking)
 	static inline bool s_ManualThrowHooksReady = false;
 	// Listen host features: the static set plus HandThrow once its server.dll
 	// grenade fields resolved (hooks_throwables.inl).

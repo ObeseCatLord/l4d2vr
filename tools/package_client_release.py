@@ -139,6 +139,15 @@ CHANGES = [
     "2.0.11: with the Pavlov holster layout off, letting go of a long gun near the chest drops it instead of hanging it on a sling you could not take it back from (which also blocked firing until a restart).",
     "2.0.11: arms and hands no longer vanish for a moment after every stutter or when one controller loses tracking briefly (they keep their last pose for up to half a second); a gun in the left hand keeps its mirrored shape meanwhile.",
     "2.0.11: smoother frames in hordes: each drawn model no longer builds several strings, takes a lock and searches its name every time; the wrist HUD reuses its buffers. With multicore rendering, reload and pose commands are sent from the game's main thread, and rare render-thread deadlocks and lock hand-overs are fixed.",
+    "2.0.11: grenades thrown with GrenadeThrowMode=arc land where the arc shows on high maps too, and other players see your head pitch smoothly: the view pitch now reaches a 2.0.11 server or host exactly at any map height (it was rounded by up to 3 degrees above 168 units). Older servers keep the old encoding.",
+    "2.0.11: hosting: a player who joins a slot someone else used (or rejoins after a crash) can reload again, and nobody's reloads, recoil or melee stop working after a map change (old command numbers no longer block them); a host in desktop mode resets its VR guests' reload state on each map too.",
+    "2.0.11: hosting: a guest's pistol reloads no longer depend on the host's own MagazineInteractionEnabled setting.",
+    "2.0.11: desktop-mode players (and mouse mode) can fire dual pistols on modded servers again.",
+    "2.0.11: other VR players' heads and hands move smoothly instead of pausing and jumping with every pose packet.",
+    "2.0.11: shooting dual pistols, shoving and handing over pills while walking no longer turns your movement toward the hand.",
+    "2.0.11: anti-cheat for hosts and server plugins: a client's hand must stay within 1.2 m of its eye and in front of walls and doors (shots, melee, throws and drops no longer start inside or behind them); listen-host physical melee has the server plugin's swing cooldown and is blocked while pinned or incapacitated; swings need real hand motion and end after 1.5 s; map props can only be pulled as the item they really are.",
+    "2.0.11: server plugin: switching weapons no longer skips a weapon's fire cycle (instant deploy only removes the draw delay); a spent grenade cannot be thrown again; magazines go in at least 0.3 s after the old one came out, shells one per 0.2 s, dual-pistol reloads one per second (generous for hand reloading).",
+    "2.0.11: server plugin: VR features apply only after the VR handshake and honour the FeatureMask bits; poses relayed in bursts keep the newest one; client actions no longer flood the server log; the Windows plugin reads l4d2vr_server_config.txt from left4dead2/addons/, understands MaxHandReachMeters and the other shared keys, keeps grenade aim per player and applies its use/mounted/throw aim while the command runs.",
 ]
 
 

@@ -2770,6 +2770,94 @@ namespace
 		}
 	}
 
+	// The map-prop hint the host derives itself from the prop's model (the
+	// one-piece carry models the client classifier accepts), via this
+	// process's client entity of the same index. The wire hint is only a
+	// cross-check: a prop whose model is not that item is never converted (B02).
+	static uint8_t ObjectPullServerHintFromModelName(const char* modelName)
+	{
+		using H = VR::ObjectPullTargetHint;
+		if (!modelName || !*modelName)
+			return static_cast<uint8_t>(H::None);
+		if (ObjectPullServerContainsNormalizedToken(modelName, "gascan001a"))
+			return static_cast<uint8_t>(H::GasCan);
+		if (ObjectPullServerContainsNormalizedToken(modelName, "propanecanister001a") ||
+			ObjectPullServerContainsNormalizedToken(modelName, "propanecanister01a"))
+			return static_cast<uint8_t>(H::PropaneTank);
+		if (ObjectPullServerContainsNormalizedToken(modelName, "oxygentank01"))
+			return static_cast<uint8_t>(H::OxygenTank);
+		if (ObjectPullServerContainsNormalizedToken(modelName, "fireworkcrate"))
+			return static_cast<uint8_t>(H::FireworksBox);
+		if (ObjectPullServerContainsNormalizedToken(modelName, "gnomemdl"))
+			return static_cast<uint8_t>(H::Gnome);
+		if (ObjectPullServerContainsNormalizedToken(modelName, "wcolamdl"))
+			return static_cast<uint8_t>(H::ColaBottles);
+		return static_cast<uint8_t>(H::None);
+	}
+
+	static bool ObjectPullServerReadModelNameSafe(C_BaseEntity* clientEntity, char* name, size_t capacity)
+	{
+		if (!name || capacity == 0)
+			return false;
+		name[0] = '\0';
+		if (!clientEntity || !Hooks::m_Game || !Hooks::m_Game->m_ModelInfo)
+			return false;
+#ifdef _MSC_VER
+		__try
+		{
+#endif
+			void* const renderable = clientEntity->GetClientRenderable();
+			if (!renderable)
+				return false;
+			void** const vtable = *reinterpret_cast<void***>(renderable);
+			if (!vtable || !vtable[8])
+				return false;
+			using GetModelFn = void* (__thiscall*)(void*);
+			void* const model = reinterpret_cast<GetModelFn>(vtable[8])(renderable);   // IClientRenderable::GetModel
+			const char* const modelName = model ? Hooks::m_Game->m_ModelInfo->GetModelName(model) : nullptr;
+			if (!modelName)
+				return false;
+			std::snprintf(name, capacity, "%s", modelName);
+			return name[0] != '\0';
+#ifdef _MSC_VER
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			name[0] = '\0';
+			return false;
+		}
+#endif
+	}
+
+	static uint8_t ObjectPullServerDeriveMapPropHint(void* serverEntity)
+	{
+		const uint8_t none = static_cast<uint8_t>(VR::ObjectPullTargetHint::None);
+		if (!serverEntity || !Hooks::m_Game || !Hooks::m_Game->m_Offsets ||
+			!Hooks::m_Game->m_Offsets->CBaseEntity_entindex.valid)
+			return none;
+		using EntindexFn = int(__thiscall*)(void*);
+		int index = -1;
+#ifdef _MSC_VER
+		__try
+		{
+#endif
+			index = reinterpret_cast<EntindexFn>(Hooks::m_Game->m_Offsets->CBaseEntity_entindex.address)(serverEntity);
+#ifdef _MSC_VER
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return none;
+		}
+#endif
+		if (index <= 0 || index >= 2048)
+			return none;
+		C_BaseEntity* clientEntity = Hooks::m_Game->GetClientEntity(index);
+		char modelName[260]{};
+		if (!ObjectPullServerReadModelNameSafe(clientEntity, modelName, sizeof(modelName)))
+			return none;
+		return ObjectPullServerHintFromModelName(modelName);
+	}
+
 	static bool ObjectPullServerClassIsHintedMapProp(
 		const char* className,
 		uint8_t targetHint)
@@ -3329,7 +3417,8 @@ namespace
 			!classSupported &&
 			ObjectPullServerClassIsHintedMapProp(
 				className,
-				targetHint);
+				targetHint) &&
+			ObjectPullServerDeriveMapPropHint(entity) == targetHint;
 		if (!classSupported && !hintedMapProp)
 		{
 			if (Hooks::m_VR->m_ObjectPullDebugLog)
@@ -4877,6 +4966,9 @@ namespace
 uint32_t Hooks::ListenHostFeatureMask()
 {
     uint32_t mask = l4d2vr_features::kListenHostMask;
+    // The exact-pitch packing restores z around the player's server origin.
+    if (!m_Game || !m_Game->m_Offsets || !m_Game->m_Offsets->CBaseEntity_GetAbsOrigin_Server.valid)
+        mask &= ~l4d2vr_features::ExactPitch;
     if (HandThrowListenBackendReady())
         mask |= l4d2vr_features::HandThrow;
     if (ListenHostShotgunPatternReady())

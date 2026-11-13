@@ -282,10 +282,14 @@ namespace
     constexpr int kUsingMountedWeaponOffset = 0x1EBB;
     constexpr int kMeleeSwingHistoryCapacity = 16;
     constexpr float kDefaultTeleportMaxDistanceUnits = 2500.0f;
-    constexpr char kServerLogFileName[] = "l4d2vr_server_log.txt";
-    constexpr char kServerConfigFileName[] = "l4d2vr_server_config.txt";
+    // Files live next to the plugin in left4dead2/addons/ (as documented),
+    // resolved against the server's working directory at load.
+    constexpr const char* kServerFileDirectories[] = { "left4dead2/addons/", "addons/", "" };
+    char kServerLogFileName[300] = "l4d2vr_server_log.txt";
+    char kServerConfigFileName[300] = "l4d2vr_server_config.txt";
 
     constexpr int kIsIncapacitatedOffset = 0x1EA9;
+    constexpr int kEntitiesHitThisSwingOffset = 0x17F0;   // Server_WeaponCSBase::entitiesHitThisSwing
     constexpr int kTongueOwnerOffset = 0x1F6C;
     constexpr int kIsHangingFromTongueOffset = 0x1F84;
     constexpr int kCarryAttackerOffset = 0x2714;
@@ -324,7 +328,34 @@ namespace
         Vector controllerPos = Vector(0.0f, 0.0f, 0.0f);
         QAngle controllerAngle = QAngle(0.0f, 0.0f, 0.0f);
         QAngle prevControllerAngle = QAngle(0.0f, 0.0f, 0.0f);
+        Vector prevControllerPos = Vector(0.0f, 0.0f, 0.0f);
+        bool havePrevControllerPose = false;
+        uint64_t lastDecodedMs = 0;              // GetTickCount64 of the newest VR command
+        uint64_t swingStartMs = 0;
+        // Throw-aim state (was shared by every player: B14).
+        uintptr_t throwableAimWeapon = 0;
+        bool prevAttackDown = false;
+        bool prevWeaponThrowable = false;
+        int throwableAimTicks = 0;
+        // Execution-time eye override armed by the newest decoded command:
+        // commands run after ProcessUsercmds returns (PlayerRunCommand), so the
+        // override is keyed by player and decode time, not by the decode call.
+        void* aimPlayer = nullptr;
+        int aimReason = 0;
+        uint64_t aimArmedMs = 0;
+        Vector aimOrigin = Vector(0.0f, 0.0f, 0.0f);
+        QAngle aimAngles = QAngle(0.0f, 0.0f, 0.0f);
+        l4d2vr_server::LogBudget logBudget{};
     };
+
+    // An armed eye override applies to the commands of the packet it was
+    // decoded from; they execute within a frame or two.
+    constexpr uint64_t kAimOverrideMaxAgeMs = 150;
+    // The newest decoded pose is used for shots only while fresh.
+    constexpr uint64_t kPoseMaxAgeMs = 500;
+    // Decode happens before the packet's commands move the player: allow this
+    // much on top of the reach limit there (bullets clamp exactly at fire time).
+    constexpr float kDecodeReachSlackUnits = 24.0f;
 
     class CUserCmd
     {
@@ -384,21 +415,40 @@ namespace
     };
     IVoiceServer* g_voiceServer = nullptr;
     ServerConfig g_config{};
+    // Keys shared with the Linux plugin (MaxHandReachMeters, UnitsPerMeter,
+    // FeatureMask, MeleeMin*/MeleeMaxSwingSeconds, HandTraceEnabled, Verbose).
+    l4d2vr_server::ServerConfig g_shared{};
 
     thread_local int g_currentUsercmdPlayerIndex = -1;
     thread_local Server_BaseEntity* g_currentUsercmdPlayer = nullptr;
     thread_local IServerUnknown* g_currentUsercmdUnknown = nullptr;
     thread_local bool g_performingMeleeTrace = false;
-    thread_local bool g_commandControllerAimOverride = false;
-    thread_local void* g_commandControllerAimPlayer = nullptr;
-    thread_local Vector g_commandControllerAimOrigin = Vector(0.0f, 0.0f, 0.0f);
-    thread_local QAngle g_commandControllerAimAngles = QAngle(0.0f, 0.0f, 0.0f);
-    thread_local int g_commandControllerAimReason = 0;
     thread_local bool g_useControllerAimOverride = false;
     thread_local void* g_useControllerAimPlayer = nullptr;
     thread_local Vector g_useControllerAimOrigin = Vector(0.0f, 0.0f, 0.0f);
     thread_local QAngle g_useControllerAimAngles = QAngle(0.0f, 0.0f, 0.0f);
     thread_local QAngle g_returnEyeAngles = QAngle(0.0f, 0.0f, 0.0f);
+
+    void ResolveServerFilePaths()
+    {
+        // The first directory that exists wins (a config already there wins first).
+        const char* chosen = "";
+        for (const char* dir : kServerFileDirectories)
+        {
+            char probe[300];
+            std::snprintf(probe, sizeof(probe), "%sl4d2vr_server_config.txt", dir);
+            FILE* f = nullptr;
+            if (fopen_s(&f, probe, "r") == 0 && f) { fclose(f); chosen = dir; break; }
+            if (*dir)
+            {
+                const DWORD attributes = GetFileAttributesA(dir);
+                if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && !*chosen)
+                    chosen = dir;
+            }
+        }
+        std::snprintf(kServerConfigFileName, sizeof(kServerConfigFileName), "%sl4d2vr_server_config.txt", chosen);
+        std::snprintf(kServerLogFileName, sizeof(kServerLogFileName), "%sl4d2vr_server_log.txt", chosen);
+    }
 
     void ResetLogFile()
     {
@@ -518,20 +568,20 @@ namespace
         fputs(
             "# L4D2VR dedicated server config. Edit values, then restart the server.\n"
             "# Distances are Source units. Rough reference: 43.2 units is about 1 meter.\n"
-            "TeleportEnabled=true\n"
-            "TeleportBlockWhileControlled=true\n"
-            "TeleportBlockWhileIncapacitated=true\n"
-            "TeleportMaxDistanceUnits=2500\n"
-            "# Optional alternative; if set after TeleportMaxDistanceUnits it overrides it.\n"
-            "# TeleportMaxDistanceMeters=20\n"
-            "TeleportCooldownSeconds=1.0\n"
+            "# Pose sanity: a hand farther than this from the eye is pulled back (max 1.2).\n"
+            "UnitsPerMeter=43.2\n"
+            "MaxHandReachMeters=1.2\n"
+            "HandTraceEnabled=true\n"
             "\n"
             "MeleeSwingEnabled=true\n"
             "MeleeSwingBlockWhileControlled=true\n"
             "MeleeSwingBlockWhileIncapacitated=true\n"
             "MeleeSwingCooldownSeconds=0.35\n"
             "MeleeSwingBurstWindowSeconds=2.0\n"
-            "MeleeSwingBurstMax=4\n",
+            "MeleeSwingBurstMax=4\n"
+            "MeleeMinHandSpeed=0.5\n"
+            "MeleeMinAngularSpeed=90\n"
+            "MeleeMaxSwingSeconds=1.5\n",
             file);
         fclose(file);
     }
@@ -569,11 +619,14 @@ namespace
             g_config.meleeSwingBurstWindowSeconds = std::clamp(floatValue, 0.0f, 60.0f);
         else if (key == "meleeswingburstmax" && ParseIntValue(value, intValue))
             g_config.meleeSwingBurstMax = std::clamp(intValue, 0, kMeleeSwingHistoryCapacity);
+        // Keys shared with the Linux plugin; unknown keys stay ignored.
+        l4d2vr_server::ApplyConfigLine(g_shared, rawKey + "=" + rawValue);
     }
 
     void LoadServerConfig()
     {
         g_config = ServerConfig{};
+        g_shared = l4d2vr_server::ServerConfig{};
         WriteDefaultServerConfigIfMissing();
 
         FILE* file = nullptr;
@@ -615,6 +668,9 @@ namespace
             g_config.meleeSwingCooldownSeconds,
             g_config.meleeSwingBurstWindowSeconds,
             g_config.meleeSwingBurstMax);
+        Log("server config file %s: reach=%.2f m (%.1f units) handTrace=%d featureMask=0x%X",
+            kServerConfigFileName, g_shared.maxHandReachMeters, g_shared.MaxHandReachUnits(),
+            g_shared.handTraceEnabled ? 1 : 0, static_cast<unsigned>(g_shared.featureMask));
     }
 
     // Player index from the engine's edict array (ServerActivate); Windows and
@@ -711,10 +767,37 @@ namespace
         return handle != 0 && handle != -1;
     }
 
+    // The status offsets are compile-time constants for one server.dll build.
+    // A read that cannot be a bool/EHANDLE means the layout moved: log once and
+    // treat the state as unknown (not blocked) instead of trusting garbage.
+    std::atomic_bool g_statusLayoutSuspect{ false };
+    void NoteSuspectStatusLayout(const char* what, int value)
+    {
+        if (!g_statusLayoutSuspect.exchange(true))
+            Log("status offset check failed (%s=0x%X): player status offsets look stale for this server.dll; "
+                "pinned/incapacitated melee blocks are unreliable", what, static_cast<unsigned>(value));
+    }
+
+    bool PlausibleBool(unsigned char value, const char* what)
+    {
+        if (value <= 1) return true;
+        NoteSuspectStatusLayout(what, value);
+        return false;
+    }
+
+    bool PlausibleHandle(int value, const char* what)
+    {
+        // EHANDLE: -1/0 (none), or 12 index bits + serial bits (< 2^22 networked, < 2^31 on the server).
+        if (value == -1 || (value >= 0 && (value & 0xFFF) < 2048)) return true;
+        NoteSuspectStatusLayout(what, value);
+        return false;
+    }
+
     bool IsServerPlayerIncapacitated(const Server_BaseEntity* player)
     {
         unsigned char incapacitated = 0;
-        return TryReadEntityValue(player, kIsIncapacitatedOffset, incapacitated) && incapacitated != 0;
+        return TryReadEntityValue(player, kIsIncapacitatedOffset, incapacitated) &&
+            PlausibleBool(incapacitated, "m_isIncapacitated") && incapacitated != 0;
     }
 
     bool IsServerPlayerControlledBySI(const Server_BaseEntity* player)
@@ -736,6 +819,10 @@ namespace
         TryReadEntityValue(player, kPounceAttackerOffset, pounceAttacker);
         TryReadEntityValue(player, kJockeyAttackerOffset, jockeyAttacker);
 
+        if (!PlausibleBool(hangingFromTongue, "m_isHangingFromTongue") || !PlausibleHandle(tongueOwner, "m_tongueOwner") ||
+            !PlausibleHandle(carryAttacker, "m_carryAttacker") || !PlausibleHandle(pummelAttacker, "m_pummelAttacker") ||
+            !PlausibleHandle(pounceAttacker, "m_pounceAttacker") || !PlausibleHandle(jockeyAttacker, "m_jockeyAttacker"))
+            return false;
         return hangingFromTongue != 0 ||
             HandleValid(tongueOwner) ||
             HandleValid(carryAttacker) ||
@@ -901,6 +988,29 @@ namespace
     Hook<tFindUseEntity> g_findUseEntity;
     Hook<tPlayerUse> g_playerUse;
 
+    bool TryGetNativeEye(Server_BaseEntity* player, Vector& eye)
+    {
+        if (!player || !g_eyePosition.original)
+            return false;
+        Vector result{};
+#ifdef _MSC_VER
+        __try
+        {
+            if (!g_eyePosition.original(player, &result))
+                return false;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+#else
+        if (!g_eyePosition.original(player, &result))
+            return false;
+#endif
+        eye = result;
+        return IsFiniteVector(eye);
+    }
+
     Server_WeaponCSBase* SafeGetActiveWeapon(Server_BaseEntity* player)
     {
         if (!player || !g_offsets.GetActiveWeapon.valid)
@@ -993,16 +1103,34 @@ namespace
         return weapon != nullptr;
     }
 
+    // Player slot of a server player entity (the edicts of slots 1..maxclients).
+    int PlayerIndexFromEntity(const void* entity)
+    {
+        if (!entity || !g_edictList)
+            return -1;
+        const int last = (std::min)(g_clientMax, g_edictCount - 1);
+        for (int index = 1; index <= last && index < kMaxPlayers; ++index)
+            if (GetBaseEntityFromEdict(&g_edictList[index]) == entity)
+                return index;
+        return -1;
+    }
+
+    bool PoseFresh(const PlayerVrState& vrPlayer, uint64_t now, uint64_t maxAgeMs)
+    {
+        return vrPlayer.isUsingVR && vrPlayer.lastDecodedMs != 0 && now >= vrPlayer.lastDecodedMs &&
+            now - vrPlayer.lastDecodedMs <= maxAgeMs;
+    }
+
+    // Use traces run inside PlayerRunCommand, after ProcessUsercmds returned:
+    // find the VR player by entity, not by the decode-time globals.
     bool TryBuildServerUseControllerPose(void* player, Vector& origin, QAngle& angles)
     {
-        if (!player || !g_currentUsercmdPlayer || player != g_currentUsercmdPlayer)
+        const int index = PlayerIndexFromEntity(player);
+        if (!IsValidPlayerIndex(index))
             return false;
 
-        if (!IsValidPlayerIndex(g_currentUsercmdPlayerIndex))
-            return false;
-
-        const PlayerVrState& vrPlayer = g_players[g_currentUsercmdPlayerIndex];
-        if (!vrPlayer.isUsingVR)
+        const PlayerVrState& vrPlayer = g_players[index];
+        if (!PoseFresh(vrPlayer, GetTickCount64(), kPoseMaxAgeMs))
             return false;
 
         origin = vrPlayer.controllerPos;
@@ -1024,16 +1152,98 @@ namespace
             return IsFiniteVector(origin) && IsFiniteAngles(angles);
         }
 
-        if (g_commandControllerAimOverride && player == g_commandControllerAimPlayer)
+        // Override armed by the player's newest decoded command (mounted gun,
+        // grip pickup, throw grace), applied while that packet's commands run.
+        const uint64_t now = GetTickCount64();
+        for (int index = 1; index < kMaxPlayers; ++index)
         {
-            origin = g_commandControllerAimOrigin;
-            angles = g_commandControllerAimAngles;
-            reason = g_commandControllerAimReason;
+            const PlayerVrState& vrPlayer = g_players[index];
+            if (vrPlayer.aimPlayer != player || vrPlayer.aimReason == 0)
+                continue;
+            if (!vrPlayer.isUsingVR || now < vrPlayer.aimArmedMs || now - vrPlayer.aimArmedMs > kAimOverrideMaxAgeMs)
+                return false;
+            origin = vrPlayer.aimOrigin;
+            angles = vrPlayer.aimAngles;
+            reason = vrPlayer.aimReason;
             return IsFiniteVector(origin) && IsFiniteAngles(angles);
         }
-
         return false;
     }
+
+    // ---- Hand wall trace (eye -> hand) --------------------------------------
+    using tGetRefEHandle = const unsigned int* (__thiscall*)(void* thisptr);
+
+    bool IsPlayerHandleEntity(IHandleEntity* entity)
+    {
+        if (!entity)
+            return false;
+#ifdef _MSC_VER
+        __try
+        {
+            auto fn = reinterpret_cast<tGetRefEHandle>((*reinterpret_cast<void***>(entity))[2]);
+            const unsigned int* handle = fn(entity);
+            const unsigned int index = handle ? (*handle & 0xFFFu) : 0u;
+            return index >= 1u && index <= static_cast<unsigned int>(g_clientMax);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+#else
+        auto fn = reinterpret_cast<tGetRefEHandle>((*reinterpret_cast<void***>(entity))[2]);
+        const unsigned int* handle = fn(entity);
+        const unsigned int index = handle ? (*handle & 0xFFFu) : 0u;
+        return index >= 1u && index <= static_cast<unsigned int>(g_clientMax);
+#endif
+    }
+
+    class HandTraceFilter final : public CTraceFilter
+    {
+    public:
+        explicit HandTraceFilter(IHandleEntity* self) : CTraceFilter(self, 0) {}
+        // Players never stop the hand; world, doors, brushes and props do.
+        bool ShouldHitEntity(IHandleEntity* entity, int) override
+        {
+            return entity && entity != m_pPassEnt && !IsPlayerHandleEntity(entity);
+        }
+    };
+
+    // Pulls `hand` back in front of the first solid surface on eye -> hand.
+    bool TraceHandFromEye(void* player, const Vector& eye, Vector& hand)
+    {
+        if (!g_engineTraceServer || !g_shared.handTraceEnabled || !IsFiniteVector(eye) || !IsFiniteVector(hand))
+            return false;
+        const Vector delta = hand - eye;
+        const float length = delta.Length();
+        if (!(length > 1.0f))
+            return false;
+        Ray_t ray;
+        ray.Init(eye, hand);
+        trace_t trace{};
+        trace.fraction = 1.0f;
+        HandTraceFilter filter(static_cast<IHandleEntity*>(player));
+        constexpr unsigned int kMask = CONTENTS_SOLID | CONTENTS_WINDOW | CONTENTS_MOVEABLE;
+#ifdef _MSC_VER
+        __try
+        {
+            g_engineTraceServer->TraceRay(ray, kMask, &filter, &trace);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+#else
+        g_engineTraceServer->TraceRay(ray, kMask, &filter, &trace);
+#endif
+        if (trace.startsolid || trace.allsolid || !std::isfinite(trace.fraction) || trace.fraction >= 1.0f)
+            return false;
+        const float keep = (std::max)(0.0f, trace.fraction * length - 2.0f) / length;
+        hand = eye + delta * keep;
+        return true;
+    }
+
+    // Native eye of the decoding player (EyePosition's original, no override).
+    bool TryGetNativeEye(Server_BaseEntity* player, Vector& eye);
 
     class ScopedServerUseControllerAimOverride
     {
@@ -1070,12 +1280,20 @@ namespace
         Vector correctedOrigin = origin;
         QAngle correctedAngles = angles;
 
-        if (IsValidPlayerIndex(playerId))
+        // Hand-origin bullets: a VR player after the handshake (AkimboRays),
+        // with a fresh pose, held to the reach limit around the engine's own
+        // shoot position (B01).
+        if (IsValidPlayerIndex(playerId) &&
+            (g_session.EffectiveFeatures(playerId) & l4d2vr_server::kFeatureAkimboRays) != 0u)
         {
             const PlayerVrState& player = g_players[playerId];
-            if (player.isUsingVR && IsFiniteVector(player.controllerPos) && IsFiniteAngles(player.controllerAngle))
+            if (PoseFresh(player, GetTickCount64(), kPoseMaxAgeMs) &&
+                IsFiniteVector(player.controllerPos) && IsFiniteAngles(player.controllerAngle) && IsFiniteVector(origin))
             {
-                correctedOrigin = player.controllerPos;
+                l4d2vr_server::Vec3 hand(player.controllerPos.x, player.controllerPos.y, player.controllerPos.z);
+                l4d2vr_server::ClampHandReach(l4d2vr_server::Vec3(origin.x, origin.y, origin.z), hand,
+                    g_shared.MaxHandReachUnits());
+                correctedOrigin = Vector(hand.x, hand.y, hand.z);
                 correctedAngles = player.controllerAngle;
                 NormalizeAndClampViewAngles(correctedAngles);
             }
@@ -1086,15 +1304,6 @@ namespace
 
     int __cdecl DetourReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
     {
-        static uintptr_t s_throwableAimWeapon = 0;
-        static bool s_prevAttackDown = false;
-        static bool s_prevWeaponThrowable = false;
-        static int s_throwableAimTicks = 0;
-
-        g_commandControllerAimOverride = false;
-        g_commandControllerAimPlayer = nullptr;
-        g_commandControllerAimReason = 0;
-
         const int originalResult = g_readUsercmd.original(buf, move, from);
         if (!move)
             return originalResult;
@@ -1109,9 +1318,15 @@ namespace
                 g_players[playerIndex].isUsingVR = false;
                 g_players[playerIndex].isMeleeing = false;
                 g_players[playerIndex].currentMeleeSwingAllowed = false;
+                g_players[playerIndex].aimReason = 0;
             }
             return originalResult;
         }
+
+        // The decoding player's own eye: reach limit and exact-pitch reference.
+        Vector nativeEye{};
+        const bool haveEye = hasValidPlayer && TryGetNativeEye(g_currentUsercmdPlayer, nativeEye);
+        const float referenceZ = nativeEye.z - 64.0f + l4d2vr_server::pitch_pack::kReferenceAboveOrigin;
 
         // Shared codec: identical decode/strip to the listen host's dReadUsercmd.
         l4d2vr_server::UsercmdData cmd{};
@@ -1130,7 +1345,7 @@ namespace
         cmd.random_seed = move->random_seed;
         cmd.mousedx = move->mousedx;
         cmd.mousedy = move->mousedy;
-        const l4d2vr_server::DecodedUsercmd decoded = l4d2vr_server::DecodeVRUsercmd(cmd);
+        const l4d2vr_server::DecodedUsercmd decoded = l4d2vr_server::DecodeVRUsercmd(cmd, haveEye ? &referenceZ : nullptr);
         move->command_number = cmd.command_number;
         move->tick_count = cmd.tick_count;
         move->viewangles.x = cmd.viewangles[0];
@@ -1140,84 +1355,84 @@ namespace
         move->impulse = cmd.impulse;
         move->weaponselect = cmd.weaponselect;
         move->weaponsubtype = cmd.weaponsubtype;
+        move->forwardmove = cmd.forwardmove;
+        move->sidemove = cmd.sidemove;
 
-        if (hasValidPlayer)
+        // VR treatment only after the handshake; the command is stripped either way.
+        const l4d2vr_server::SessionClient* client = hasValidPlayer ? g_session.Client(playerIndex) : nullptr;
+        if (!client || !client->helloSeen)
+            return originalResult;
+
+        PlayerVrState& vrPlayer = g_players[playerIndex];
+        g_session.NoteVRUsercmd(playerIndex);
+        vrPlayer.viewYaw = move->viewangles.y;
+        vrPlayer.haveViewYaw = std::isfinite(vrPlayer.viewYaw);
+        vrPlayer.isMeleeing = decoded.meleeSwing;
+        if (!decoded.meleeSwing)
+            vrPlayer.currentMeleeSwingAllowed = false;
+        // Without the server's own eye the hand cannot be held to the reach
+        // limit: no hand pose at all (fail closed).
+        vrPlayer.isUsingVR = haveEye && decoded.poseValid && l4d2vr_server::SaneControllerAngles(decoded.controllerAngles);
+        l4d2vr_server::Vec3 hand = decoded.controllerPos;
+        if (vrPlayer.isUsingVR)
         {
-            PlayerVrState& vrPlayer = g_players[playerIndex];
-            g_session.NoteVRUsercmd(playerIndex);
-            vrPlayer.viewYaw = move->viewangles.y;
-            vrPlayer.haveViewYaw = std::isfinite(vrPlayer.viewYaw);
-            vrPlayer.isMeleeing = decoded.meleeSwing;
-            if (!decoded.meleeSwing)
-                vrPlayer.currentMeleeSwingAllowed = false;
-            vrPlayer.isUsingVR = decoded.poseValid && l4d2vr_server::SaneControllerAngles(decoded.controllerAngles);
-            vrPlayer.controllerPos = Vector(decoded.controllerPos.x, decoded.controllerPos.y, decoded.controllerPos.z);
-            vrPlayer.controllerAngle = QAngle(decoded.controllerAngles.x, decoded.controllerAngles.y, decoded.controllerAngles.z);
-            NormalizeAndClampViewAngles(vrPlayer.controllerAngle);
-            if (!vrPlayer.isUsingVR)
-            {
-                vrPlayer.isMeleeing = false;
-                vrPlayer.currentMeleeSwingAllowed = false;
-            }
+            l4d2vr_server::ClampHandReach(l4d2vr_server::Vec3(nativeEye.x, nativeEye.y, nativeEye.z), hand,
+                g_shared.MaxHandReachUnits() + kDecodeReachSlackUnits);
+            vrPlayer.controllerPos = Vector(hand.x, hand.y, hand.z);
+            TraceHandFromEye(g_currentUsercmdPlayer, nativeEye, vrPlayer.controllerPos);
+            vrPlayer.lastDecodedMs = GetTickCount64();
+        }
+        vrPlayer.controllerAngle = QAngle(decoded.controllerAngles.x, decoded.controllerAngles.y, decoded.controllerAngles.z);
+        NormalizeAndClampViewAngles(vrPlayer.controllerAngle);
+        if (!vrPlayer.isUsingVR)
+        {
+            vrPlayer.isMeleeing = false;
+            vrPlayer.currentMeleeSwingAllowed = false;
+            vrPlayer.aimReason = 0;
+            return originalResult;
         }
 
+        // Throw grace after a grenade release, per player (B14), like the
+        // Linux plugin: the throw runs with the hand's aim for 48 commands.
         Server_WeaponCSBase* serverWeapon = nullptr;
         int serverWeaponId = 0;
         TryGetCurrentServerWeapon(serverWeapon, serverWeaponId);
         const uintptr_t weaponTag = reinterpret_cast<uintptr_t>(serverWeapon);
-        if (weaponTag != s_throwableAimWeapon)
+        if (weaponTag != vrPlayer.throwableAimWeapon)
         {
-            if (s_prevWeaponThrowable && s_prevAttackDown)
-                s_throwableAimTicks = std::max(s_throwableAimTicks, 48);
-            s_throwableAimWeapon = weaponTag;
-            s_prevAttackDown = false;
-            s_prevWeaponThrowable = false;
+            if (vrPlayer.prevWeaponThrowable && vrPlayer.prevAttackDown)
+                vrPlayer.throwableAimTicks = (std::max)(vrPlayer.throwableAimTicks, 48);
+            vrPlayer.throwableAimWeapon = weaponTag;
+            vrPlayer.prevAttackDown = false;
+            vrPlayer.prevWeaponThrowable = false;
         }
-
         constexpr int kInAttack = (1 << 0);
         const bool attackDown = (move->buttons & kInAttack) != 0;
         const bool activeWeaponIsThrowable = IsThrowableWeapon(serverWeaponId);
-        bool commandControllerAim = false;
+        if (activeWeaponIsThrowable && vrPlayer.prevAttackDown && !attackDown)
+            vrPlayer.throwableAimTicks = (std::max)(vrPlayer.throwableAimTicks, 48);
         int commandControllerAimReason = 0;
-        if (activeWeaponIsThrowable)
+        if (vrPlayer.throwableAimTicks > 0)
         {
-            if (attackDown || (s_prevAttackDown && !attackDown))
-                s_throwableAimTicks = std::max(s_throwableAimTicks, 48);
-            commandControllerAim = attackDown || (s_throwableAimTicks > 0);
-            commandControllerAimReason = attackDown ? 2 : 3;
-            if (s_throwableAimTicks > 0)
-                --s_throwableAimTicks;
-        }
-        else
-        {
-            commandControllerAim = s_throwableAimTicks > 0;
             commandControllerAimReason = 3;
-            if (s_throwableAimTicks > 0)
-                --s_throwableAimTicks;
+            --vrPlayer.throwableAimTicks;
         }
-        s_prevAttackDown = activeWeaponIsThrowable && attackDown;
-        s_prevWeaponThrowable = activeWeaponIsThrowable;
+        vrPlayer.prevAttackDown = activeWeaponIsThrowable && attackDown;
+        vrPlayer.prevWeaponThrowable = activeWeaponIsThrowable;
 
         if (IsCurrentServerPlayerUsingMountedWeapon())
-        {
-            commandControllerAim = true;
             commandControllerAimReason = 4;
-        }
         if (decoded.intent == l4d2vr_server::Intent::GripPickup && decoded.useDown)
-        {
-            commandControllerAim = true;
             commandControllerAimReason = 8;
-        }
 
-        if (commandControllerAim && hasValidPlayer && g_players[playerIndex].isUsingVR)
+        vrPlayer.aimReason = commandControllerAimReason;
+        if (commandControllerAimReason != 0)
         {
-            const PlayerVrState& vrPlayer = g_players[playerIndex];
-            g_commandControllerAimOverride = true;
-            g_commandControllerAimPlayer = g_currentUsercmdPlayer;
-            g_commandControllerAimOrigin = vrPlayer.controllerPos;
-            g_commandControllerAimAngles = vrPlayer.controllerAngle;
-            NormalizeAndClampViewAngles(g_commandControllerAimAngles);
-            g_commandControllerAimReason = commandControllerAimReason;
+            vrPlayer.aimPlayer = g_currentUsercmdPlayer;
+            vrPlayer.aimArmedMs = GetTickCount64();
+            vrPlayer.aimOrigin = vrPlayer.controllerPos;
+            vrPlayer.aimAngles = vrPlayer.controllerAngle;
+            NormalizeAndClampViewAngles(vrPlayer.aimAngles);
         }
         return originalResult;
     }
@@ -1235,9 +1450,29 @@ namespace
 
     bool SessionHost::ViewYaw(int playerIndex, float& yaw) const
     {
-        if (!IsValidPlayerIndex(playerIndex) || !g_players[playerIndex].haveViewYaw)
+        if (!IsValidPlayerIndex(playerIndex))
             return false;
-        yaw = g_players[playerIndex].viewYaw;
+        if (g_players[playerIndex].haveViewYaw)
+        {
+            yaw = g_players[playerIndex].viewYaw;
+            return true;
+        }
+        // Before the sender's first VR usercmd: the player's server eye angles.
+        if (!g_serverPlayerEyeAngles.original || !g_edictList || playerIndex >= g_edictCount)
+            return false;
+        Server_BaseEntity* player = GetBaseEntityFromEdict(&g_edictList[playerIndex]);
+        if (!player)
+            return false;
+        const QAngle* angles = nullptr;
+#ifdef _MSC_VER
+        __try { angles = g_serverPlayerEyeAngles.original(player); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { angles = nullptr; }
+#else
+        angles = g_serverPlayerEyeAngles.original(player);
+#endif
+        if (!angles || !std::isfinite(angles->y))
+            return false;
+        yaw = angles->y;
         return true;
     }
 
@@ -1287,23 +1522,39 @@ namespace
         vrPlayer.meleeSwingHistory[writeIndex] = now;
     }
 
+    // Client-driven lines (a client can toggle the swing flag every command)
+    // go through the player's log budget.
+    bool MeleeLogAllowed(PlayerVrState& vrPlayer, int playerIndex)
+    {
+        if (g_shared.verbose)
+            return true;
+        switch (vrPlayer.logBudget.Take(GetTickCount64()))
+        {
+        case l4d2vr_server::LogBudget::Verdict::Log: return true;
+        case l4d2vr_server::LogBudget::Verdict::LogSuppressedNote:
+            Log("melee player=%d: further swing lines suppressed for 10 s", playerIndex);
+            return false;
+        default: return false;
+        }
+    }
+
     bool CanStartMeleeSwing(Server_BaseEntity* player, int playerIndex, PlayerVrState& vrPlayer)
     {
         if (!g_config.meleeSwingEnabled)
         {
-            Log("melee swing rejected player=%d reason=disabled", playerIndex);
+            if (MeleeLogAllowed(vrPlayer, playerIndex)) Log("melee swing rejected player=%d reason=disabled", playerIndex);
             return false;
         }
 
         if (g_config.meleeSwingBlockWhileControlled && IsServerPlayerControlledBySI(player))
         {
-            Log("melee swing rejected player=%d reason=controlled", playerIndex);
+            if (MeleeLogAllowed(vrPlayer, playerIndex)) Log("melee swing rejected player=%d reason=controlled", playerIndex);
             return false;
         }
 
         if (g_config.meleeSwingBlockWhileIncapacitated && IsServerPlayerIncapacitated(player))
         {
-            Log("melee swing rejected player=%d reason=incapacitated", playerIndex);
+            if (MeleeLogAllowed(vrPlayer, playerIndex)) Log("melee swing rejected player=%d reason=incapacitated", playerIndex);
             return false;
         }
 
@@ -1315,7 +1566,7 @@ namespace
             const float elapsedSeconds = static_cast<float>(elapsedMs) / 1000.0f;
             if (elapsedSeconds < g_config.meleeSwingCooldownSeconds)
             {
-                Log("melee swing rejected player=%d reason=cooldown remaining=%.2f", playerIndex, g_config.meleeSwingCooldownSeconds - elapsedSeconds);
+                if (MeleeLogAllowed(vrPlayer, playerIndex)) Log("melee swing rejected player=%d reason=cooldown remaining=%.2f", playerIndex, g_config.meleeSwingCooldownSeconds - elapsedSeconds);
                 return false;
             }
         }
@@ -1324,7 +1575,7 @@ namespace
             g_config.meleeSwingBurstMax > 0 &&
             CountRecentMeleeSwings(vrPlayer, now) >= g_config.meleeSwingBurstMax)
         {
-            Log("melee swing rejected player=%d reason=burst-limit window=%.2f max=%d",
+            if (MeleeLogAllowed(vrPlayer, playerIndex)) Log("melee swing rejected player=%d reason=burst-limit window=%.2f max=%d",
                 playerIndex,
                 g_config.meleeSwingBurstWindowSeconds,
                 g_config.meleeSwingBurstMax);
@@ -1335,7 +1586,26 @@ namespace
         return true;
     }
 
-    void ApplyVrMeleeTrace(Server_BaseEntity* player, int playerIndex)
+    // entitiesHitThisSwing sits at a fixed offset of one server.dll build; it
+    // only ever holds a small count, so anything else means the layout moved.
+    bool ResetMeleeHitList(Server_WeaponCSBase* weapon)
+    {
+        static std::atomic_bool s_warned{ false };
+        int count = 0;
+        if (!TryReadEntityValue(reinterpret_cast<const Server_BaseEntity*>(weapon),
+                kEntitiesHitThisSwingOffset, count))
+            return false;
+        if (count < 0 || count > 64)
+        {
+            if (!s_warned.exchange(true))
+                Log("melee hit-list offset check failed (value %d): physical melee sweeps disabled for this server.dll", count);
+            return false;
+        }
+        weapon->entitiesHitThisSwing = 0;
+        return true;
+    }
+
+    void ApplyVrMeleeTrace(Server_BaseEntity* player, int playerIndex, int commandsInPacket)
     {
         if (!player || !IsValidPlayerIndex(playerIndex))
             return;
@@ -1355,6 +1625,7 @@ namespace
             return;
         }
 
+        const uint64_t nowMs = GetTickCount64();
         if (vrPlayer.isNewSwing)
         {
             vrPlayer.isNewSwing = false;
@@ -1362,17 +1633,31 @@ namespace
             if (!vrPlayer.currentMeleeSwingAllowed)
                 return;
 
-            weapon->entitiesHitThisSwing = 0;
+            if (!ResetMeleeHitList(weapon))
+            {
+                vrPlayer.currentMeleeSwingAllowed = false;
+                return;
+            }
+            vrPlayer.swingStartMs = nowMs;
         }
 
         if (!vrPlayer.currentMeleeSwingAllowed)
             return;
 
+        // A swing deals damage for a limited time only (S14).
+        const auto maxSwingMs = static_cast<uint64_t>((std::max)(0.0f, g_shared.meleeMaxSwingSeconds) * 1000.0f);
+        if (maxSwingMs > 0 && nowMs >= vrPlayer.swingStartMs && nowMs - vrPlayer.swingStartMs > maxSwingMs)
+        {
+            vrPlayer.currentMeleeSwingAllowed = false;
+            return;
+        }
+
         if ((g_config.meleeSwingBlockWhileControlled && IsServerPlayerControlledBySI(player)) ||
             (g_config.meleeSwingBlockWhileIncapacitated && IsServerPlayerIncapacitated(player)))
         {
             vrPlayer.currentMeleeSwingAllowed = false;
-            Log("melee swing stopped player=%d reason=state-changed", playerIndex);
+            if (MeleeLogAllowed(vrPlayer, playerIndex))
+                Log("melee swing stopped player=%d reason=state-changed", playerIndex);
             return;
         }
 
@@ -1397,6 +1682,12 @@ namespace
         if (!std::isfinite(swingAngle) || swingAngle <= 0.01f)
             return;
 
+        // The hand must really move (S14): this packet's motion over its commands.
+        const float packetSeconds = (std::max)(1, commandsInPacket) / 30.0f;
+        const float moved = vrPlayer.havePrevControllerPose ? (vrPlayer.controllerPos - vrPlayer.prevControllerPos).Length() : 0.0f;
+        if (!l4d2vr_server::MeleeMotionSufficient(moved, swingAngle, packetSeconds, g_shared))
+            return;
+
         g_getPrimaryAttackActivity.original(weapon, meleeInfo);
 
         g_performingMeleeTrace = true;
@@ -1413,9 +1704,6 @@ namespace
 
     float __fastcall DetourProcessUsercmds(void* ecx, void* edx, edict_t* player, void* buf, int numcmds, int totalcmds, int droppedPackets, bool ignore, bool paused)
     {
-        g_commandControllerAimOverride = false;
-        g_commandControllerAimPlayer = nullptr;
-        g_commandControllerAimReason = 0;
 
         const int previousIndex = g_currentUsercmdPlayerIndex;
         Server_BaseEntity* const previousPlayer = g_currentUsercmdPlayer;
@@ -1427,14 +1715,16 @@ namespace
 
         const float result = g_processUsercmds.original(ecx, player, buf, numcmds, totalcmds, droppedPackets, ignore, paused);
 
-        g_commandControllerAimOverride = false;
-        g_commandControllerAimPlayer = nullptr;
-        g_commandControllerAimReason = 0;
-
-        ApplyVrMeleeTrace(g_currentUsercmdPlayer, g_currentUsercmdPlayerIndex);
+        // The melee sweep runs once per packet on the newest decoded pose.
+        ApplyVrMeleeTrace(g_currentUsercmdPlayer, g_currentUsercmdPlayerIndex, numcmds);
 
         if (IsValidPlayerIndex(g_currentUsercmdPlayerIndex))
-            g_players[g_currentUsercmdPlayerIndex].prevControllerAngle = g_players[g_currentUsercmdPlayerIndex].controllerAngle;
+        {
+            PlayerVrState& vrPlayer = g_players[g_currentUsercmdPlayerIndex];
+            vrPlayer.prevControllerAngle = vrPlayer.controllerAngle;
+            vrPlayer.prevControllerPos = vrPlayer.controllerPos;
+            vrPlayer.havePrevControllerPose = vrPlayer.isUsingVR;
+        }
 
         g_currentUsercmdPlayerIndex = previousIndex;
         g_currentUsercmdPlayer = previousPlayer;
@@ -1464,7 +1754,8 @@ namespace
         }
 
         Vector* result = g_eyePosition.original(ecx, eyePos);
-        if (g_performingMeleeTrace && result && IsValidPlayerIndex(g_currentUsercmdPlayerIndex))
+        if (g_performingMeleeTrace && result && ecx == g_currentUsercmdPlayer &&
+            IsValidPlayerIndex(g_currentUsercmdPlayerIndex))
             *result = g_players[g_currentUsercmdPlayerIndex].controllerPos;
 
         return result;
@@ -1671,9 +1962,15 @@ namespace
         l4d2vr_server::SessionCapabilities caps{};
         caps.usercmdDecoder = g_hooksInstalled.load() && g_readUsercmd.original != nullptr;
         caps.interaction = false;
-        caps.features = l4d2vr_server::kFeaturePoseV3 | l4d2vr_server::kFeatureOpusVoice;
+        caps.features = l4d2vr_server::kFeatureOpusVoice;
+        // With the decoder: hand-origin bullets (AkimboRays), both pitch
+        // packings (ExactPitch) and the view yaw v3 -> v2 needs (PoseV3).
+        if (caps.usercmdDecoder)
+            caps.features |= l4d2vr_server::kFeaturePoseV3 | l4d2vr_server::kFeatureAkimboRays |
+                l4d2vr_server::kFeatureExactPitch;
+        caps.features &= g_shared.featureMask;
         g_session.SetCapabilities(caps);
-        Log("capabilities: usercmd_decoder=%d interaction=0 features=0x%03X [PoseV3 OpusVoice]",
+        Log("capabilities: usercmd_decoder=%d interaction=0 features=0x%03X",
             caps.usercmdDecoder ? 1 : 0, static_cast<unsigned>(caps.features));
     }
 
@@ -1682,6 +1979,7 @@ namespace
     public:
         bool Load(CreateInterfaceFn interfaceFactory, CreateInterfaceFn) override
         {
+            ResolveServerFilePaths();
             ResetLogFile();
             LoadServerConfig();
 

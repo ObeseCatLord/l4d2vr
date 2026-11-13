@@ -134,28 +134,30 @@ int main()
     Check(ledger.Apply(altered, state, 1200u, writer).status == Status::Stale && writes == 1);
     Request next{10u, 2u, handle, 200u, 3, 4, 19};
     Check(ledger.Apply(next, state, 1050u, writer).status == Status::RateLimited && writes == 1);
-    next.sequence = 3u;
+    next.sequence = 3u;    // 2.0.11: one shell per 200 ms
+    Check(ledger.Apply(next, state, 1150u, writer).status == Status::RateLimited && writes == 1);
+    next.sequence = 4u;
     Check(ledger.Apply(next, state, 1200u, writer).status == Status::Applied && writes == 2);
     state.clip = clip; state.reserve = reserve;
-    next.sequence = 4u; // an old predicted baseline must not overwrite a shot or another reload
+    next.sequence = 5u; // an old predicted baseline must not overwrite a shot or another reload
     Check(ledger.Apply(next, state, 1400u, writer).status == Status::Stale && writes == 2);
-    next.sequence = 5u; next.clip = clip; next.reserve = reserve; next.command = 100u;
+    next.sequence = 6u; next.clip = clip; next.reserve = reserve; next.command = 100u;
     Check(ledger.Apply(next, state, 1500u, writer).status == Status::Stale && writes == 2);
-    next.sequence = 6u; next.command = 209u;
+    next.sequence = 7u; next.command = 209u;
     Check(ledger.Apply(next, state, 1600u, writer).status == Status::Stale && writes == 2);
-    next.sequence = 7u; next.command = 200u; next.handle += 4096u;
+    next.sequence = 8u; next.command = 200u; next.handle += 4096u;
     Check(ledger.Apply(next, state, 1700u, writer).status == Status::Weapon && writes == 2);
-    next.sequence = 8u; next.handle = handle; state.eligible = false;
+    next.sequence = 9u; next.handle = handle; state.eligible = false;
     Check(ledger.Apply(next, state, 1800u, writer).status == Status::Weapon && writes == 2);
-    state.eligible = true; state.clip = 8; next.clip = 8; next.sequence = 9u;
+    state.eligible = true; state.clip = 8; next.clip = 8; next.sequence = 10u;
     Check(ledger.Apply(next, state, 1900u, writer).status == Status::NoSpaceOrAmmo && writes == 2);
-    state.clip = 0; state.reserve = 0; next.clip = next.reserve = 0; next.sequence = 10u;
+    state.clip = 0; state.reserve = 0; next.clip = next.reserve = 0; next.sequence = 11u;
     Check(ledger.Apply(next, state, 2000u, writer).status == Status::NoSpaceOrAmmo && writes == 2);
     // Custom script capacity comes from the server and still moves exactly one existing round.
     state.clip = 11; state.reserve = 3; state.capacity = 12;
-    next.clip = 11; next.reserve = 3; next.sequence = 11u;
+    next.clip = 11; next.reserve = 3; next.sequence = 12u;
     Check(ledger.Apply(next, state, 2100u, writer).status == Status::Applied && clip == 12 && reserve == 2);
-    next.sequence = 12u; state.clip = next.clip = 2; state.reserve = next.reserve = 7;
+    next.sequence = 13u; state.clip = next.clip = 2; state.reserve = next.reserve = 7;
     int failedWrites = 0;
     auto fail = [&](int, int) { ++failedWrites; return false; };
     Check(ledger.Apply(next, state, 2300u, fail).status == Status::Backend);

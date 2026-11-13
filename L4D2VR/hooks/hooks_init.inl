@@ -179,7 +179,7 @@ namespace
 	}
 }
 
-bool Hooks::s_ServerUnderstandsVR = false;
+std::atomic<bool> Hooks::s_ServerUnderstandsVR{ false };
 
 bool Hooks::InitializeNoHmdNekoPostProbe()
 {

@@ -85,6 +85,19 @@ namespace l4d2vr_server
         return plan;
     }
 
+    // Angle (degrees) the blade direction turned between two controller poses.
+    inline float MeleeBladeTurnDegrees(const Angles& previous, const Angles& current)
+    {
+        Vec3 f0, r0, u0, f1, r1, u1;
+        AngleVectors(previous, &f0, &r0, &u0);
+        AngleVectors(current, &f1, &r1, &u1);
+        Vec3 d0 = RotateAroundAxis(f0, r0, 50.0f);
+        Vec3 d1 = RotateAroundAxis(f1, r1, 50.0f);
+        if (Normalize(d0) <= 0.0001f || Normalize(d1) <= 0.0001f) return 0.0f;
+        const float angle = std::acos(std::clamp(Dot(d0, d1), -1.0f, 1.0f)) * 180.0f / 3.14159265f;
+        return std::isfinite(angle) ? angle : 0.0f;
+    }
+
     // Per-player sweep continuity, swing start gate and previous pose.
     class MeleeSweepState
     {
@@ -100,8 +113,12 @@ namespace l4d2vr_server
 
         // One executed command. `eligible`: live survivor holding a melee weapon
         // and a finite VR pose; `blocked`: incapacitated/pinned per config.
+        // `commandSeconds`: simulated time of one command (tick interval); the
+        // hand must move at meleeMinHandSpeed / meleeMinAngularSpeed for a
+        // sweep, and a swing deals damage for meleeMaxSwingSeconds at most.
         Step Process(std::uintptr_t owner, std::uintptr_t weapon, int command, bool eligible, bool swinging,
-            bool blocked, const Vec3& pos, const Angles& angles, std::uint64_t nowMs, const ServerConfig& c)
+            bool blocked, const Vec3& pos, const Angles& angles, std::uint64_t nowMs, const ServerConfig& c,
+            float commandSeconds = 1.0f / 30.0f)
         {
             Step step{};
             eligible = eligible && pos.Finite() && angles.Finite();
@@ -128,8 +145,14 @@ namespace l4d2vr_server
                         m_SwingAllowed = step.gate == MeleeSwingGate::Result::Allowed;
                         step.newSwing = m_SwingAllowed;
                         step.rejected = !m_SwingAllowed;
+                        m_SwingStartMs = nowMs;
                     }
-                    if (m_SwingAllowed)
+                    const auto maxSwingMs = static_cast<std::uint64_t>(std::max(0.0f, c.meleeMaxSwingSeconds) * 1000.0f);
+                    if (m_SwingAllowed && maxSwingMs > 0u && nowMs >= m_SwingStartMs && nowMs - m_SwingStartMs > maxSwingMs)
+                        m_SwingAllowed = false;   // held "swinging" without ending the swing
+                    const bool moving = m_HasPrevious && MeleeMotionSufficient((pos - m_PrevPos).Length(),
+                        MeleeBladeTurnDegrees(m_PrevAngles, angles), commandSeconds, c);
+                    if (m_SwingAllowed && moving)
                     {
                         step.plan = PlanMeleeSweep(m_HasPrevious, m_PrevPos, m_PrevAngles, pos, angles, c.unitsPerMeter);
                         step.sweep = step.plan.count > 0;
@@ -155,6 +178,7 @@ namespace l4d2vr_server
         bool m_HasPrevious = false;
         bool m_NewSwing = true;
         bool m_SwingAllowed = false;
+        std::uint64_t m_SwingStartMs = 0u;
         Vec3 m_PrevPos{};
         Angles m_PrevAngles{};
     };

@@ -26,6 +26,11 @@ namespace l4d2vr_server
         float meleeSwingCooldownSeconds = 0.35f;
         float meleeSwingBurstWindowSeconds = 2.0f;
         int meleeSwingBurstMax = 4;
+        // A swing only deals damage while the hand really moves, and only for
+        // so long (2.0.11). The client's swing detector fires at 1.1 m/s.
+        float meleeMinHandSpeed = 0.5f;          // m/s along the sweep
+        float meleeMinAngularSpeed = 90.0f;      // deg/s of the blade
+        float meleeMaxSwingSeconds = 1.5f;
 
         // Pose sanity.
         float unitsPerMeter = 43.2f;          // client VRScale default
@@ -47,6 +52,13 @@ namespace l4d2vr_server
         // clamped to throwMaxSpeed. 3.0 is Pavlov's grenade ProjectileSpeedMul.
         float throwHandVelocityScale = 2.5f;   // the throw boost (l4d2vr_hand_throw::kDefaultThrowBoost)
         int handThrowMinIntervalMs = 250;
+        // Hand throws also need this many executed commands in between, so a
+        // client cannot pace its commands around the wall-clock interval.
+        int handThrowMinCommands = 6;
+
+        // Pull the hand back to the first world/brush surface on the line
+        // eye -> hand (bullets, throws, drops and melee never start in a wall).
+        bool handTraceEnabled = true;
 
         // Eye override windows, in executed commands.
         int throwAimCommands = 48;
@@ -150,6 +162,11 @@ namespace l4d2vr_server
         if (key == "shoveminintervalms" && ParseInt(value, i)) { c.shoveMinIntervalMs = std::clamp(i, 50, 10000); return true; }
         if (key == "pillgiveminintervalms" && ParseInt(value, i)) { c.pillGiveMinIntervalMs = std::clamp(i, 100, 10000); return true; }
         if (key == "intentbudgetpersecond" && ParseInt(value, i)) { c.intentBudgetPerSecond = std::clamp(i, 1, 60); return true; }
+        if (key == "meleeminhandspeed" && ParseFloat(value, f)) { c.meleeMinHandSpeed = std::clamp(f, 0.0f, 5.0f); return true; }
+        if (key == "meleeminangularspeed" && ParseFloat(value, f)) { c.meleeMinAngularSpeed = std::clamp(f, 0.0f, 1440.0f); return true; }
+        if (key == "meleemaxswingseconds" && ParseFloat(value, f)) { c.meleeMaxSwingSeconds = std::clamp(f, 0.0f, 60.0f); return true; }
+        if (key == "handthrowmincommands" && ParseInt(value, i)) { c.handThrowMinCommands = std::clamp(i, 0, 64); return true; }
+        if (key == "handtraceenabled" && ParseBool(value, b)) { c.handTraceEnabled = b; return true; }
         if (key == "verbose" && ParseBool(value, b)) { c.verbose = b; return true; }
         return false;
     }
@@ -218,6 +235,93 @@ namespace l4d2vr_server
         std::uint64_t m_WindowStart = 0u;
         int m_Used = 0;
     };
+
+    // Per-player log budget: client-driven log lines (transactions, throws,
+    // drops, rejected swings) stop after `perWindow` lines per window, with one
+    // note that lines were suppressed.
+    class LogBudget
+    {
+    public:
+        enum class Verdict { Log, LogSuppressedNote, Drop };
+        Verdict Take(std::uint64_t nowMs, int perWindow = 20, std::uint64_t windowMs = 10000u)
+        {
+            if (!m_Have || nowMs < m_Start || nowMs - m_Start >= windowMs)
+            {
+                m_Have = true;
+                m_Start = nowMs;
+                m_Used = 0;
+            }
+            if (m_Used < perWindow) { ++m_Used; return Verdict::Log; }
+            if (m_Used == perWindow) { ++m_Used; return Verdict::LogSuppressedNote; }
+            return Verdict::Drop;
+        }
+        void Reset() { m_Have = false; m_Start = 0u; m_Used = 0; }
+    private:
+        bool m_Have = false;
+        std::uint64_t m_Start = 0u;
+        int m_Used = 0;
+    };
+
+    // ---- Instant deploy --------------------------------------------------------
+
+    // Fire timers (m_flNextPrimaryAttack / m_flNextSecondaryAttack, curtime) of
+    // the weapons a player recently held, noted while each was held. Instant
+    // deploy removes only the delay a switch adds: a weapon put away mid-cycle
+    // keeps its cycle when it comes back.
+    class WeaponReadyCache
+    {
+    public:
+        void Note(std::uintptr_t weapon, float nextPrimary, float nextSecondary)
+        {
+            if (!weapon) return;
+            Entry* slot = nullptr;
+            for (Entry& e : m_Entries)
+                if (e.weapon == weapon) { slot = &e; break; }
+            if (!slot)
+            {
+                slot = &m_Entries[0];
+                for (Entry& e : m_Entries)
+                {
+                    if (!e.weapon) { slot = &e; break; }
+                    if (e.stamp < slot->stamp) slot = &e;
+                }
+            }
+            *slot = { weapon, nextPrimary, nextSecondary, ++m_Stamp };
+        }
+        bool Find(std::uintptr_t weapon, float& nextPrimary, float& nextSecondary) const
+        {
+            if (!weapon) return false;
+            for (const Entry& e : m_Entries)
+                if (e.weapon == weapon) { nextPrimary = e.nextPrimary; nextSecondary = e.nextSecondary; return true; }
+            return false;
+        }
+        void Reset() { m_Entries = {}; m_Stamp = 0u; }
+    private:
+        struct Entry { std::uintptr_t weapon = 0u; float nextPrimary = 0.0f, nextSecondary = 0.0f; std::uint64_t stamp = 0u; };
+        std::array<Entry, 8> m_Entries{};
+        std::uint64_t m_Stamp = 0u;
+    };
+
+    // The timer instant deploy leaves: never later than now unless the weapon's
+    // own noted timer (its fire cycle when it was put away) is later.
+    inline float InstantDeployTimer(float current, bool haveNoted, float noted, float now)
+    {
+        if (!std::isfinite(current)) return now;
+        const float floor = haveNoted && std::isfinite(noted) ? std::max(now, noted) : now;
+        return std::min(current, floor);
+    }
+
+    // ---- Melee motion ----------------------------------------------------------
+
+    // True when the hand moved enough during one command for a sweep to count.
+    inline bool MeleeMotionSufficient(float distanceUnits, float bladeAngleDeg, float seconds, const ServerConfig& c)
+    {
+        if (!(seconds > 0.0f) || !std::isfinite(distanceUnits) || !std::isfinite(bladeAngleDeg)) return false;
+        const float unitsPerMeter = std::clamp(c.unitsPerMeter, 1.0f, 200.0f);
+        const float speed = distanceUnits / unitsPerMeter / seconds;
+        const float angular = bladeAngleDeg / seconds;
+        return speed >= c.meleeMinHandSpeed || angular >= c.meleeMinAngularSpeed;
+    }
 
     // Cooldown and burst gate for starting a physical melee swing; a port of the
     // previous dedicated plugin's CanStartMeleeSwing.

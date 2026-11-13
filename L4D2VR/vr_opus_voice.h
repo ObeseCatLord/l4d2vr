@@ -494,6 +494,13 @@ namespace l4d2vr_voice
         { "voice_scale", "1" },       // receive volume at the menu's maximum (the game's voice is quiet)
     };
 
+    // A player with voice_enable 0 chose "Voice: Disabled" (the game's default
+    // is on): the VR defaults leave the voice settings alone (2.0.11).
+    inline bool ShouldApplyVrVoiceDefaults(int voiceEnable)
+    {
+        return voiceEnable != 0;
+    }
+
     // vr/config_migrations_applied.txt: one id per line, '#' comments.
     inline bool MigrationStateHasId(const std::string& text, const std::string& id)
     {
@@ -981,6 +988,11 @@ namespace l4d2vr_voice
             bool serverFeature = false;  // OpusVoice in l4d2vr_feature_ack
             bool transmit = false;       // a microphone (or test tone) is usable
             bool loopback = false;
+            // 2.0.11: other players' Opus voice can be played without hearing
+            // them twice (the stock voice filter is installed). Without it the
+            // hello leaves kHelloReceive out: everyone is heard once, through
+            // the game's voice.
+            bool receive = true;
             double nowMs = 0.0;
         };
 
@@ -989,9 +1001,10 @@ namespace l4d2vr_voice
         // Returns the hello flags to send now, or -1. Flags 0 = opt out.
         int Update(const Inputs& in)
         {
-            const bool want = in.enabled && in.serverFeature;
-            const std::uint32_t flags = want
-                ? (kHelloReceive | (in.transmit ? kHelloTransmit : 0u) | (in.loopback ? kHelloLoopback : 0u)) : 0u;
+            const bool receive = in.receive || in.loopback;   // loopback needs the relay to send to us
+            const std::uint32_t flags = (in.enabled && in.serverFeature)
+                ? ((receive ? kHelloReceive : 0u) | (in.transmit ? kHelloTransmit : 0u) | (in.loopback ? kHelloLoopback : 0u)) : 0u;
+            const bool want = flags != 0u;
             if (!want)
             {
                 m_Acked = false;
@@ -1017,7 +1030,8 @@ namespace l4d2vr_voice
             return -1;
         }
 
-        // A new server feature ack (map change, reconnect): handshake again.
+        // A new server feature ack (map change, reconnect), or a client stall
+        // long enough to be a map change (2.0.11): handshake again.
         void Restart() { m_SentFlags = -1; m_Acked = false; m_Attempts = 0; m_Peers = 0u; }
         // The same server repeated its capability bundle: say hello again (the
         // relay may have been reset) but keep the session running meanwhile.
@@ -1041,6 +1055,79 @@ namespace l4d2vr_voice
         bool m_Acked = false;
         std::uint64_t m_Peers = 0u;
     };
+
+    // ---- microphone device policy (2.0.11) -----------------------------------------------
+    // When the audio thread opens or closes the microphone.
+    // * A failed waveInOpen is retried every kCaptureFailedRetryMs while the
+    //   relay is active (was: never again in this process).
+    // * Push to talk: the microphone opens on the first press and closes
+    //   kPttIdleCloseMs after the last one (the game's own voice records only
+    //   while the key is down; an always-open mic shows as "in use" in Windows
+    //   and forces a Bluetooth headset into its hands-free profile).
+    // * Open mic: open while the relay allows transmitting.
+    struct CapturePolicy
+    {
+        static constexpr double kRetryMs = 5000.0;
+        static constexpr double kCaptureFailedRetryMs = 15000.0;
+        static constexpr double kPttIdleCloseMs = 45000.0;
+        static constexpr double kMinOpenMs = 2000.0;   // a probe that worked waits for the new ack
+
+        struct Inputs
+        {
+            bool active = false;           // the relay acked our hello
+            bool transmitAllowed = false;  // ... with kHelloTransmit
+            bool captureFailed = false;    // the last waveInOpen failed
+            bool pushToTalk = false;       // transmit mode
+            bool pttHeld = false;
+            bool open = false;             // the device is open now
+            double nowMs = 0.0;
+        };
+        enum class Action { None, Open, Close };
+
+        Action Update(const Inputs& in)
+        {
+            if (in.pttHeld) m_LastPressMs = in.nowMs;
+            bool want = false;
+            if (!in.active) want = false;
+            else if (in.captureFailed) want = true;   // keep probing (headset mic appears later)
+            else if (!in.transmitAllowed) want = false;
+            else if (in.pushToTalk) want = in.pttHeld || (m_LastPressMs > -1e29 && in.nowMs - m_LastPressMs < kPttIdleCloseMs);
+            else want = true;
+            if (want && !in.open && in.nowMs >= m_RetryAtMs)
+            {
+                m_RetryAtMs = in.nowMs + (in.captureFailed ? kCaptureFailedRetryMs : kRetryMs);
+                m_OpenedMs = in.nowMs;
+                return Action::Open;
+            }
+            if (!want && in.open && (!in.active || in.nowMs - m_OpenedMs >= kMinOpenMs)) return Action::Close;
+            return Action::None;
+        }
+        // The open attempt failed: next try after the failure back-off.
+        void OpenFailed(double nowMs) { m_RetryAtMs = nowMs + kCaptureFailedRetryMs; }
+        void Reset() { *this = CapturePolicy{}; }
+
+    private:
+        double m_RetryAtMs = 0.0;
+        double m_OpenedMs = -1e30;
+        double m_LastPressMs = -1e30;
+    };
+
+    // ---- playback device health (2.0.11) ---------------------------------------------------
+    // A talker's game voice may only be dropped while its Opus voice can really
+    // be played: waveOut is open and returned a buffer recently. Without a
+    // device (timer clock) or with a stalled one, the game's voice plays.
+    constexpr double kOutputHealthyMs = 500.0;     // a buffer completed this recently
+    constexpr double kOutputStallMs = 1500.0;      // no buffer completed for this long: reopen
+    constexpr double kOutputRetryMs = 10000.0;     // no device: try again this often
+
+    inline bool OutputPlaying(bool deviceOpen, double nowMs, double lastDoneMs)
+    {
+        return deviceOpen && nowMs - lastDoneMs < kOutputHealthyMs;
+    }
+    inline bool OutputStalled(bool deviceOpen, double nowMs, double lastDoneMs)
+    {
+        return deviceOpen && nowMs - lastDoneMs > kOutputStallMs;
+    }
 
     // ---- spatial playback --------------------------------------------------------------
     struct Vec3 { float x = 0.0f, y = 0.0f, z = 0.0f; };

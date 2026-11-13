@@ -3,6 +3,15 @@
 #include "game.h"
 
 
+// 2.0.11 (review B39): a signature missing after a game update is logged, one
+// line each, and collected; Game shows one summary (or enters desktop mode)
+// instead of a blocking message box per signature on the init thread.
+inline std::vector<std::string>& OffsetRequiredFailures()
+{
+    static std::vector<std::string> failures;
+    return failures;
+}
+
 struct Offset
 {
     std::string moduleName;
@@ -23,31 +32,53 @@ struct Offset
         this->optional = optional;
         this->valid = false;
 
-        int newOffset = SigScanner::VerifyOffset(moduleName, currentOffset, signature, sigOffset);
-        if (newOffset > 0)
-        {
-            this->offset = newOffset;
-        }
+        auto fail = [&](const char* why) {
+            Game::logMsg("[VR][Offsets] %s %s in %s (known offset 0x%X): %s",
+                optional ? "optional signature" : "REQUIRED signature", why, moduleName.c_str(), currentOffset, signature.c_str());
+            if (!optional)
+                OffsetRequiredFailures().push_back(moduleName + "+0x" + ToHex(currentOffset) + " (" + why + ")");
+        };
+
+        int matches = 0;
+        int newOffset = SigScanner::VerifyOffset(moduleName, currentOffset, signature, sigOffset, matches);
         if (newOffset == -1)
         {
             // Keep address=0 and valid=false so hook setup can safely skip.
-            if (!optional)
-            {
-                Game::errorMsg(("Signature not found: " + signature).c_str());
-            }
+            fail("not found");
             return;
+        }
+        if (newOffset > 0)
+        {
+            // Relocated: say so, and never guess between several matches of a
+            // required (often short) signature: that would detour an
+            // unrelated function.
+            if (!optional && matches > 1)
+            {
+                fail("moved and matches several places");
+                return;
+            }
+            Game::logMsg("[VR][Offsets] %s signature moved 0x%X -> 0x%X (%d match%s): %s", moduleName.c_str(),
+                currentOffset, newOffset, matches, matches == 1 ? "" : "es", signature.c_str());
+            this->offset = newOffset;
         }
 
         HMODULE mod = GetModuleHandle(moduleName.c_str());
         if (!mod)
         {
-            if (!optional)
-                Game::errorMsg(("Module not loaded: " + moduleName).c_str());
+            fail("module not loaded");
             return;
         }
 
         this->address = (uintptr_t)mod + this->offset;
         this->valid = (this->address != 0);
+    }
+
+private:
+    static std::string ToHex(int value)
+    {
+        char buffer[16] = {};
+        sprintf_s(buffer, sizeof(buffer), "%X", static_cast<unsigned>(value));
+        return buffer;
     }
 };
 

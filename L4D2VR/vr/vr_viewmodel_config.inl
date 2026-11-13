@@ -356,6 +356,10 @@ std::string VR::BuildViewmodelAdjustKey(C_WeaponCSBase* weapon) const
 
 ViewmodelAdjustment& VR::EnsureViewmodelAdjustment(const std::string& key)
 {
+    // find first: emplace builds a node even when the key exists (per frame).
+    const auto found = m_ViewmodelAdjustments.find(key);
+    if (found != m_ViewmodelAdjustments.end())
+        return found->second;
     auto [it, inserted] = m_ViewmodelAdjustments.emplace(key, m_DefaultViewmodelAdjust);
     return it->second;
 }
@@ -363,7 +367,19 @@ ViewmodelAdjustment& VR::EnsureViewmodelAdjustment(const std::string& key)
 void VR::RefreshActiveViewmodelAdjustment(C_BasePlayer* localPlayer)
 {
     C_WeaponCSBase* activeWeapon = localPlayer ? (C_WeaponCSBase*)localPlayer->GetActiveWeapon() : nullptr;
-    std::string adjustKey = BuildViewmodelAdjustKey(activeWeapon);
+    const int activeWeaponId = activeWeapon ? static_cast<int>(activeWeapon->GetWeaponID()) : -1;
+    AdjustKeyCache& keyCache = m_ViewmodelAdjustKeyCache;
+    const bool keyCached = keyCache.valid && keyCache.weapon == activeWeapon && keyCache.weaponId == activeWeaponId &&
+        activeWeaponId != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE);
+    if (!keyCached)
+    {
+        keyCache.key = BuildViewmodelAdjustKey(activeWeapon);
+        keyCache.weapon = activeWeapon;
+        keyCache.weaponId = activeWeaponId;
+        keyCache.valid = true;
+        keyCache.hash = 0u;
+    }
+    const std::string& adjustKey = keyCache.key;
 
     auto hashAdjustKey = [](const std::string& key)
         {
@@ -376,9 +392,12 @@ void VR::RefreshActiveViewmodelAdjustment(C_BasePlayer* localPlayer)
             return hash == 0u ? 1u : hash;
         };
 
-    const uint32_t currentAdjustKeyHash = activeWeapon ? hashAdjustKey(adjustKey) : 0u;
+    if (!keyCached)
+        keyCache.hash = hashAdjustKey(adjustKey);
+    const uint32_t currentAdjustKeyHash = activeWeapon ? keyCache.hash : 0u;
 
-    m_CurrentViewmodelKey = adjustKey;
+    if (m_CurrentViewmodelKey != adjustKey)
+        m_CurrentViewmodelKey = adjustKey;
 
     if (m_LastLoggedViewmodelKey != m_CurrentViewmodelKey)
     {
@@ -581,6 +600,9 @@ std::string VR::BuildScopeAdjustKey(C_WeaponCSBase* weapon) const
 
 ScopeAdjustment& VR::EnsureScopeAdjustment(const std::string& key)
 {
+    const auto found = m_ScopeAdjustments.find(key);
+    if (found != m_ScopeAdjustments.end())
+        return found->second;
     auto [it, inserted] = m_ScopeAdjustments.emplace(key, m_DefaultScopeAdjust);
     return it->second;
 }
@@ -588,9 +610,20 @@ ScopeAdjustment& VR::EnsureScopeAdjustment(const std::string& key)
 void VR::RefreshActiveScopeAdjustment(C_BasePlayer* localPlayer)
 {
     C_WeaponCSBase* activeWeapon = localPlayer ? (C_WeaponCSBase*)localPlayer->GetActiveWeapon() : nullptr;
-    std::string adjustKey = BuildScopeAdjustKey(activeWeapon);
+    const int activeWeaponId = activeWeapon ? static_cast<int>(activeWeapon->GetWeaponID()) : -1;
+    AdjustKeyCache& keyCache = m_ScopeAdjustKeyCache;
+    if (!(keyCache.valid && keyCache.weapon == activeWeapon && keyCache.weaponId == activeWeaponId &&
+            activeWeaponId != static_cast<int>(C_WeaponCSBase::WeaponID::MELEE)))
+    {
+        keyCache.key = BuildScopeAdjustKey(activeWeapon);
+        keyCache.weapon = activeWeapon;
+        keyCache.weaponId = activeWeaponId;
+        keyCache.valid = true;
+    }
+    const std::string& adjustKey = keyCache.key;
 
-    m_CurrentScopeAdjustmentKey = adjustKey;
+    if (m_CurrentScopeAdjustmentKey != adjustKey)
+        m_CurrentScopeAdjustmentKey = adjustKey;
 
     if (m_LastLoggedScopeAdjustmentKey != m_CurrentScopeAdjustmentKey)
     {
@@ -718,7 +751,7 @@ void VR::SaveScopeAdjustments()
     m_ScopeAdjustmentsDirty = false;
 }
 
-void VR::ParseConfigFile()
+void VR::ParseConfigFileUnlocked()
 {
     //  򵥵  trim
     auto ltrim = [](std::string& s) {
@@ -834,13 +867,24 @@ void VR::ParseConfigFile()
 
     // С   ߣ   Ĭ  ֵ İ ȫ  ȡ
     // Self-test overrides arrive lower-cased: then option names match in any case.
+    // Keys match in any case when the exact spelling is missing ("lefthanded=
+    // true"), as in haptics_config.txt and the start-up reader (review B68).
+    std::unordered_map<std::string, std::string> userConfigLowerKeys;
+    for (const auto& kv : userConfig)
+    {
+        std::string lower = kv.first;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        userConfigLowerKeys.emplace(std::move(lower), kv.first);
+    }
     auto findConfig = [&](const char* k) {
         auto it = userConfig.find(k);
-        if (it == userConfig.end() && !SelfTestConfigOverrides().empty())
+        if (it == userConfig.end())
         {
-            for (auto i2 = userConfig.begin(); i2 != userConfig.end(); ++i2)
-                if (_stricmp(i2->first.c_str(), k) == 0)
-                    return i2;
+            std::string lower(k);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            const auto lowerIt = userConfigLowerKeys.find(lower);
+            if (lowerIt != userConfigLowerKeys.end())
+                return userConfig.find(lowerIt->second);
         }
         return it;
     };
@@ -857,6 +901,41 @@ void VR::ParseConfigFile()
         if (v == "0" || v == "false" || v == "off" || v == "no")  return false;
         return defVal;
         };
+    // Numbers must be finite and use the whole text (2.0.11, review B68:
+    // "nan"/"inf" passed every std::clamp, "43,2" silently read as 43). A
+    // decimal comma in a single number ("0,3") is read as a decimal point.
+    // Rejected values keep the default and are logged once per key and value.
+    static std::unordered_set<std::string> s_ConfigValueWarnings;
+    auto warnConfigValue = [&](const char* k, const std::string& value, const char* why) {
+        const std::string tag = std::string(k) + "=" + value;
+        if (s_ConfigValueWarnings.size() < 256 && s_ConfigValueWarnings.insert(tag).second)
+            Game::logMsg("[VR][Config] %s: \"%s\" %s", k, value.c_str(), why);
+        };
+    auto parseFiniteFloat = [&](std::string text, float& out)->bool {
+        trim(text);
+        if (text.empty())
+            return false;
+        auto attempt = [&](const std::string& t)->bool {
+            char* end = nullptr;
+            const float value = std::strtof(t.c_str(), &end);
+            if (!end || end == t.c_str())
+                return false;
+            while (*end == ' ' || *end == '\t')
+                ++end;
+            if (*end != '\0' || !std::isfinite(value))
+                return false;
+            out = value;
+            return true;
+            };
+        if (attempt(text))
+            return true;
+        if (std::count(text.begin(), text.end(), ',') == 1 && text.find('.') == std::string::npos)
+        {
+            std::replace(text.begin(), text.end(), ',', '.');
+            return attempt(text);
+        }
+        return false;
+        };
     auto getFloat = [&](const char* k, float defVal)->float {
         auto it = findConfig(k);
         if (it == userConfig.end() || it->second.empty()) return defVal;
@@ -864,8 +943,11 @@ void VR::ParseConfigFile()
         std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
         if (v == "true" || v == "on" || v == "yes") return 1.0f;
         if (v == "false" || v == "off" || v == "no") return 0.0f;
-        try { return std::stof(it->second); }
-        catch (...) { return defVal; }
+        float value = defVal;
+        if (parseFiniteFloat(it->second, value))
+            return value;
+        warnConfigValue(k, it->second, "is not a number; the default is used");
+        return defVal;
         };
     auto getInt = [&](const char* k, int defVal)->int {
         auto it = findConfig(k);
@@ -874,8 +956,11 @@ void VR::ParseConfigFile()
         std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return std::tolower(c); });
         if (v == "true" || v == "on" || v == "yes") return 1;
         if (v == "false" || v == "off" || v == "no") return 0;
-        try { return std::stoi(it->second); }
-        catch (...) { return defVal; }
+        float value = 0.0f;
+        if (parseFiniteFloat(it->second, value) && value > -2.0e9f && value < 2.0e9f)
+            return static_cast<int>(value);   // "3.0" reads as 3, as std::stoi did
+        warnConfigValue(k, it->second, "is not a whole number; the default is used");
+        return defVal;
         };
     auto getColor = [&](const char* k, int defR, int defG, int defB, int defA)->std::array<int, 4> {
         std::array<int, 4> defaults{ defR, defG, defB, defA };
@@ -922,21 +1007,22 @@ void VR::ParseConfigFile()
         float* components[3] = { &result.x, &result.y, &result.z };
         int index = 0;
 
-        while (std::getline(ss, token, ',') && index < 3)
+        bool bad = false;
+        while (std::getline(ss, token, ','))
         {
             trim(token);
-            if (!token.empty())
+            if (index < 3 && !token.empty())
             {
-                try
-                {
-                    *components[index] = std::stof(token);
-                }
-                catch (...)
-                {
-                }
+                float value = 0.0f;
+                if (parseFiniteFloat(token, value))
+                    *components[index] = value;
+                else
+                    bad = true;
             }
             ++index;
         }
+        if (bad || index != 3)
+            warnConfigValue(k, it->second, "needs three numbers x,y,z (a decimal comma cannot be used here); unreadable parts keep their default");
 
         return result;
         };
@@ -957,13 +1043,11 @@ void VR::ParseConfigFile()
                 if (token.empty())
                     continue;
 
-                try
-                {
-                    values.push_back(std::stof(token));
-                }
-                catch (...)
-                {
-                }
+                float value = 0.0f;
+                if (parseFiniteFloat(token, value))
+                    values.push_back(value);
+                else
+                    warnConfigValue(k, source, "contains a part that is not a number; it is skipped");
             }
 
             return values;
@@ -977,6 +1061,16 @@ void VR::ParseConfigFile()
         std::string value = it->second;
         trim(value);
 
+        // An emptied override list or custom action means "none" (review B68:
+        // it used to keep the previous value until the game restarted).
+        const std::string key(k);
+        static const std::string overridesSuffix = "Overrides";
+        const bool emptyMeansNone =
+            key.rfind("CustomAction", 0) == 0 ||
+            (key.size() > overridesSuffix.size() &&
+                key.compare(key.size() - overridesSuffix.size(), overridesSuffix.size(), overridesSuffix) == 0);
+        if (value.empty() && emptyMeansNone)
+            return std::string();
         return value.empty() ? defVal : value;
         };
 
@@ -997,10 +1091,23 @@ void VR::ParseConfigFile()
         return values;
         };
 
-    const std::string injectedCmd = getString("cmd", getString("Cmd", "exec cam.cfg"));
-    if (!injectedCmd.empty())
+    // The injected console command runs once, and again only when its text
+    // changes: every VR Options click reparses the config, and re-running it
+    // re-applied the player's cam.cfg over their console changes (2.0.11,
+    // review B68). An empty "cmd=" disables it.
     {
-        m_Game->ClientCmd_Unrestricted(injectedCmd.c_str());
+        auto cmdIt = findConfig("cmd");
+        if (cmdIt == userConfig.end())
+            cmdIt = findConfig("Cmd");
+        std::string injectedCmd = cmdIt == userConfig.end() ? std::string("exec cam.cfg") : cmdIt->second;
+        trim(injectedCmd);
+        if (!m_InjectedConfigCommandRan || injectedCmd != m_LastInjectedConfigCommand)
+        {
+            m_InjectedConfigCommandRan = true;
+            m_LastInjectedConfigCommand = injectedCmd;
+            if (!injectedCmd.empty() && m_Game)
+                m_Game->ClientCmd_Unrestricted(injectedCmd.c_str());
+        }
     }
 
     auto parseVirtualKey = [&](const std::string& rawValue)->std::optional<WORD>
@@ -1061,9 +1168,11 @@ void VR::ParseConfigFile()
             return std::nullopt;
         };
 
-    auto parseCustomActionBinding = [&](const char* key, CustomActionBinding& binding)
+    // The fallback is the fixed default: the member holds the parsed form
+    // (alias name, "hold:" stripped) and must not feed the next parse.
+    auto parseCustomActionBinding = [&](const char* key, CustomActionBinding& binding, const char* defaultCommand)
         {
-            binding.command = getString(key, binding.command);
+            binding.command = getString(key, defaultCommand);
             binding.holdVirtualKey = false;
             binding.releaseCommand.clear();
             binding.usePressReleaseCommands = false;
@@ -1122,8 +1231,8 @@ void VR::ParseConfigFile()
         };
 
 
-    m_SnapTurnAngle = getFloat("SnapTurnAngle", m_SnapTurnAngle);
-    m_TurnSpeed = getFloat("TurnSpeed", m_TurnSpeed);
+    m_SnapTurnAngle = std::clamp(getFloat("SnapTurnAngle", m_SnapTurnAngle), 1.0f, 180.0f);
+    m_TurnSpeed = std::clamp(getFloat("TurnSpeed", m_TurnSpeed), 0.0f, 10.0f);
     // Locomotion direction: default is HMD-yaw-based. Optional hand-yaw-based.
     m_MoveDirectionFromController = getBool("MoveDirectionFromController", m_MoveDirectionFromController);
     m_MoveDirectionFromController = getBool("MovementDirectionFromController", m_MoveDirectionFromController);
@@ -1233,15 +1342,16 @@ void VR::ParseConfigFile()
     m_VoiceRecordCombo = parseActionCombo("VoiceRecordCombo", m_VoiceRecordCombo);
     m_QuickTurnCombo = parseActionCombo("QuickTurnCombo", m_QuickTurnCombo);
     m_ViewmodelAdjustCombo = parseActionCombo("ViewmodelAdjustCombo", m_ViewmodelAdjustCombo);
-    parseCustomActionBinding("CustomAction1Command", m_CustomAction1Binding);
-    parseCustomActionBinding("CustomAction2Command", m_CustomAction2Binding);
-    parseCustomActionBinding("CustomAction3Command", m_CustomAction3Binding);
-    parseCustomActionBinding("CustomAction4Command", m_CustomAction4Binding);
-    parseCustomActionBinding("CustomAction5Command", m_CustomAction5Binding);
+    parseCustomActionBinding("CustomAction1Command", m_CustomAction1Binding, "thirdpersonshoulder");
+    parseCustomActionBinding("CustomAction2Command", m_CustomAction2Binding, "");
+    parseCustomActionBinding("CustomAction3Command", m_CustomAction3Binding, "");
+    parseCustomActionBinding("CustomAction4Command", m_CustomAction4Binding, "");
+    parseCustomActionBinding("CustomAction5Command", m_CustomAction5Binding, "");
 
     m_LeftHanded = getBool("LeftHanded", m_LeftHanded);
     m_LeftHandedSwapInputActions = getBool("LeftHandedSwapInputActions", m_LeftHandedSwapInputActions);
-    m_VRScale = getFloat("VRScale", m_VRScale);
+    // A divisor in many places: never 0 or negative (review B68).
+    m_VRScale = std::clamp(getFloat("VRScale", m_VRScale), 10.0f, 200.0f);
     m_VRNearClipAdaptive = getBool("VRNearClipAdaptive", m_VRNearClipAdaptive);
     m_VRNearClipSelfBody = getBool("VRNearClipSelfBody", m_VRNearClipSelfBody);
     m_VRNearClipDebugLog = getBool("VRNearClipDebugLog", m_VRNearClipDebugLog);
@@ -1265,7 +1375,7 @@ void VR::ParseConfigFile()
         getFloat("VRNearClipExitDistance", m_VRNearClipExitDistance),
         m_VRNearClipEnterDistance,
         192.0f);
-    m_IpdScale = getFloat("IPDScale", m_IpdScale);
+    m_IpdScale = std::clamp(getFloat("IPDScale", m_IpdScale), 0.1f, 5.0f);
     {
         auto clampVector = [](Vector value, float minValue, float maxValue)
         {
@@ -1608,8 +1718,13 @@ void VR::ParseConfigFile()
     m_FirstPersonBodyHideWorldWeapon = getBool(
         "FirstPersonBodyHideWorldWeapon",
         m_FirstPersonBodyHideWorldWeapon);
-    m_HideArms = getBool("HideArms", m_HideArms);
-    m_NativeViewmodelHandsOnly = getBool("NativeViewmodelHandsOnly", m_NativeViewmodelHandsOnly);
+    // Fixed fallbacks: the hands block below rewrites both members.
+    m_HideArms = getBool("HideArms", false);
+    m_NativeViewmodelHandsOnly = getBool("NativeViewmodelHandsOnly", true);
+    // The VR Options "Hide arms" and "Hand mode" rows: the hands block below
+    // used to overwrite both, so the rows changed nothing (2.0.11, review B34).
+    const bool configHideArms = m_HideArms;
+    const bool configNativeViewmodelHandsOnly = m_NativeViewmodelHandsOnly;
     m_NativeViewmodelArmCroppingEnabled = getBool(
         "NativeViewmodelArmCroppingEnabled",
         m_NativeViewmodelArmCroppingEnabled);
@@ -1909,8 +2024,11 @@ void VR::ParseConfigFile()
     // Left-handed play turns VR hands on. The separate SteamVR glove models
     // are retired (the survivor's own viewmodel hands are used for everyone):
     // VrHandsGlovesEnabled is ignored.
+    // Hand mode "Game animation" (NativeViewmodelHandsOnly=false) is the
+    // classic viewmodel: the same as VR hands off. Left-handed play keeps the
+    // hands (the left-hand remap needs them).
     const bool vrHandsEntryEnabled =
-        getBool("VrHandsEnabled", true) || m_LeftHanded;
+        (getBool("VrHandsEnabled", true) && configNativeViewmodelHandsOnly) || m_LeftHanded;
     m_VrHandsGlovesEnabled = false;
     m_VrHandsGloveFingerMaxCurl[0] = std::clamp(
         getFloat("VrHandsGloveThumbMaxCurl", m_VrHandsGloveFingerMaxCurl[0]),
@@ -1945,17 +2063,12 @@ void VR::ParseConfigFile()
     {
         m_VrHandsGlovesRuntimeFallback = false;
         m_NativeViewmodelHandsOnly = true;
-        m_HideArms = false;
-    }
-    else if (m_NativeViewmodelHandsOnly)
-    {
-        m_VrHandsGlovesRuntimeFallback = false;
-        m_HideArms = false;
+        m_HideArms = configHideArms;
     }
     else
     {
         m_VrHandsGlovesRuntimeFallback = false;
-        m_HideArms = false;
+        m_HideArms = configHideArms;
     }
     m_VrHandsMotionRangeWithoutController = getBool("VrHandsMotionRangeWithoutController", m_VrHandsMotionRangeWithoutController);
     m_VrHandsDebugLog = getBool("VrHandsDebugLog", m_VrHandsDebugLog);
@@ -2929,8 +3042,8 @@ void VR::ParseConfigFile()
     m_MagazineInteractionMagazineHandOffsetMeters = getVector3("ManualReloadMagazineHandOffsetMeters", m_MagazineInteractionMagazineHandOffsetMeters);
     m_MagazineInteractionMagazineHandRotationOffsetDeg = getVector3("ManualReloadMagazineHandRotationOffsetDeg", m_MagazineInteractionMagazineHandRotationOffsetDeg);
     m_SplitArmsToControllers = getBool("SplitArmsToControllers", m_SplitArmsToControllers);
-    m_HudDistance = getFloat("HudDistance", m_HudDistance);
-    m_HudSize = getFloat("HudSize", m_HudSize);
+    m_HudDistance = std::clamp(getFloat("HudDistance", m_HudDistance), 0.1f, 20.0f);
+    m_HudSize = std::clamp(getFloat("HudSize", m_HudSize), 0.05f, 20.0f);
     m_FixedHudXOffset = std::clamp(getFloat("FixedHudXOffset", m_FixedHudXOffset), -2.0f, 2.0f);
     m_FixedHudYOffset = std::clamp(getFloat("FixedHudYOffset", m_FixedHudYOffset), -2.0f, 2.0f);
     m_TopHudCurvature = std::clamp(getFloat("TopHudCurvature", m_TopHudCurvature), 0.0f, 1.0f);
@@ -2942,16 +3055,20 @@ void VR::ParseConfigFile()
             m_HudLiftGestureActive.load(std::memory_order_acquire) != 0);
 
     // Hand HUD background opacity (0..1)
-    m_LeftWristHudBgAlpha = std::clamp(getFloat("LeftWristHudBgAlpha", m_LeftWristHudBgAlpha), 0.0f, 1.0f);
-    m_RightAmmoHudBgAlpha = std::clamp(getFloat("RightAmmoHudBgAlpha", m_RightAmmoHudBgAlpha), 0.0f, 1.0f);
+    // The configured base comes from the key or the fixed default, never from
+    // the member (which holds the product below): every reload used to multiply
+    // it again, so the panel faded out after a few VR Options clicks (review B33).
+    m_LeftWristHudBgAlpha = std::clamp(getFloat("LeftWristHudBgAlpha", 0.85f), 0.0f, 1.0f);
+    m_RightAmmoHudBgAlpha = std::clamp(getFloat("RightAmmoHudBgAlpha", 0.70f), 0.0f, 1.0f);
 
     // Right ammo HUD: crop ratio (U max). Removes unused blank area on the right.
     m_RightAmmoHudUVMaxU = std::clamp(getFloat("RightAmmoHudUVMaxU", m_RightAmmoHudUVMaxU), 0.05f, 1.0f);
 
     // Hand HUD alpha (legacy): used as an extra BACKGROUND opacity multiplier (0..1).
     // We no longer apply IVROverlay::SetOverlayAlpha to the whole overlay because it makes text/bars fade too.
-    const float leftBgMul = std::clamp(getFloat("LeftWristHudAlpha", m_LeftWristHudAlpha), 0.0f, 1.0f);
-    const float rightBgMul = std::clamp(getFloat("RightAmmoHudAlpha", m_RightAmmoHudAlpha), 0.0f, 1.0f);
+    // (Fixed fallbacks: the members are set to 1 below, so they are no default.)
+    const float leftBgMul = std::clamp(getFloat("LeftWristHudAlpha", 0.5f), 0.0f, 1.0f);
+    const float rightBgMul = std::clamp(getFloat("RightAmmoHudAlpha", 0.5f), 0.0f, 1.0f);
     m_LeftWristHudBgAlpha = std::clamp(m_LeftWristHudBgAlpha * leftBgMul, 0.0f, 1.0f);
     m_RightAmmoHudBgAlpha = std::clamp(m_RightAmmoHudBgAlpha * rightBgMul, 0.0f, 1.0f);
     m_LeftWristHudAlpha = 1.0f;
@@ -3096,10 +3213,11 @@ void VR::ParseConfigFile()
     m_MotionGesturePushEnabled = getBool("MotionGesturePushEnabled", m_MotionGesturePushEnabled);
     m_MotionGestureDownSwingEnabled = getBool("MotionGestureDownSwingEnabled", m_MotionGestureDownSwingEnabled);
     m_MotionGestureJumpEnabled = getBool("MotionGestureJumpEnabled", m_MotionGestureJumpEnabled);
-    m_MotionGestureSwingThreshold = std::max(0.0f, getFloat("MotionGestureSwingThreshold", m_MotionGestureSwingThreshold));
-    m_MotionGesturePushThreshold = std::max(0.0f, getFloat("MotionGesturePushThreshold", m_MotionGesturePushThreshold));
-    m_MotionGestureDownSwingThreshold = std::max(0.0f, getFloat("MotionGestureDownSwingThreshold", m_MotionGestureDownSwingThreshold));
-    m_MotionGestureJumpThreshold = std::max(0.0f, getFloat("MotionGestureJumpThreshold", m_MotionGestureJumpThreshold));
+    // Fixed fallbacks: a disabled gesture stores 999 below (review B69).
+    m_MotionGestureSwingThreshold = std::max(0.0f, getFloat("MotionGestureSwingThreshold", 2.0f));
+    m_MotionGesturePushThreshold = std::max(0.0f, getFloat("MotionGesturePushThreshold", 1.5f));
+    m_MotionGestureDownSwingThreshold = std::max(0.0f, getFloat("MotionGestureDownSwingThreshold", 2.0f));
+    m_MotionGestureJumpThreshold = std::max(0.0f, getFloat("MotionGestureJumpThreshold", 2.0f));
     if (!m_MotionGestureSwingEnabled)
         m_MotionGestureSwingThreshold = 999.0f;
     if (!m_MotionGesturePushEnabled)
@@ -3615,7 +3733,9 @@ void VR::ParseConfigFile()
     m_ScopePhysicalLensEnabled = getBool("ScopePhysicalLensEnabled", m_ScopePhysicalLensEnabled);
     m_ScopeBaseMagnification = std::clamp(getFloat("ScopeBaseMagnification", m_ScopeBaseMagnification), 1.0f, 16.0f);
     m_ScopeRTTSize = std::clamp(getInt("ScopeRTTSize", m_ScopeRTTSize), 128, 4096);
-    m_DefaultScopeAdjust.fov = std::clamp(getFloat("ScopeDefaultFov", m_DefaultScopeAdjust.fov), 1.0f, 179.0f);
+    // Fixed fallbacks (ScopeAdjustment defaults): the members are clamped into
+    // the ranges below, which must not leak into the next parse (review B69).
+    m_DefaultScopeAdjust.fov = std::clamp(getFloat("ScopeDefaultFov", ScopeAdjustment{}.fov), 1.0f, 179.0f);
     {
         const auto fovRange = getFloatList("ScopeMagnificationFovRange", "3,20");
         if (fovRange.size() >= 2 && std::isfinite(fovRange[0]) && std::isfinite(fovRange[1]))
@@ -3644,8 +3764,8 @@ void VR::ParseConfigFile()
     m_ScopeCameraOffset = getVector3("ScopeCameraOffset", m_ScopeCameraOffset);
     { Vector tmp = getVector3("ScopeCameraAngleOffset", Vector{ m_ScopeCameraAngleOffset.x, m_ScopeCameraAngleOffset.y, m_ScopeCameraAngleOffset.z }); m_ScopeCameraAngleOffset = QAngle{ tmp.x, tmp.y, tmp.z }; }
 
-    m_DefaultScopeAdjust.widthMeters = std::clamp(getFloat("ScopeDefaultOverlayWidthMeters", m_DefaultScopeAdjust.widthMeters), m_ScopeSizeMin, m_ScopeSizeMax);
-    m_DefaultScopeAdjust.overlayOffset = getVector3("ScopeDefaultOverlayOffset", m_DefaultScopeAdjust.overlayOffset);
+    m_DefaultScopeAdjust.widthMeters = std::clamp(getFloat("ScopeDefaultOverlayWidthMeters", ScopeAdjustment{}.widthMeters), m_ScopeSizeMin, m_ScopeSizeMax);
+    m_DefaultScopeAdjust.overlayOffset = getVector3("ScopeDefaultOverlayOffset", ScopeAdjustment{}.overlayOffset);
     m_ScopeFov = m_DefaultScopeAdjust.fov;
     m_ScopeOverlayWidthMeters = m_DefaultScopeAdjust.widthMeters;
     m_ScopeOverlayXOffset = m_DefaultScopeAdjust.overlayOffset.x;
@@ -3854,9 +3974,9 @@ void VR::ParseConfigFile()
         desktopMirrorLegacyCleanPassSafe;
     if (m_DesktopMirrorEnabled && m_DesktopMirrorHidePluginOverlaysRequested && desktopMirrorTexturesReady && !m_DesktopMirrorTexture)
     {
-        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
-        m_CreatedVRTextures.store(false, std::memory_order_release);
-        m_CreatingTextureID = Texture_None;
+        // Done by Update: the parse holds m_ConfigLock and must not wait for
+        // m_TextureMutex (a render functor may hold it).
+        m_DesktopMirrorTextureResetRequested.store(true, std::memory_order_release);
     }
     m_ItemModelLabelPlayerSuppressRadius = std::max(0.0f, getFloat("ItemModelLabelPlayerSuppressRadius", m_ItemModelLabelPlayerSuppressRadius));
     m_ItemModelLabelPlayerSuppressMinZ = getFloat("ItemModelLabelPlayerSuppressMinZ", m_ItemModelLabelPlayerSuppressMinZ);
@@ -5314,32 +5434,100 @@ void VR::AuditLocalVScriptConvarsCurrentValues(const char* reason)
         missingCount);
 }
 
+void VR::ParseConfigFile()
+{
+    // 2.0.11 (review B05): never rewrite the settings while a frame reads them.
+    // Bounded wait: the config overlay calls this while holding its own
+    // state mutex, which a frame may be waiting for.
+    l4d2vr_config_lock::ConfigLock::WriteScope write(m_ConfigLock, std::chrono::milliseconds(250));
+    if (!write.Owns())
+    {
+        // Called from inside a frame (self-test step, overlay code) or the
+        // frames kept the lock: the watcher thread parses (again) shortly.
+        RequestConfigReload();
+        return;
+    }
+    ParseConfigFileUnlocked();
+}
+
+void VR::RequestConfigReload()
+{
+    m_ConfigReloadRequested.store(true, std::memory_order_release);
+    if (m_ConfigReloadEvent)
+        SetEvent(static_cast<HANDLE>(m_ConfigReloadEvent));
+}
+
+void VR::StartConfigWatcher()
+{
+    if (m_ConfigWatcherStarted.exchange(true, std::memory_order_acq_rel))
+        return;
+    m_ConfigReloadEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+    // The first parse runs now, on the caller's thread, so everything after
+    // VR::VR (Hooks, desktop mode) sees the player's settings (review B36).
+    try
+    {
+        ParseConfigFile();
+    }
+    catch (...)
+    {
+        Game::logMsg("[VR][Config] config.txt/config2.txt could not be parsed at start; defaults are used until it is fixed");
+    }
+    std::thread configParser(&VR::WaitForConfigUpdate, this);
+    configParser.detach();
+}
+
 void VR::WaitForConfigUpdate()
 {
     char currentDir[MAX_STR_LEN];
     GetCurrentDirectoryA(MAX_STR_LEN, currentDir);
     char configDir[MAX_STR_LEN];
     sprintf_s(configDir, MAX_STR_LEN, "%s\\VR\\", currentDir);
-    HANDLE fileChangeHandle = FindFirstChangeNotificationA(configDir, false, FILE_NOTIFY_CHANGE_LAST_WRITE);
+    HANDLE fileChangeHandle = FindFirstChangeNotificationA(configDir, false, FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME);
 
+    // StartConfigWatcher parsed the files just before this thread started:
+    // remember their times so the first loop does not parse them again.
     FILETIME configLastModified{};
     FILETIME config2LastModified{};
+    {
+        WIN32_FILE_ATTRIBUTE_DATA a{};
+        if (GetFileAttributesExA("VR\\config.txt", GetFileExInfoStandard, &a))
+            configLastModified = a.ftLastWriteTime;
+        if (GetFileAttributesExA("VR\\config2.txt", GetFileExInfoStandard, &a))
+            config2LastModified = a.ftLastWriteTime;
+    }
     FILETIME hapticsLastModified{};
     FILETIME localVScriptLastModified{};
     bool localVScriptMissing = false;
+    bool loggedConfigMissing = false;
+    int parseFailuresLogged = 0;
     while (1)
     {
         WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
         WIN32_FILE_ATTRIBUTE_DATA config2Attributes{};
         const bool hasConfig = GetFileAttributesExA("VR\\config.txt", GetFileExInfoStandard, &fileAttributes) != FALSE;
         const bool hasConfig2 = GetFileAttributesExA("VR\\config2.txt", GetFileExInfoStandard, &config2Attributes) != FALSE;
+        bool configReloadNeeded = m_ConfigReloadRequested.exchange(false, std::memory_order_acq_rel);
         if (!hasConfig && !hasConfig2)
         {
-            m_Game->errorMsg("config.txt/config2.txt not found.");
-            return;
+            // An editor's "safe save" or a sync tool may delete and recreate
+            // the file: keep watching (2.0.11, review B67; this used to end hot
+            // reload for the session with a message box on the desktop).
+            if (!loggedConfigMissing)
+            {
+                Game::logMsg("[VR][Config] VR\\config.txt and VR\\config2.txt are missing; waiting for them to come back");
+                loggedConfigMissing = true;
+            }
+            if (configReloadNeeded)
+                m_ConfigReloadRequested.store(true, std::memory_order_release);
+            Sleep(1000);
+            continue;
+        }
+        if (loggedConfigMissing)
+        {
+            Game::logMsg("[VR][Config] config file is back; reloading");
+            loggedConfigMissing = false;
         }
 
-        bool configReloadNeeded = false;
         if (hasConfig && CompareFileTime(&fileAttributes.ftLastWriteTime, &configLastModified) != 0)
         {
             configLastModified = fileAttributes.ftLastWriteTime;
@@ -5357,13 +5545,14 @@ void VR::WaitForConfigUpdate()
             {
                 ParseConfigFile();
             }
-            catch (const std::invalid_argument&)
-            {
-                m_Game->errorMsg("Failed to parse config.txt/config2.txt");
-            }
             catch (...)
             {
-                m_Game->errorMsg("Failed to parse config.txt/config2.txt");
+                // Logged, never a message box (invisible in the headset; one per reload).
+                if (parseFailuresLogged < 5)
+                {
+                    ++parseFailuresLogged;
+                    Game::logMsg("[VR][Config] failed to parse config.txt/config2.txt; the previous settings stay in use");
+                }
             }
         }
 
@@ -5378,11 +5567,12 @@ void VR::WaitForConfigUpdate()
                 {
                     try
                     {
+                        l4d2vr_config_lock::ConfigLock::WriteScope write(m_ConfigLock);
                         ParseHapticsConfigFile();
                     }
-                    catch (const std::invalid_argument&)
+                    catch (...)
                     {
-                        m_Game->errorMsg("Failed to parse haptics_config.txt");
+                        Game::logMsg("[VR][Config] failed to parse haptics_config.txt");
                     }
                 }
             }
@@ -5390,8 +5580,13 @@ void VR::WaitForConfigUpdate()
 
         if (!m_LocalVScriptConvarsPath.empty())
         {
+            std::string localVScriptPath;
+            {
+                l4d2vr_config_lock::ConfigLock::WriteScope write(m_ConfigLock);
+                localVScriptPath = m_LocalVScriptConvarsPath;
+            }
             WIN32_FILE_ATTRIBUTE_DATA localVScriptAttributes{};
-            if (GetFileAttributesExA(m_LocalVScriptConvarsPath.c_str(), GetFileExInfoStandard, &localVScriptAttributes))
+            if (GetFileAttributesExA(localVScriptPath.c_str(), GetFileExInfoStandard, &localVScriptAttributes))
             {
                 if (localVScriptMissing ||
                     CompareFileTime(&localVScriptAttributes.ftLastWriteTime, &localVScriptLastModified) != 0)
@@ -5409,18 +5604,24 @@ void VR::WaitForConfigUpdate()
             }
         }
 
-        if (fileChangeHandle == INVALID_HANDLE_VALUE)
-        {
-            Sleep(1000);
+        if (m_ConfigReloadRequested.load(std::memory_order_acquire))
             continue;
-        }
 
-        if (!FindNextChangeNotification(fileChangeHandle))
+        HANDLE waitHandles[2];
+        DWORD waitCount = 0;
+        if (fileChangeHandle != INVALID_HANDLE_VALUE && FindNextChangeNotification(fileChangeHandle))
+            waitHandles[waitCount++] = fileChangeHandle;
+        if (m_ConfigReloadEvent)
+            waitHandles[waitCount++] = static_cast<HANDLE>(m_ConfigReloadEvent);
+        if (waitCount == 0)
         {
             Sleep(1000);
             continue;
         }
-        WaitForSingleObject(fileChangeHandle, INFINITE);
-        Sleep(100); // Sometimes the thread tries to read config.txt before it's finished writing
+        // Poll once a second as well: a missed notification (or none at all)
+        // only delays a reload.
+        const DWORD waited = WaitForMultipleObjects(waitCount, waitHandles, FALSE, 1000);
+        if (waited == WAIT_OBJECT_0 && waitHandles[0] == fileChangeHandle)
+            Sleep(100); // Sometimes the thread tries to read config.txt before it's finished writing
     }
 }

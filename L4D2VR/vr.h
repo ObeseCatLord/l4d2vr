@@ -64,6 +64,7 @@
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
 #include "vr_opus_voice.h"
+#include "vr_config_lock.h"
 #include "vector.h"
 #include "vr_hands/vr_hand_types.h"
 #include <cstdint>
@@ -1026,6 +1027,18 @@ public:
 	ViewmodelAdjustment m_DefaultViewmodelAdjust{ {0,0,0}, {0,0,0} };
 	std::unordered_map<std::string, ViewmodelAdjustment> m_ViewmodelAdjustments{};
 	std::string m_CurrentViewmodelKey;
+	// Per-weapon key cache (2.0.11, review S23): rebuilt only when the active
+	// weapon entity or its id changes (melee keys depend on the model: not cached).
+	struct AdjustKeyCache
+	{
+		const void* weapon = nullptr;
+		int weaponId = -1;
+		bool valid = false;
+		std::string key;
+		uint32_t hash = 0u;
+	};
+	AdjustKeyCache m_ViewmodelAdjustKeyCache;
+	AdjustKeyCache m_ScopeAdjustKeyCache;
 	// Crosshair-to-sights alignment (see vr_sight_correction.h).
 	bool m_SightAutoAlignEnabled = true;
 	mutable std::mutex m_SightBoreMutex;
@@ -1518,9 +1531,9 @@ public:
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_BodyGripSelectionSerial{ 0 };
     std::atomic<uint32_t> m_GripDrawSerial{ 0 }; // weapon-hand grip drew from a holster (the grip took the item)
-    bool m_BodyGripInventoryEnabled = false;
+    bool m_BodyGripInventoryEnabled = true;    // = the parser and config.txt default
     bool m_PhysicalReloadOnUnsupportedServers = true;
-    bool m_ManualPumpEnabled = false;
+    bool m_ManualPumpEnabled = true;
     // Manual pump stroke (l4d2vr_physical::PumpStroke): the fore-end's hand
     // travel, the fraction of it that cocks the action, the distance from the
     // closed position (fraction of the travel) within which the forward stroke
@@ -2235,7 +2248,7 @@ public:
 
 	ActionCombo m_VoiceRecordCombo{ &m_ActionCrouch, &m_ActionReload };
 	ActionCombo m_QuickTurnCombo{ &m_ActionSecondaryAttack, &m_ActionCrouch };
-	ActionCombo m_ViewmodelAdjustCombo{ &m_ActionSecondaryAttack, &m_ActionUse };
+	ActionCombo m_ViewmodelAdjustCombo{ &m_ActionReload, &m_ActionSecondaryAttack };   // = config.txt Reload+SecondaryAttack
 	bool m_SpeechToTextEnabled = false;
 	bool m_SpeechToTextSendChatEnabled = true;
 	bool m_SpeechToTextSendVoiceEnabled = false;
@@ -3974,6 +3987,14 @@ public:
 
 	// One-shot menu ConVar injection: apply launch-style visual defaults after the first main-menu entry.
 	bool m_MainMenuOneShotVisualCvarsInjected = false;
+	// 2.0.11 (review B37): game settings VR changes (crosshair, film grain,
+	// motion blur, fps_max, mat_queue_mode) are no longer saved to config.cfg
+	// while VR runs; the player's own values are kept in
+	// VR\vr_saved_game_cvars.txt and put back by the next non-VR start.
+	void ProtectGameCvarForVr(const char* name);
+	void RestoreGameCvarsAfterVrOnce();
+	std::unordered_set<std::string> m_VrProtectedGameCvars;
+	bool m_GameCvarsRestoreDone = false;
 	// 2.0.10: the game's voice set to open mic / full receive volume once ever
 	// for VR players (l4d2vr_voice::kVrVoiceDefaultsId); checked once per session.
 	bool m_VrVoiceDefaultsChecked = false;
@@ -5616,7 +5637,24 @@ public:
 	void TriggerMeleeHitHaptics(bool leftHand = false);
 	void TriggerShoveHaptics(bool leftHand = false);
 	void NotifyMeleeHitConfirmed(std::uintptr_t entityTag = 0);
+	// Takes m_ConfigLock exclusively; from a thread inside a read (a frame) the
+	// parse is handed to the watcher thread instead (2.0.11, review B05).
 	void ParseConfigFile();
+	void ParseConfigFileUnlocked();
+	void RequestConfigReload();
+	// Parses config.txt once now and starts the hot-reload watcher (also in
+	// desktop mode, review B36). Safe to call more than once.
+	void StartConfigWatcher();
+	l4d2vr_config_lock::ConfigLock m_ConfigLock;
+	std::atomic<bool> m_ConfigReloadRequested{ false };
+	std::atomic<bool> m_ConfigWatcherStarted{ false };
+	void* m_ConfigReloadEvent = nullptr;
+	// Desktop mirror: the parse asks Update to drop the VR textures (it may not
+	// take m_TextureMutex while it holds m_ConfigLock).
+	std::atomic<bool> m_DesktopMirrorTextureResetRequested{ false };
+	// Last injected config command ("cmd="): run only when it changes (B68).
+	std::string m_LastInjectedConfigCommand;
+	bool m_InjectedConfigCommandRan = false;
 	void ParseHapticsConfigFile();
 	void LoadViewmodelAdjustments();
 	void SaveViewmodelAdjustments();

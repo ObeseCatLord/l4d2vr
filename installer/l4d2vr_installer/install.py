@@ -57,6 +57,13 @@ CLIENT_PRESERVE = (
     "vr/native_viewmodel_hands_freeze_pose.txt",  # saved by the in-game hand pose editor
 )
 SERVER_PRESERVE = ("*l4d2vr_server_config.txt", "cfg/*")
+# Shipped files that players are told to tune by hand. An update keeps the
+# player's edited copy and writes the new default next to it as <name>.new.
+CLIENT_USER_TUNABLE = (
+    "vr/haptics_config.txt",
+    "vr/local_client_convars.nut",
+)
+NEW_SUFFIX = ".new"
 # OpenVR files of the releases before the OpenXR-only 1.3. When a package no
 # longer ships them, an update removes them (backed up first, like every
 # removal), whether an earlier installer run recorded them or not, and even if
@@ -221,7 +228,7 @@ def _strip_wrapper(raw: Dict[str, zipfile.ZipInfo], target: Target) -> Dict[str,
 class PlanItem:
     rel: str  # path inside the package (normalized)
     dest: Path
-    action: str  # add | overwrite | unchanged | preserve | remove | keep-modified
+    action: str  # add | overwrite | unchanged | preserve | remove | keep-modified | keep-user
     new_sha: Optional[str] = None
     old_sha: Optional[str] = None
     data: Optional[bytes] = None  # generated content (not from the archive)
@@ -246,7 +253,7 @@ class Plan:
         counts = {}
         for item in self.items:
             counts[item.action] = counts.get(item.action, 0) + 1
-        order = ("add", "overwrite", "remove", "unchanged", "preserve", "keep-modified")
+        order = ("add", "overwrite", "remove", "unchanged", "preserve", "keep-modified", "keep-user")
         return ", ".join(f"{counts[name]} {name}" for name in order if counts.get(name))
 
 
@@ -273,8 +280,23 @@ def plan_install(target: Target, package: Package, metadata: Optional[dict] = No
         new_sha = _member_sha(package, rel)
         exists = dest.is_file()
         old_sha = sha256_file(dest) if exists else None
+        recorded = (previous.get("files") or {}).get(rel)
         if exists and target.is_preserved(rel):
             action = "preserve"
+        elif (exists and target.kind == "client" and is_user_tunable(rel) and recorded
+              and old_sha not in (recorded, new_sha)):
+            # The player edited a tuning file the installer wrote: keep it,
+            # and put the new default next to it.
+            plan.items.append(PlanItem(rel, dest, "keep-user", recorded, old_sha))
+            side_rel = rel + NEW_SUFFIX
+            side = resolve_ci(target.root, side_rel)
+            _check_dest(side)
+            seen_dest.add(os.path.normcase(str(side)))
+            side_old = sha256_file(side) if side.is_file() else None
+            side_action = "add" if side_old is None else ("unchanged" if side_old == new_sha else "overwrite")
+            plan.items.append(PlanItem(side_rel, side, side_action, new_sha, side_old, package.read(rel)))
+            plan.warnings.append(f"You changed {rel}; keeping your copy. The new default is in {side_rel}.")
+            continue
         elif not exists:
             action = "add"
         elif old_sha == new_sha:
@@ -324,6 +346,10 @@ def plan_install(target: Target, package: Package, metadata: Optional[dict] = No
     plan.metadata.setdefault("previous_version", previous.get("version"))
     plan.metadata.setdefault("previous_tag", previous.get("tag"))
     return plan
+
+
+def is_user_tunable(rel: str) -> bool:
+    return rel.lower() in CLIENT_USER_TUNABLE
 
 
 def is_retired_client_file(rel: str) -> bool:
@@ -390,7 +416,7 @@ def list_backups(target: Target, include_restored: bool = True) -> List[Backup]:
     root = target.backup_root
     if not root.is_dir():
         return out
-    for child in sorted(root.iterdir(), reverse=True):
+    for child in root.iterdir():
         index_path = child / "index.json"
         if not child.is_dir() or not index_path.is_file():
             continue
@@ -403,6 +429,9 @@ def list_backups(target: Target, include_restored: bool = True) -> List[Backup]:
         backup = Backup(child, index)
         if include_restored or not backup.restored:
             out.append(backup)
+    # Newest first by the UTC creation time in the index, not by the folder
+    # name (local time: a DST change or clock correction would reorder it).
+    out.sort(key=lambda b: (str(b.index.get("created_at") or ""), b.name), reverse=True)
     return out
 
 
@@ -415,8 +444,10 @@ def _state_document(plan: Plan, backup_name: Optional[str]) -> dict:
     previous = target.read_state() or {}
     # Preserved files only count as ours when this run created them (e.g. a
     # default config on first install); after that they belong to the user.
+    # keep-user: the player's edited copy of a tuning file; the hash the
+    # installer last wrote stays recorded so the next update knows it again.
     files = {item.rel: item.new_sha for item in plan.items
-             if item.action in ("add", "overwrite", "unchanged")}
+             if item.action in ("add", "overwrite", "unchanged", "keep-user")}
     meta = plan.metadata
     backups = list(previous.get("backups") or [])
     if backup_name:
@@ -453,6 +484,8 @@ def apply_plan(plan: Plan, dry_run: bool = False, log: Log = _noop) -> Optional[
         log(f"  {item.action:9} {item.rel}")
     for item in plan.by_action("preserve"):
         log(f"  keep      {item.rel} (your file)")
+    for item in plan.by_action("keep-user"):
+        log(f"  keep      {item.rel} (you edited it; new default in {item.rel}{NEW_SUFFIX})")
     if dry_run:
         log("Dry run: no files were changed.")
         return None
@@ -533,7 +566,9 @@ def apply_plan(plan: Plan, dry_run: bool = False, log: Log = _noop) -> Optional[
                 data = item.data if item.data is not None else plan.package.read(item.rel)
                 if sha256_bytes(data) != item.new_sha:
                     raise InstallerError(f"Archive content changed while installing {item.rel}")
-                atomic_write_bytes(item.dest, data)
+                member = plan.package.members.get(item.rel) if plan.package and item.data is None else None
+                executable = bool(member is not None and (member.external_attr >> 16) & 0o111)
+                atomic_write_bytes(item.dest, data, executable=executable)
             elif item.action == "remove":
                 os.remove(item.dest)
                 _remove_empty_parents(target.root, item.dest)
@@ -678,13 +713,18 @@ def _restore_entries(target: Target, backup: Backup, force: bool, log: Log) -> L
         raise InstallerError(
             "These files changed after the install, so restoring would lose your edits:\n  "
             + "\n  ".join(step.path for step in conflicts)
-            + "\nRe-run with --force to restore anyway (your current copies are saved in the backup folder)."
+            + "\nRe-run with --force (command line) to restore anyway (your current copies are saved in the "
+              "backup folder)."
         )
     entries = {entry["path"]: entry for entry in backup.index.get("entries", [])}
     for step in steps:
         dest = target.root / step.path
         if step.action == "delete":
-            os.remove(dest)
+            try:
+                os.remove(dest)
+            except PermissionError as error:
+                raise InstallerError(f"Cannot remove {dest}: {error}. If the game is running, close it and "
+                                     "try again (the rest is finished then).") from error
         elif step.action == "restore":
             entry = entries[step.path]
             source = backup.path / "files" / step.path

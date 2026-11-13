@@ -864,15 +864,31 @@ namespace
     {
         unsigned long version = 0;
         std::uint32_t mask = 0u;
-        if (!g_Game || !g_Game->m_VR || !Hooks::s_ServerUnderstandsVR || command.ArgC() != 3 ||
+        if (!g_Game || !g_Game->m_VR || command.ArgC() != 3 ||
             !l4d2vr_features::ParseMask(command.Arg(1), mask) ||
             !ParseUnsignedCommandArgument(command, 2, 255u, version) || version < l4d2vr_features::kVersion)
             return;
-        const std::uint32_t previous = g_Game->m_VR->m_ServerFeatureMask.exchange(mask, std::memory_order_acq_rel);
-        if (previous != mask)
-            Game::logMsg("[VR][FeatureAck] server features 0x%03X (protocol %lu)", mask, version);
+        if (!Hooks::s_ServerUnderstandsVR)
+        {
+            // 2.0.11: a plugin whose gameplay hooks are unavailable sends no
+            // l4d2vr_server_ack but still relays Opus voice (it needs no game
+            // hooks). Take only that bit; the gameplay features stay off.
+            g_Game->m_VR->m_ServerFeatureMask.fetch_or(mask & l4d2vr_features::OpusVoice, std::memory_order_acq_rel);
+            static int s_VoiceOnlyLogs = 0;
+            if (s_VoiceOnlyLogs < 4)
+            {
+                ++s_VoiceOnlyLogs;
+                Game::logMsg("[VR][FeatureAck] server features 0x%03X before l4d2vr_server_ack: only Opus voice is used", mask);
+            }
+        }
+        else
+        {
+            const std::uint32_t previous = g_Game->m_VR->m_ServerFeatureMask.exchange(mask, std::memory_order_acq_rel);
+            if (previous != mask)
+                Game::logMsg("[VR][FeatureAck] server features 0x%03X (protocol %lu)", mask, version);
+        }
         // Every capability bundle (new map, reconnect) restarts the voice handshake.
-        OpusVoiceClient::OnServerFeatures(mask);
+        OpusVoiceClient::OnServerFeatures(mask & l4d2vr_features::OpusVoice);
     }
 
     void __cdecl OnL4D2VRShellCapability(const SourceCCommand& command)
@@ -1257,6 +1273,20 @@ Game::Game()
         s_DataCacheMsgIatSlot);
 
     m_Offsets = new Offsets();
+    // A game update moved required code: one summary, and desktop mode when
+    // allowed, instead of a half-hooked VR game (review B39).
+    if (!OffsetRequiredFailures().empty())
+    {
+        std::string summary = std::to_string(OffsetRequiredFailures().size()) +
+            " required game signature(s) not found (a game update?):";
+        for (const std::string& failure : OffsetRequiredFailures())
+            summary += " " + failure;
+        Game::logMsg("[VR][Offsets] %s", summary.c_str());
+        if (L4D2VR_DesktopFallbackAllowed())
+            L4D2VR_EnterDesktopFallback(summary.c_str());
+        else
+            Game::errorMsg((summary + "\nVR features that need them stay off.").c_str());
+    }
     m_VR = new VR(this);
     L4D2VRConfigOverlay_StartWorker();
 
@@ -1293,11 +1323,19 @@ void Game::logMsg(const char* fmt, ...)
         return;
 
     std::lock_guard<std::mutex> lock(logMutex);
+    // One handle for the whole session, flushed per line (it used to reopen the
+    // file for every line). The previous session's log is kept as
+    // vrmod_log.prev.txt: a player whose game crashed usually restarts it
+    // before sending the log (2.0.11, review S24).
+    static FILE* s_LogFile = nullptr;
     std::call_once(logResetOnce, []()
         {
-            FILE* file = _wfopen(VrLogPath().c_str(), L"w");
-            if (file)
-                fclose(file);
+            const std::wstring& path = VrLogPath();
+            std::wstring previous = path;
+            const size_t dot = previous.rfind(L'.');
+            previous = (dot == std::wstring::npos ? previous : previous.substr(0, dot)) + L".prev.txt";
+            MoveFileExW(path.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
+            s_LogFile = _wfopen(path.c_str(), L"w");
         });
 
     auto now = std::chrono::system_clock::now();
@@ -1305,6 +1343,7 @@ void Game::logMsg(const char* fmt, ...)
     char timebuf[20] = {};
     std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now_c));
 
+#ifdef _DEBUG
     printf("[%s] ", timebuf);
 
     va_list args;
@@ -1313,13 +1352,14 @@ void Game::logMsg(const char* fmt, ...)
     va_end(args);
 
     printf("\n");
+#endif
 
-    const std::wstring* logFiles[] = { &VrLogPath() };
-    for (const std::wstring* logFile : logFiles)
+    if (!s_LogFile)
+        s_LogFile = _wfopen(VrLogPath().c_str(), L"a");
     {
-        FILE* file = _wfopen(logFile->c_str(), L"a");
+        FILE* file = s_LogFile;
         if (!file)
-            continue;
+            return;
 
         fprintf(file, "[%s] ", timebuf);
         va_list args2;
@@ -1327,7 +1367,7 @@ void Game::logMsg(const char* fmt, ...)
         vfprintf(file, fmt, args2);
         va_end(args2);
         fprintf(file, "\n");
-        fclose(file);
+        fflush(file);
     }
 }
 
@@ -1500,6 +1540,7 @@ void Game::ResetServerPlayerSlot(int index)
 {
     if (!IsValidPlayerIndex(index))
         return;
+    ResetListenVoiceSlot(index);
     {
         std::lock_guard<std::mutex> lock(m_VRPoseMutex);
         ResetServerPlayerFields(m_PlayersVRInfo[static_cast<std::size_t>(index)]);
@@ -2424,6 +2465,41 @@ bool Game::HandleBuiltinVoiceCommand(edict_t* entity, const void* sourceCommand)
     return true;
 }
 
+// 2.0.11: the listen host has no disconnect hook; once a second, forget the
+// voice state of players who left (their talker bit made older clients drop
+// the game's voice of whoever took the slot next).
+void Game::PruneListenVoiceRelay()
+{
+    static ULONGLONG s_LastPruneMs = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (nowMs - s_LastPruneMs < 1000) return;
+    s_LastPruneMs = nowMs;
+    std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+    if (!g_ListenVoiceRelay.Enabled() || !m_ServerPluginHelpers) return;
+    g_ListenVoiceHost.helpers = m_ServerPluginHelpers;
+    g_ListenVoiceRelay.PruneDisconnected(g_ListenVoiceHost);
+    for (int i = 1; i <= l4d2vr_voice::kMaxPlayers; ++i)
+    {
+        const l4d2vr_voice_server::RelayClient* c = g_ListenVoiceRelay.Client(i);
+        if (c && !c->bucketStarted) g_ListenVoiceHost.slots[static_cast<std::size_t>(i)] = ListenVoiceSlot{};
+    }
+}
+
+// One slot's occupant changed (B04 slot reset on the listen host, B62): the
+// new player starts with no voice state and the others get the new talker list.
+void Game::ResetListenVoiceSlot(int index)
+{
+    if (index < 1 || index > l4d2vr_voice::kMaxPlayers)
+        return;
+    std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+    g_ListenVoiceHost.slots[static_cast<std::size_t>(index)] = ListenVoiceSlot{};
+    if (g_ListenVoiceRelay.Enabled() && m_ServerPluginHelpers)
+    {
+        g_ListenVoiceHost.helpers = m_ServerPluginHelpers;
+        g_ListenVoiceRelay.Reset(g_ListenVoiceHost, index);
+    }
+}
+
 void Game::ResetListenVoiceRelay()
 {
     std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
@@ -2435,6 +2511,7 @@ void Game::ResetListenVoiceRelay()
 void Game::UpdateOpusVoice()
 {
     if (!m_EngineClient) return;
+    PruneListenVoiceRelay();
     // Main thread, MinHook initialized: hook the stock voice receive once.
     OpusVoiceClient::InstallStockVoiceFilter();
     // VR players: the game's voice to open mic once ever (CreateMove runs in a
@@ -2445,8 +2522,8 @@ void Game::UpdateOpusVoice()
     in.inGame = m_EngineClient->IsInGame();
     in.localPlayer = in.inGame ? m_EngineClient->GetLocalPlayer() : 0;
     // The feature mask is cleared with the server session (ResetVRPoseServerSession);
-    // s_ServerUnderstandsVR is also reset when the map finishes loading, after
-    // the ack may already have arrived, so it is not a gate here.
+    // s_ServerUnderstandsVR is not a gate here: the voice feature ack can come
+    // without l4d2vr_server_ack (plugin without the usercmd decoder, B27).
     in.serverFeatures = m_VR ? m_VR->m_ServerFeatureMask.load(std::memory_order_acquire) : 0u;
     // The game's own voice settings (Options > Audio): Opus voice follows them
     // live, read twice a second.
@@ -2508,6 +2585,7 @@ void Game::UpdateOpusVoice()
             return true;
         };
         in.serverCommand = [this](const char* text, bool reliable) { ServerCmd(text, reliable); };
+        in.clientCommand = [this](const char* text) { ClientCmd_Unrestricted(text); };
     }
     OpusVoiceClient::Frame(in);
 }

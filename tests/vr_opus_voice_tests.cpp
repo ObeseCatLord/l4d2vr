@@ -224,6 +224,9 @@ static void TestVrVoiceDefaultsState()
     Check(MigrationStateHasId("  " + id + "  # note\r\n", id));
     Check(!MigrationStateHasId("# " + id + "\n", id));
     Check(!MigrationStateHasId(id + "_other\n", id));
+    // 2.0.11: "Voice: Disabled" is kept (no open mic for a player who turned voice off).
+    Check(!ShouldApplyVrVoiceDefaults(0));
+    Check(ShouldApplyVrVoiceDefaults(1));
     // Open mic, voice on, full receive volume.
     bool vox = false, scale = false, enable = false;
     for (const GameCvarDefault& d : kVrVoiceCvarDefaults)
@@ -733,6 +736,104 @@ static void TestNegotiation()
     r.Refresh();
     Check(r.Active() && r.Update(in) == int(kHelloReceive));
     Check(r.Update(in) == -1 && r.Active());
+
+    // 2.0.11: no stock voice filter -> no kHelloReceive (heard once, through
+    // the game's voice); our own voice still goes out; nothing to say -> opt out.
+    ClientNegotiation f;
+    ClientNegotiation::Inputs fi;
+    fi.enabled = fi.serverFeature = true;
+    fi.transmit = true;
+    fi.receive = false;
+    Check(f.Update(fi) == int(kHelloTransmit));
+    f.OnAck(1);
+    Check(f.Active() && f.TransmitAllowed());
+    fi.loopback = true;   // loopback needs the relay to send to us
+    Check(f.Update(fi) == int(kHelloReceive | kHelloTransmit | kHelloLoopback));
+    fi.loopback = false;
+    fi.transmit = false;
+    Check(f.Update(fi) == 0 && !f.Active());
+    Check(f.Update(fi) == -1);
+
+    // 2.0.11: a stall restarts the handshake (B09): hello again, same flags.
+    ClientNegotiation g;
+    ClientNegotiation::Inputs gi;
+    gi.enabled = gi.serverFeature = gi.transmit = true;
+    Check(g.Update(gi) == int(kHelloReceive | kHelloTransmit));
+    g.OnAck(1);
+    Check(g.Update(gi) == -1 && g.Active());
+    g.Restart();
+    Check(!g.Active() && g.Update(gi) == int(kHelloReceive | kHelloTransmit));
+    g.OnAck(1);
+    Check(g.Active());
+}
+
+static void TestCapturePolicy()
+{
+    using A = CapturePolicy::Action;
+    CapturePolicy p;
+    CapturePolicy::Inputs in;
+    in.nowMs = 1000.0;
+    Check(p.Update(in) == A::None);                       // relay not active
+    in.active = true;
+    in.transmitAllowed = true;
+    Check(p.Update(in) == A::Open);                       // open mic: open
+    // waveInOpen failed -> retried after the failure back-off (B45), even
+    // though the hello without transmit took the transmit permission away.
+    p.OpenFailed(in.nowMs);
+    in.captureFailed = true;
+    in.transmitAllowed = false;
+    in.nowMs += 5000.0;
+    Check(p.Update(in) == A::None);
+    in.nowMs += CapturePolicy::kCaptureFailedRetryMs;
+    Check(p.Update(in) == A::Open);
+    // It worked: open, the new hello is acked within kMinOpenMs -> stays open.
+    in.captureFailed = false;
+    in.open = true;
+    in.nowMs += 500.0;
+    Check(p.Update(in) == A::None);
+    in.transmitAllowed = true;
+    in.nowMs += 2000.0;
+    Check(p.Update(in) == A::None);
+    // Transmit revoked: closed.
+    in.transmitAllowed = false;
+    in.nowMs += 10.0;
+    Check(p.Update(in) == A::Close);
+    in.open = false;
+    // Push to talk (S19): closed until the first press, open while used,
+    // closed kPttIdleCloseMs after the last press.
+    CapturePolicy t;
+    CapturePolicy::Inputs ti;
+    ti.active = ti.transmitAllowed = ti.pushToTalk = true;
+    ti.nowMs = 1000.0;
+    Check(t.Update(ti) == A::None);
+    ti.pttHeld = true;
+    Check(t.Update(ti) == A::Open);
+    ti.open = true;
+    ti.pttHeld = false;
+    ti.nowMs += 30000.0;
+    Check(t.Update(ti) == A::None);
+    ti.nowMs += CapturePolicy::kPttIdleCloseMs;
+    Check(t.Update(ti) == A::Close);
+    // Session over: closed at once.
+    CapturePolicy u;
+    CapturePolicy::Inputs ui;
+    ui.active = ui.transmitAllowed = true;
+    ui.nowMs = 1.0;
+    Check(u.Update(ui) == A::Open);
+    ui.open = true;
+    ui.active = false;
+    Check(u.Update(ui) == A::Close);
+}
+
+static void TestOutputHealth()
+{
+    // B26: stock voice is dropped only while Opus can really play.
+    Check(!OutputPlaying(false, 1000.0, 999.0));               // timer clock / no device
+    Check(OutputPlaying(true, 1000.0, 900.0));
+    Check(!OutputPlaying(true, 1000.0, 1000.0 - kOutputHealthyMs - 1.0));
+    Check(!OutputStalled(false, 1e9, 0.0));
+    Check(!OutputStalled(true, 1000.0, 900.0));
+    Check(OutputStalled(true, 5000.0, 1000.0));
 }
 
 static void TestSpatial()
@@ -959,6 +1060,75 @@ static void TestRelay()
     Check(Dispatch(relay, host, 3, { "l4d2vr_voice_hello", "1" }));
     Check(Dispatch(relay, host, 9, { "l4d2vr_voice_hello", "1", "1" }));   // beyond maxclients
     Check(host.sent.empty());
+
+    // 2.0.11 (B28): an opt-out/opt-in hello no longer refills the burst, and
+    // hellos are rate limited (1/s, burst 4).
+    Relay bypass;
+    bypass.SetEnabled(true);
+    bypass.SetClientMax(8);
+    FakeHost h5;
+    h5.connected[1] = h5.connected[2] = true;
+    Dispatch(bypass, h5, 2, { "l4d2vr_voice_hello", "1", "1" });
+    Dispatch(bypass, h5, 1, { "l4d2vr_voice_hello", "1", "2" });
+    for (int i = 0; i < 60; ++i) Dispatch(bypass, h5, 1, { "l4d2vr_voice_up", text });
+    Dispatch(bypass, h5, 1, { "l4d2vr_voice_hello", "1", "0" });
+    Dispatch(bypass, h5, 1, { "l4d2vr_voice_hello", "1", "2" });
+    for (int i = 0; i < 60; ++i) Dispatch(bypass, h5, 1, { "l4d2vr_voice_up", text });
+    Check(h5.Count(2, "l4d2vr_voice_rx") == static_cast<int>(Relay::kBurstFrames));
+    h5.sent.clear();
+    for (int i = 0; i < 20; ++i) Dispatch(bypass, h5, 1, { "l4d2vr_voice_hello", "1", i % 2 ? "2" : "3" });
+    Check(h5.Count(1, "l4d2vr_voice_ack") <= 2);   // burst already spent above, at most what refilled
+    int flagLogs = 0;
+    for (const auto& l : h5.logs) flagLogs += l.find("player 1 Opus voice hello") != std::string::npos;
+    Check(flagLogs <= static_cast<int>(Relay::kMaxFlagLogs));
+    h5.now += 1000u;
+    Check(Dispatch(bypass, h5, 1, { "l4d2vr_voice_hello", "1", "3" }) && h5.Count(1, "l4d2vr_voice_ack") >= 1);
+    // A slot reset (new client) starts fresh.
+    bypass.Reset(h5, 1);
+    h5.sent.clear();
+    Dispatch(bypass, h5, 1, { "l4d2vr_voice_hello", "1", "2" });
+    Check(h5.Count(1, "l4d2vr_voice_ack") == 1);
+
+    // S03: one listener receives at most kListenerFramesPerSecond.
+    Relay many;
+    many.SetEnabled(true);
+    many.SetClientMax(16);
+    FakeHost h6;
+    for (int i = 1; i <= 8; ++i) { h6.connected[i] = true; Dispatch(many, h6, i, { "l4d2vr_voice_hello", "1", i == 8 ? "1" : "2" }); }
+    for (int t = 0; t < 200; ++t)   // 7 talkers x 50 frames/s for 4 s
+    {
+        h6.now += 20u;
+        for (int i = 1; i <= 7; ++i) Dispatch(many, h6, i, { "l4d2vr_voice_up", text });
+    }
+    const int got = h6.Count(8, "l4d2vr_voice_rx");
+    Check(got < 1400 && got <= static_cast<int>(Relay::kListenerBurstFrames + 4.0 * Relay::kListenerFramesPerSecond) + 1);
+    Check(many.Client(8)->rxDropped > 0u);
+    // Five talkers at full rate are never cut.
+    Relay five;
+    five.SetEnabled(true);
+    FakeHost h7;
+    for (int i = 1; i <= 6; ++i) { h7.connected[i] = true; Dispatch(five, h7, i, { "l4d2vr_voice_hello", "1", i == 6 ? "1" : "2" }); }
+    for (int t = 0; t < 500; ++t)
+    {
+        h7.now += 20u;
+        for (int i = 1; i <= 5; ++i) Dispatch(five, h7, i, { "l4d2vr_voice_up", text });
+    }
+    Check(h7.Count(6, "l4d2vr_voice_rx") == 2500);
+
+    // B62: a talker that left is pruned and the peers go out again.
+    Relay prune;
+    prune.SetEnabled(true);
+    FakeHost h8;
+    h8.connected[1] = h8.connected[2] = true;
+    Dispatch(prune, h8, 1, { "l4d2vr_voice_hello", "1", "3" });
+    Dispatch(prune, h8, 2, { "l4d2vr_voice_hello", "1", "1" });
+    Check(prune.TalkerMask() == PlayerBit(1));
+    h8.sent.clear();
+    prune.PruneDisconnected(h8);
+    Check(h8.sent.empty());                                 // nobody left
+    h8.connected[1] = false;
+    prune.PruneDisconnected(h8);
+    Check(prune.TalkerMask() == 0u && !prune.Client(1)->hello && h8.Count(2, "l4d2vr_voice_peers 0 0") == 1);
 }
 
 int main()
@@ -982,6 +1152,8 @@ int main()
     TestJitterStall();
     TestJitterTalkspurts();
     TestNegotiation();
+    TestCapturePolicy();
+    TestOutputHealth();
     TestSpatial();
     TestAgcAndLimit();
     TestTone();

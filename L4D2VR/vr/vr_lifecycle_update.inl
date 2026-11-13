@@ -1634,6 +1634,15 @@ void VR::Update()
         return;
     }
 
+    // No config hot reload while this frame reads the settings (review B05).
+    l4d2vr_config_lock::ConfigLock::ReadScope configRead(m_ConfigLock);
+    if (m_DesktopMirrorTextureResetRequested.exchange(false, std::memory_order_acq_rel))
+    {
+        std::lock_guard<TextureStateMutex> textureLock(m_TextureMutex);
+        m_CreatedVRTextures.store(false, std::memory_order_release);
+        m_CreatingTextureID = Texture_None;
+    }
+
     // Hold the compositor frame while the game drives it; the loading pump only
     // takes over when this has not run for a while.
     std::unique_lock<std::mutex> compositorFrameLock(m_CompositorFrameMutex);
@@ -4144,9 +4153,13 @@ void VR::SubmitVRTextures()
 
     vr::HmdMatrix34_t completedRenderHmdPose{};
     bool useRenderPoseTextureSubmit = false;
+    // OpenXR declares the render pose per layer: always pass the pose the
+    // frame was rendered from (2.0.11), not only with QueuedRenderPoseFromTracking.
+    const bool submitRenderPose = m_QueuedRenderPoseFromTracking ||
+        (m_Backend && m_Backend->Kind() == l4d2vr_backend::RuntimeKind::OpenXR);
     if (queued &&
         sceneReadyForStaleResubmit &&
-        m_QueuedRenderPoseFromTracking &&
+        submitRenderPose &&
         m_QueuedSubmitUseRenderPoseToken)
     {
         std::lock_guard<std::mutex> poseLock(m_RenderCompletedHmdPoseMutex);
@@ -4318,7 +4331,7 @@ void VR::SubmitVRTextures()
                     poseToken = lockedRenderPoseToken;
 
                 if (sceneReadyForStaleResubmit &&
-                    m_QueuedRenderPoseFromTracking)
+                    submitRenderPose)
                 {
                     std::lock_guard<std::mutex> poseLock(m_RenderCompletedHmdPoseMutex);
                     if (m_RenderCompletedHmdPoseValid)

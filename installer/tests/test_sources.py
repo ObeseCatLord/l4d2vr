@@ -145,8 +145,26 @@ class ManifestSourceTests(TempDirTest):
 
     def test_repo_manifest_file_is_valid(self):
         repo_manifest = Path(__file__).resolve().parents[1] / "manifest.json"
+        data = json.loads(repo_manifest.read_text())
+        if data.get("version") == "0.0.0":
+            # The checked-in placeholder must be refused, never "always up to date" (review B43).
+            with self.assertRaises(InstallerError) as raised:
+                sources.ManifestSource(repo_manifest.as_uri()).latest()
+            self.assertIn("placeholder", str(raised.exception))
+            return
         release = sources.ManifestSource(repo_manifest.as_uri()).latest()
         self.assertTrue(release.client.url.startswith("https://github.com/ObeseCatLord/l4d2vr/"))
+        self.assertTrue(release.client.sha256)
+
+    def test_url_scheme_and_prerelease_order(self):
+        with self.assertRaises(InstallerError):
+            sources.open_url("http://example.invalid/l4d2vr.zip")
+        with self.assertRaises(InstallerError):
+            sources.open_url("ftp://example.invalid/l4d2vr.zip")
+        self.assertTrue(sources.is_newer("v2.1.0-beta.10", "v2.1.0-beta.9"))
+        self.assertFalse(sources.is_newer("v2.1.0-beta.9", "v2.1.0-beta.10"))
+        self.assertTrue(sources.is_newer("v2.1.0", "v2.1.0-beta.10"))
+        self.assertTrue(sources.is_newer("v2.1.0-rc.1", "v2.1.0-beta.10"))
 
 
 class VersionTests(unittest.TestCase):
@@ -179,3 +197,31 @@ class VersionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResumeDownloadTests(TempDirTest):
+    def test_dropped_connection_resumes_with_range(self):
+        import io
+        from unittest import mock
+        data = bytes(range(256)) * 4096
+        calls = []
+
+        class Response(io.BytesIO):
+            def __init__(self, body, status, length):
+                super().__init__(body)
+                self.status = status
+                self.headers = {"Content-Length": str(length)}
+
+        def fake_open(url, accept=None, timeout=30.0, headers=None):
+            calls.append(dict(headers or {}))
+            if len(calls) == 1:
+                return Response(data[:1000], 200, len(data))  # connection drops after 1000 bytes
+            start = int(headers["Range"].split("=")[1].rstrip("-"))
+            return Response(data[start:], 206, len(data) - start)
+
+        asset = sources.Asset("l4d2vr.zip", "https://example.invalid/l4d2vr.zip", len(data), sha(data))
+        with mock.patch.object(sources, "open_url", side_effect=fake_open), \
+                mock.patch.object(sources.time, "sleep"):
+            path = sources.download(asset, self.tmp)
+        self.assertEqual(path.read_bytes(), data)
+        self.assertEqual(calls[1].get("Range"), "bytes=1000-")

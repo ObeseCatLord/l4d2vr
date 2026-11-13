@@ -52,6 +52,7 @@ class App:
         }
         self.pin = tk.BooleanVar(value=self.saved.get("pin_workshop", True))
         self.dry_run = tk.BooleanVar(value=False)
+        self.repair = tk.BooleanVar(value=False)
         self.password = tk.StringVar(value="")
 
         self._build()
@@ -127,6 +128,8 @@ class App:
         ttk.Checkbutton(opts, text="Turn off the mod's Steam Workshop self-update (recommended)",
                         variable=self.pin).pack(side="left", **PAD)
         ttk.Checkbutton(opts, text="Dry run (show changes only)", variable=self.dry_run).pack(side="left", **PAD)
+        ttk.Checkbutton(opts, text="Repair (reinstall even if up to date)", variable=self.repair).pack(
+            side="left", **PAD)
         row = ttk.Frame(tab)
         row.grid(row=4, column=0, columnspan=3, sticky="w")
         for column, (text, command) in enumerate((
@@ -293,7 +296,8 @@ class App:
     def _snapshot(self) -> dict:
         """Read all Tk variables on the main thread (Tk is not thread-safe)."""
         snap = {name: var.get() for name, var in self.v.items()}
-        snap.update(pin=self.pin.get(), dry_run=self.dry_run.get(), password=self.password.get())
+        snap.update(pin=self.pin.get(), dry_run=self.dry_run.get(), repair=self.repair.get(),
+                    password=self.password.get())
         return snap
 
     def _save(self):
@@ -364,7 +368,7 @@ class App:
         game = self._game(snap)
         actions.install_client(game, options=self._options(snap), pin_workshop=snap["pin"],
                                extra_preserve=self.saved.get("extra_preserve"), dry_run=snap["dry_run"],
-                               log=self.log, progress=self.progress_cb)
+                               force=snap.get("repair", False), log=self.log, progress=self.progress_cb)
         self._detect(snap | {"game_dir": str(game)}, quiet=True)
         if not snap["dry_run"] and not IS_WINDOWS:
             self.log("Linux: now set the Steam launch options (Linux setup tab).")
@@ -394,6 +398,7 @@ class App:
 
         def job(snap):
             target = install.client_target(self._game(snap))
+            self._require_game_closed(snap)
             install.restore_backup(target, dry_run=snap["dry_run"], log=self.log)
             self._detect(snap, quiet=True)
         self.run(job)
@@ -405,9 +410,15 @@ class App:
 
         def job(snap):
             target = install.client_target(self._game(snap))
+            self._require_game_closed(snap)
             install.uninstall(target, dry_run=snap["dry_run"], log=self.log)
             self._detect(snap, quiet=True)
         self.run(job)
+
+    @staticmethod
+    def _require_game_closed(snap):
+        if not snap["dry_run"] and steam.is_game_running():
+            raise InstallerError("Left 4 Dead 2 is running. Close the game first.")
 
     def browse_game(self):
         chosen = filedialog.askdirectory(title="Left 4 Dead 2 folder (with left4dead2.exe)")

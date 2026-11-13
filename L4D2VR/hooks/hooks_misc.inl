@@ -27465,6 +27465,9 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
 
 void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
 {
+    // No config hot reload while a draw reads the per-weapon overrides (review
+    // B05); inside RenderView this is only a thread-local counter.
+    l4d2vr_config_lock::ConfigLock::MaybeReadScope configRead(m_VR ? &m_VR->m_ConfigLock : nullptr);
     // A holstered item is drawn by itself at its holster: none of the viewmodel,
     // hands, magazine or world-model processing below applies to it.
     if (g_HolsterDrawScope.renderable && info.pRenderable == g_HolsterDrawScope.renderable)

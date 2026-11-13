@@ -16,8 +16,9 @@
 #endif
 #include "../L4D2VR/vr_magazine_policy.h"
 #include "../L4D2VR/vr_remote_magazines.h"
-#include "vr_native_reload_config.inl"
-#include "vr_native_reload_embedded_sample.inl"
+#include "../L4D2VR/vr_config_migration.h"
+#include <unordered_map>
+#include <vector>
 
 static int checks = 0;
 static void Require(bool result, const char* message)
@@ -50,7 +51,12 @@ struct Surface
     bool visible = false;
     bool IsCursorVisible() const { return visible; }
 };
-struct Game { Engine* m_EngineClient = nullptr; Surface* m_VguiSurface = nullptr; };
+struct Game
+{
+    Engine* m_EngineClient = nullptr; Surface* m_VguiSurface = nullptr;
+    static void logMsg(const char*, ...) {}
+};
+#include "vr_native_reload_config.inl"
 
 // Script the existing safe native readers at their boundary. The production
 // context getter and its input caller below are extracted unchanged.
@@ -184,14 +190,31 @@ static void TestLegacySample()
 {
     const std::string legacySample = "#ScopeEnabled=false\n#MagazineInteractionEnabled=true\n";
     std::string config = "ScopeEnabled=true\nScopePhysicalLensEnabled=false\nScopeBaseMagnification=4\n"
-        "MagazineReleaseButtonRequired=true\nUnknownSetting=true\n";
-    Require(CleanupNativeReloadConfig(config, legacySample), "Legacy cleanup removes an unrelated unknown setting");
+        "MagazineReleaseButtonRequired=true\nUnknownSetting=true\nDesktopMirrorEnabled=false\n";
+    // 2.0.11 (review B03): keys missing from the sample are kept.
+    Require(!CleanupNativeReloadConfig(config, legacySample), "Cleanup keeps keys the sample does not list");
     Require(config.find("ScopePhysicalLensEnabled=false") != std::string::npos, "Saved legacy scope fallback survives restart cleanup");
     Require(config.find("ScopeBaseMagnification=4") != std::string::npos, "Saved optical magnification survives restart cleanup");
     Require(config.find("MagazineReleaseButtonRequired=true") != std::string::npos, "Existing release setting remains protected");
-    Require(config.find("UnknownSetting=") == std::string::npos, "Unrelated sample pruning behavior remains intact");
-    Require(std::string(kCfgSampleConfigText2).find("ScopePhysicalLensEnabled=true\nScopeBaseMagnification=2") != std::string::npos,
-        "Embedded reset defaults include the supported physical scope options");
+    Require(config.find("UnknownSetting=true") != std::string::npos, "Unknown settings are no longer pruned");
+    Require(config.find("DesktopMirrorEnabled=false") != std::string::npos, "A config-panel key outside the sample survives a restart");
+
+    // Retired keys go, renamed ones carry a tuned value, duplicates keep the last line.
+    std::string old = "\xEF\xBB\xBFVRScale=40\nVRNearClip=0.8\nScopeFov=12\nScopeMagnification=18,9,4\n"
+        "ScopeOverlayYOffset=0.05\nAutoFlashlightSampleInterval=0.15\nVRNearClip=0.3\n";
+    Require(CleanupNativeReloadConfig(old, legacySample), "Old config is cleaned");
+    Require(old.rfind("VRScale=40", 0) == 0, "BOM stripped, first key kept");
+    Require(old.find("ScopeDefaultFov=12") != std::string::npos, "ScopeFov carries over");
+    Require(old.find("ScopeMagnificationFovRange=4,18") != std::string::npos, "ScopeMagnification becomes the FOV range");
+    Require(old.find("ScopeDefaultOverlayOffset=0.02,0.05,-0.06") != std::string::npos, "Overlay offsets merge");
+    Require(old.find("ScopeFov=") == std::string::npos && old.find("ScopeMagnification=") == std::string::npos &&
+        old.find("ScopeOverlayYOffset") == std::string::npos, "Renamed keys removed");
+    Require(old.find("AutoFlashlightSampleInterval") == std::string::npos, "Retired key removed");
+    Require(old.find("VRNearClip=0.8") == std::string::npos && old.find("VRNearClip=0.3") != std::string::npos,
+        "Duplicate keeps the effective last line");
+    std::string tuned = "ScopeDefaultFov=9\nScopeFov=12\n";
+    CleanupNativeReloadConfig(tuned, legacySample);
+    Require(tuned.find("ScopeDefaultFov=9") != std::string::npos, "An existing new key wins over the old one");
 }
 
 int main()

@@ -93,7 +93,7 @@ namespace l4d2vr_options_menu
 
     inline const Row kWeaponRows[] = {
         { "RecoilEnabled", RowKind::Toggle, "Recoil", "Guns kick in your hand on each shot (Pavlov VR values).", 0, 0, 0, "true" },
-        { "RecoilScale", RowKind::Slider, "Recoil strength", "1 is Pavlov's kick, 0 none.", 0.0f, 2.0f, 0.1f, "1.0", nullptr, "RecoilEnabled", false, "x" },
+        { "RecoilScale", RowKind::Slider, "Recoil strength", "1 is Pavlov's kick, 0 none.", 0.0f, 4.0f, 0.1f, "1.0", nullptr, "RecoilEnabled", false, "x" },
         { "RecoilStanceEnabled", RowKind::Toggle, "Stance recoil", "Crouching, moving and jumping change the kick.", 0, 0, 0, "true", nullptr, "RecoilEnabled" },
         { "CrosshairEnabled", RowKind::Toggle, "Crosshair", "Show a crosshair where the gun points (scopes keep their reticles).", 0, 0, 0, "false" },
         { "IronSightAimEnabled", RowKind::Toggle, "Iron-sight aiming", "Bullets go where the sights point.", 0, 0, 0, "true" },
@@ -110,7 +110,7 @@ namespace l4d2vr_options_menu
         { "GrenadeThrowMode", RowKind::Choice, "Throw mode", "Arc: aim with the shown arc and let go of the trigger. Physics: throw with your hand's own motion.", 0, 0, 0, "arc", "arc:Arc|physics:Physics" },
         { "GrenadeThrowAssist", RowKind::Toggle, "Physics throw assistance", "Gently steers a hand throw onto the spot your hand points at, when the throw is already heading there.", 0, 0, 0, "true", nullptr, "GrenadeThrowMode=physics" },
         { "GrenadeThrowAssistStrength", RowKind::Slider, "Assistance strength", "0 = your throw as it is, 1 = lands on the spot you point at.", 0.0f, 1.0f, 0.05f, "0.5", nullptr, "GrenadeThrowAssist" },
-        { "ManualThrowHandVelocityScale", RowKind::Slider, "Throw boost", "Physics throws leave at your hand's speed times this.", 1.0f, 4.0f, 0.1f, "2.5", nullptr, "GrenadeThrowMode=physics", false, "x" },
+        { "ManualThrowHandVelocityScale", RowKind::Slider, "Throw boost", "Physics throws leave at your hand's speed times this.", 0.0f, 10.0f, 0.1f, "2.5", nullptr, "GrenadeThrowMode=physics", false, "x" },
         { "ManualThrowPinRequired", RowKind::Toggle, "Pull the pin first", "Without the pin, letting go of the grip drops the grenade.", 0, 0, 0, "true", nullptr, "GrenadeThrowMode=physics" },
     };
 
@@ -130,7 +130,7 @@ namespace l4d2vr_options_menu
     inline const Row kAudioRows[] = {
         { "BackgroundAudio", RowKind::Toggle, "Audio when unfocused", "Keep game audio playing when the desktop window is not focused.", 0, 0, 0, "true", nullptr, nullptr, true },
         { "HitSoundEnabled", RowKind::Toggle, "Hit sounds", "A sound when your shots hit.", 0, 0, 0, "false" },
-        { "HitSoundVolume", RowKind::Slider, "Hit sound volume", "", 0.5f, 2.0f, 0.1f, "1.2", nullptr, "HitSoundEnabled", false, "x" },
+        { "HitSoundVolume", RowKind::Slider, "Hit sound volume", "", 0.0f, 2.0f, 0.1f, "1.2", nullptr, "HitSoundEnabled", false, "x" },
         { "KillSoundEnabled", RowKind::Toggle, "Kill sounds", "A sound on kills.", 0, 0, 0, "false" },
         { "KillSoundVolume", RowKind::Slider, "Kill sound volume", "", 0.0f, 2.0f, 0.1f, "1.8", nullptr, "KillSoundEnabled", false, "x" },
         { "HeadshotSoundVolume", RowKind::Slider, "Headshot sound volume", "", 0.0f, 2.0f, 0.1f, "1.3", nullptr, "KillSoundEnabled", false, "x" },
@@ -138,7 +138,7 @@ namespace l4d2vr_options_menu
 
     inline const Row kControlRows[] = {
         { nullptr, RowKind::Info, "Open this menu", "Hold the pause button (left B on Index, Y on Quest/Touch, menu on Vive/WMR), point at VR Options next to the game's main or pause menu, press F8, or type vroptions in the console." },
-        { "VrOptionsMenuHoldSeconds", RowKind::Slider, "Hold pause to open", "How long to hold the pause button to open this menu (0 = off).", 0.0f, 2.0f, 0.1f, "0.8", nullptr, nullptr, false, " s" },
+        { "VrOptionsMenuHoldSeconds", RowKind::Slider, "Hold pause to open", "How long to hold the pause button to open this menu (0 = off).", 0.0f, 5.0f, 0.1f, "0.8", nullptr, nullptr, false, " s" },
         { nullptr, RowKind::Info, "Buttons", "Trigger: fire, pull the pin, menus. Grip: take, hold and holster items. Left stick: walk (click: recenter). Right stick: turn, jump and crouch. Bindings are built in per controller (docs/openxr.md)." },
         { "GripToggle", RowKind::Toggle, "Toggle grips", "Pavlov: one squeeze takes an item, the next puts it away at its holster or drops it. Off: hold the grip.", 0, 0, 0, "true" },
         { "StickJumpCrouch", RowKind::Toggle, "Jump and crouch on the stick", "Right stick up jumps, down crouches.", 0, 0, 0, "true" },

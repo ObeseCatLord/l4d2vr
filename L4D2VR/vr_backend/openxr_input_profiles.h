@@ -398,8 +398,8 @@ namespace l4d2vr_openxr_input
                 // force_input=value with the binding file's click thresholds.
                 Bind(p, Action::OffHandGrip, Hand::Left, "/input/squeeze/value", 0.80f, 0.45f);
                 Bind(p, Action::WeaponGrip, Hand::Right, "/input/squeeze/value", 0.85f, 0.50f);
-                Bind(p, Action::PrimaryAttack, Hand::Right, "/input/trigger/click");
-                Bind(p, Action::SecondaryAttack, Hand::Left, "/input/trigger/click");
+                Bind(p, Action::PrimaryAttack, Hand::Right, "/input/trigger/value");
+                Bind(p, Action::SecondaryAttack, Hand::Left, "/input/trigger/value");
                 Bind(p, Action::Use, Hand::Right, "/input/b/click");
                 Bind(p, Action::MenuBack, Hand::Right, "/input/b/click");
                 Bind(p, Action::ActivateVR, Hand::Right, "/input/a/click");
@@ -484,8 +484,8 @@ namespace l4d2vr_openxr_input
                 MenuDpad(p, Hand::Left, "/input/trackpad");
                 Bind(p, Action::OffHandGrip, Hand::Left, "/input/squeeze/click");
                 Bind(p, Action::WeaponGrip, Hand::Right, "/input/squeeze/click");
-                Bind(p, Action::PrimaryAttack, Hand::Right, "/input/trigger/click");
-                Bind(p, Action::SecondaryAttack, Hand::Left, "/input/trigger/click");
+                Bind(p, Action::PrimaryAttack, Hand::Right, "/input/trigger/value");
+                Bind(p, Action::SecondaryAttack, Hand::Left, "/input/trigger/value");
                 // Right trackpad press = A (select, magazine release); right menu = B.
                 Bind(p, Action::ActivateVR, Hand::Right, "/input/trackpad/click");
                 Bind(p, Action::MagazineRelease, Hand::Right, "/input/trackpad/click");
@@ -518,7 +518,7 @@ namespace l4d2vr_openxr_input
                 // later Focus 3 controller uses exactly the Touch openxr_grip.
                 TouchGrip(p);
                 p.gripNote = "ESTIMATE: Touch-style openxr_grip (no Cosmos data)";
-                TouchStyleBindings(p, "/input/squeeze/click", "/input/trigger/click", "/input/x/click", "/input/y/click");
+                TouchStyleBindings(p, "/input/squeeze/click", "/input/trigger/value", "/input/x/click", "/input/y/click");
                 Bind(p, Action::Scoreboard, Hand::Left, "/input/shoulder/click");
                 Both(p.legal, { "/input/shoulder/click", "/input/squeeze/click", "/input/trigger/click", "/input/trigger/value",
                     "/input/thumbstick", "/input/thumbstick/x", "/input/thumbstick/y", "/input/thumbstick/click",
@@ -540,7 +540,7 @@ namespace l4d2vr_openxr_input
                 p.thumbTouch[0] = p.thumbTouch[1] = { "/input/thumbstick/touch", "/input/thumbrest/touch" };
                 TouchGrip(p);
                 p.gripNote = "SteamVR openxr_grip (vive_focus3_controller)";
-                TouchStyleBindings(p, "/input/squeeze/click", "/input/trigger/click", "/input/x/click", "/input/y/click");
+                TouchStyleBindings(p, "/input/squeeze/click", "/input/trigger/value", "/input/x/click", "/input/y/click");
                 p.unboundByDesign = { Action::Scoreboard };
                 Both(p.legal, { "/input/squeeze/click", "/input/squeeze/touch", "/input/trigger/click", "/input/trigger/touch",
                     "/input/trigger/value", "/input/thumbstick", "/input/thumbstick/x", "/input/thumbstick/y",
@@ -621,7 +621,7 @@ namespace l4d2vr_openxr_input
                 p.thumbTouch[1] = { "/input/thumbstick/touch", "/input/a/touch", "/input/b/touch" };
                 TouchGrip(p);
                 p.gripNote = "SteamVR openxr_grip (pico_4_controller)";
-                TouchStyleBindings(p, "/input/squeeze/value", "/input/trigger/click", "/input/x/click", "/input/y/click");
+                TouchStyleBindings(p, "/input/squeeze/value", "/input/trigger/value", "/input/x/click", "/input/y/click");
                 p.unboundByDesign = { Action::Scoreboard };
                 Both(p.legal, { "/input/trigger/click", "/input/trigger/value", "/input/trigger/touch", "/input/thumbstick",
                     "/input/thumbstick/x", "/input/thumbstick/y", "/input/thumbstick/click", "/input/thumbstick/touch",

@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from . import APP_ID, vdf
-from .fsutil import InstallerError, atomic_write_json, atomic_write_text, read_json
+from .fsutil import InstallerError, atomic_write_json, atomic_write_text, read_json, read_text_raw
 
 WINEOPENXR32 = Path("files") / "lib" / "wine" / "i386-windows" / "wineopenxr.dll"
 SUPPORTED_PROTON = ("Proton Hotfix (2026-10-07 or newer) or Proton Experimental (11.0-20261014 or newer) "
@@ -246,7 +246,7 @@ def set_compat_tool(steam_root: Path, name: str, *, steam_running: bool, dry_run
     config = Path(steam_root) / "config" / "config.vdf"
     if not config.is_file():
         raise InstallerError(f"{config} not found. Start Steam once, then try again.")
-    text = config.read_text(encoding="utf-8", errors="surrogateescape")
+    text = read_text_raw(config)
     try:
         root = vdf.loads(text)
     except vdf.VdfError as error:
@@ -299,7 +299,7 @@ def restore_compat_tool(steam_root: Path, *, steam_running: bool, dry_run: bool 
         return CompatToolChange(config, current, previous or {})
     if steam_running:
         raise InstallerError("Steam is running. Close Steam completely, then try again.")
-    text = config.read_text(encoding="utf-8", errors="surrogateescape")
+    text = read_text_raw(config)
     root = vdf.loads(text)
     mapping = _mapping_node(root)
     if previous:

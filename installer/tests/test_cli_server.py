@@ -72,6 +72,12 @@ class CliTests(CliTestCase):
         self.assertIn("Up to date", out)
         code, out, _ = self.run_cli("update", *common)
         self.assertIn("Already up to date", out)
+        # A missing file is repaired instead of "already up to date" (review B42).
+        (self.game / "d3d9.dll").unlink()
+        code, out, err = self.run_cli("update", *common)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Already up to date", out)
+        self.assertEqual((self.game / "d3d9.dll").read_bytes(), CLIENT_V1["d3d9.dll"])
 
         v2_bytes = make_zip(self.tmp / "b2" / "l4d2vr.zip", CLIENT_V2).read_bytes()
         gh.publish("v1.1.0", [gh.asset("l4d2vr.zip", v2_bytes, digest=True)])
@@ -93,6 +99,19 @@ class CliTests(CliTestCase):
         self.assertEqual(code, 1)
         self.assertIn("mismatch", err)
         self.assertFalse((self.game / "d3d9.dll").exists())
+
+    def test_unverified_download_needs_explicit_flag(self):
+        gh = FakeGitHub(self.tmp / "api", "someone/fork")
+        data = make_zip(self.tmp / "b1" / "l4d2vr.zip", CLIENT_V1).read_bytes()
+        gh.publish("v1", [gh.asset("l4d2vr.zip", data)])
+        common = ["--game-dir", self.game, "--repo", "someone/fork", "--api-base", gh.api_base]
+        code, _, err = self.run_cli("install", *common)
+        self.assertEqual(code, 1)
+        self.assertIn("SHA-256", err)
+        self.assertFalse((self.game / "d3d9.dll").exists())
+        code, _, err = self.run_cli("install", *common, "--allow-unverified")
+        self.assertEqual(code, 0, err)
+        self.assertTrue((self.game / "d3d9.dll").exists())
 
     def test_make_manifest(self):
         zip_path = make_zip(self.tmp / "l4d2vr.zip", CLIENT_V1)
@@ -202,14 +221,35 @@ class BundledZipTests(TempDirTest):
     def test_offline_falls_back_to_bundled_zip(self):
         game = make_game(self.tmp)
         bundled = make_zip(self.tmp / "dist" / "l4d2vr.zip", CLIENT_V1)
-        with mock.patch.object(actions, "fetch_release", side_effect=actions.InstallerError("offline")), \
+        with mock.patch.object(actions, "fetch_release", side_effect=actions.NetworkError("offline")), \
                 mock.patch.object(actions, "bundled_client_zip", return_value=bundled):
             actions.install_client(game, check_running=False, log=lambda *_: None)
         self.assertEqual((game / "d3d9.dll").read_bytes(), CLIENT_V1["d3d9.dll"])
 
+    def test_offline_never_downgrades_to_an_older_bundled_zip(self):
+        game = make_game(self.tmp)
+        newer = make_zip(self.tmp / "dl" / "v2.zip", CLIENT_V2)
+        actions.install_client(game, zip_path=newer, check_running=False, log=lambda *_: None)
+        bundled = make_zip(self.tmp / "dist" / "l4d2vr.zip", CLIENT_V1)
+        with mock.patch.object(actions, "fetch_release", side_effect=actions.NetworkError("offline")), \
+                mock.patch.object(actions, "bundled_client_zip", return_value=bundled):
+            with self.assertRaises(actions.InstallerError) as raised:
+                actions.install_client(game, check_running=False, log=lambda *_: None)
+        self.assertIn("newer", str(raised.exception))
+        self.assertEqual((game / "d3d9.dll").read_bytes(), CLIENT_V2["d3d9.dll"])
+
+    def test_non_network_error_does_not_use_bundled_zip(self):
+        game = make_game(self.tmp)
+        bundled = make_zip(self.tmp / "dist" / "l4d2vr.zip", CLIENT_V1)
+        with mock.patch.object(actions, "fetch_release", side_effect=actions.InstallerError("SHA-256 mismatch")), \
+                mock.patch.object(actions, "bundled_client_zip", return_value=bundled):
+            with self.assertRaises(actions.InstallerError):
+                actions.install_client(game, check_running=False, log=lambda *_: None)
+        self.assertFalse((game / "d3d9.dll").exists())
+
     def test_offline_without_bundled_zip_still_fails(self):
         game = make_game(self.tmp)
-        with mock.patch.object(actions, "fetch_release", side_effect=actions.InstallerError("offline")), \
+        with mock.patch.object(actions, "fetch_release", side_effect=actions.NetworkError("offline")), \
                 mock.patch.object(actions, "bundled_client_zip", return_value=None):
             with self.assertRaises(actions.InstallerError):
                 actions.install_client(game, check_running=False, log=lambda *_: None)

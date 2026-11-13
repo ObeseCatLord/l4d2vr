@@ -272,15 +272,28 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
     nwh::Element own{};
     nwh::Rect ownPanel{};
     nwh::Element weaponPanel{};
-    std::vector<std::pair<int, nwh::Teammate>> mates;
-    std::vector<nwh::Rect> mateHide;
+    // 2.0.11: the walk's scratch vectors are reused from frame to frame (this
+    // runs after every HUD paint).
+    struct Node { NativeHudVPanel panel; int depth; nwh::Rect parentRect; nwh::PanelMap map; };
+    struct Scratch
+    {
+        std::vector<std::pair<int, nwh::Teammate>> mates;
+        std::vector<nwh::Rect> mateHide;
+        std::vector<nwh::Teammate> mateList;
+        std::vector<Node> stack;
+    };
+    static thread_local Scratch s_Scratch;
+    std::vector<std::pair<int, nwh::Teammate>>& mates = s_Scratch.mates;
+    std::vector<nwh::Rect>& mateHide = s_Scratch.mateHide;
+    mates.clear();
+    mateHide.clear();
 
     // Visible-only depth-first walk: hidden subtrees (menus, unused HUD variants) are skipped.
     // The client root panels can be narrower than the CBaseViewport laid out inside them;
     // VGUI then paints that HUD squeezed into the root's rectangle, so each subtree carries
     // the mapping from layout to painted coordinates.
-    struct Node { NativeHudVPanel panel; int depth; nwh::Rect parentRect; nwh::PanelMap map; };
-    std::vector<Node> stack;
+    std::vector<Node>& stack = s_Scratch.stack;
+    stack.clear();
     stack.reserve(256);
     stack.push_back({ root, 0, rootRect, nwh::PanelMap{} });
     int visited = 0;
@@ -357,7 +370,8 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
     }
 
     std::stable_sort(mates.begin(), mates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    std::vector<nwh::Teammate> mateList;
+    std::vector<nwh::Teammate>& mateList = s_Scratch.mateList;
+    mateList.clear();
     for (const auto& m : mates)
         mateList.push_back(m.second);
 
@@ -365,7 +379,10 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
     job.epoch = m_SourceRenderQueueMarkerEpoch.load(std::memory_order_acquire);
     job.dump = dump;
     if (m_LeftWristHudEnabled || dump)
-        job.left = nwh::ComposeLeft(own, m_LeftWristHudShowTeammates ? mateList : std::vector<nwh::Teammate>{}, nwh::kLeftTexW, nwh::kLeftTexH);
+    {
+        static const std::vector<nwh::Teammate> s_NoMates;
+        job.left = nwh::ComposeLeft(own, m_LeftWristHudShowTeammates ? mateList : s_NoMates, nwh::kLeftTexW, nwh::kLeftTexH);
+    }
     if (m_RightAmmoHudEnabled || dump)
     {
         job.trimSrc = weaponPanel.src;

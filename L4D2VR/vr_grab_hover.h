@@ -98,7 +98,8 @@ namespace l4d2vr_grab_hover
         Bolt = 2,      // the bolt / pump / slide to cycle
         Magazine = 3,  // the spare magazine or shell to take
         Pouch = 4,     // the magazine pouch (magazine interaction)
-        Count = 5
+        OwnHolster = 5, // 2.0.11: the held item over its own holster (the put-away cue)
+        Count = 6
     };
     constexpr int kSourceCount = static_cast<int>(Source::Count);
 }

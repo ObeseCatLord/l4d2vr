@@ -33,12 +33,20 @@ bool VR::ReadPoseWaiterSnapshot(vr::TrackedDevicePose_t* outPoses, uint32_t* out
     if (!outPoses)
         return false;
 
-    // Seqlock read: writer flips seq odd->even around the memcpy.
-    for (int attempt = 0; attempt < 3; ++attempt)
+    // Seqlock read: writer flips seq odd->even around the memcpy. 2.0.11: like
+    // the view-params reader, yield and retry (up to 32 times) while the writer
+    // is mid-copy, instead of giving up after three back-to-back attempts (a
+    // preempted writer then switched this frame to the fallback pose source).
+    for (int attempt = 0; attempt < 32; ++attempt)
     {
         const uint32_t s1 = m_PoseWaiterSeq.load(std::memory_order_acquire);
-        if (s1 == 0 || (s1 & 1u))
+        if (s1 == 0)
+            return false; // nothing published yet
+        if (s1 & 1u)
+        {
+            SwitchToThread();
             continue;
+        }
 
         std::memcpy(outPoses, m_PoseWaiterPoses.data(), sizeof(vr::TrackedDevicePose_t) * vr::k_unMaxTrackedDeviceCount);
 
@@ -49,6 +57,7 @@ bool VR::ReadPoseWaiterSnapshot(vr::TrackedDevicePose_t* outPoses, uint32_t* out
                 *outSeq = s2;
             return true;
         }
+        SwitchToThread();
     }
 
     return false;
@@ -105,6 +114,7 @@ void VR::PoseWaiterThreadMain()
 
     uint32_t poseWaiterSuccessCount = 0;
     uint32_t poseWaiterErrorCount = 0;
+    bool poseWaiterErrorStreak = false;
     DWORD poseWaiterLastLogMs = GetTickCount();
     while (true)
     {
@@ -121,9 +131,19 @@ void VR::PoseWaiterThreadMain()
         vr::EVRCompositorError result = m_Compositor->WaitGetPoses(poses.data(), vr::k_unMaxTrackedDeviceCount, NULL, 0);
         if (result != vr::VRCompositorError_None)
         {
+            // 2.0.11: an error that returns at once must not spin this
+            // highest-priority thread; the first error of a streak is logged.
+            if (!poseWaiterErrorStreak)
+                Game::logMsg("[VR][PoseWaiter] WaitGetPoses failed (error %d); retrying every 1 ms",
+                    static_cast<int>(result));
+            poseWaiterErrorStreak = true;
             ++poseWaiterErrorCount;
+            Sleep(1);
             continue;
         }
+        if (poseWaiterErrorStreak)
+            Game::logMsg("[VR][PoseWaiter] WaitGetPoses recovered");
+        poseWaiterErrorStreak = false;
         ++poseWaiterSuccessCount;
 
         // Publish snapshot.

@@ -125,8 +125,60 @@ static void TestSqueezeOverOtherHolsterSwaps()
     CHECK(r.Step(false, 2000u));  // the new item is held
 }
 
+// 2.0.11 (review F4): a free-hand holster draw hands the grip to the other
+// controller. The old hand's grip was physically down (not held by the
+// toggle: the spawn pistol); the new hand already squeezes at the holster.
+// Without ExpectFreshPress the new hand's squeeze is not an edge and nothing
+// is drawn.
+static void TestFreshPressAfterHandChange()
+{
+    Rig r;
+    for (int i = 0; i < 60; ++i)
+        r.Step(true);                 // the old item hand keeps squeezing: the empty grab timed out
+    CHECK(!r.toggle.Held());
+    r.toggle.ExpectFreshPress();      // the hands changed: the grip is now the new hand's
+    CHECK(r.Step(true));              // the new hand's squeeze is a press
+    // Without it, the same raw state would not be a press.
+    Rig old;
+    for (int i = 0; i < 60; ++i)
+        old.Step(true);
+    CHECK(!old.Step(true));
+    // A held item stays held; the fresh press then lets it go / swaps.
+    Rig held;
+    CHECK(held.Step(true));
+    held.in.takeSerial++;
+    held.Step(true);
+    held.Step(false);
+    held.toggle.ExpectFreshPress();
+    CHECK(held.toggle.Held());
+    held.in.inOtherHolster = true;
+    CHECK(!held.Step(true));          // one frame up (swap) ...
+    CHECK(held.Step(true));           // ... then the grab from the other holster
+}
+
+// 2.0.11 (review F3): the pinned tag is published once the taken item settled.
+static void TestPinnedTag()
+{
+    Rig r;
+    CHECK(r.toggle.PinnedTag() == 0u);
+    CHECK(r.Step(true));
+    CHECK(r.toggle.PinnedTag() == 0u);        // pending: nothing taken yet
+    r.in.takeSerial++;
+    r.Step(true);
+    r.Step(false);
+    r.in.heldItemTag = 9u;
+    CHECK(r.toggle.PinnedTag() == 0u);        // not settled yet
+    r.Step(false, 2000u);
+    r.Step(false);
+    CHECK(r.toggle.PinnedTag() == 9u);
+    CHECK(!r.Squeeze());                      // let go
+    CHECK(r.toggle.PinnedTag() == 0u);
+}
+
 int main()
 {
+    TestFreshPressAfterHandChange();
+    TestPinnedTag();
     TestSqueezeOverOtherHolsterSwaps();
     TestDrawKeepsItemAfterLettingGo();
     TestEmptyGrabBecomesTap();

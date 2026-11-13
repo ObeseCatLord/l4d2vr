@@ -493,6 +493,14 @@ namespace l4d2vr_holster
         return HandFitsZone(frame, layout, zone, hand, distance, true);
     }
 
+    // 2.0.11: the held item's own holster beats any other item under the hand
+    // while the hand is inside that holster's grab volume (putting the item
+    // away never turns into a swap because a neighbour's body overlaps it).
+    inline bool OwnHolsterWins(bool handInOwnVolume, Zone otherZoneUnderHand)
+    {
+        return handInOwnVolume && otherZoneUnderHand != Zone::None;
+    }
+
     // World placement for a holstered item. The returned basis is for the item's
     // reference bone, ValveBiped.weapon_bone (on the v_ models that the local
     // player's carried weapons report, and on the w_ models): axisZ = the

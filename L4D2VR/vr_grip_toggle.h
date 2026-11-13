@@ -89,6 +89,14 @@ namespace l4d2vr_grip_toggle
             Clear();
             m_PrevRaw = false;
         }
+        // 2.0.11: the grip now belongs to another physical hand (a free-hand
+        // holster draw): its raw state is not continuous with the old hand's,
+        // so a squeeze that is already down reads as a fresh press. The held
+        // state is kept.
+        void ExpectFreshPress() { m_PrevRaw = false; }
+        // The item the held grip took, once it settled in the hand (0 = none
+        // or not settled yet).
+        std::uint32_t PinnedTag() const { return m_Held && !m_Pending ? m_PinnedTag : 0u; }
 
     private:
         void StartGrab(const Input& in, const Params& params)

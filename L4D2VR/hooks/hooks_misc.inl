@@ -19454,7 +19454,10 @@ namespace
 
         static std::mutex s_Mutex;
         static std::unordered_map<std::string, int> s_HandBone;
-        static std::unordered_map<std::string, l4d2vr_gun_hand_anchor::Anchor> s_Anchors;
+        // 2.0.11: one stored translation per holding hand: the target differs
+        // between the right hand and the mirrored left hold (per-hand offsets).
+        static std::unordered_map<std::string, l4d2vr_gun_hand_anchor::Anchor> s_Anchors[2];
+        const int holdIndex = vr->ItemHandIsPhysicalLeft() ? 1 : 0;
         int hand = -1;
         {
             std::lock_guard<std::mutex> lock(s_Mutex);
@@ -19500,7 +19503,7 @@ namespace
         l4d2vr_gun_hand_anchor::Anchor anchor{};
         {
             std::lock_guard<std::mutex> lock(s_Mutex);
-            anchor = s_Anchors[weaponModel];
+            anchor = s_Anchors[holdIndex][weaponModel];
         }
         if (!armsModel)
         {
@@ -19547,7 +19550,7 @@ namespace
                 if (l4d2vr_gun_hand_anchor::Blend(anchor, estimate, 0.25f, 0.5f * vr->m_VRScale))
                 {
                     std::lock_guard<std::mutex> lock(s_Mutex);
-                    s_Anchors[weaponModel] = anchor;
+                    s_Anchors[holdIndex][weaponModel] = anchor;
                 }
             }
             vr->SetGunHandAnchor(weaponId, anchor);
@@ -22715,6 +22718,67 @@ namespace
         return false;
     }
 
+    // 2.0.11: what the draw hook needs from a model's name, computed once per
+    // model instead of on every draw (lower-case copy, survivor character,
+    // path classes). Per thread, keyed by model_t* and checked against the
+    // engine's name, so a reused model pointer is re-read. Entries are never
+    // erased: references stay valid across nested draws.
+    struct HooksModelDrawInfo
+    {
+        bool filled = false;
+        std::string name;            // as the engine returns it
+        std::string lower;           // vr_vm_stabilize::ToLowerAscii(name)
+        std::string characterName;   // survivor character ("" otherwise)
+        bool hasCharacter = false;
+        bool viewmodelPath = false;  // a first-person viewmodel / arms / hands path
+        bool heldWorldModel = false; // a w_ weapon model
+        bool survivorPath = false;   // models/survivors/
+    };
+
+    inline const std::string& HooksEmptyModelName()
+    {
+        static const std::string s_Empty;
+        return s_Empty;
+    }
+
+    inline const HooksModelDrawInfo* HooksLookupModelDrawInfo(IModelInfo* modelInfo, const model_t* model)
+    {
+        const char* raw = nullptr;
+        if (!HooksFirstPersonBodyGetModelNameSafe(modelInfo, model, raw) || !raw)
+            return nullptr;
+        static thread_local std::unordered_map<const model_t*, HooksModelDrawInfo> s_Cache;
+        HooksModelDrawInfo& entry = s_Cache[model];
+        if (entry.filled && std::strcmp(entry.name.c_str(), raw) == 0)
+            return &entry;
+        entry.filled = true;
+        entry.name = raw;
+        entry.lower = vr_vm_stabilize::ToLowerAscii(entry.name);
+        entry.hasCharacter = HooksWorldModelClothingGetCharacterName(modelInfo, model, entry.characterName);
+        if (!entry.hasCharacter)
+            entry.characterName.clear();
+        const std::string& n = entry.name;
+        entry.viewmodelPath =
+            (n.find("models/weapons/v_") != std::string::npos) ||
+            (n.find("/v_models/") != std::string::npos) ||
+            (n.find("models/v_models/") != std::string::npos) ||
+            (n.find("models/weapons/melee/v_") != std::string::npos) ||
+            (n.find("/melee/v_") != std::string::npos) ||
+            (n.find("models/weapons/arms/") != std::string::npos) ||
+            (n.find("/arms/") != std::string::npos) ||
+            (n.find("v_arms") != std::string::npos) ||
+            (n.find("models/weapons/hands/") != std::string::npos) ||
+            (n.find("/hands/") != std::string::npos) ||
+            (n.find("v_hands") != std::string::npos);
+        const std::string& l = entry.lower;
+        entry.heldWorldModel =
+            l.find("/w_models/") != std::string::npos ||
+            l.find("models/weapons/w_") != std::string::npos ||
+            l.find("/weapons/w_") != std::string::npos ||
+            l.find("/melee/w_") != std::string::npos;
+        entry.survivorPath = n.find("models/survivors/") != std::string::npos;
+        return &entry;
+    }
+
     inline std::string HooksWorldModelClothingNormalizeMaterialPath(
         const std::string& rawName)
     {
@@ -22755,7 +22819,8 @@ namespace
         Game* game,
         void* drawState,
         const ModelRenderInfo_t& info,
-        bool shadowDepthDraw)
+        bool shadowDepthDraw,
+        const HooksModelDrawInfo* modelDrawInfo)
     {
         struct PublishedModelKey
         {
@@ -22790,15 +22855,11 @@ namespace
             return;
         }
 
-        std::string modelName = "<unknown>";
-        const char* resolvedModelName = nullptr;
-        if (HooksFirstPersonBodyGetModelNameSafe(
-            game->m_ModelInfo,
-            info.pModel,
-            resolvedModelName))
-        {
-            modelName = resolvedModelName;
-        }
+        // Only survivor character models are published (2.0.11: decided once
+        // per model, not with a string, a lock and a search on every draw).
+        if (!modelDrawInfo || !modelDrawInfo->hasCharacter)
+            return;
+        const std::string& modelName = modelDrawInfo->name;
 
         const uint32_t logSession =
             vr
@@ -22825,14 +22886,7 @@ namespace
                 return;
         }
 
-        std::string characterName;
-        if (!HooksWorldModelClothingGetCharacterName(
-            game->m_ModelInfo,
-            info.pModel,
-            characterName))
-        {
-            return;
-        }
+        const std::string& characterName = modelDrawInfo->characterName;
 
         std::vector<std::string> materialNames;
         if (!vr_vm_stabilize::TryGetStudioMaterialNamesFromDrawState(
@@ -22903,7 +22957,8 @@ namespace
         Game* game,
         void* drawState,
         const model_t* model,
-        std::vector<IMaterial*>& hiddenMaterials)
+        std::vector<IMaterial*>& hiddenMaterials,
+        const HooksModelDrawInfo* modelDrawInfo)
     {
         hiddenMaterials.clear();
         if (!vr ||
@@ -22916,14 +22971,9 @@ namespace
             return false;
         }
 
-        std::string characterName;
-        if (!HooksWorldModelClothingGetCharacterName(
-            game->m_ModelInfo,
-            model,
-            characterName))
-        {
+        if (!modelDrawInfo || !modelDrawInfo->hasCharacter)
             return false;
-        }
+        const std::string& characterName = modelDrawInfo->characterName;
 
         if (!game->m_MaterialSystem)
         {
@@ -27449,12 +27499,16 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     const bool shadowDepthDraw =
         (info.flags & kStudioShadowDepthTexture) != 0;
 
+    const HooksModelDrawInfo* const modelDrawInfo =
+        (m_Game && info.pModel) ? HooksLookupModelDrawInfo(m_Game->m_ModelInfo, info.pModel) : nullptr;
+
     HooksMaybePublishAndLogPlayerModelMaterials(
         m_VR,
         m_Game,
         state,
         info,
-        shadowDepthDraw);
+        shadowDepthDraw,
+        modelDrawInfo);
 
     std::vector<IMaterial*> hiddenWorldModelMaterials;
     const bool hasHiddenWorldModelMaterials =
@@ -27464,7 +27518,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             m_Game,
             state,
             info.pModel,
-            hiddenWorldModelMaterials);
+            hiddenWorldModelMaterials,
+            modelDrawInfo);
 
     CMatRenderContextPtr worldModelMaterialContext;
     ICallQueue* worldModelMaterialCallQueue = nullptr;
@@ -27647,10 +27702,12 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     ModelRenderInfo_t drawInfo = info;
     const ModelRenderInfo_t* pDrawInfo = &info;
 
-    std::string modelName;
+    // 2.0.11: the model's name and its lower-case form come from the per-model
+    // cache (no string building per draw).
+    const std::string& modelName = modelDrawInfo ? modelDrawInfo->name : HooksEmptyModelName();
+    const std::string& lowerModelName = modelDrawInfo ? modelDrawInfo->lower : HooksEmptyModelName();
     if (info.pModel)
     {
-        modelName = m_Game->m_ModelInfo->GetModelName(info.pModel);
         HooksGunHandStageTrace(m_VR, state, modelName, info, pCustomBoneToWorld, "entry");
         if (m_VR->m_MeleeDrawnLagRecord.load(std::memory_order_relaxed) &&
             modelName.find("v_") != std::string::npos)
@@ -27692,7 +27749,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             entity &&
             info.entity_index > 0 &&
             info.entity_index <= 64 &&
-            modelName.find("models/survivors/") != std::string::npos;
+            modelDrawInfo && modelDrawInfo->survivorPath;
         const bool isPlayerWorldModel =
             isPlayerClass || isSurvivorWorldModel;
         if (m_VR->m_WorldModelVRPoseDebugLog &&
@@ -27734,33 +27791,13 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         // instead of rendering a weapon model that flashes once and disappears.
         const bool teleportSuppressibleViewmodel =
             (className && (std::strcmp(className, "CBaseViewModel") == 0 || std::strcmp(className, "C_BaseViewModel") == 0)) ||
-            (modelName.find("models/weapons/v_") != std::string::npos) ||
-            (modelName.find("/v_models/") != std::string::npos) ||
-            (modelName.find("models/v_models/") != std::string::npos) ||
-            (modelName.find("models/weapons/melee/v_") != std::string::npos) ||
-            (modelName.find("/melee/v_") != std::string::npos) ||
-            (modelName.find("models/weapons/arms/") != std::string::npos) ||
-            (modelName.find("/arms/") != std::string::npos) ||
-            (modelName.find("v_arms") != std::string::npos) ||
-            (modelName.find("models/weapons/hands/") != std::string::npos) ||
-            (modelName.find("/hands/") != std::string::npos) ||
-            (modelName.find("v_hands") != std::string::npos);
+            (modelDrawInfo && modelDrawInfo->viewmodelPath);
         drawUsesNativeViewmodelDepthHack = teleportSuppressibleViewmodel;
         // A hand-thrown grenade has left the hand: do not draw it there while
         // the server's switch to the next item is on its way.
         if (teleportSuppressibleViewmodel && m_VR && m_VR->HandThrowHidesViewmodel(modelName))
             return;
-        const std::string lowerWorldPoseModelName =
-            vr_vm_stabilize::ToLowerAscii(modelName);
-        const bool looksLikeHeldWorldModel =
-            lowerWorldPoseModelName.find("/w_models/") !=
-            std::string::npos ||
-            lowerWorldPoseModelName.find("models/weapons/w_") !=
-            std::string::npos ||
-            lowerWorldPoseModelName.find("/weapons/w_") !=
-            std::string::npos ||
-            lowerWorldPoseModelName.find("/melee/w_") !=
-            std::string::npos;
+        const bool looksLikeHeldWorldModel = modelDrawInfo && modelDrawInfo->heldWorldModel;
         if (emptyHandsPlaceholderActiveAtEntry &&
             m_VR->m_IsThirdPersonCamera &&
             looksLikeHeldWorldModel &&
@@ -27810,7 +27847,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             m_VR->ChestSlingActive();
         if (emptyHandsPlaceholderActive &&
             teleportSuppressibleViewmodel &&
-            !HooksModelNameIsArmsOrHands(vr_vm_stabilize::ToLowerAscii(modelName)))
+            !HooksModelNameIsArmsOrHands(lowerModelName))
         {
             // The native placeholder pistol supplies stock shove behavior, but its
             // weapon model is not visible. Keep the separate survivor arms model;
@@ -28522,7 +28559,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     if (m_VR && m_VR->m_IsVREnabled && !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
         l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
     {
-        const std::string lowerDrawn = vr_vm_stabilize::ToLowerAscii(modelName);
+        const std::string& lowerDrawn = lowerModelName;
         if ((drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerDrawn)) &&
             !HooksModelNameIsArmsOrHands(lowerDrawn) && !HooksDrawIsHolsteredItem(m_VR, info))
         {
@@ -28538,7 +28575,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     // Before 2.0.4 the lens was never captured: no scope ever rendered.
     if (!m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass && pBonesToWorldFinal)
     {
-        const std::string lowerScopeModel = vr_vm_stabilize::ToLowerAscii(modelName);
+        const std::string& lowerScopeModel = lowerModelName;
         if ((drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerScopeModel)) &&
             !HooksModelNameIsArmsOrHands(lowerScopeModel) && !HooksDrawIsHolsteredItem(m_VR, info))
             CapturePhysicalScopeLens(m_VR, state, modelName, reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(pBonesToWorldFinal));
@@ -28550,7 +28587,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         *pDrawInfo,
         pBonesToWorldFinal,
         viewmodelAutoGripApplied);
-    const std::string lowerModelForCalibrationHide = vr_vm_stabilize::ToLowerAscii(modelName);
+    const std::string& lowerModelForCalibrationHide = lowerModelName;
     const bool nativeViewmodelArmsOrHandsModel =
         HooksModelNameIsArmsOrHands(lowerModelForCalibrationHide);
     const bool nativeViewmodelPendingFreezeHide =
@@ -28795,9 +28832,10 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
                         classicArmsMirror) &&
                     !HooksDrawIsHolsteredItem(m_VR, info) &&
                     m_VR->ItemHandMirrorWanted() &&
+                    // 2.0.11: not keyed on the controller-pair readiness: while
+                    // the arms wait for tracking the gun keeps its mirrored shape.
                     (!HooksNativeViewmodelHandsOnlyActive(m_VR) ||
-                        (HooksNativeViewmodelFullArmIkActive(m_VR) &&
-                            HooksNativeViewmodelFullArmControllerPairReady(m_VR))))
+                        HooksNativeViewmodelFullArmIkActive(m_VR)))
                 {
                     int mirrorBoneCount = 0;
                     l4d2vr_hand_mirror::Mat34 gunMirror{};
@@ -28873,10 +28911,10 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         PublishViewmodelSightBore(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
 
     if (!shadowDepthDraw && m_VR && m_VR->m_MagazineDropEnabled && pBonesToWorldFinal &&
-        HooksModelNameIsViewmodel(vr_vm_stabilize::ToLowerAscii(modelName)))
+        HooksModelNameIsViewmodel(lowerModelName))
     {
         VR::DroppedMagazineRender drops[4]{};
-        const int dropCount = m_VR->GetDroppedMagazineRenders(vr_vm_stabilize::ToLowerAscii(modelName), drops, 4);
+        const int dropCount = m_VR->GetDroppedMagazineRenders(lowerModelName, drops, 4);
         if (dropCount > 0)
         {
             std::vector<std::string> boneNames;
@@ -29151,6 +29189,8 @@ void Hooks::dPopRenderTargetAndViewport(void* ecx, void* edx)
 
 void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
 {
+    // 2.0.11: main thread, every frame (menus too): send queued server commands.
+    if (m_Game) m_Game->FlushDeferredServerCmds(false);
     if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
         return hkVgui_Paint.fOriginal(ecx, mode);
 

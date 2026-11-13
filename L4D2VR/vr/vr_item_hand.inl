@@ -11,6 +11,9 @@ void VR::RequestItemHand(bool physicalLeft, l4d2vr_item_hand::Reason reason)
         return;
     if (reason == l4d2vr_item_hand::Reason::SelfTest)
         m_ItemHandAdoptHeld = m_GripToggle.Held(); // the held state moves with the item
+    // Only the draw the watch belongs to (or its own undo) keeps it running.
+    if (reason != l4d2vr_item_hand::Reason::HolsterDraw)
+        m_ItemHandDrawWatch.Cancel();
     m_ItemHandSwitch.Request(l4d2vr_item_hand::SwappedForPhysicalHand(m_LeftHanded, physicalLeft), reason);
 }
 
@@ -50,6 +53,9 @@ void VR::CommitItemHandSwitch()
     m_LeftHandedAnalogActionFrameCache.clear();
     m_ItemHandAdoptGrip = l4d2vr_item_hand::AdoptsGrip(reason);
     m_ItemHandForceGripUpFrame = reason == l4d2vr_item_hand::Reason::HolsterDraw;
+    // 2.0.11: the toggle's previous raw grip was the OLD hand's; a new item
+    // hand that already squeezes must still read as a fresh press.
+    m_ItemHandFreshPress = reason == l4d2vr_item_hand::Reason::HolsterDraw;
     if (reason == l4d2vr_item_hand::Reason::HolsterDraw)
     {
         // The new item hand is over the holster it squeezed (the holster block
@@ -63,11 +69,16 @@ void VR::CommitItemHandSwitch()
 }
 
 
+// The same gate as the weapon-hand holster logic that does the draw (2.0.11:
+// incapacitated or during a dual reload no draw happens, so the hands must not
+// change either).
 bool VR::ItemHandReady(C_BasePlayer* localPlayer, bool isObserverOrIdle) const
 {
     return m_AmbidextrousItemHands && m_IsVREnabled && !m_MouseModeEnabled && localPlayer && !isObserverOrIdle &&
         !m_SuppressPlayerInput && m_FirstPersonControlReady.load(std::memory_order_acquire) &&
-        !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
+        !m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
+        !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) &&
+        !DualReloadActive();
 }
 
 // Runs right after the weapon-hand grip (toggle) is resolved each frame.
@@ -90,6 +101,21 @@ void VR::UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserve
         gripDown = false;
         gripJustPressed = false;
         weaponGripInputState = gripValid ? 1u : 0u;
+    }
+
+    // 2.0.11: a free-hand draw that did not draw within the watch window gives
+    // the item back to the hand that held it (a held item never changes hands).
+    {
+        const uintptr_t activeItem = localPlayer ? reinterpret_cast<uintptr_t>(localPlayer->GetActiveWeapon()) : 0u;
+        if (m_ItemHandDrawWatch.Update(m_GripDrawSerial.load(std::memory_order_acquire), activeItem,
+                m_ItemHandSwitch.Pending(), GetTickCount64()))
+        {
+            const bool previousLeft = m_ItemHandDrawWatch.PreviousPhysicalLeft();
+            m_ItemHandAdoptHeld = m_ItemHandDrawWatch.PreviousHeld();
+            RequestItemHand(previousLeft, l4d2vr_item_hand::Reason::DrawCancel);
+            Game::logMsg("[VR][ItemHand] the free-hand draw did not happen: item back to the %s hand",
+                previousLeft ? "left" : "right");
+        }
     }
 
     // Since 2.0.6 letting go never moves the item to the hand on the foregrip:

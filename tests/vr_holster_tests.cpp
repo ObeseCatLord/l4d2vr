@@ -630,8 +630,54 @@ static void TestItemOrientationRealisticBody()
     CHECK(ItemShapeForWeaponId(26) == ItemShape::LongGun);
 }
 
+// 2.0.11 (review F5): putting the held pistol away at the hip with the hand a
+// little in front of the socket is inside the slung rifle's body box too; the
+// own holster wins inside its grab volume, the rifle is still taken outside it.
+static void TestOwnHolsterBeatsOverlappingItem()
+{
+    const Layout layout{};
+    BodyItems items{};
+    items.mask = 0x1u;               // only the slung rifle hangs on the body; the pistol is in the hand
+    items.shape[0] = ItemShape::LongGun;
+    const std::uint32_t drawable = 0x1Du; // every occupied slot except the held pistol (slot 2)
+    for (int handed = 0; handed < 2; ++handed)
+    {
+        const Body body = MakeBody(0.0f, 0.0f, 0.0f, handed == 1);
+        const BodyFrame& f = body.frame;
+        int overlap = 0;
+        int ownOnly = 0;
+        for (float dx = -0.10f; dx <= 0.101f; dx += 0.025f)
+        for (float dy = -0.10f; dy <= 0.101f; dy += 0.025f)
+        for (float dz = -0.10f; dz <= 0.101f; dz += 0.025f)
+        {
+            const Vector local = layout.socket[1] + Vector(dx, dy, dz);
+            const Vector hand = RootToWorld(f, local);
+            const bool inOwn = HandInHolsterVolume(f, layout, Zone::Secondary, hand);
+            Zone other = FindZone(f, layout, hand, drawable, nullptr, &items);
+            if (inOwn && other == Zone::Primary)
+                ++overlap;
+            if (OwnHolsterWins(inOwn, other))
+                other = Zone::None;
+            if (inOwn)
+            {
+                CHECK(other == Zone::None);
+                ++ownOnly;
+            }
+        }
+        CHECK(overlap > 0);   // the overlap the rule is for exists with the default layout
+        CHECK(ownOnly > 0);
+        // Outside the hip volume the rifle body is still grabbed anywhere.
+        const ItemPose sling = SlingPose(f, layout);
+        const Vector muzzle = sling.origin + sling.axisZ * 30.0f;
+        CHECK(!HandInHolsterVolume(f, layout, Zone::Secondary, muzzle));
+        CHECK(!OwnHolsterWins(false, FindZone(f, layout, muzzle, drawable, nullptr, &items)));
+        CHECK(FindZone(f, layout, muzzle, drawable, nullptr, &items) == Zone::Primary);
+    }
+}
+
 int main()
 {
+    TestOwnHolsterBeatsOverlappingItem();
     TestForefrontLayoutRealisticBody();
     TestBodyGrabAnywhere();
     TestItemOrientationRealisticBody();

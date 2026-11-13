@@ -1512,6 +1512,7 @@ public:
 	bool m_StickCrouchPressed = false;
 	l4d2vr_grip_toggle::Toggle m_GripToggle;
 	std::atomic<uint32_t> m_GripToggleAdoptSerial{ 0u };   // contact pickups adopted by the grip
+	std::atomic<uint32_t> m_GripToggleHeldTag{ 0u };       // 2.0.11: the item the toggle grip holds (0 = none / not settled)
 	std::atomic<uint32_t> m_GripTogglePickupSerial{ 0u };  // contact pickups requested
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
@@ -1821,6 +1822,15 @@ public:
     // CreateMove: the grip let go of the held item where it would drop. True
     // when the sling caught it (nothing is sent to the server).
     bool ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId);
+    // 2.0.11: every ProcessInput (also when the Pavlov holster block does not
+    // run): forget a stowed weapon that can no longer be taken back.
+    void ForgetStaleStowedWeapon(C_BasePlayer* localPlayer, bool isObserverOrIdle);
+    // The stowed weapon is the given (active) weapon.
+    bool ChestSlingHolds(uintptr_t activeWeapon) const
+    {
+        const uintptr_t slung = m_ChestSlungWeapon.load(std::memory_order_acquire);
+        return slung != 0u && slung == activeWeapon;
+    }
     // Forefront: a sidearm or melee weapon let go near the body goes back to
     // its hip holster (HolsterEmptyHands). True when it was stowed.
     bool HolsterCatchRelease(uintptr_t weaponTag, int weaponId);
@@ -2378,6 +2388,8 @@ public:
 	bool m_ItemHandAdoptGrip = false;       // the new item hand (a sling take) keeps the item (no press edge, no drop)
 	bool m_ItemHandAdoptHeld = false;       // ... and the toggle grip holds it
 	bool m_ItemHandForceGripUpFrame = false; // a holster draw: the new item hand presses afresh next frame
+	bool m_ItemHandFreshPress = false;       // 2.0.11: ... and the toggle forgets the old hand's raw grip
+	l4d2vr_item_hand::DrawWatch m_ItemHandDrawWatch; // 2.0.11: undo a free-hand draw that never drew
 	// Gameplay right hand (the item hand) is the physical left controller.
 	bool ItemHandIsPhysicalLeft() const
 	{

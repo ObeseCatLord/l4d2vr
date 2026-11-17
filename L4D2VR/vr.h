@@ -5207,7 +5207,7 @@ public:
 	// to its axis (0 = off). The per-optic FOV (ScopePavlovOpticFov) is the
 	// zoom of a scope whose magnification was never adjusted.
 	float m_ScopeActivateDistanceMeters = 0.40f;
-	float m_ScopeActivateAxisMeters = 0.05f;
+	float m_ScopeActivateAxisMeters = 0.0f;   // off by default: keeps the wide eyebox (Pavlov uses 0.05)
 	bool m_ScopePavlovOpticFov = true;
 	float m_ScopeStabilizationMinCutoff = 0.5f;  // Hz (lower = smoother, more latency)
 	float m_ScopeStabilizationBeta = 0.5f;      // responsiveness to fast motion

@@ -532,7 +532,7 @@ ScopeLensOverrides=
 // unadjusted scope has its optic's own zoom: 8x (AWP, Scout, military sniper) 5.3-5.6 deg, 4x (hunting rifle,
 // SG552) 11.25 deg.
 ScopeActivateDistanceMeters=0.40
-ScopeActivateAxisMeters=0.05
+ScopeActivateAxisMeters=0
 ScopePavlovOpticFov=true
 PhysicalShoveEnabled=true
 # Any fast swing of the gun in front of the body bashes (sideways, chops, butt strokes; measured at the muzzle).

@@ -38,7 +38,7 @@ class Defaults(unittest.TestCase):
             'VrHandsTwoHandedAimSmoothingSeconds': '0',
             'ScopeStabilizationEnabled': 'false',
             'ScopeActivateDistanceMeters': '0.40',
-            'ScopeActivateAxisMeters': '0.05',
+            'ScopeActivateAxisMeters': '0',
             'ScopePavlovOpticFov': 'true',
             'MuzzleWallBlockEnabled': 'true',
             'ManualThrowPavlovSmoothing': 'true',

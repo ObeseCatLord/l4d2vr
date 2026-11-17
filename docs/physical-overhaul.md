@@ -231,7 +231,7 @@ Classic mode is unchanged.
   gun hand pulses after 0.5 s and every 0.75 s, and the scope shows nothing. The client only holds back the attack
   button, so the server sees an ordinary usercmd and nobody shoots through walls.
 - **Scopes:** no picture stabilisation by default (`ScopeStabilizationEnabled=false`; Classic keeps it on), the
-  picture only while an eye is within 40 cm of the scope and 5 cm of its axis (`ScopeActivateDistanceMeters`,
+  picture only while an eye is within 40 cm of the scope (and, if `ScopeActivateAxisMeters` is set, e.g. 0.05, within that distance of its axis; off by default) (`ScopeActivateDistanceMeters`,
   `ScopeActivateAxisMeters`, Pavlov's Sight_Base), and a scope whose zoom was never adjusted has its optic's own FOV
   (`ScopePavlovOpticFov`: 5.625 deg on the AWP and military sniper, 5.332 on the Scout, 11.25 on the hunting rifle and
   SG552). The parallax lens and eyebox stay.

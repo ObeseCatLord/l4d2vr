@@ -152,6 +152,9 @@ FixedHudYOffset=0.25
 FixedHudDistanceOffset=0.25
 ControllerSmoothing=0.0
 WeaponAimPitchOffsetDeg=-45.0
+// Pistols, the magnum, the Uzi and the MAC-10 sit this much steeper in the hand than long guns (Pavlov VR holds
+// pistols 70 degrees and long guns 60 degrees nose-down from the grip; 2.0.12). 0 = the same as long guns.
+WeaponAimPistolPitchOffsetDeg=-10.0
 WeaponAimYawOffsetDeg=0.0
 WeaponAimRollOffsetDeg=0.0
 BulletAimOffset=0,0,0
@@ -198,6 +201,10 @@ HideArms=false
 VrHandsEnabled=true
 VrHandsGlovesEnabled=false
 VrHandsTwoHandedGripTargetBoxScale=1.5
+// 2.0.12: the support hand takes the foregrip with Pavlov's per-class boxes (pistols: a large box just ahead
+// of the grip; rifles about 30 cm, shotguns 34-42 cm ahead of it) and an 11.5 cm hand sphere; it lets go 30 cm
+// away. false = the older box at the animated left hand (VrHandsTwoHandedGripTargetBoxScale).
+VrHandsPavlovForegripBoxes=true
 VrHandsTwoHandedGripHeldMode=false
 VrHandsRealBulletSpreadEnabled=false
 VrHandsTwoHandedAimMountFriendly=false
@@ -276,6 +283,11 @@ VrHandsLeftHandedViewmodelPoseRotationOffsetDeg=0,0,0
 ViewmodelPoseOffset=0,0,0
 ViewmodelPoseRotationOffsetDeg=0,0,0
 MagazineBoxDebugEnabled=false
+// Debug: outline every grab and interaction volume (holsters, item bodies, the pouch, magazine well, bolt/slide/pump,
+// foregrip, hand spheres, pickups, object pull, pills/adrenaline zones, melee/bash, scope eye box, throw release)
+// in your own headset view only, colour-coded by type (green: a hand inside, yellow: a squeeze would take it, red:
+// refused). Nobody else ever sees it. Also turns on MagazineBoxDebugEnabled and ShowInventoryAnchors.
+DebugInteractionVolumes=false
 ViewmodelBoneLabelsEnabled=false
 MagazineInteractionEnabled=true
 MagazineInteractionQuickReloadMode=false
@@ -520,10 +532,10 @@ PhysicalShoveEnabled=true
 GunBashSweepEnabled=true
 HolsterReleaseDrop=true
 # Toggle grips (Pavlov's toggle grip mode): a squeeze takes an item from a holster or the
-# sling and the hand keeps it without holding the grip; that hand's next squeeze lets it go:
-# at its own holster it is put away (a long gun anywhere near your body hangs on the sling), elsewhere it drops
-# at your hand. Letting go of the grip never drops anything. The other hand's grip on the
-# gun is only the foregrip. Off: hold the grip to keep the item (letting go puts away/drops).
+# sling and the hand keeps it without holding the grip; that hand's next squeeze puts it
+# away at its own holster (a long gun anywhere near your body hangs on the sling). Since
+# 2.0.12 nothing is ever dropped: away from a holster the item stays in your hand. The other
+# hand's grip on the gun is only the foregrip. Off: hold the grip to keep the item.
 GripToggle=true
 # Pavlov VR reload feel: per-weapon slide/bolt pull, chamber return and magazine
 # insert depth taken from Pavlov (your own per-weapon overrides still win).
@@ -546,6 +558,18 @@ ConsumableGiveEnabled=true
 // Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
 ConsumableGesturesEnabled=true
 HolsterPavlovLayoutEnabled=true
+// Where the holsters sit on your body: forefront (rifle on a chest sling, pistol on the dominant hip, grenade and
+// magazines on the upper chest at Pavlov's top pocket row, kits on the back, pills on the other hip) or pavlov
+// (Pavlov VR: rifle on your back over the shoulder, pistol on the hip, grenade/kit/pills in vest pockets 31-54 cm
+// below your eyes, magazines on the other hip). HolsterYawFollowSpeed=20 adds Pavlov's slight turn lag.
+HolsterLayout=forefront
+// Only an empty hand takes things from your body (Pavlov and Forefront): squeezing at a holster while the hand
+// holds something does nothing (except putting that item away at its own holster). The other, empty hand may draw.
+HolsterGrabRequiresEmptyHand=true
+// Move the grenade pocket / magazine pouch: auto = the layout's place, or forward,toward-your-gun-hand,up metres
+// from the holster root (0.60 m below your eyes in forefront, 0.75 m in pavlov), e.g. 0.05,0.15,0.29.
+HolsterGrenadeOffsetMeters=auto
+HolsterMagPouchOffsetMeters=auto
 HolsterItemsVisible=true
 // No weapon switch plays the draw animation: the item is simply in your hand.
 HolsterInstantDraw=true
@@ -557,7 +581,7 @@ ItemHandLeftArmModel=true
 ChestSlingEnabled=true
 // Empty hands (Forefront / Pavlov): putting an item away in its holster leaves your hand empty; it stays on your body until a hand takes it back.
 HolsterEmptyHands=true
-// Letting go of a long gun with the hand farther than this from its sling (arm stretched out) drops it instead (with GripToggle=false also sidearms and the hip).
+// Letting go of a long gun within this distance of its sling hangs it there (with GripToggle=false also sidearms at the hip). Farther away it stays in your hand (2.0.12: nothing is dropped).
 ChestSlingDropDistanceMeters=0.6
 // How close a squeezing hand must be to the slung gun's handle or foregrip to take it.
 ChestSlingGrabRadiusMeters=0.15

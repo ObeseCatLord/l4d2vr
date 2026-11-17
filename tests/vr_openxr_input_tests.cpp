@@ -267,10 +267,14 @@ int main()
             "grips are one hand each (leftright manifest)");
         float press = 0.0f, release = 0.0f;
         xi::Thresholds(*BindingsOf(idx, Action::OffHandGrip, Hand::Left)[0], press, release);
-        Check(Near(press, 0.80f) && Near(release, 0.45f), "index off-hand grip 0.80/0.45 (force_input value)");
+        // 2.0.12 (review s12 7c, E10): Index grabs on squeeze FORCE, not the
+        // capacitive value a resting hand saturates.
+        Check(Near(press, 0.30f) && Near(release, 0.12f), "index off-hand grip force 0.30/0.12");
         xi::Thresholds(*BindingsOf(idx, Action::WeaponGrip, Hand::Right)[0], press, release);
-        Check(Near(press, 0.85f) && Near(release, 0.50f), "index weapon grip 0.85/0.50 (force_input value)");
-        Check(std::strcmp(BindingsOf(idx, Action::WeaponGrip, Hand::Right)[0]->input, "/input/squeeze/value") == 0, "index grip uses the value");
+        Check(Near(press, 0.30f) && Near(release, 0.12f), "index weapon grip force 0.30/0.12");
+        Check(std::strcmp(BindingsOf(idx, Action::WeaponGrip, Hand::Right)[0]->input, "/input/squeeze/force") == 0 &&
+            std::strcmp(BindingsOf(idx, Action::OffHandGrip, Hand::Left)[0]->input, "/input/squeeze/force") == 0, "index grips use the force");
+        Check(std::strcmp(idx.squeezeCurl, "/input/squeeze/value") == 0, "index finger curl still follows the value");
         // 2.0.12: a resting thumb (0.25-0.31 force) never presses the trackpad buttons.
         for (Action a : { Action::VoicePushToTalk, Action::Scoreboard })
         {
@@ -296,7 +300,18 @@ int main()
         Check(HasBinding(touch, Action::OffHandGrip, Hand::Left, "/input/squeeze/value") && HasBinding(touch, Action::WeaponGrip, Hand::Right, "/input/squeeze/value"),
             "touch grips on squeeze value");
         xi::Thresholds(*BindingsOf(touch, Action::WeaponGrip, Hand::Right)[0], press, release);
-        Check(Near(press, 0.25f) && Near(release, 0.20f), "touch grip uses SteamVR's default click threshold");
+        Check(Near(press, 0.60f) && Near(release, 0.35f), "touch grip needs a firm squeeze (2.0.12)");
+        // Every analog grip grabs on a firm squeeze; click grips click.
+        for (const xi::Profile& p : xi::Profiles())
+            for (Action a : { Action::WeaponGrip, Action::OffHandGrip })
+                for (const xi::Binding* b : BindingsOf(p, a, a == Action::WeaponGrip ? Hand::Right : Hand::Left))
+                {
+                    xi::Thresholds(*b, press, release);
+                    if (xi::EndsWith(b->input, "/value"))
+                        CheckS(press >= 0.5f && release < press, std::string("analog grip firm squeeze on ") + p.key);
+                    else if (xi::EndsWith(b->input, "/force"))
+                        CheckS(press >= 0.2f && release < press, std::string("force grip on ") + p.key);
+                }
         xi::Thresholds(*BindingsOf(touch, Action::PrimaryAttack, Hand::Right)[0], press, release);
         Check(Near(press, 0.25f) && Near(release, 0.20f), "touch trigger uses SteamVR's default click threshold");
         for (xi::ProfileId id : { xi::ProfileId::TouchPro, xi::ProfileId::TouchPlus })

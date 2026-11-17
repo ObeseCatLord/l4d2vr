@@ -84,11 +84,13 @@ namespace l4d2vr_options_menu
         { "NativeViewmodelArmCroppingEnabled", RowKind::Toggle, "Hands only (cropped arms)", "Show only the hands, not the arms.", 0, 0, 0, "false" },
         { "AmbidextrousItemHands", RowKind::Toggle, "Either hand takes items", "The hand that draws an item holds and uses it.", 0, 0, 0, "true" },
         { "ChestSlingEnabled", RowKind::Toggle, "Chest sling", "Let go of a long gun near your body to hang it on your chest.", 0, 0, 0, "true" },
-        { "HolsterPavlovLayoutEnabled", RowKind::Toggle, "Pavlov holster layout", "Holsters on your hips, chest and back like Pavlov VR.", 0, 0, 0, "true" },
+        { "HolsterPavlovLayoutEnabled", RowKind::Toggle, "Body holsters", "Take items from holsters on your hips, chest and back (layout below).", 0, 0, 0, "true" },
+        { "HolsterLayout", RowKind::Choice, "Holster layout", "Forefront: rifle on a chest sling, grenade and magazines on the chest. Pavlov: rifle on your back, grenade and kits in vest pockets, magazines on the hip.", 0, 0, 0, "forefront", "forefront:Forefront|pavlov:Pavlov", "HolsterPavlovLayoutEnabled" },
         { "HolsterItemsVisible", RowKind::Toggle, "Show holstered items", "Draw the items that sit in your holsters.", 0, 0, 0, "true" },
         { "GrabHoverHapticEnabled", RowKind::Toggle, "Touch tick on grabbable things", "A light buzz when an empty hand first touches something it can grab.", 0, 0, 0, "true" },
         { "HandPosesEnabled", RowKind::Toggle, "Finger poses", "Fingers wrap around what you hold.", 0, 0, 0, "true" },
         { "HideArms", RowKind::Toggle, "Hide arms", "Hide the first-person arms completely.", 0, 0, 0, "false" },
+        { "DebugInteractionVolumes", RowKind::Toggle, "Show grab volumes (debug)", "Outline every holster, pouch, gun part and grab zone in your own view only (nobody else sees it). Green: hand inside, yellow: a squeeze takes it, red: refused.", 0, 0, 0, "false" },
     };
 
     inline const Row kWeaponRows[] = {
@@ -140,10 +142,10 @@ namespace l4d2vr_options_menu
         { nullptr, RowKind::Info, "Open this menu", "Hold the pause button (left B on Index, Y on Quest/Touch, menu on Vive/WMR), point at VR Options next to the game's main or pause menu, press F8, or type vroptions in the console." },
         { "VrOptionsMenuHoldSeconds", RowKind::Slider, "Hold pause to open", "How long to hold the pause button to open this menu (0 = off).", 0.0f, 5.0f, 0.1f, "0.8", nullptr, nullptr, false, " s" },
         { nullptr, RowKind::Info, "Buttons", "Trigger: fire, pull the pin, menus. Grip: take, hold and holster items. Left stick: walk (click: recenter). Right stick: turn, jump and crouch. Bindings are built in per controller (docs/openxr.md)." },
-        { "GripToggle", RowKind::Toggle, "Toggle grips", "Pavlov: one squeeze takes an item, the next puts it away at its holster or drops it. Off: hold the grip.", 0, 0, 0, "true" },
+        { "GripToggle", RowKind::Toggle, "Toggle grips", "Pavlov: one squeeze takes an item, the next puts it away at its holster (away from a holster it stays in your hand). Off: hold the grip.", 0, 0, 0, "true" },
         { "StickJumpCrouch", RowKind::Toggle, "Jump and crouch on the stick", "Right stick up jumps, down crouches.", 0, 0, 0, "true" },
         { "StickCrouchToggle", RowKind::Toggle, "Stick crouch toggles", "Stick down toggles crouching instead of holding it.", 0, 0, 0, "true", nullptr, "StickJumpCrouch" },
-        { "HolsterReleaseDrop", RowKind::Toggle, "Drop on grip release", "Letting go of the grip away from a holster drops the item.", 0, 0, 0, "true" },
+        { "HolsterReleaseDrop", RowKind::Toggle, "Squeeze again to put away", "The hand that holds an item puts it back at its holster with its next squeeze. Nothing is ever dropped: away from a holster the item stays in your hand.", 0, 0, 0, "true" },
         { "MotionOnlyMeleeAndShove", RowKind::Toggle, "Swing to melee and shove", "Melee and shoves only come from real swings.", 0, 0, 0, "true" },
         { nullptr, RowKind::Action, "Save logs for sharing", "Copies the logs, your VR settings and a system summary to VR\\shared-logs (a folder and a .zip) to send with a bug report. No passwords. Console: l4d2vr_save_logs.", 0, 0, 0, "", nullptr, nullptr, false, "", RowAction::SaveLogs },
     };

@@ -427,28 +427,29 @@ namespace
 
     void TestPostExecution()
     {
+        constexpr int kKit = 12, kSmg = 2;   // droppable items (slot-2 items never are, 2.0.12)
         ServerConfig c{};
         PlayerVRState p{};
         p.isUsingVR = true;
         CommandPose drop = Pose(500, Intent::HolsterDrop);
-        ExecContext ctx = PreExecute(p, &drop, 500, 0, Input(weapon::kMelee, kFeatureAllMask), c);
-        PostActions a = PostExecute(p, &drop, ctx, Post(weapon::kMelee, 0x2000, 0x2000), c);
-        Check(a.drop && a.dropRequest.holster && a.dropRequest.weaponId == weapon::kMelee);
+        ExecContext ctx = PreExecute(p, &drop, 500, 0, Input(kKit, kFeatureAllMask), c);
+        PostActions a = PostExecute(p, &drop, ctx, Post(kKit, 0x2000, 0x2000), c);
+        Check(a.drop && a.dropRequest.holster && a.dropRequest.weaponId == kKit);
         CommandPose drop2 = Pose(501, Intent::HolsterDrop);
-        ctx = PreExecute(p, &drop2, 501, 0, Input(weapon::kMelee, kFeatureAllMask), c);
-        a = PostExecute(p, &drop2, ctx, Post(weapon::kMelee, 0x2000, 0x2000), c);
+        ctx = PreExecute(p, &drop2, 501, 0, Input(kKit, kFeatureAllMask), c);
+        a = PostExecute(p, &drop2, ctx, Post(kKit, 0x2000, 0x2000), c);
         Check(!a.drop);                                                  // 400 ms interval
-        PostInput incap = Post(weapon::kMelee, 0x2000, 0x2000);
+        PostInput incap = Post(kKit, 0x2000, 0x2000);
         incap.incapacitated = true;
         incap.nowMs = 30000;
         CommandPose drop3 = Pose(502, Intent::HolsterDrop);
-        ctx = PreExecute(p, &drop3, 502, 0, Input(weapon::kMelee, kFeatureAllMask), c);
+        ctx = PreExecute(p, &drop3, 502, 0, Input(kKit, kFeatureAllMask), c);
         Check(!PostExecute(p, &drop3, ctx, incap, c).drop);
-        PostInput disabled = Post(weapon::kMelee, 0x2000, 0x2000);
+        PostInput disabled = Post(kKit, 0x2000, 0x2000);
         disabled.features &= ~kFeatureHolsterDrop;
         disabled.nowMs = 40000;
         CommandPose drop4 = Pose(503, Intent::HolsterDrop);
-        ctx = PreExecute(p, &drop4, 503, 0, Input(weapon::kMelee, kFeatureAllMask), c);
+        ctx = PreExecute(p, &drop4, 503, 0, Input(kKit, kFeatureAllMask), c);
         Check(!PostExecute(p, &drop4, ctx, disabled, c).drop);
 
         // Grip release of an inventory item: the hand's own motion (none here),
@@ -457,18 +458,41 @@ namespace
         grip.isUsingVR = true;
         CommandPose release = Pose(600, Intent::GripRelease);
         release.inventoryRelease = true;
-        release.carryWeaponId = weapon::kPistol;
-        ctx = PreExecute(grip, &release, 600, 0, Input(weapon::kPistol, kFeatureAllMask), c);
-        a = PostExecute(grip, &release, ctx, Post(weapon::kPistol, 0x2000, 0x2000), c);
+        release.carryWeaponId = kSmg;
+        ctx = PreExecute(grip, &release, 600, 0, Input(kSmg, kFeatureAllMask), c);
+        a = PostExecute(grip, &release, ctx, Post(kSmg, 0x2000, 0x2000), c);
         Check(a.drop && a.dropRequest.gripRelease && a.dropRequest.velocity == Vec3());
         Check(a.dropRequest.haveOrigin && a.dropRequest.origin == ctx.position);
         CommandPose mismatch = release;
         mismatch.command = 601;
         mismatch.carryWeaponId = weapon::kMelee;
-        PostInput later = Post(weapon::kPistol, 0x2000, 0x2000);
+        PostInput later = Post(kSmg, 0x2000, 0x2000);
         later.nowMs = 50000;
-        ctx = PreExecute(grip, &mismatch, 601, 0, Input(weapon::kPistol, kFeatureAllMask), c);
+        ctx = PreExecute(grip, &mismatch, 601, 0, Input(kSmg, kFeatureAllMask), c);
         Check(!PostExecute(grip, &mismatch, ctx, later, c).drop);       // released item is not the active one
+
+        // 2.0.12: slot-2 items are never dropped, whatever the client asks
+        // (holster drop, grip release, a dual-pistol drop marker); inventory unchanged.
+        for (int sidearm : { weapon::kPistol, weapon::kMagnum, weapon::kMelee, weapon::kChainsaw })
+        {
+            Check(weapon::IsNeverDroppable(sidearm));
+            PlayerVRState s{};
+            s.isUsingVR = true;
+            CommandPose hd = Pose(1000, Intent::HolsterDrop);
+            ExecContext sctx = PreExecute(s, &hd, 1000, 0, Input(sidearm, kFeatureAllMask), c);
+            PostActions sa = PostExecute(s, &hd, sctx, Post(sidearm, 0x2000, 0x2000), c);
+            Check(!sa.drop && sa.dropRefusedSidearm);
+            CommandPose gr = Pose(1001, Intent::GripRelease);
+            gr.inventoryRelease = true;
+            gr.carryWeaponId = sidearm;
+            PostInput laterS = Post(sidearm, 0x2000, 0x2000);
+            laterS.nowMs = 90000;
+            sctx = PreExecute(s, &gr, 1001, 0, Input(sidearm, kFeatureAllMask), c);
+            sa = PostExecute(s, &gr, sctx, laterS, c);
+            Check(!sa.drop && sa.dropRefusedSidearm);
+        }
+        Check(!weapon::IsNeverDroppable(kKit) && !weapon::IsNeverDroppable(kSmg) &&
+            !weapon::IsNeverDroppable(weapon::kMolotov));
 
         // Instant deploy after a VR weapon switch only.
         PlayerVRState deploy{};
@@ -576,12 +600,12 @@ namespace
         walled.isUsingVR = true;
         CommandPose through = Pose(901, Intent::HolsterDrop);
         through.position = Vec3(30, 0, 64);
-        ExecInput traced = Input(weapon::kPistol, kFeatureAllMask);
+        ExecInput traced = Input(12, kFeatureAllMask);   // first aid kit (slot-2 items never drop)
         traced.traceHand = &Wall::Trace;
         traced.traceContext = &wallX;
         ctx = PreExecute(walled, &through, 901, 0, traced, c);
         Check(ctx.poseValid && ctx.handBlocked && ctx.position.x < wallX && walled.handTraceHits == 1u);
-        PostActions a = PostExecute(walled, &through, ctx, Post(weapon::kPistol, 0x2000, 0x2000), c);
+        PostActions a = PostExecute(walled, &through, ctx, Post(12, 0x2000, 0x2000), c);
         Check(a.drop && !a.dropRequest.haveOrigin);
         wallX = 100.0f;
         CommandPose clear = Pose(902);

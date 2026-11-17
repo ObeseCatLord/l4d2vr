@@ -38,6 +38,9 @@
 //   hip holster) it is put away; with the arm stretched away it drops; a fast
 //   swing that lets go of a melee weapon throws it.
 //
+// 2.0.12: a ReleaseAction::Drop from these rules is no longer a drop: the
+// item stays in the hand (vr_drop_policy.h; nothing is dropped by a squeeze).
+//
 // std-only so the rules are unit-tested offline (tests/vr_chest_sling_tests.cpp).
 namespace l4d2vr_chest_sling
 {

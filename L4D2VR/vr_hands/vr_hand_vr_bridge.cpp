@@ -1085,6 +1085,15 @@ namespace
     }
 
     bool MagazineInteractionNativeFist(const VR* vr, Vector& outWorld);
+    bool MagazineInteractionNativePinch(const VR* vr, Vector& outWorld);
+
+    // 2.0.12 (review s12 issue 5; Pavlov grip SPEC 3.1): a shell is pinched
+    // between the thumb tip and the index tip. Without a drawn pinch (GLB
+    // gloves, bones missing) the same point is taken from the controller: 4 cm
+    // forward, 1 cm up, no lateral offset, so both hands hold it alike.
+    constexpr float kShellPinchForwardMeters = 0.04f;
+    constexpr float kShellPinchUpMeters = 0.01f;
+    constexpr float kShellPinchPitchDownDeg = 5.0f;
 
     bool MagazineInteractionResolveFreshMagazineHandAnchorWorld(
         const VR* vr,
@@ -1097,6 +1106,16 @@ namespace
         {
             outAnchorWorld = MagazineInteractionMatrixOrigin(controllerWorld);
             return false;
+        }
+
+        if (vr->m_MagazineInteractionShotgunShellMode)
+        {
+            if (MagazineInteractionNativePinch(vr, outAnchorWorld))
+                return true;
+            outAnchorWorld = MagazineInteractionMatrixOrigin(controllerWorld) +
+                MagazineInteractionMatrixLocalVectorToWorld(controllerWorld,
+                    Vector(0.0f, kShellPinchUpMeters, -kShellPinchForwardMeters) * vr->m_VRScale);
+            return true;
         }
 
         // The drawn hand's fist, where the spare is seen to be held.
@@ -1894,10 +1913,34 @@ namespace
 
     // The drawn native off hand's fist, when it holds the spare (see
     // l4d2vr_ammo_grip::FistCenter): the spare is placed in it.
+    // 2.0.12 (review s12 5b): the drawn hand AT the support controller, left or
+    // right, through one construction (it used to be the model's left hand
+    // only, so a gun in the left hand reloaded with a different anchor).
+    Vector MagazineInteractionSupportControllerInViewmodelLayer(const VR* vr)
+    {
+        const Vector scene = vr->MagazineReloadSupportIsLeft() ? vr->m_LeftControllerPosAbs : vr->m_RightControllerPosAbs;
+        Vector layer = scene;
+        Vector reprojected{};
+        if (MagazineInteractionReprojectScenePointToViewmodelLayer(vr, scene, reprojected))
+            layer = reprojected;
+        return layer;
+    }
+
     bool MagazineInteractionNativeFist(const VR* vr, Vector& outWorld)
     {
-        return vr && !vr->m_VrHandsEnabled && vr->MagazineReloadSupportIsLeft() &&
-            vr->GetMagazineInteractionNativeLeftFist(outWorld);
+        if (!vr || vr->m_VrHandsEnabled)
+            return false;
+        return vr->GetMagazineInteractionNativeSupportGrip(MagazineInteractionSupportControllerInViewmodelLayer(vr),
+            &outWorld, nullptr);
+    }
+
+    // 2.0.12 (review s12 5a): the support hand's thumb-index pinch (shells).
+    bool MagazineInteractionNativePinch(const VR* vr, Vector& outWorld)
+    {
+        if (!vr || vr->m_VrHandsEnabled)
+            return false;
+        return vr->GetMagazineInteractionNativeSupportGrip(MagazineInteractionSupportControllerInViewmodelLayer(vr),
+            nullptr, &outWorld);
     }
 
     // How far up a spare magazine the fist closes, from its base (Pavlov holds
@@ -1924,15 +1967,8 @@ namespace
         if (vr && vr->m_MagazineInteractionShotgunShellMode && longest == insertion &&
             insertionLength <= kSingleShellBoxMaxMeters * std::max(0.001f, vr->m_VRScale))
         {
-            // A single shell standing along the port's insertion line is held
-            // by its base, upright out of the fist as it goes in; the
-            // magazine-sized grip offset below would hide it in the fingers.
-            const Vector& axis = vr->m_MagazineInteractionMagazineInsertionAxisLocal;
-            const float toward = insertion == 0 ? axis.x : insertion == 1 ? axis.y : axis.z;
-            const Vector& end = toward < 0.0f ? magazineBox.mins : magazineBox.maxs;
-            if (insertion == 0) anchorLocal.x = end.x;
-            else if (insertion == 1) anchorLocal.y = end.y;
-            else anchorLocal.z = end.z;
+            // 2.0.12: a single shell is pinched at its middle between the
+            // thumb and index tips (Pavlov), not held by its base in the fist.
             return anchorLocal;
         }
         // In the drawn fist: the magazine passes through it along its length,
@@ -3569,6 +3605,53 @@ void VR::PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld)
     m_MagazineInteractionNativeLeftFistWorld = fistWorld;
     m_MagazineInteractionNativeLeftFistPublishedAt = std::chrono::steady_clock::now();
     m_MagazineInteractionNativeLeftFistValid = true;
+}
+
+void VR::PublishMagazineInteractionNativeHandGrip(bool modelLeft, const Vector& wrist, const Vector& fist,
+    bool fistValid, const Vector& pinch, bool pinchValid)
+{
+    if (!l4d2vr_ammo_grip::Finite(wrist))
+        return;
+    std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+    NativeHandGrip& grip = m_MagazineInteractionNativeHandGrip[modelLeft ? 0 : 1];
+    grip.wrist = wrist;
+    grip.fist = fist;
+    grip.fistValid = fistValid && l4d2vr_ammo_grip::Finite(fist);
+    grip.pinch = pinch;
+    grip.pinchValid = pinchValid && l4d2vr_ammo_grip::Finite(pinch);
+    grip.publishedAt = std::chrono::steady_clock::now();
+}
+
+bool VR::GetMagazineInteractionNativeSupportGrip(const Vector& nearPoint, Vector* fist, Vector* pinch) const
+{
+    std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+    const float staleSeconds = std::max(0.02f, m_MagazineInteractionStaleSeconds);
+    const auto now = std::chrono::steady_clock::now();
+    int best = -1;
+    float bestDistance = 0.30f * std::max(1.0f, m_VRScale);   // the drawn hand within 30 cm of its controller
+    for (int i = 0; i < 2; ++i)
+    {
+        const NativeHandGrip& grip = m_MagazineInteractionNativeHandGrip[i];
+        if (grip.publishedAt.time_since_epoch().count() == 0 ||
+            std::chrono::duration<float>(now - grip.publishedAt).count() > staleSeconds)
+            continue;
+        const float distance = (grip.wrist - nearPoint).Length();
+        if (std::isfinite(distance) && distance < bestDistance)
+        {
+            bestDistance = distance;
+            best = i;
+        }
+    }
+    if (best < 0)
+        return false;
+    const NativeHandGrip& grip = m_MagazineInteractionNativeHandGrip[best];
+    if (fist && !grip.fistValid)
+        return false;
+    if (pinch && !grip.pinchValid)
+        return false;
+    if (fist) *fist = grip.fist;
+    if (pinch) *pinch = grip.pinch;
+    return true;
 }
 
 bool VR::GetMagazineInteractionNativeLeftFist(Vector& outWorld) const
@@ -6581,11 +6664,17 @@ bool VR::UpdateMagazineInteraction(
         const VrHandMatrix4 gunController = MagazineInteractionBuildControllerWorldFromAxes(
             gunPosition, gunForward, gunRight, gunUp);
         VrHandMatrix4 hold{}, gunRotation{}, wellRotation{};
-        const bool natural = m_MagazineInteractionSocketValid && MagazineInteractionMatrixLooksRenderable(well) &&
+        // 2.0.12 (review s12 5a): a shell sits in the pinch along the hand's
+        // forward (crimp out past the fingertips, brass toward the palm),
+        // the same in either hand and whatever the gun is doing.
+        const bool pinchHold = m_MagazineInteractionShotgunShellMode &&
+            l4d2vr_ammo_grip::ShellPinchHold(m_MagazineInteractionMagazineInsertionAxisLocal,
+                kShellPinchPitchDownDeg, hold);
+        const bool natural = !pinchHold && m_MagazineInteractionSocketValid && MagazineInteractionMatrixLooksRenderable(well) &&
             l4d2vr_ammo_grip::NaturalHold(gunController, well,
                 l4d2vr_reload_tuning::MagazineHoldTiltDeg(activeWeaponIdInt),
                 m_MagazineInteractionMagazineHandRotationOffsetDeg, hold);
-        if (!natural)
+        if (!natural && !pinchHold)
             hold = l4d2vr_ammo_grip::Calibration(m_MagazineInteractionMagazineHandRotationOffsetDeg);
         m_MagazineInteractionHoldWellInGunHandValid = natural &&
             l4d2vr_ammo_grip::RotationOf(gunController, gunRotation) && l4d2vr_ammo_grip::RotationOf(well, wellRotation);
@@ -6594,7 +6683,7 @@ bool VR::UpdateMagazineInteraction(
         {
             const Vector euler = l4d2vr_ammo_grip::CalibrationDegrees(hold);
             Game::logMsg("[VR][MagazineInteraction][Event] spare held %s: weaponId=%d tilt=%.0f hand rotation=(%.1f %.1f %.1f)",
-                natural ? "as in the gun" : "by the configured rotation", activeWeaponIdInt,
+                pinchHold ? "pinched (thumb and index)" : natural ? "as in the gun" : "by the configured rotation", activeWeaponIdInt,
                 l4d2vr_reload_tuning::MagazineHoldTiltDeg(activeWeaponIdInt), euler.x, euler.y, euler.z);
         }
         l4d2vr_ammo_grip::Pose pose{};
@@ -7475,9 +7564,37 @@ bool VR::UpdateMagazineInteraction(
         return true;
     };
 
+    // 2.0.12: Pavlov's per-class foregrip box (vr_grab_volumes.h) in the gun
+    // frame at the gun hand, against the support hand's 11.5 cm sphere.
+    auto supportInGunFrame = [&]() -> l4d2vr_grab::Vec3
+    {
+        // The gun frame's origin is the gun hand's grip, where the drawn hand
+        // sits relative to the controller point (NativeViewmodelRightHandPose-
+        // OffsetMeters: right, up, back), like Pavlov's gun root vs its
+        // controller point.
+        const float s = std::max(0.001f, m_VRScale);
+        const Vector d = supportPosition - gunPosition;
+        const Vector& hand = m_NativeViewmodelRightHandPoseOffsetMeters;
+        return l4d2vr_grab::Vec3{ DotProduct(d, gunForward) / s + hand.z, DotProduct(d, gunRight) / s - hand.x,
+            DotProduct(d, gunUp) / s - hand.y };
+    };
+    auto pavlovForegripBox = [&](l4d2vr_grab::Box& box) -> bool
+    {
+        return m_VrHandsPavlovForegripBoxes && l4d2vr_grab::ForegripBox(activeWeaponIdInt, box) &&
+            l4d2vr_interaction::Finite(gunForward) && l4d2vr_interaction::Finite(gunRight) &&
+            l4d2vr_interaction::Finite(gunUp) && l4d2vr_interaction::Finite(gunPosition);
+    };
+
     auto leftHandTouchesTwoHandedGripTarget = [&](float& outDistance) -> bool
     {
         outDistance = FLT_MAX;
+        l4d2vr_grab::Box pavlovBox{};
+        if (pavlovForegripBox(pavlovBox))
+        {
+            // Source units like the target box: <= 0 when the hand sphere overlaps.
+            outDistance = l4d2vr_grab::SphereGap(supportInGunFrame(), pavlovBox) * m_VRScale;
+            return outDistance <= 0.0f;
+        }
         MagazineInteractionBoxSnapshot targetBox{};
         if (!buildTwoHandedGripTargetBox(targetBox))
             return false;
@@ -7684,9 +7801,23 @@ bool VR::UpdateMagazineInteraction(
         // toggling the two-hand grip off.
         if (m_VrHandsTwoHandedGripActive)
         {
+            // 2.0.12: Pavlov's 30 cm from the foregrip (was 20 cm past the box).
+            l4d2vr_grab::Box ungripBox{};
+            if (pavlovForegripBox(ungripBox))
+            {
+                const l4d2vr_grab::Vec3 hand = supportInGunFrame();
+                if (l4d2vr_grab::AutoUngrip(hand, ungripBox))
+                {
+                    m_VrHandsTwoHandedGripActive = false;
+                    m_VrHandsTwoHandedGripWeaponId = 0;
+                    LogMagazineInteractionEvent("two-hand grip released: support hand %.2f m from the foregrip",
+                        l4d2vr_grab::Distance(hand, ungripBox.center));
+                }
+            }
             constexpr float kTwoHandAutoUngripMeters = 0.20f;
             float targetDistance = FLT_MAX;
-            if (!leftHandTouchesTwoHandedGripTarget(targetDistance) && targetDistance != FLT_MAX &&
+            if (m_VrHandsTwoHandedGripActive && !pavlovForegripBox(ungripBox) &&
+                !leftHandTouchesTwoHandedGripTarget(targetDistance) && targetDistance != FLT_MAX &&
                 targetDistance > kTwoHandAutoUngripMeters * m_VRScale)
             {
                 m_VrHandsTwoHandedGripActive = false;
@@ -7732,6 +7863,13 @@ bool VR::UpdateMagazineInteraction(
                 m_VrHandsTwoHandedGripActive = true;
                 m_VrHandsTwoHandedGripWeaponId = activeWeaponIdInt;
                 m_VrHandsTwoHandedGripWeaponTag = reinterpret_cast<uintptr_t>(activeWeapon);
+                {
+                    // 2.0.12 (Pavlov): the aim's support point starts on the bore
+                    // line and slides onto the real hand at 5/s (no aim jump).
+                    const float along = DotProduct(supportPosition - gunPosition, gunForward);
+                    m_TwoHandSupportSlideOffset = (gunPosition + gunForward * along) - supportPosition;
+                    m_TwoHandSupportSlideStart = now;
+                }
                 if (!foregripSplit && leftGripDown && !m_VrHandsTwoHandedGripHeldMode)
                     m_MagazineInteractionSuppressLeftInputUntilRelease = true;
                 triggerMagazineInteractionHaptic(0.020f, 95.0f, 0.32f, 2);
@@ -10226,7 +10364,11 @@ bool VR::DrawVrHandsForEyeImmediate(
         (m_MagazineBoxDebugEnabled || calibrationOverlayActive) &&
         drawPass != VrHandDrawPass::WorldVisibilityMask &&
         (m_VrHandsEnabled || m_NativeViewmodelHandsOnly);
-    if ((!drawGloves && !drawMagazineDebugBoxes && !drawLeftHandTargetDebugBox) ||
+    // 2.0.12: every interaction volume, local eye pass only; never in a
+    // self-test screenshot (self-tests do not request it).
+    const bool drawInteractionVolumes = m_DebugInteractionVolumes && !m_SelfTestEnabled &&
+        drawPass != VrHandDrawPass::WorldVisibilityMask && !m_MouseModeEnabled;
+    if ((!drawGloves && !drawMagazineDebugBoxes && !drawLeftHandTargetDebugBox && !drawInteractionVolumes) ||
         !m_IsVREnabled ||
         !m_Game)
     {
@@ -10591,6 +10733,15 @@ bool VR::DrawVrHandsForEyeImmediate(
             leftHandTargetBoxMaxs,
             leftHandTargetBoxUseViewmodelLayer,
             drawPass);
+    }
+
+    if (drawInteractionVolumes && m_VrHands)
+    {
+        // Local eye texture only (see vr_debug_volumes.h); does not count as a
+        // hand draw for the caller.
+        static thread_local std::vector<l4d2vr_debug_volumes::Line<Vector>> s_DebugVolumeLines;
+        BuildDebugInteractionVolumes(s_DebugVolumeLines);
+        m_VrHands->DrawDebugLinesForEye(device, view, s_DebugVolumeLines);
     }
 
     if (drawGloves && !drewAny && m_VrHands && m_VrHands->IsDependencyUnavailable())
@@ -11382,3 +11533,268 @@ bool VR::GetTwoHandedGripTargetPoint(Vector& point) const
 }
 
 #include "vr_dual_reload_bridge.inl"
+
+// 2.0.12 (review s12, "Interaction volumes to show in a local debug view"):
+// every grab / interaction volume as a wire outline (vr_debug_volumes.h),
+// drawn into the local eye textures only (DrawVrHandsForEyeImmediate). Grey
+// (per-type tint) idle, green with a hand inside, yellow where a press would
+// take or use it, red where a hand is inside but the press is refused.
+void VR::BuildDebugInteractionVolumes(std::vector<l4d2vr_debug_volumes::Line<Vector>>& out)
+{
+    namespace dv = l4d2vr_debug_volumes;
+    using dv::Kind;
+    using dv::State;
+    out.clear();
+    dv::Builder<Vector> b(out, true);
+    const float s = std::max(1.0f, m_VRScale);
+    const Vector hands[2] = { m_LeftControllerPosAbs, m_RightControllerPosAbs };   // gameplay left (free), right (item)
+
+    // Each hand's 11.5 cm grab sphere (Pavlov) and grab point.
+    for (int i = 0; i < 2; ++i)
+    {
+        b.Sphere(Kind::HandSphere, State::Idle, hands[i], l4d2vr_grab::kHandSphereRadiusMeters * s, 16);
+        b.Cross(Kind::HandSphere, State::Idle, hands[i], 0.012f * s);
+        // World grip pickup volume (GripReleaseDropEnabled): a cube of the same size.
+        if (m_GripReleaseDropEnabled)
+        {
+            const float e = l4d2vr_grab::kHandSphereRadiusMeters * s;
+            b.Box(Kind::Pickup, State::Idle, hands[i], Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1),
+                Vector(-e, -e, -e), Vector(e, e, e));
+        }
+    }
+
+    // Holsters, the items hanging on the body, the sling catch, the pouch.
+    l4d2vr_holster::BodyFrame frame{};
+    if (m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled && GetHolsterBodyFrame(frame))
+    {
+        const l4d2vr_holster::Layout& layout = m_HolsterLayout;
+        const int highlight = m_HolsterHighlightSlot.load(std::memory_order_acquire);
+        const bool itemHandHolds = m_HolsterHandOverOtherZone.load(std::memory_order_acquire) == false &&
+            m_HolsterHoverZone[1] == l4d2vr_holster::Zone::None;
+        for (int z = 0; z < l4d2vr_holster::kZoneCount; ++z)
+        {
+            const auto zone = static_cast<l4d2vr_holster::Zone>(z);
+            float dl = 1.0e9f, dr = 1.0e9f;
+            const bool inLeft = l4d2vr_holster::HandFitsZone(frame, layout, zone, hands[0], dl);
+            const bool inRight = l4d2vr_holster::HandFitsZone(frame, layout, zone, hands[1], dr);
+            State state = State::Idle;
+            if (highlight == z)
+                state = State::WouldTake;
+            else if (inRight && itemHandHolds && m_HolsterGrabRequiresEmptyHand)
+                state = State::Refused;
+            else if (inLeft || inRight)
+                state = State::Inside;
+            const float reach = l4d2vr_holster::ZoneReachMeters(layout, zone) * s;
+            switch (l4d2vr_holster::KindOf(layout, zone))
+            {
+            case l4d2vr_holster::ZoneKind::Sling:
+            {
+                Vector handle{}, foregrip{};
+                l4d2vr_holster::SlingHandle(frame, layout, handle, foregrip);
+                b.Capsule(Kind::HolsterZone, state, handle, foregrip, reach);
+                b.Sphere(Kind::SlingCatch, State::Idle, handle, m_ChestSlingDropDistanceMeters * s, 28);
+                break;
+            }
+            case l4d2vr_holster::ZoneKind::Hip:
+            {
+                Vector top{}, bottom{};
+                l4d2vr_holster::HipSegment(frame, layout, zone, top, bottom);
+                b.Capsule(Kind::HolsterZone, state, top, bottom, reach);
+                break;
+            }
+            case l4d2vr_holster::ZoneKind::Back:
+                b.Sphere(Kind::HolsterZone, state, l4d2vr_holster::HeadToWorld(frame, layout.backCenterHead),
+                    layout.backRadiusMeters * s, 24);
+                break;
+            default:
+                b.Sphere(Kind::HolsterZone, state, l4d2vr_holster::ZoneCenterWorld(frame, layout, zone), reach, 16);
+                break;
+            }
+            b.Cross(Kind::HolsterZone, state, l4d2vr_holster::ZoneCenterWorld(frame, layout, zone), 0.015f * s);
+        }
+        // The drawn bodies of the items hanging on the body (+ their grab margin).
+        const l4d2vr_holster::BodyItems items = m_HolsterBodyItems;
+        for (int z = 0; z < l4d2vr_holster::kZoneCount; ++z)
+        {
+            if ((items.mask & (1u << z)) == 0u)
+                continue;
+            const auto zone = static_cast<l4d2vr_holster::Zone>(z);
+            const l4d2vr_holster::ItemShape shape = zone == l4d2vr_holster::Zone::Primary
+                ? l4d2vr_holster::ItemShape::LongGun : items.shape[z];
+            const l4d2vr_holster::ItemPose pose = l4d2vr_holster::BuildItemPose(frame, layout, zone, shape);
+            if (!pose.valid)
+                continue;
+            Vector c{}, h{};
+            l4d2vr_holster::ItemBodyBox(shape, c, h);
+            const float margin = (l4d2vr_holster::KindOf(layout, zone) == l4d2vr_holster::ZoneKind::Pocket
+                ? layout.pocketItemGrabMarginMeters : layout.itemGrabMarginMeters) * s;
+            const Vector m(margin, margin, margin);
+            b.Box(Kind::ItemBody, highlight == z ? State::WouldTake : State::Idle, pose.origin, pose.axisX, pose.axisY,
+                pose.axisZ, c - h - m, c + h + m);
+        }
+        // Magazine / shell pouch reach.
+        const Vector pouch = l4d2vr_holster::RootToWorld(frame, layout.magPouch);
+        const bool atPouch = (hands[0] - pouch).Length() <= layout.magPouchReachMeters * s ||
+            (hands[1] - pouch).Length() <= layout.magPouchReachMeters * s;
+        b.Sphere(Kind::Pouch, atPouch ? State::Inside : State::Idle, pouch, layout.magPouchReachMeters * s, 16);
+        // Adrenaline chest target.
+        b.Sphere(Kind::Consumable, State::Idle, l4d2vr_holster::ToWorld(frame, Vector(0.12f, 0.0f, -0.30f)),
+            m_AdrenalineGesture.GetParams().hitRadius * s, 12);
+    }
+
+    // Pills to the mouth (head frame), adrenaline arm target (the free hand's forearm).
+    {
+        const l4d2vr_gesture::PillsParams& pills = m_PillsGesture.GetParams();
+        Vector forward = m_HmdForward, up = m_HmdUp;
+        if (forward.Length() > 0.5f && up.Length() > 0.5f)
+        {
+            const Vector mouth = m_HmdPosAbs - up * (pills.mouthDown * s) + forward * (pills.mouthForward * s);
+            b.Sphere(Kind::Consumable, State::Idle, mouth, pills.radius * s, 12);
+        }
+        const l4d2vr_gesture::AdrenalineParams& adrenaline = m_AdrenalineGesture.GetParams();
+        b.Sphere(Kind::Consumable, State::Idle, m_LeftControllerPosAbs - m_LeftControllerForward * (adrenaline.armBackOffset * s),
+            adrenaline.hitRadius * s, 12);
+    }
+
+    // Gun parts (viewmodel layer): magazine well / shell port, capture box, bolt/slide/pump.
+    {
+        MagazineInteractionBoxSnapshot box{};
+        if (GetMagazineInteractionBox(box))
+            b.Box(Kind::MagWell, m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine
+                ? State::WouldTake : State::Idle, box.origin, box.axisX, box.axisY, box.axisZ, box.mins, box.maxs, true);
+        if (m_MagazineInteractionSocketValid)
+        {
+            const MagazineInteractionBoxSnapshot& capture = m_MagazineInteractionSocketCaptureBox;
+            const float r = std::max(0.0f, m_MagazineInteractionSocketCaptureRadiusMeters) * s;
+            b.Box(Kind::MagWell, State::Idle, capture.origin, capture.axisX, capture.axisY, capture.axisZ,
+                capture.mins - Vector(r, r, r), capture.maxs + Vector(r, r, r), true);
+            if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap)
+                b.Box(Kind::MagSlap, State::WouldTake, capture.origin, capture.axisX, capture.axisY, capture.axisZ,
+                    capture.mins, capture.maxs, true);
+        }
+        MagazineInteractionBoxSnapshot bolt{};
+        if (GetMagazineInteractionBoltBox(bolt))
+        {
+            const float pad = 0.10f * s;
+            b.Box(Kind::Bolt, State::Idle, bolt.origin, bolt.axisX, bolt.axisY, bolt.axisZ, bolt.mins, bolt.maxs, true);
+            b.Box(Kind::Bolt, State::Idle, bolt.origin, bolt.axisX, bolt.axisY, bolt.axisZ,
+                bolt.mins - Vector(pad, pad, pad), bolt.maxs + Vector(pad, pad, pad), true);
+        }
+        MagazineInteractionBoxSnapshot pouchBox{};
+        QAngle pouchAngles{};
+        if (MagazineInteractionBuildFreshMagazinePickupBox(this, pouchBox, pouchAngles))
+            b.Box(Kind::Pouch, State::Idle, pouchBox.origin, pouchBox.axisX, pouchBox.axisY, pouchBox.axisZ,
+                pouchBox.mins, pouchBox.maxs, true);
+    }
+
+    // The foregrip (Pavlov per-class box in the gun frame at the gun hand), the pump travel.
+    {
+        const int weaponId = m_ActiveGunWeaponId.load(std::memory_order_acquire);
+        l4d2vr_grab::Box box{};
+        const bool supportLeft = MagazineReloadSupportIsLeft();
+        const Vector gunPos = supportLeft ? m_RightControllerPosAbs : m_LeftControllerPosAbs;
+        const Vector f = supportLeft ? m_RightControllerForward : m_LeftControllerForward;
+        const Vector r = supportLeft ? m_RightControllerRight : m_LeftControllerRight;
+        const Vector u = supportLeft ? m_RightControllerUp : m_LeftControllerUp;
+        if (l4d2vr_grab::ForegripBox(weaponId, box) && f.Length() > 0.5f)
+        {
+            const Vector& hand = m_NativeViewmodelRightHandPoseOffsetMeters;   // right, up, back
+            const Vector grip = gunPos + (f * -hand.z + r * hand.x + u * hand.y) * s;
+            const Vector center = grip + (f * box.center.x + r * box.center.y + u * box.center.z) * s;
+            const Vector support = supportLeft ? m_LeftControllerPosAbs : m_RightControllerPosAbs;
+            const Vector d = support - grip;
+            const l4d2vr_grab::Vec3 local{ DotProduct(d, f) / s, DotProduct(d, r) / s, DotProduct(d, u) / s };
+            const State state = m_VrHandsTwoHandedGripActive ? State::Inside :
+                l4d2vr_grab::SphereGap(local, box) <= 0.0f ? State::WouldTake : State::Idle;
+            const Vector half(box.half.x * s, box.half.y * s, box.half.z * s);
+            b.Box(Kind::Foregrip, state, center, f, r, u, half * -1.0f, half);
+            b.Sphere(Kind::Foregrip, State::Idle, center, l4d2vr_grab::kAutoUngripMeters * s, 20);
+            if (m_ManualPumpEnabled && (weaponId == 3 || weaponId == 8))
+                b.Segment(Kind::Pump, State::Idle, center, center - f * (m_ManualPumpTravelMeters * s));
+            // Gun bash tip and the aim ray (the old sight debug line).
+            const l4d2vr_gesture::GunBashParams& bash = m_GunBash.GetParams();
+            b.Cross(Kind::BashTip, State::Idle, gunPos + f * (bash.tipLength * s), 0.03f * s);
+            b.Segment(Kind::SightLine, State::Idle, gunPos, gunPos + f * (2.0f * s));
+        }
+        // Melee blade: the hand along the item's forward.
+        if (m_Game && m_Game->m_IsMeleeWeaponActive)
+        {
+            const Vector item = m_RightControllerPosAbs;
+            b.Segment(Kind::MeleeBlade, State::Idle, item, item + m_RightControllerForward * (0.80f * s));
+            b.Cross(Kind::MeleeBlade, State::Idle, item + m_RightControllerForward * (0.80f * s), 0.02f * s);
+        }
+    }
+
+    // Held spare anchors: fist and thumb-index pinch of both drawn hands.
+    {
+        std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+        for (const NativeHandGrip& grip : m_MagazineInteractionNativeHandGrip)
+        {
+            if (grip.publishedAt.time_since_epoch().count() == 0)
+                continue;
+            if (grip.fistValid)
+                b.Cross(Kind::HeldSpare, State::Idle, grip.fist, 0.015f * s, true);
+            if (grip.pinchValid)
+                b.Sphere(Kind::HeldSpare, State::Idle, grip.pinch, 0.01f * s, 8, true);
+        }
+    }
+
+    // Dual-pistol reload: the stack seat, both slides, the double-magazine pouch.
+    if (m_DualPistolsActive.load(std::memory_order_acquire))
+    {
+        DualReloadSelfTestPoints points{};
+        if (GetDualReloadSelfTestPoints(points) && points.enabled)
+        {
+            b.Sphere(Kind::DualReload, State::Idle, points.freeSeatTarget, 0.12f * s, 12);
+            for (int i = 0; i < 2; ++i)
+                if (points.slideValid[i])
+                    b.Segment(Kind::DualReload, State::Idle, points.slideTarget[i], points.slideBack[i]);
+            if (points.pouchValid)
+                b.Cross(Kind::DualReload, State::Idle, points.pouchTarget, 0.04f * s);
+        }
+    }
+
+    // Dropped magazines (visual only, no pickup volume).
+    {
+        std::lock_guard<std::mutex> lock(m_DroppedMagazineMutex);
+        for (const auto& mag : m_DroppedMagazinePool.mags)
+            if (mag.active)
+                b.Cross(Kind::DroppedMag, State::Idle, mag.position, 0.04f * s);
+    }
+
+    // Object pull: the ray and its current target.
+    {
+        std::lock_guard<std::mutex> lock(m_ObjectPullClientTargetStateMutex);
+        const ObjectPullClientTargetSnapshot& t = m_ObjectPullClientTargetSnapshot;
+        const Vector from = m_ObjectPullArmPosition.Length() > 0.0f ? m_ObjectPullArmPosition : m_LeftControllerPosAbs;
+        if (t.valid && t.hitAnything)
+        {
+            b.Segment(Kind::ObjectPull, t.entityIndex > 0 ? State::WouldTake : State::Idle, from, t.hitPosition);
+            b.Sphere(Kind::ObjectPull, State::Idle, t.hitPosition, m_ObjectPullTargetAssistRadiusMeters * s, 12);
+        }
+    }
+
+    // Scope lens discs and eye-box cones (scene).
+    {
+        std::lock_guard<std::mutex> lock(m_PhysicalScopeLensMutex);
+        const uint64_t nowMs = GetTickCount64();
+        for (const PhysicalScopeLensSnapshot& lens : m_PhysicalScopeLenses)
+        {
+            if (lens.publishedAt == 0u || nowMs - lens.publishedAt > 500u || !(lens.sceneRadius > 0.0f))
+                continue;
+            Vector up = lens.sceneUp, fwd = lens.sceneForward;
+            Vector right{};
+            CrossProduct(fwd, up, right);
+            b.Circle(Kind::ScopeEyebox, State::Idle, lens.sceneCenter, right, up, lens.sceneRadius, 20);
+            b.Cone(Kind::ScopeEyebox, State::Idle, lens.sceneCenter, fwd * -1.0f, 0.50f * s,
+                m_ScopeEyeboxDeg * 3.14159265f / 180.0f, 16);
+        }
+    }
+
+    // The last hand-throw release point.
+    {
+        std::lock_guard<std::mutex> lock(m_HandThrowMutex);
+        if (m_HandThrowLastReleasePos.Length() > 0.0f)
+            b.Cross(Kind::ThrowRelease, State::Idle, m_HandThrowLastReleasePos, 0.05f * s);
+    }
+}

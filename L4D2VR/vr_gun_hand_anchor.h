@@ -21,6 +21,23 @@
 // Std-only so the policy is unit tested (tests/vr_gun_hand_anchor_tests.cpp).
 namespace l4d2vr_gun_hand_anchor
 {
+    // 2.0.12 (review s12 issue 6; Pavlov grip SPEC 1.4 / 7.1): Pavlov snaps a
+    // gun to the controller with a per-CLASS barrel pitch, not per gun: pistols
+    // and machine pistols 70 deg nose-down from the grip axis, long guns 60.
+    // L4D2VR's WeaponAimPitchOffsetDeg is the long-gun pitch; pistol-class guns
+    // (pistol, magnum, Uzi, MAC-10) add pistolExtraDeg in the same sense (the
+    // more upright pistol grip). Applied to the shared aim basis, so the drawn
+    // gun, sights, scope and bullets stay aligned; the left gun of a pair uses
+    // the same extra pitch on its own controller.
+    inline bool IsPistolClass(int weaponId)
+    {
+        return weaponId == 1 || weaponId == 32 || weaponId == 2 || weaponId == 7;
+    }
+    inline float ClassAimPitchExtraDeg(int weaponId, float pistolExtraDeg)
+    {
+        return IsPistolClass(weaponId) && std::isfinite(pistolExtraDeg) ? pistolExtraDeg : 0.0f;
+    }
+
     struct Vec3
     {
         float x = 0.0f, y = 0.0f, z = 0.0f;

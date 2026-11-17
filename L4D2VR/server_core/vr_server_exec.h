@@ -226,6 +226,7 @@ namespace l4d2vr_server
     {
         MeleeSweepState::Step melee{};
         bool drop = false;
+        bool dropRefusedSidearm = false;   // 2.0.12: a drop request for a slot-2 item, refused
         PendingDrop dropRequest{};
         bool instantDeploy = false;
     };
@@ -254,7 +255,10 @@ namespace l4d2vr_server
 
         // Drops run after the command, through the game's own Weapon_Drop.
         const bool canDrop = in.dropBackend && in.liveSurvivor && !in.incapacitated && !in.controlled &&
-            in.weaponTagAfter != 0u && in.weaponTagAfter == in.weaponTagBefore;
+            in.weaponTagAfter != 0u && in.weaponTagAfter == in.weaponTagBefore &&
+            !weapon::IsNeverDroppable(in.weaponIdAfter);
+        a.dropRefusedSidearm = weapon::IsNeverDroppable(in.weaponIdAfter) &&
+            (pose->intent == Intent::HolsterDrop || pose->inventoryRelease || pose->dropHand != l4d2vr_dual::Hand::None);
         if (canDrop && pose->intent == Intent::HolsterDrop && (in.features & kFeatureHolsterDrop) != 0u &&
             p.holsterLimiter.Allow(in.nowMs, c.holsterDropMinIntervalMs) &&
             p.intentBudget.Consume(in.nowMs, c.intentBudgetPerSecond))

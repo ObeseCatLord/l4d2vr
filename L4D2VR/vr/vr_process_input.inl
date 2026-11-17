@@ -689,6 +689,12 @@ void VR::ProcessInput()
             m_ItemHandAdoptGrip = false;
             m_GripToggle.Adopt(rightGripValid && rightGripDown, toggleApplies && m_ItemHandAdoptHeld);
         }
+        if (m_GripToggleRehold.exchange(false, std::memory_order_acq_rel) && toggleApplies)
+        {
+            // 2.0.12: the squeeze let go away from any holster and nothing is
+            // dropped: the hand keeps the item, held as before.
+            m_GripToggle.Adopt(rightGripValid && rightGripDown, true);
+        }
         const bool wasHeld = m_GripToggle.Held();
         const bool virtualDown = m_GripToggle.Update(toggleInput);
         m_GripToggleHeldTag.store(toggleApplies ? m_GripToggle.PinnedTag() : 0u, std::memory_order_release);
@@ -805,9 +811,28 @@ void VR::ProcessInput()
                     HandAtStowedItem(frame, m_LeftControllerPosAbs, occupied & ~(1u << activeSlot), leftItems);
                 if (m_HolsterEmptyHands && activeSlot >= 0)
                     occupied &= ~(1u << activeSlot);
-                const l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
-                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied, nullptr, leftItems);
+                l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
+                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied, nullptr, leftItems,
+                        nullptr, m_HolsterHoverZone[0]);
                 LogHolsterGripPress(true, &frame, m_LeftControllerPosAbs, true, static_cast<int>(zone), activeSlot);
+                // 2.0.12 (review s12 7a, G1): only an empty hand takes from the
+                // body. This hand is not empty while it holds the left pistol,
+                // the foregrip or a magazine/shell. Without ambidextrous items
+                // the drawn item goes to the item hand, which must be empty too.
+                if (zone != l4d2vr_holster::Zone::None && m_HolsterGrabRequiresEmptyHand)
+                {
+                    const bool leftEmpty = !leftHeldPistol && !dualPistolsActive && !m_VrHandsTwoHandedGripActive &&
+                        !m_MagazineInteractionLeftHandHolding && !IsMagazineInteractionLeftHandActive();
+                    const bool itemHandEmpty = activeSlot < 0 || (ChestSlingActive() && StowedSlot() == activeSlot);
+                    const char* refused = !leftEmpty ? "the hand holds something" :
+                        (!m_AmbidextrousItemHands && !itemHandEmpty) ? "the item hand holds something" : nullptr;
+                    if (refused)
+                    {
+                        Game::logMsg("[VR][Holster] free hand at slot%d: no take (%s)",
+                            l4d2vr_holster::SlotIndex(zone) + 1, refused);
+                        zone = l4d2vr_holster::Zone::None;
+                    }
+                }
                 if (zone != l4d2vr_holster::Zone::None && m_AmbidextrousItemHands &&
                     l4d2vr_holster::SlotIndex(zone) != activeSlot && !leftHeldPistol && !dualPistolsActive &&
                     ItemHandReady(localPlayer, isObserverOrIdle))
@@ -818,6 +843,10 @@ void VR::ProcessInput()
                     m_ItemHandDrawWatch.Start(m_GripDrawSerial.load(std::memory_order_acquire),
                         reinterpret_cast<uintptr_t>(active), ItemHandIsPhysicalLeft(), m_GripToggle.Held(),
                         GetTickCount64());
+                    m_ItemHandFreeDrawPending = true;
+                    m_ItemHandFreeDrawMs = GetTickCount64();
+                    m_ItemHandFreeDrawPrevLeft = ItemHandIsPhysicalLeft();
+                    m_ItemHandFreeDrawPrevHeld = m_GripToggle.Held();
                     RequestItemHand(IsGameplayHandLeftPhysical(true), l4d2vr_item_hand::Reason::HolsterDraw);
                     s_LeftHolsterLatched = true;
                     offHandGripDown = offHandGripJustPressed = false;
@@ -1838,7 +1867,7 @@ void VR::ProcessInput()
             if (frameValid)
             {
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
-                    m_RightControllerPosAbs, drawableMask, nullptr, rightItems);
+                    m_RightControllerPosAbs, drawableMask, nullptr, rightItems, nullptr, m_HolsterHoverZone[1]);
                 // Nearest grab wins (Forefront / Pavlov): a stowed item nearer to
                 // the hand than an overlapping holster (the sling handle sits by
                 // the hip) is taken back by UpdateChestSling, not passed over.
@@ -1859,6 +1888,17 @@ void VR::ProcessInput()
                 if (l4d2vr_holster::OwnHolsterWins(inOwnVolume, grabInput.handZone))
                     grabInput.handZone = l4d2vr_holster::Zone::None;
             }
+            // 2.0.12 (review s12 7a, G1; Pavlov / Forefront): only an empty hand
+            // takes from the body. A hand that holds an item (or a carried prop)
+            // sees no other holster: no draw, no glow, no swap, no hover tick;
+            // its own holster still takes its item back.
+            {
+                const bool carryingOther = localPlayer && activeSlot < 0 && localPlayer->GetActiveWeapon() != nullptr;
+                grabInput.handEmpty = !m_HolsterGrabRequiresEmptyHand || (heldSlot < 0 && !carryingOther);
+                if (!grabInput.handEmpty)
+                    grabInput.handZone = l4d2vr_holster::Zone::None;
+            }
+            m_HolsterHoverZone[1] = grabInput.handZone;
 
             if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
             {
@@ -1941,7 +1981,9 @@ void VR::ProcessInput()
                     if (ready && frameValid)
                     {
                         const l4d2vr_holster::Zone zone = l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand,
-                            hoverMask, nullptr, items);
+                            hoverMask, nullptr, items, nullptr, m_HolsterHoverZone[side]);
+                        if (gameplayLeft)
+                            m_HolsterHoverZone[0] = (gameplayLeft ? leftFree : rightFree) ? zone : l4d2vr_holster::Zone::None;
                         key = zone != l4d2vr_holster::Zone::None ? l4d2vr_holster::SlotIndex(zone) + 1 : 0;
                         const int latched = GrabHoverLatchedKey(physicalLeft, l4d2vr_grab_hover::Source::Holster);
                         if (latched > 0 && latched <= l4d2vr_holster::kZoneCount)
@@ -1997,6 +2039,52 @@ void VR::ProcessInput()
             static const char* kSlotCommands[] = { "slot1", "slot2", "slot3", "slot4", "slot5" };
             // "use <class>" switches directly; "slotN" goes through the HUD's
             // weapon selection, which ignores input while a UI owns the cursor.
+            // 2.0.12 (review s12 G4): a draw the game refuses (an empty primary, the
+            // grenade launcher at 0/0) used to leave the instant-draw state armed
+            // with no feedback. Watch each draw for 300 ms: no switch -> a short
+            // double buzz, one log line, the pending draw cleared, and a hand that
+            // changed for that draw gets its item back (no hand switching).
+            {
+                const uint64_t watchNowMs = GetTickCount64();
+                if (m_HolsterDrawWatchSlot >= 0)
+                {
+                    if (activeSlot == m_HolsterDrawWatchSlot)
+                        m_HolsterDrawWatchSlot = -1;
+                    else if (watchNowMs - m_HolsterDrawWatchMs > 300u)
+                    {
+                        Game::logMsg("[VR][Holster] draw of slot%d refused by the game (active slot%d): cleared",
+                            m_HolsterDrawWatchSlot + 1, activeSlot + 1);
+                        TriggerPhysicalHandHapticPulse(m_HolsterDrawWatchPhysicalLeft, 0.015f, 60.0f, 0.25f, 2);
+                        m_HolsterInstantDrawUntilMs.store(0u, std::memory_order_release);
+                        m_HolsterInstantDrawSlot.store(-1, std::memory_order_release);
+                        if (m_HolsterDrawWatchHandChanged && ItemHandIsPhysicalLeft() != m_HolsterDrawWatchPrevLeft &&
+                            !m_ItemHandSwitch.Pending())
+                        {
+                            m_ItemHandAdoptHeld = m_HolsterDrawWatchPrevHeld;
+                            RequestItemHand(m_HolsterDrawWatchPrevLeft, l4d2vr_item_hand::Reason::DrawCancel);
+                        }
+                        m_HolsterDrawRefusedCount.fetch_add(1u, std::memory_order_acq_rel);
+                        m_HolsterDrawWatchSlot = -1;
+                    }
+                }
+            }
+            auto watchDraw = [&](int slot, bool physicalLeft)
+                {
+                    const uint64_t watchNowMs = GetTickCount64();
+                    // A free-hand draw moved the item hand within the last moment.
+                    const bool handChanged = m_ItemHandFreeDrawPending &&
+                        watchNowMs - m_ItemHandFreeDrawMs < 500u;
+                    m_HolsterDrawWatchHandChanged = handChanged;
+                    if (handChanged)
+                    {
+                        m_HolsterDrawWatchPrevLeft = m_ItemHandFreeDrawPrevLeft;
+                        m_HolsterDrawWatchPrevHeld = m_ItemHandFreeDrawPrevHeld;
+                    }
+                    m_ItemHandFreeDrawPending = false;
+                    m_HolsterDrawWatchSlot = slot;
+                    m_HolsterDrawWatchMs = watchNowMs;
+                    m_HolsterDrawWatchPhysicalLeft = physicalLeft;
+                };
             auto selectInventorySlot = [&](int slot)
                 {
                     C_WeaponCSBase* const weapon = localPlayer
@@ -2031,6 +2119,7 @@ void VR::ProcessInput()
                     }
                     m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
                     selectInventorySlot(target);
+                    watchDraw(target, IsGameplayHandLeftPhysical(false));
                     Game::logMsg("[VR][Holster] off-hand %s slot=%d -> slot=%d",
                         slot == activeSlot ? "holstered" : "swap", slot + 1, target + 1);
                 }
@@ -2047,6 +2136,7 @@ void VR::ProcessInput()
                 m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
                 m_GripDrawSerial.fetch_add(1u, std::memory_order_release);
                 selectInventorySlot(grab.selectSlot);
+                watchDraw(grab.selectSlot, IsGameplayHandLeftPhysical(false));
                 Game::logMsg("[VR][Holster] grip draw slot=%d", grab.selectSlot + 1);
             }
             if (grab.putAwaySlot >= 0 && grab.putAwaySlot == activeSlot && m_HolsterEmptyHands && localPlayer)

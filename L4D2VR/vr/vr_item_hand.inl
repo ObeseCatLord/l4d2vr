@@ -118,9 +118,52 @@ void VR::UpdateItemHandGripTransitions(C_BasePlayer* localPlayer, bool isObserve
         }
     }
 
+    // 2.0.12 (review s12 issue 15, E13, G5): an item the game switched to by
+    // itself (heal, pills, adrenaline, defib, throw, pack, dry primary, pickup,
+    // server switch, dismount) goes to the hand that last held it.
+    {
+        const uint64_t nowMs = GetTickCount64();
+        const uint32_t modSerial = m_BodyGripSelectionSerial.load(std::memory_order_acquire) +
+            m_GripDrawSerial.load(std::memory_order_acquire) +
+            m_GripTogglePickupSerial.load(std::memory_order_acquire) +
+            m_GripToggleAdoptSerial.load(std::memory_order_acquire) +
+            m_ChestSlingTakeSerial.load(std::memory_order_acquire);
+        if (modSerial != m_ItemOwnerModSerial)
+        {
+            m_ItemOwnerModSerial = modSerial;
+            m_ItemOwners.ModSelected(nowMs);
+        }
+        if (!m_AmbidextrousItemHands || !m_IsVREnabled || m_MouseModeEnabled || !localPlayer || isObserverOrIdle)
+        {
+            m_ItemOwners.Reset();
+        }
+        else
+        {
+            C_BaseCombatWeapon* const active = localPlayer->GetActiveWeapon();
+            int slot = -1;
+            for (int i = 0; active && i < l4d2vr_item_hand::OwnerHands::kSlots; ++i)
+                if (localPlayer->Weapon_GetSlot(i) == active)
+                    slot = i;
+            const l4d2vr_item_hand::OwnerHands::Decision decision = m_ItemOwners.Update(
+                reinterpret_cast<uintptr_t>(active), slot, ItemHandIsPhysicalLeft(), m_LeftHanded,
+                m_ItemHandSwitch.Pending() || m_ItemHandDrawWatch.Active(),
+                m_RenderPlayerIncap.load(std::memory_order_relaxed), akimbo, nowMs);
+            if (decision.autoSwitch)
+            {
+                if (decision.change)
+                {
+                    m_ItemHandAdoptHeld = false;
+                    RequestItemHand(decision.physicalLeft, l4d2vr_item_hand::Reason::AutoReturn);
+                    m_ItemAutoReturnCount.fetch_add(1u, std::memory_order_acq_rel);
+                }
+                Game::logMsg("[VR][ItemHand] auto return: the game switched to slot%d; it goes to the %s hand (%s)",
+                    slot + 1, decision.physicalLeft ? "left" : "right", decision.change ? "moved" : "already there");
+            }
+        }
+    }
+
     // Since 2.0.6 letting go never moves the item to the hand on the foregrip:
-    // the owner's grip alone puts it away or drops it (vr_item_hand.h Ownership).
-    (void)akimbo;
+    // the owner's grip alone puts it away (vr_item_hand.h Ownership).
     (void)toggleApplies;
 }
 

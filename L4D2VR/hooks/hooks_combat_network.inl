@@ -3101,8 +3101,11 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
 		const bool activeWeaponIsCarryThrowable = ServerWeaponIdIsManualCarryThrowable(serverWeaponId);
 		const bool encodedCarryRelease =
 			attackDown && ServerWeaponIdIsManualCarryThrowable(encodedCarryWeaponId);
+		// 2.0.12: slot-2 items (and both dual-pistol drop markers) are never
+		// dropped on a client's request (vr_drop_policy.h IsNeverDroppable).
 		const bool encodedInventoryRelease =
-			!attackDown && ManualInventoryThrowWeaponIdRequiresCustomDrop(encodedCarryWeaponId);
+			!attackDown && ManualInventoryThrowWeaponIdRequiresCustomDrop(encodedCarryWeaponId) &&
+			!l4d2vr_drop::IsNeverDroppable(encodedCarryWeaponId);
 		const bool releasedThrowable = previousWeaponThrowable && previousAttackDown && !attackDown;
 		const int releasedWeaponId = activeWeaponIsThrowable ? serverWeaponId : previousThrowableWeaponId;
 		// GrenadeThrowMode=arc: grenades keep the game's own throw (aimed by the

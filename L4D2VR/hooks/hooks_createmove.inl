@@ -2236,9 +2236,38 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				if (!handThrowMode)
 					m_VR->m_HandThrowHideUntilMs.store(0u, std::memory_order_release);
 			}
+            // 2.0.12 (review s12 12/13): a release no holster caught and no throw
+            // used is never a drop (vr_drop_policy.h): the item stays in the hand
+            // and the grip keeps owning it, so the next squeeze behaves the same.
+            // Sidearms can never be dropped. The deliberate drop of a later
+            // button/chord comes in through ConsumeDeliberateDropRequest.
+            l4d2vr_drop::ReleaseInput dropInput{};
+            dropInput.released = gripDropRequested;
+            dropInput.weaponId = pistolDropHand != l4d2vr_dual::Hand::None
+                ? static_cast<int>(C_WeaponCSBase::WeaponID::PISTOL) : activeWeaponId;
+            dropInput.thrown = handThrowNow;
+            dropInput.carriedProp = carriedProp;
+            dropInput.deliberateDrop = gripDropRequested && m_VR->ConsumeDeliberateDropRequest();
+            const l4d2vr_drop::Outcome dropOutcome = l4d2vr_drop::Resolve(dropInput);
+            const bool gripDropSend = dropOutcome == l4d2vr_drop::Outcome::Drop;
+            if (dropOutcome == l4d2vr_drop::Outcome::Keep)
+            {
+                if (pistolDropHand != l4d2vr_dual::Hand::None)
+                    s_pistolOwnership.AdoptPickup(pistolDropHand);
+                else
+                    s_weaponGripRelease.ReclaimWeapon(activeWeaponTag);
+                // The toggle grip holds it again (ProcessInput).
+                if (pistolDropHand != l4d2vr_dual::Hand::Left)
+                    m_VR->m_GripToggleRehold.store(true, std::memory_order_release);
+                m_VR->m_GripReleaseKeptCount.fetch_add(1u, std::memory_order_acq_rel);
+                Game::logMsg("[VR][GripDrop] release away from a holster cmd=%d weaponId=%d hand=%s: %s (dropping is off)",
+                    cmd->command_number, activeWeaponId,
+                    pistolDropHand == l4d2vr_dual::Hand::Left ? "left pistol" : "item",
+                    l4d2vr_drop::OutcomeName(dropOutcome));
+            }
             // Sent below with the release command (not for a carried prop or a
             // pistol hand): watch whether the item comes back to the hand.
-            if (gripDropRequested && !handThrowNow && manualThrowInputActive && !carriedProp && pistolDropHand == l4d2vr_dual::Hand::None)
+            if (gripDropSend && manualThrowInputActive && !carriedProp && pistolDropHand == l4d2vr_dual::Hand::None)
                 s_gripDropReturn.Dropped(activeWeaponTag, gripNowMs);
 			{
 				// One line per weapon-grip release: why it did or did not drop.
@@ -2247,7 +2276,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 				if (s_prevGripDownForDropLog && !gripDownNow && (holsterGripHoldMode || m_VR->m_GripReleaseDropEnabled))
 				{
 					Game::logMsg("[VR][GripDrop] release: drop=%d owned=%d eligible=%d proto=%d gameplay=%d(blocked 0x%X) throwActive=%d backend=%d inventoryItem=%d ownZone=%d otherZone=%d canRelease=%d weaponId=%d",
-						gripDropRequested ? 1 : 0, gripOwnedBeforeRelease ? 1 : 0, gripDropEligible ? 1 : 0,
+						gripDropSend ? 1 : 0, gripOwnedBeforeRelease ? 1 : 0, gripDropEligible ? 1 : 0,
 						l4d2vr_wire::SupportsPhysicalVersion(m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire)) ? 1 : 0,
 						gripSession.gameplay ? 1 : 0, gripSession.blocked, manualThrowInputActive ? 1 : 0, throwBackendReady ? 1 : 0,
 						inventoryItem ? 1 : 0,
@@ -2280,7 +2309,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 						m_VR->m_FirstPersonControlReady.load(std::memory_order_acquire) ? 1 : 0, activeWeaponId,
                         gripDropEligible ? 1 : 0, gripSession.blocked,
                         s_weaponGripRelease.IsArmed() ? 1 : 0, s_weaponGripRelease.WaitingForRelease() ? 1 : 0,
-                        gripDropRequested ? 1 : 0, s_gripExtraSamples, reinterpret_cast<void*>(activeWeaponTag),
+                        gripDropSend ? 1 : 0, s_gripExtraSamples, reinterpret_cast<void*>(activeWeaponTag),
                         m_VR->m_ServerPhysicalInteractionVersion.load(std::memory_order_acquire));
 				}
 			}
@@ -2335,7 +2364,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 					const bool triggerPressedAfterUse =
 						physicalAttackDown && !s_manualCarryThrowPhysicalAttackDown &&
 						physicalUseDown && s_manualInventoryThrowPhysicalUseDown;
-					if (gripDropRequested && !handThrowNow)
+					if (gripDropSend)
 					{
 						m_VR->CancelMagazineInteractionManual();
 						m_VR->m_VrHandsTwoHandedGripActive = false;
@@ -2356,7 +2385,7 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 						carryButtons |= (encodedWeaponId & 0x3Fu) << kManualCarryThrowWeaponShift;
 						Game::logMsg("[VR][GripDrop] client release cmd=%d weaponId=%d", cmd->command_number, activeWeaponId);
 					}
-					if (!gripDropRequested && !s_manualInventoryThrowArmed && triggerPressedAfterUse)
+					if (!gripDropSend && !s_manualInventoryThrowArmed && triggerPressedAfterUse)
 						s_manualInventoryThrowArmed = true;
 					// The trigger pulls the pin; the grenade's native attack never starts.
 					if (handThrowMode)

@@ -14493,6 +14493,71 @@ namespace
         }
     }
 
+    // 2.0.12 (review s12 issue 5): the fist AND the thumb-index pinch of BOTH
+    // drawn hands (bip01_l_* and bip01_r_*), so the reload hand gets the same
+    // construction whichever hand it is (a gun in the left hand reloads with
+    // the right). VR::GetMagazineInteractionNativeSupportGrip picks the drawn
+    // hand at the support controller.
+    constexpr float kNativePinchTipFraction = 0.6f;
+    inline void HooksNativeViewmodelHandsOnlyPublishHandGrips(
+        VR* vr,
+        const std::vector<std::string>& boneNames,
+        int numBones,
+        const vr_vm_stabilize::Mat3x4* currentBones)
+    {
+        static const char* const kSuffix[] = { "hand", "finger0", "finger1", "finger2", "finger3", "finger4",
+            "finger01", "finger02", "finger11", "finger12" };
+        constexpr int kCount = static_cast<int>(sizeof(kSuffix) / sizeof(kSuffix[0]));
+        static std::vector<std::string> s_names;
+        static int s_index[2][kCount] = {};
+        if (s_names != boneNames)
+        {
+            s_names = boneNames;
+            for (int side = 0; side < 2; ++side)
+                for (int i = 0; i < kCount; ++i)
+                {
+                    const std::string name = std::string(side == 0 ? "bip01_l_" : "bip01_r_") + kSuffix[i];
+                    if (!HooksNativeViewmodelHandsOnlyFindBoneByLowerSuffix(boneNames, name.c_str(), s_index[side][i]))
+                        s_index[side][i] = -1;
+                }
+        }
+        for (int side = 0; side < 2; ++side)
+        {
+            Vector at[kCount] = {};
+            bool valid[kCount] = {};
+            for (int i = 0; i < kCount; ++i)
+            {
+                vr_vm_stabilize::Mat3x4 bone{};
+                valid[i] = s_index[side][i] >= 0 && s_index[side][i] < numBones &&
+                    vr_vm_stabilize::SafeRead(currentBones + s_index[side][i], bone) &&
+                    HooksNativeViewmodelHandsOnlyMatrixFinite(bone);
+                if (valid[i])
+                    at[i] = vr_vm_stabilize::GetOrigin(bone);
+            }
+            if (!valid[0])
+                continue;
+            l4d2vr_ammo_grip::HandBones hand{};
+            hand.wrist = at[0];
+            for (int finger = 0; finger < 4; ++finger)
+            {
+                hand.knuckles[finger] = at[2 + finger];
+                hand.knuckleValid[finger] = valid[2 + finger];
+            }
+            hand.thumbRoot = at[1];
+            hand.thumbValid = valid[1];
+            Vector fist{};
+            const bool fistValid = l4d2vr_ammo_grip::FistCenter(hand, kNativeFistAlong, kNativeFistDepth, fist);
+            l4d2vr_ammo_grip::PinchBones pinchBones{};
+            pinchBones.thumb[0] = at[1]; pinchBones.thumb[1] = at[6]; pinchBones.thumb[2] = at[7];
+            pinchBones.index[0] = at[2]; pinchBones.index[1] = at[8]; pinchBones.index[2] = at[9];
+            pinchBones.thumbValid = valid[1] && valid[6] && valid[7];
+            pinchBones.indexValid = valid[2] && valid[8] && valid[9];
+            Vector pinch{}, pinchAxis{};
+            const bool pinchValid = l4d2vr_ammo_grip::PinchPoint(pinchBones, kNativePinchTipFraction, pinch, pinchAxis);
+            vr->PublishMagazineInteractionNativeHandGrip(side == 0, at[0], fist, fistValid, pinch, pinchValid);
+        }
+    }
+
     inline void HooksNativeViewmodelHandsOnlyPublishLeftWristAnchor(
         VR* vr,
         const std::vector<std::string>& boneNames,
@@ -14537,6 +14602,7 @@ namespace
             HooksMatrixAxis(anchorWorld, 1),
             HooksMatrixAxis(anchorWorld, 2));
         HooksNativeViewmodelHandsOnlyPublishLeftFist(vr, boneNames, numBones, currentBones);
+        HooksNativeViewmodelHandsOnlyPublishHandGrips(vr, boneNames, numBones, currentBones);
     }
 
     inline vr_vm_stabilize::Mat3x4 HooksNativeViewmodelHandsOnlyMakeLocalAxisRotation(
@@ -26715,7 +26781,8 @@ static void RefreshGripPickupContact(VR* vr, Game* game, C_BasePlayer* player, b
     } filter(game, vr, player, left);
     const Vector hand = left ? vr->GetLeftControllerAbsPos() : vr->GetRightControllerAbsPos();
     if (!IsFiniteVector3(hand)) return;
-    const float extent = 0.18f * vr->m_VRScale;
+    // 2.0.12: Pavlov's hand grab volume (11.5 cm; was an 18 cm box).
+    const float extent = l4d2vr_grab::kHandSphereRadiusMeters * vr->m_VRScale;
     Ray_t ray;
     ray.Init(hand, hand, Vector(-extent, -extent, -extent), Vector(extent, extent, extent));
     trace_t trace{};
@@ -26941,9 +27008,34 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
             rightController.m[row][col] = VrHandMath::Get(rightWorld, row, col);
             leftController.m[row][col] = VrHandMath::Get(leftWorld, row, col);
         }
+    // 2.0.12 (review s12 issue 6): the left gun mirrors the right hand's hold
+    // (lateral offset negated) instead of copying it into the left palm; this
+    // is the native-hands path too (no glove wrist needed).
+    {
+        // 2.0.12: the left gun takes the same per-class barrel pitch as the right
+        // gun's aim basis (vr_tracking.inl); rotate its controller frame (right,
+        // up, back) about its right axis the same way.
+        const float classPitch = l4d2vr_gun_hand_anchor::ClassAimPitchExtraDeg(
+            vr->m_ActiveGunWeaponId.load(std::memory_order_acquire), vr->m_WeaponAimPistolPitchOffsetDeg);
+        if (leftTracked && classPitch != 0.0f)
+        {
+            const Vector right(leftController.m[0][0], leftController.m[1][0], leftController.m[2][0]);
+            Vector up(leftController.m[0][1], leftController.m[1][1], leftController.m[2][1]);
+            Vector forward(-leftController.m[0][2], -leftController.m[1][2], -leftController.m[2][2]);
+            forward = VectorRotate(forward, right, classPitch);
+            up = VectorRotate(up, right, classPitch);
+            for (int row = 0; row < 3; ++row)
+            {
+                leftController.m[row][1] = up[row];
+                leftController.m[row][2] = -forward[row];
+            }
+        }
+    }
+    // With the GLB gloves the glove wrist below aligns the copied hold instead.
+    const bool gloveAlign = vr->m_VrHandsEnabled && vr->m_VrHandsGlovesEnabled;
     const bool canRetarget = rightTracked && leftTracked &&
-        l4d2vr_dual::Retarget(rightController, leftController, primary, other, delta);
-    if (canRetarget && primaryWrist >= 0)
+        l4d2vr_dual::Retarget(rightController, leftController, primary, other, delta, !gloveAlign);
+    if (canRetarget && primaryWrist >= 0 && gloveAlign)
     {
         vr_vm_stabilize::Mat3x4 wristWorld{};
         Vector gloveWrist{};

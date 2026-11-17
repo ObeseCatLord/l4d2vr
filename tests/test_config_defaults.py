@@ -27,12 +27,15 @@ class ConfigDefaults(unittest.TestCase):
         values = shipped_values((ROOT / 'config.txt').read_text(encoding='utf-8'))
         self.assertEqual(values.get('MagazineBoxDebugEnabled'), 'false')
         self.assertEqual(values.get('ShowInventoryAnchors'), 'false')
+        # 2.0.12: the local interaction-volume view is off by default.
+        self.assertEqual(values.get('DebugInteractionVolumes'), 'false')
         self.check(values, 'config.txt')
 
     def test_code_defaults(self):
         header = (ROOT / 'vr.h').read_text(encoding='utf-8', errors='replace')
         self.assertIn('bool m_MagazineBoxDebugEnabled = false;', header)
         self.assertIn('bool m_DrawInventoryAnchors = false;', header)
+        self.assertIn('bool m_DebugInteractionVolumes = false;', header)
 
     def test_existing_configs_are_migrated(self):
         main = (ROOT / 'dllmain.cpp').read_text(encoding='utf-8', errors='replace')

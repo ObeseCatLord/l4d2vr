@@ -119,8 +119,11 @@ the instance (runtime name and version, extensions), the session states and fram
     [physical-overhaul.md](physical-overhaul.md#controls-physical-layout).
   * SteamVR's OpenXR binding screen can still remap the OpenXR actions. Monado cannot.
 * **Trigger and grip thresholds are the mod's**, not SteamVR's per-binding settings:
-  * Index grips click at squeeze 0.85 (right, released below 0.5) and 0.8 (left, released below
-    0.45), as in the old SteamVR file. A firm, full-hand squeeze is needed.
+  * Index grips grab on squeeze *force* (2.0.12): press at force 0.30, release below 0.12. The
+    capacitive squeeze value (fingers merely wrapped round the handle) only curls the fingers; it
+    used to count as a grab and fired about every 9 s while aiming. Analog grips of the other
+    controllers (Touch, Quest, Pico, Reverb, Focus 3) grab at squeeze 0.60 and let go below 0.35;
+    click grips (Vive wands, WMR, Cosmos) click.
   * Analog triggers (Index, Touch, Vive, Cosmos, Focus 3, WMR, Pico 4) and the other analog grips click at
     0.25 and release below 0.2. Since 2.0.11 the Index, Vive, Cosmos, Focus 3 and Pico 4 triggers read the
     analog value too (2.0.0-2.0.10 used the trigger's end-of-travel click on them).

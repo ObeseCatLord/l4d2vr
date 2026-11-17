@@ -726,6 +726,96 @@ bool VrHandSystem::DrawStandaloneMagazineBox(
     return true;
 }
 
+bool VrHandSystem::DrawDebugLinesForEye(
+    IDirect3DDevice9* device,
+    const CViewSetup& view,
+    const std::vector<l4d2vr_debug_volumes::Line<Vector>>& lines)
+{
+    if (!device || lines.empty())
+        return false;
+    D3DVIEWPORT9 viewport{};
+    if (FAILED(device->GetViewport(&viewport)) || viewport.Width == 0 || viewport.Height == 0)
+        return false;
+    struct LineVertex { float x, y, z, rhw; DWORD color; };
+    std::vector<LineVertex> vertices;
+    vertices.reserve(lines.size() * 2u);
+    const VrHandMatrix4 camera = VrHandMath::BuildSourceView(view.origin, view.angles);
+    constexpr float kPi = 3.14159265358979323846f;
+    auto scaleFor = [&](bool vm, float& xScale, float& yScale)
+    {
+        const float fov = (vm && view.fovViewmodel > 0.001f) ? view.fovViewmodel : view.fov;
+        const float aspect = vm ? ResolveVrHandsViewmodelAspect(view) : ResolveVrHandsSceneAspect(view);
+        xScale = 1.0f / std::tan(std::clamp(fov, 1.0f, 179.0f) * kPi / 360.0f);
+        yScale = xScale * aspect;
+    };
+    float sceneX = 1.0f, sceneY = 1.0f, vmX = 1.0f, vmY = 1.0f;
+    scaleFor(false, sceneX, sceneY);
+    scaleFor(true, vmX, vmY);
+    auto toCamera = [&](const Vector& p)
+    {
+        return Vector(
+            VrHandMath::Get(camera, 0, 0) * p.x + VrHandMath::Get(camera, 0, 1) * p.y + VrHandMath::Get(camera, 0, 2) * p.z + VrHandMath::Get(camera, 0, 3),
+            VrHandMath::Get(camera, 1, 0) * p.x + VrHandMath::Get(camera, 1, 1) * p.y + VrHandMath::Get(camera, 1, 2) * p.z + VrHandMath::Get(camera, 1, 3),
+            VrHandMath::Get(camera, 2, 0) * p.x + VrHandMath::Get(camera, 2, 1) * p.y + VrHandMath::Get(camera, 2, 2) * p.z + VrHandMath::Get(camera, 2, 3));
+    };
+    constexpr float kNear = 0.5f;   // source units in front of the eye
+    for (const auto& line : lines)
+    {
+        Vector a = toCamera(line.a), b = toCamera(line.b);   // (right, up, forward)
+        if (a.z < kNear && b.z < kNear)
+            continue;
+        if (a.z < kNear || b.z < kNear)
+        {
+            const float t = (kNear - a.z) / (b.z - a.z);
+            const Vector cut = a + (b - a) * t;
+            if (a.z < kNear) a = cut; else b = cut;
+        }
+        const float xs = line.viewmodelLayer ? vmX : sceneX, ys = line.viewmodelLayer ? vmY : sceneY;
+        for (const Vector* p : { &a, &b })
+        {
+            LineVertex v{};
+            const float ndcX = xs * p->x / p->z, ndcY = ys * p->y / p->z;
+            v.x = static_cast<float>(viewport.X) + (ndcX * 0.5f + 0.5f) * static_cast<float>(viewport.Width);
+            v.y = static_cast<float>(viewport.Y) + (0.5f - ndcY * 0.5f) * static_cast<float>(viewport.Height);
+            v.z = 0.0f;
+            v.rhw = 1.0f;
+            v.color = static_cast<DWORD>(line.argb);
+            vertices.push_back(v);
+        }
+    }
+    if (vertices.size() < 2u)
+        return false;
+    IDirect3DStateBlock9* saved = nullptr;
+    if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &saved)) || !saved)
+        return false;
+    device->SetVertexShader(nullptr);
+    device->SetPixelShader(nullptr);
+    device->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    device->SetTexture(0, nullptr);
+    device->SetRenderState(D3DRS_ZENABLE, D3DZB_FALSE);
+    device->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    device->SetRenderState(D3DRS_STENCILENABLE, FALSE);
+    device->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    device->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    device->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    device->SetRenderState(D3DRS_LIGHTING, FALSE);
+    device->SetRenderState(D3DRS_FOGENABLE, FALSE);
+    device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+    device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
+    device->SetRenderState(D3DRS_COLORWRITEENABLE, 0x0Fu);
+    device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+    device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
+    device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+    device->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+    const UINT lineCount = static_cast<UINT>(vertices.size() / 2u);
+    const HRESULT hr = device->DrawPrimitiveUP(D3DPT_LINELIST, lineCount, vertices.data(), sizeof(LineVertex));
+    saved->Apply();
+    saved->Release();
+    return SUCCEEDED(hr);
+}
+
 bool VrHandSystem::DrawMagazineDebugBoxesForEye(
     IDirect3DDevice9* device,
     const CViewSetup& view,

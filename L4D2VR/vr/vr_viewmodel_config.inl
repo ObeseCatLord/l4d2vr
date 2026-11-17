@@ -1255,7 +1255,7 @@ void VR::ParseConfigFileUnlocked()
         m_InventoryQuickSwitchActive = false;
         m_InventoryQuickSwitchArmed = false;
     }
-    m_DrawInventoryAnchors = getBool("ShowInventoryAnchors", false);
+    m_DrawInventoryAnchors = getBool("ShowInventoryAnchors", false) || getBool("DebugInteractionVolumes", false);
     const auto inventoryColor = getColor("InventoryAnchorColor", m_InventoryAnchorColorR, m_InventoryAnchorColorG, m_InventoryAnchorColorB, m_InventoryAnchorColorA);
     m_InventoryAnchorColorR = inventoryColor[0];
     m_InventoryAnchorColorG = inventoryColor[1];
@@ -2075,6 +2075,7 @@ void VR::ParseConfigFileUnlocked()
     m_VrHandsModelScale = std::clamp(getFloat("VrHandsModelScale", m_VrHandsModelScale), 0.25f, 4.0f);
     m_VrHandsRightUseViewmodelPose = getBool("VrHandsRightUseViewmodelPose", m_VrHandsRightUseViewmodelPose);
     m_VrHandsTwoHandedGripTargetBoxScale = std::clamp(getFloat("VrHandsTwoHandedGripTargetBoxScale", m_VrHandsTwoHandedGripTargetBoxScale), 0.25f, 8.0f);
+    m_VrHandsPavlovForegripBoxes = getBool("VrHandsPavlovForegripBoxes", m_VrHandsPavlovForegripBoxes);
     m_VrHandsTwoHandedGripHeldMode = getBool("VrHandsTwoHandedGripHeldMode", m_VrHandsTwoHandedGripHeldMode);
     m_VrHandsRealBulletSpreadEnabled = getBool("VrHandsRealBulletSpreadEnabled", m_VrHandsRealBulletSpreadEnabled);
     m_VrHandsTwoHandedAimMountFriendly = getBool("VrHandsTwoHandedAimMountFriendly", m_VrHandsTwoHandedAimMountFriendly);
@@ -2096,6 +2097,13 @@ void VR::ParseConfigFileUnlocked()
     m_VrHandsVirtualStockOffsetMeters = getVector3("VrHandsVirtualStockOffsetMeters", m_VrHandsVirtualStockOffsetMeters);
     m_VrHandsVirtualStockStrength = std::clamp(getFloat("VrHandsVirtualStockStrength", m_VrHandsVirtualStockStrength), 0.0f, 1.0f);
     m_MagazineBoxDebugEnabled = getBool("MagazineBoxDebugEnabled", false);
+    // 2.0.12: every grab / interaction volume in your own eyes only (local
+    // eye pass; nobody else sees it). It includes the magazine/bolt debug
+    // boxes and the aim line; with the legacy (non-holster) layout also the
+    // inventory anchors (ShowInventoryAnchors, local client overlay).
+    m_DebugInteractionVolumes = getBool("DebugInteractionVolumes", false);
+    if (m_DebugInteractionVolumes)
+        m_MagazineBoxDebugEnabled = true;
     m_ViewmodelBoneLabelsEnabled = getBool("ViewmodelBoneLabelsEnabled", m_ViewmodelBoneLabelsEnabled);
     m_MagazineBoxDebugFallbackHalfExtentsMeters = getVector3("MagazineBoxDebugFallbackHalfExtentsMeters", m_MagazineBoxDebugFallbackHalfExtentsMeters);
     m_MagazineBoxDebugPaddingMeters = getVector3("MagazineBoxDebugPaddingMeters", m_MagazineBoxDebugPaddingMeters);
@@ -3147,6 +3155,7 @@ void VR::ParseConfigFileUnlocked()
         getFloat("WeaponAimPitchOffsetDeg", m_WeaponAimPitchOffsetDeg),
         -90.0f,
         90.0f);
+    m_WeaponAimPistolPitchOffsetDeg = std::clamp(getFloat("WeaponAimPistolPitchOffsetDeg", m_WeaponAimPistolPitchOffsetDeg), -30.0f, 30.0f);
     m_WeaponAimYawOffsetDeg = l4d2vr_calibration::ClampFinite(
         getFloat("WeaponAimYawOffsetDeg", m_WeaponAimYawOffsetDeg),
         -180.0f,
@@ -3458,6 +3467,38 @@ void VR::ParseConfigFileUnlocked()
         m_CrosshairColorA = std::clamp(getInt("CrosshairAlpha", 210), 0, 255);
     }
     m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
+    {
+        // 2.0.12: the body layout (vr_holster.h MakeLayout): forefront (default)
+        // or pavlov. Positions are code tables; the chest pouches can be moved
+        // with HolsterGrenadeOffsetMeters / HolsterMagPouchOffsetMeters
+        // ("auto" = the layout's own place; root-relative forward, dominant, up).
+        const std::string layoutName = getString("HolsterLayout", "forefront");
+        bool knownLayout = true;
+        const l4d2vr_holster::LayoutKind layoutKind =
+            l4d2vr_holster::LayoutKindFromName(layoutName.c_str(), &knownLayout);
+        if (!knownLayout)
+            Game::logMsg("[VR][Holster] HolsterLayout=%s is unknown: using forefront", layoutName.c_str());
+        if (!knownLayout || layoutKind != m_HolsterLayout.layoutKind)
+            Game::logMsg("[VR][Holster] layout %s", l4d2vr_holster::LayoutKindName(layoutKind));
+        m_HolsterLayout = l4d2vr_holster::MakeLayout(layoutKind);
+        auto offsetOverride = [&](const char* key, Vector& target)
+        {
+            const std::string text = getString(key, "auto");
+            if (text.empty() || text == "auto")
+                return;
+            Vector v{};
+            if (std::sscanf(text.c_str(), "%f , %f , %f", &v.x, &v.y, &v.z) == 3 &&
+                std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) &&
+                std::fabs(v.x) < 1.0f && std::fabs(v.y) < 1.0f && std::fabs(v.z) < 1.5f)
+                target = v;
+            else
+                Game::logMsg("[VR][Holster] %s=%s is not \"auto\" or x,y,z metres: ignored", key, text.c_str());
+        };
+        offsetOverride("HolsterGrenadeOffsetMeters", m_HolsterLayout.socket[l4d2vr_holster::SlotIndex(l4d2vr_holster::Zone::Throwable)]);
+        offsetOverride("HolsterMagPouchOffsetMeters", m_HolsterLayout.magPouch);
+        // Review s12 7a / G1: only an empty hand takes from the body.
+        m_HolsterGrabRequiresEmptyHand = getBool("HolsterGrabRequiresEmptyHand", true);
+    }
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
     m_AmbidextrousItemHands = getBool("AmbidextrousItemHands", true);

@@ -9,6 +9,7 @@
 #include "vr_vrik_lower_body.h"
 #include "vr_body_ik.h"
 #include "vr_grip_release.h"
+#include "vr_drop_policy.h"
 #include "vr_pistol_detachment.h"
 #include "vr_interaction_geometry.h"
 #include "vr_interaction_protocol.h"
@@ -519,7 +520,7 @@ namespace
             // a slung rifle or pack would float behind you and show up when you
             // look down. Back holsters stay grabbable (and pulse) but undrawn.
             if (!vr->m_FirstPersonBodyEnabled &&
-                l4d2vr_holster::IsBackZone(static_cast<l4d2vr_holster::Zone>(item.slot)) &&
+                l4d2vr_holster::IsBackZone(vr->m_HolsterLayout, static_cast<l4d2vr_holster::Zone>(item.slot)) &&
                 !(vr->m_SelfTestEnabled && (vr->m_SelfTestBackPreviewMeters > 0.0f || vr->m_SelfTestAllPreviewMeters > 0.0f)))
                 continue;
             // Without the hooked SetupBones the item would be drawn with its

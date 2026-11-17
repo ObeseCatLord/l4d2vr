@@ -60,6 +60,8 @@
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
+#include "vr_grab_volumes.h"
+#include "vr_debug_volumes.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
@@ -512,6 +514,7 @@ public:
 	// Rotates the logical weapon hand's OpenVR grip pose around its local right
 	// axis before the pose is used by the viewmodel, aim line, and gameplay aim.
 	float m_WeaponAimPitchOffsetDeg = -45.0f;
+	float m_WeaponAimPistolPitchOffsetDeg = -10.0f;   // 2.0.12: pistol-class guns 10 deg steeper (Pavlov 70 vs 60)
 	// Additional aim-basis offsets layered on top of the default pitch tweak.
 	float m_WeaponAimYawOffsetDeg = 0.0f;
 	float m_WeaponAimRollOffsetDeg = 0.0f;
@@ -1534,6 +1537,13 @@ public:
 	l4d2vr_grip_toggle::Toggle m_GripToggle;
 	std::atomic<uint32_t> m_GripToggleAdoptSerial{ 0u };   // contact pickups adopted by the grip
 	std::atomic<uint32_t> m_GripToggleHeldTag{ 0u };       // 2.0.11: the item the toggle grip holds (0 = none / not settled)
+	// 2.0.12 (vr_drop_policy.h): a release no holster caught keeps the item;
+	// CreateMove asks the toggle grip to hold it again.
+	std::atomic<bool> m_GripToggleRehold{ false };
+	std::atomic<uint32_t> m_GripReleaseKeptCount{ 0u };
+	// Hook for the later dedicated drop button/chord (nothing sets it yet).
+	std::atomic<bool> m_DeliberateDropRequested{ false };
+	bool ConsumeDeliberateDropRequest() { return m_DeliberateDropRequested.exchange(false, std::memory_order_acq_rel); }
 	std::atomic<uint32_t> m_GripTogglePickupSerial{ 0u };  // contact pickups requested
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };
@@ -1728,6 +1738,8 @@ public:
 
     // Pavlov-style holsters (body grip inventory with visible, grabbable items).
     bool m_HolsterPavlovLayoutEnabled = true;
+    bool m_HolsterGrabRequiresEmptyHand = true;   // 2.0.12: only an empty hand takes from the body
+    l4d2vr_holster::Zone m_HolsterHoverZone[2] = { l4d2vr_holster::Zone::None, l4d2vr_holster::Zone::None }; // [0] free, [1] item hand (nearest-wins hysteresis)
     bool m_HolsterItemsVisible = true;
     bool m_HolsterInstantDraw = true;
     float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the head yaw every frame (Forefront)
@@ -2411,6 +2423,21 @@ public:
 	bool m_ItemHandForceGripUpFrame = false; // a holster draw: the new item hand presses afresh next frame
 	bool m_ItemHandFreshPress = false;       // 2.0.11: ... and the toggle forgets the old hand's raw grip
 	l4d2vr_item_hand::DrawWatch m_ItemHandDrawWatch; // 2.0.11: undo a free-hand draw that never drew
+	l4d2vr_item_hand::OwnerHands m_ItemOwners;      // 2.0.12: the hand each item returns to after a game-side switch
+	// 2.0.12 (review s12 G4): a holster draw the game refuses.
+	int m_HolsterDrawWatchSlot = -1;
+	uint64_t m_HolsterDrawWatchMs = 0u;
+	bool m_HolsterDrawWatchPhysicalLeft = false;
+	bool m_HolsterDrawWatchHandChanged = false;
+	bool m_HolsterDrawWatchPrevLeft = false;
+	bool m_HolsterDrawWatchPrevHeld = false;
+	bool m_ItemHandFreeDrawPending = false;
+	uint64_t m_ItemHandFreeDrawMs = 0u;
+	bool m_ItemHandFreeDrawPrevLeft = false;
+	bool m_ItemHandFreeDrawPrevHeld = false;
+	std::atomic<uint32_t> m_HolsterDrawRefusedCount{ 0u };
+	uint32_t m_ItemOwnerModSerial = 0u;
+	std::atomic<uint32_t> m_ItemAutoReturnCount{ 0u };
 	// Gameplay right hand (the item hand) is the physical left controller.
 	bool ItemHandIsPhysicalLeft() const
 	{
@@ -2713,6 +2740,11 @@ public:
 	bool m_VrHandsMotionRangeWithoutController = false;
 	bool m_VrHandsRightUseViewmodelPose = false;
 	float m_VrHandsTwoHandedGripTargetBoxScale = 1.5f;
+	// 2.0.12: Pavlov's per-class foregrip boxes (vr_grab_volumes.h) instead of
+	// the box at the animated left hand; and the support point's bore-line slide.
+	bool m_VrHandsPavlovForegripBoxes = true;
+	Vector m_TwoHandSupportSlideOffset{};
+	std::chrono::steady_clock::time_point m_TwoHandSupportSlideStart{};
 	bool m_VrHandsTwoHandedGripHeldMode = false;
 	bool m_VrHandsRealBulletSpreadEnabled = false;
 	bool m_VrHandsTwoHandedAimMountFriendly = false;
@@ -2919,6 +2951,13 @@ public:
 	// the curled fingers), from the drawn hand bones.
 	Vector m_MagazineInteractionNativeLeftFistWorld{};
 	bool m_MagazineInteractionNativeLeftFistValid = false;
+	struct NativeHandGrip
+	{
+		Vector wrist{}, fist{}, pinch{};
+		bool fistValid = false, pinchValid = false;
+		std::chrono::steady_clock::time_point publishedAt{};
+	};
+	NativeHandGrip m_MagazineInteractionNativeHandGrip[2]{};   // [0] model left hand, [1] model right hand
 	std::chrono::steady_clock::time_point m_MagazineInteractionNativeLeftFistPublishedAt{};
 	uint32_t m_MagazineInteractionPublishSeq = 0;
 	uint32_t m_MagazineInteractionBoltPublishSeq = 0;
@@ -5428,6 +5467,15 @@ public:
 	bool GetTwoHandedGripTargetPoint(Vector& point) const;
 	bool GetMagazineInteractionNativeLeftWristAnchor(VrHandMatrix4& outWorld) const;
 	void PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld);
+	// 2.0.12 (review s12 issue 5): fist and thumb-index pinch of both drawn hands.
+	void PublishMagazineInteractionNativeHandGrip(bool modelLeft, const Vector& wrist, const Vector& fist, bool fistValid,
+		const Vector& pinch, bool pinchValid);
+	// The drawn hand at the support (reload) controller: its fist and pinch
+	// (viewmodel layer). nearPoint = that controller in the viewmodel layer.
+	bool GetMagazineInteractionNativeSupportGrip(const Vector& nearPoint, Vector* fist, Vector* pinch) const;
+	// 2.0.12: DebugInteractionVolumes (vr_debug_volumes.h), local eye pass only.
+	bool m_DebugInteractionVolumes = false;
+	void BuildDebugInteractionVolumes(std::vector<l4d2vr_debug_volumes::Line<Vector>>& out);
 	bool GetMagazineInteractionNativeLeftFist(Vector& outWorld) const;
 	bool HasFreshMagazineInteractionDebugBoxWork() const;
 	bool GetMagazineInteractionCalibrationSnapshot(MagazineInteractionCalibrationSnapshot& outSnapshot) const;

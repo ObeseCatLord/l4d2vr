@@ -103,15 +103,15 @@ int main()
         Matrix gun=rc; gun.m[0][3]=3; gun.m[1][3]=-20-2; gun.m[2][3]=0;
         Matrix d{};
         CHECK(Retarget(rc,lc,gun,gun,d,true));
-        Matrix left=Multiply(d,gun);
+        Matrix mirrored=Multiply(d,gun);
         // In the left controller frame: lateral -2 cm (toward ITS fingers, the
         // mirror side), forward and up unchanged, rotation as the controller.
-        CHECK(std::fabs(left.m[1][3]-(20+2))<0.0001f && std::fabs(left.m[0][3]-3)<0.0001f && std::fabs(left.m[2][3])<0.0001f);
-        CHECK(std::fabs(left.m[0][0]-gun.m[0][0])<0.0001f && std::fabs(left.m[1][1]-gun.m[1][1])<0.0001f);
+        CHECK(std::fabs(mirrored.m[1][3]-(20+2))<0.0001f && std::fabs(mirrored.m[0][3]-3)<0.0001f && std::fabs(mirrored.m[2][3])<0.0001f);
+        CHECK(std::fabs(mirrored.m[0][0]-gun.m[0][0])<0.0001f && std::fabs(mirrored.m[1][1]-gun.m[1][1])<0.0001f);
         // The copy (2.0.11) put it 2 cm toward the left controller's right: into the palm.
         CHECK(Retarget(rc,lc,gun,gun,d));
-        left=Multiply(d,gun);
-        CHECK(std::fabs(left.m[1][3]-(20-2))<0.0001f);
+        mirrored=Multiply(d,gun);
+        CHECK(std::fabs(mirrored.m[1][3]-(20-2))<0.0001f);
     }
 
     CHECK(PrimaryHand(true, false, 2u) == Hand::Left);

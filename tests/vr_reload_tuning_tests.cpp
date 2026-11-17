@@ -133,7 +133,8 @@ static void TestPavlovMagazineSlots()
     CHECK(std::fabs(SlotLateralBoundMeters(6) - 0.15f) < 1e-6f && std::fabs(SlotLateralBoundMeters(1) - 0.10f) < 1e-6f); // SKS 15 cm, M9 10 cm
     CHECK(SlotForWeapon(1).slideGoalCm == 3.0f && SlotForWeapon(26).slideGoalCm == 10.0f);
     CHECK(ClampReloadSpeed(20.0f) == 10.0f && ClampReloadSpeed(1.0f) == 2.5f);
-    CHECK(kSeatFraction == 0.95f && kReleaseCompleteFraction == 0.35f);
+    const float seatFraction = kSeatFraction, releaseFraction = kReleaseCompleteFraction;
+    CHECK(seatFraction == 0.95f && releaseFraction == 0.35f);
 }
 
 int main()

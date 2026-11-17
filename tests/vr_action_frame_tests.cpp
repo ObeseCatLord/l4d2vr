@@ -255,6 +255,7 @@ struct VR
     void updateFreshDetachedMagazineFromLeftHand() { ++shellWorldUpdates; }
     void ShellPending(bool leftGripDown)
     {
+        (void)leftGripDown;
 #include "vr_action_frame_shell_hold.inl"
     }
     bool RemoteMagazineProtocolSupported() const { return magazineProtocolSupported; }

@@ -34,6 +34,8 @@ namespace vr_vm_stabilize
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
+            // A caught fault costs tens of microseconds under Wine ([VR][Perf]).
+            l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kFaults, 1);
             return false;
         }
 #else
@@ -54,6 +56,7 @@ namespace vr_vm_stabilize
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
+            l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kFaults, 1);
             return false;
         }
 #else
@@ -19924,9 +19927,13 @@ namespace
         }
         if (!haveLeftChain || !haveRightChain)
         {
+            // 2.0.12 (E19): name the missing side; the arms keep the game's
+            // animation for this draw (seen while a throwable is deployed).
             HooksNativeViewmodelArmIkLogOnce(
-                "atomic-chain|" + lowerModel,
-                "[VR][ViewmodelArmIK] atomic pair rejected because one shoulder-elbow-hand chain is missing model=%s",
+                std::string(haveLeftChain ? "atomic-chain-right|" : "atomic-chain-left|") + lowerModel,
+                haveLeftChain
+                    ? "[VR][ViewmodelArmIK] both-arm solve skipped: the right shoulder-elbow-hand chain is missing (game animation kept for this draw) model=%s"
+                    : "[VR][ViewmodelArmIK] both-arm solve skipped: the left shoulder-elbow-hand chain is missing (game animation kept for this draw) model=%s",
                 lowerModel,
                 nullptr,
                 nullptr,
@@ -21003,7 +21010,7 @@ namespace
                         chain.upperArm,
                         chain.forearm,
                         chain.hand,
-                        haveAttachedBodySkeleton ? "attached" : "unavailable");
+                        haveAttachedBodySkeleton ? "attached" : haveFirstPersonBodyFrame ? "not attached" : "off (full body off)");
                 }
             };
         auto solveSide = [&](
@@ -21510,11 +21517,16 @@ namespace
                     armRequiredStretchScale[1]);
             }
         }
+        // 2.0.12 (E19): without the full body (FirstPersonBodyEnabled=false)
+        // there is no body skeleton by design and the shoulders come from the
+        // head/torso frame; say that instead of "unavailable".
         HooksNativeViewmodelArmIkLogOnce(
             "success|" + lowerModel,
             haveAttachedBodySkeleton
-                ? "[VR][ViewmodelArmIK] active bodySkeleton=attached manualArmOffsets=active model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)"
-                : "[VR][ViewmodelArmIK] active bodySkeleton=unavailable cameraFallback=active model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)",
+                ? "[VR][ViewmodelArmIK] active shoulders=full body skeleton manualArmOffsets=active model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)"
+                : haveFirstPersonBodyFrame
+                    ? "[VR][ViewmodelArmIK] active shoulders=head/torso frame (the full body's shoulders did not fit this arm model) model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)"
+                    : "[VR][ViewmodelArmIK] active shoulders=head/torso frame (full body off) model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)",
             lowerModel,
             solvedSide[0] ? &leftChain : nullptr,
             solvedSide[1] ? &rightChain : nullptr,
@@ -27465,6 +27477,28 @@ bool __fastcall Hooks::dWorldPoseWeaponSetupBones(
 
 void Hooks::dDrawModelExecute(void* ecx, void* edx, void* state, const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
 {
+    // [VR][Perf]: count and time the outermost model draws (nested draws are
+    // inside the engine's time of their parent).
+    struct PerfDrawDepth
+    {
+        PerfDrawDepth() { ++t_PerfModelDrawDepth; }
+        ~PerfDrawDepth() { --t_PerfModelDrawDepth; }
+    } perfDrawDepth;
+    std::chrono::steady_clock::time_point perfDrawStart{};
+    if (t_PerfModelDrawDepth == 1)
+        perfDrawStart = std::chrono::steady_clock::now();
+    struct PerfDrawScope
+    {
+        std::chrono::steady_clock::time_point start;
+        ~PerfDrawScope()
+        {
+            if (start == std::chrono::steady_clock::time_point{})
+                return;
+            l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kModelDraws, 1);
+            l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kModelDrawUs,
+                l4d2vr_frame_perf::ToUs(std::chrono::steady_clock::now() - start));
+        }
+    } perfDrawScope{ perfDrawStart };
     // No config hot reload while a draw reads the per-weapon overrides (review
     // B05); inside RenderView this is only a thread-local counter.
     l4d2vr_config_lock::ConfigLock::MaybeReadScope configRead(m_VR ? &m_VR->m_ConfigLock : nullptr);
@@ -27888,6 +27922,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             entity)
         {
             vr_vm_stabilize::Mat3x4* worldPoseBones = nullptr;
+            l4d2vr_frame_perf::Scope perfWorldPoseScope(l4d2vr_frame_perf::kWorldPoseUs, l4d2vr_frame_perf::kWorldPoseCalls);
             if (HooksWorldPoseBuildPlayerBones(
                 m_VR,
                 m_Game,
@@ -27926,6 +27961,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             std::uint64_t weaponHandAgeMs = 0u;
             Vector weaponHandDisplacement(0.0f, 0.0f, 0.0f);
             int weaponMatchMask = 0;
+            l4d2vr_frame_perf::Scope perfWeaponPoseScope(l4d2vr_frame_perf::kWeaponPoseUs);
             if (HooksWorldPoseBuildActiveWeaponBones(
                 m_VR,
                 m_Game,

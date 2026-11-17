@@ -32,6 +32,7 @@ static bool IsClientAttachedToLadder(Game* game, C_BasePlayer* player)
 
 bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime, CUserCmd* cmd)
 {
+	l4d2vr_frame_perf::Scope perfCreateMoveScope(l4d2vr_frame_perf::kCreateMoveUs);
 	// 2.0.11: server commands queued by other threads go out from here.
 	if (m_Game) m_Game->FlushDeferredServerCmds(true);
 	// No config hot reload while this command reads the settings (review B05).

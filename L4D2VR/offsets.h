@@ -52,9 +52,11 @@ struct Offset
             // Relocated: say so, and never guess between several matches of a
             // required (often short) signature: that would detour an
             // unrelated function.
-            if (!optional && matches > 1)
+            // 2.0.12 (E15): optional signatures too; a wrong optional detour
+            // is as harmful as a wrong required one. The feature stays off.
+            if (matches > 1)
             {
-                fail("moved and matches several places");
+                fail("moved and matches several places (feature off)");
                 return;
             }
             Game::logMsg("[VR][Offsets] %s signature moved 0x%X -> 0x%X (%d match%s): %s", moduleName.c_str(),
@@ -85,30 +87,30 @@ private:
 class Offsets
 {
 public:
-    Offset RenderView =                  { "client.dll", 0x1D6C30, "55 8B EC 81 EC ? ? ? ? 53 56 57 8B D9" };
-    Offset g_pClientMode =               { "client.dll", 0x228351, "89 04 B5 ? ? ? ? E8", 3 };
-    Offset CalcViewModelView =           { "client.dll", 0x287270, "55 8B EC 83 EC 48 A1 ? ? ? ? 33 C5 89 45 FC 8B 45 10 8B 10" };
-    Offset ClientFireTerrorBullets =     { "client.dll", 0x2F4350, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 08 8B 4D 10"};
+    Offset RenderView =                  { "client.dll", 0x1D6D80, "55 8B EC 81 EC ? ? ? ? 53 56 57 8B D9" };
+    Offset g_pClientMode =               { "client.dll", 0x228551, "89 04 B5 ? ? ? ? E8", 3 };
+    Offset CalcViewModelView =           { "client.dll", 0x288F40, "55 8B EC 83 EC 48 A1 ? ? ? ? 33 C5 89 45 FC 8B 45 10 8B 10" };
+    Offset ClientFireTerrorBullets =     { "client.dll", 0x2F6090, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 08 8B 4D 10"};
     // FX_Tracer: cdecl, eight 4-byte stack arguments; attachment -1 emits
     // from its explicit start instead of rebinding to a native viewmodel.
     Offset ClientFxTracer = { "client.dll", 0x001ACAC0,
         "55 8B EC 83 EC 60 53 0F 57 C0 F3 0F 10 0D ? ? ? ? 33 C0 F3 0F 11 45 B8", 0, true };
-    Offset WriteUsercmdDeltaToBuffer =   { "client.dll", 0x134790, "55 8B EC 83 EC 60 0F 57 C0 8B 55 0C" };
-    Offset WriteUsercmd =                { "client.dll", 0x1AAD50, "55 8B EC A1 ? ? ? ? 83 78 30 00 53 8B 5D 10 56 57" };
-    Offset g_pppInput =                  { "client.dll", 0xA8A22, "8B 0D ? ? ? ? 8B 01 8B 50 58 FF E2", 2 };
-    Offset AdjustEngineViewport =        { "client.dll", 0x31A890, "55 8B EC 8B 0D ? ? ? ? 85 C9 74 17" };
-    Offset TestMeleeSwingClient =        { "client.dll", 0x30C040, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 53 56 8B 75 08 57 8B D9 E8 ? ? ? ? 8B" };
-    Offset GetMeleeWeaponInfoClient =    { "client.dll", 0x30B570, "8B 81 ? ? ? ? 50 B9 ? ? ? ? E8 ? ? ? ? C3" };
-    Offset IsSplitScreen =               { "client.dll", 0x1B2A60, "33 C0 83 3D ? ? ? ? ? 0F 9D C0" };
-    Offset PrePushRenderTarget =         { "client.dll", 0xA8C80, "55 8B EC 8B C1 56 8B 75 08 8B 0E 89 08 8B 56 04 89" };
+    Offset WriteUsercmdDeltaToBuffer =   { "client.dll", 0x134850, "55 8B EC 83 EC 60 0F 57 C0 8B 55 0C" };
+    Offset WriteUsercmd =                { "client.dll", 0x1AADD0, "55 8B EC A1 ? ? ? ? 83 78 30 00 53 8B 5D 10 56 57" };
+    Offset g_pppInput =                  { "client.dll", 0xA8A62, "8B 0D ? ? ? ? 8B 01 8B 50 58 FF E2", 2 };
+    Offset AdjustEngineViewport =        { "client.dll", 0x31C5C0, "55 8B EC 8B 0D ? ? ? ? 85 C9 74 17" };
+    Offset TestMeleeSwingClient =        { "client.dll", 0x30DD60, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 53 56 8B 75 08 57 8B D9 E8 ? ? ? ? 8B" };
+    Offset GetMeleeWeaponInfoClient =    { "client.dll", 0x30D290, "8B 81 ? ? ? ? 50 B9 ? ? ? ? E8 ? ? ? ? C3" };
+    Offset IsSplitScreen =               { "client.dll", 0x1B2AD0, "33 C0 83 3D ? ? ? ? ? 0F 9D C0" };
+    Offset PrePushRenderTarget =         { "client.dll", 0xA8CB0, "55 8B EC 8B C1 56 8B 75 08 8B 0E 89 08 8B 56 04 89" };
     Offset UpdateLaserSight =            { "client.dll", 0x25DD80, "53 8B DC 83 EC 08 83 E4 F0 83 C4 04 55 8B 6B 04 89 6C 24 04 8B EC 81 EC 28 02 00 00 A1 ? ? ? ? 33 C5 89 45 FC 56 57 8B F1 E8 ? ? ? ? 8B F8 83 FF FF 0F 84 ? ? ? ?", 0, true };
-    Offset ParticleSetControlPointPosition = { "client.dll", 0x15BD10, "55 8B EC 53 56 8B 75 0C 57 8B F9 BB 01 00 00 00 84 9F B1 03 00 00 0F 84 ? ? ? ? 83 BF B4 03 00 00 FF", 0, true };
-    Offset CreateParticleEffect =        { "client.dll", 0x152200, "55 8B EC 56 57 8B 7D 08 8B F1 8B 0D ? ? ? ? 57 E8 ? ? ? ? 85 C0 75 17 57 68 ? ? ? ? FF 15 ? ? ? ? 83 C4 08 33 C0 5F 5E 5D C2 1C 00 8B 4D 20 8B 55 14 51 83 EC 0C 8B CC 89 11 8B 55 18 89 51 04 8B 55 1C 89 51 08", 0, true };
-    Offset StopParticleEffect =          { "client.dll", 0x1523C0, "55 8B EC 51 53 56 8B 75 08 57 8B F9 8B 5F 14 85 F6 74 61 33 C0 85 DB 0F 8E ? ? ? ? 8B 57 08 83 C2 14 39 32 74 11 40 83 C2 18 3B C3 7C F4 5F 5E 5B 8B E5 5D C2 04 00", 0, true };
-    Offset ParticleSetControlPointForwardVector = { "client.dll", 0x15C030, "55 8B EC 8B 45 0C 56 57 8B 7D 08 8B F1 50 57 8D 4E 10 E8 ? ? ? ? 57 8B CE E8 ? ? ? ? 5F 5E 5D C2 08 00", 0, true };
-    Offset DrawLaserBeam =               { "client.dll", 0x0EF660, "53 8B DC 83 EC 08 83 E4 F0 83 C4 04 55 8B 6B 04 89 6C 24 04 8B EC 81 EC C8 04 00 00 A1 ? ? ? ? 33 C5 89 45 FC A1 ? ? ? ? D9 BD BA FB FF FF D9 40 0C 8B 4B 0C 0F B7 85 BA FB FF FF D8 0D ? ? ? ? 0D 00 0C 00 00", 0, true };
-    Offset UpdateFlashlight =             { "client.dll", 0x0EE820, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 10 8B 55 18 53 8B 5D 0C 56 8B F1", 0, true };
-    Offset UpdateFlashlightColor =        { "client.dll", 0x0EEB10, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 0C 8B 55 14 53 56 89 85 ? ? ? ? 8B 45 18 8B F1", 0, true };
+    Offset ParticleSetControlPointPosition = { "client.dll", 0x15BD20, "55 8B EC 53 56 8B 75 0C 57 8B F9 BB 01 00 00 00 84 9F B1 03 00 00 0F 84 ? ? ? ? 83 BF B4 03 00 00 FF", 0, true };
+    Offset CreateParticleEffect =        { "client.dll", 0x152220, "55 8B EC 56 57 8B 7D 08 8B F1 8B 0D ? ? ? ? 57 E8 ? ? ? ? 85 C0 75 17 57 68 ? ? ? ? FF 15 ? ? ? ? 83 C4 08 33 C0 5F 5E 5D C2 1C 00 8B 4D 20 8B 55 14 51 83 EC 0C 8B CC 89 11 8B 55 18 89 51 04 8B 55 1C 89 51 08", 0, true };
+    Offset StopParticleEffect =          { "client.dll", 0x1523E0, "55 8B EC 51 53 56 8B 75 08 57 8B F9 8B 5F 14 85 F6 74 61 33 C0 85 DB 0F 8E ? ? ? ? 8B 57 08 83 C2 14 39 32 74 11 40 83 C2 18 3B C3 7C F4 5F 5E 5B 8B E5 5D C2 04 00", 0, true };
+    Offset ParticleSetControlPointForwardVector = { "client.dll", 0x15C040, "55 8B EC 8B 45 0C 56 57 8B 7D 08 8B F1 50 57 8D 4E 10 E8 ? ? ? ? 57 8B CE E8 ? ? ? ? 5F 5E 5D C2 08 00", 0, true };
+    Offset DrawLaserBeam =               { "client.dll", 0xEF6A0, "53 8B DC 83 EC 08 83 E4 F0 83 C4 04 55 8B 6B 04 89 6C 24 04 8B EC 81 EC C8 04 00 00 A1 ? ? ? ? 33 C5 89 45 FC A1 ? ? ? ? D9 BD BA FB FF FF D9 40 0C 8B 4B 0C 0F B7 85 BA FB FF FF D8 0D ? ? ? ? 0D 00 0C 00 00", 0, true };
+    Offset UpdateFlashlight =             { "client.dll", 0xEE860, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 10 8B 55 18 53 8B 5D 0C 56 8B F1", 0, true };
+    Offset UpdateFlashlightColor =        { "client.dll", 0xEEB50, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 0C 8B 55 14 53 56 89 85 ? ? ? ? 8B 45 18 8B F1", 0, true };
     Offset ClientPlayerEyeVectors =       { "client.dll", 0x20450,
         "55 8B EC 56 8B F1 8B 86 ? ? ? ? 83 F8 FF 74 5B",
         0,
@@ -131,19 +133,19 @@ public:
         0,
         true
     };
-    Offset ServerFireTerrorBullets =     { "server.dll", 0x3C3FC0, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 08 8B 4D 10" };
-    Offset ReadUserCmd =                 { "server.dll", 0x205100, "55 8B EC 53 8B 5D 10 56 57 8B 7D 0C 53" };
-    Offset ProcessUsercmds =             { "server.dll", 0xEF710, "55 8B EC B8 ? ? ? ? E8 ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 0C 8B 55 08" };
-    Offset CBaseEntity_entindex =        { "server.dll", 0x25390, "8B 41 28 85 C0 75 01 C3 8B 0D ? ? ? ? 2B 41 58 C1 F8 04 C3 CC CC CC CC CC CC CC CC CC CC CC 55"};
+    Offset ServerFireTerrorBullets =     { "server.dll", 0x3C78B0, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 08 8B 4D 10" };
+    Offset ReadUserCmd =                 { "server.dll", 0x205710, "55 8B EC 53 8B 5D 10 56 57 8B 7D 0C 53" };
+    Offset ProcessUsercmds =             { "server.dll", 0xEFB20, "55 8B EC B8 ? ? ? ? E8 ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 0C 8B 55 08" };
+    Offset CBaseEntity_entindex =        { "server.dll", 0x253A0, "8B 41 28 85 C0 75 01 C3 8B 0D ? ? ? ? 2B 41 58 C1 F8 04 C3 CC CC CC CC CC CC CC CC CC CC CC 55"};
     Offset TestMeleeSwingServer = { "server.dll", 0x003EB2E0,
         "53 8B DC 83 EC 08 83 E4 F0 83 C4 04 55 8B 6B 04 89 6C 24 04 8B EC 81 EC 48 02 00 00 A1 ? ? ? ? 33 C5 89 45 FC 56 8B 73 08 57 89 4D 98 E8 ? ? ? ? 8B F8", 0 };
     // CTerrorPlayer::WeaponShootPosition: thiscall output Vector*, ret4.
     Offset PhysicalMeleeShootPosition = { "server.dll", 0x002FC430,
         "55 8B EC 56 8B F1 E8 ? ? ? ? 8B CE 85 C0 74 1C E8 ? ? ? ? 8B 10 8B 75 08 8B C8 8B 82 70 04 00 00 56 FF D0", 0, true };
-    Offset DoMeleeSwingServer =          { "server.dll", 0x3E84C0, "55 8B EC 83 EC 3C 53 56 8B F1 E8 ? ? ? ? 8B D8 85" };
-    Offset StartMeleeSwingServer =       { "server.dll", 0x3E8780, "55 8B EC 53 56 8B F1 8B 86 ? ? ? ? 50 B9 ? ? ? ? E8 ? ? ? ? 8B" };
-    Offset PrimaryAttackServer =         { "server.dll", 0x3E8AB0, "56 57 8B F1 E8 ? ? ? ? 8B F8 85 FF 0F 84 ? ? ? ? 8B 87 ? ? ? ? 83 F8 FF" };
-    Offset ItemPostFrameServer =         { "server.dll", 0x3E8BA0, "56 57 8B F1 E8 ? ? ? ? 8B CE E8 ? ? ? ? 8B F8 85 FF 0F 84 ? ? ? ? 53" };
+    Offset DoMeleeSwingServer =          { "server.dll", 0x3EBDC0, "55 8B EC 83 EC 3C 53 56 8B F1 E8 ? ? ? ? 8B D8 85" };
+    Offset StartMeleeSwingServer =       { "server.dll", 0x3EC080, "55 8B EC 53 56 8B F1 8B 86 ? ? ? ? 50 B9 ? ? ? ? E8 ? ? ? ? 8B" };
+    Offset PrimaryAttackServer =         { "server.dll", 0x3EC3B0, "56 57 8B F1 E8 ? ? ? ? 8B F8 85 FF 0F 84 ? ? ? ? 8B 87 ? ? ? ? 83 F8 FF" };
+    Offset ItemPostFrameServer =         { "server.dll", 0x3EC4A0, "56 57 8B F1 E8 ? ? ? ? 8B CE E8 ? ? ? ? 8B F8 85 FF 0F 84 ? ? ? ? 53" };
     Offset MolotovProjectileCreate =     { "server.dll", 0x003DA4E0, "51 8B CE E8 ? ? ? ? D9 EE 6A 00 51 D9 1C 24 68 ? ? ? ? 8B CE E8 ? ? ? ? D9 EE 6A 00 51 D9 1C 24 68 ? ? ? ? 8B CE E8 ? ? ? ? 8B 0D ? ? ? ? 8B 11 8B 42 18 6A 00 6A 00 68 ? ? ? ? FF D0 8B F8 85 FF 74 ? 85 DB 74 ?", -0x1E0, true };
     Offset PipeBombProjectileCreate =    { "server.dll", 0x003DE720, "55 8B EC 8B 45 18 8B 4D 0C 53 8B 5D 08 56 57 50 51 53 68 ? ? ? ? E8 ? ? ? ? 8B 7D 10 D9 47 08 83 EC 20 DD 5C 24 28 8B F0 D9 47 04 DD 5C 24 20 D9 07 DD 5C 24 18 D9 43 08 DD 5C 24 10 D9 43 04 DD 5C 24 08 D9 03 DD 1C 24 68 ? ? ? ? E8 ? ? ? ? 8B 15 ? ? ? ? D9 42 2C 83 C4 30 8B CE D9 1C 24 E8 ? ? ? ?", 0, true };
     Offset VomitJarProjectileCreate =    { "server.dll", 0x003F4190, "8B 3E 8B CB E8 ? ? ? ? 50 8B 87 90 01 00 00 8B CE FF D0 8B 4D 14 51 8B CE E8 ? ? ? ? 5F 8B C6 5E 5B 5D C3", -0x1BE, true };
@@ -264,10 +266,10 @@ public:
         0,
         true
     };
-    Offset GetPrimaryAttackActivity =    { "server.dll", 0x3E7630, "55 8B EC 53 8B 5D 08 56 57 8B BB ? ? ? ?" };
+    Offset GetPrimaryAttackActivity =    { "server.dll", 0x3EAF30, "55 8B EC 53 8B 5D 08 56 57 8B BB ? ? ? ?" };
     Offset GetActiveWeapon =             { "server.dll", 0x464F0, "55 8B EC 8B 45 0C 56 8B 75 08 50 56 E8 ? ? ? ? 84 C0 74 47 8B", -64 };
-    Offset GetMeleeWeaponInfo =          { "server.dll", 0x3E67D0, "8B 81 ? ? ? ? 50 B9 ? ? ? ? E8 ? ? ? ? C3" };
-    Offset EyePosition =                 { "server.dll", 0x6D610, "55 8B EC 56 8B F1 8B 86 ? ? ? ? C1 E8 0B A8 01 74 05 E8 ? ? ? ? 8B 45 08 F3" };
+    Offset GetMeleeWeaponInfo =          { "server.dll", 0x3EA0D0, "8B 81 ? ? ? ? 50 B9 ? ? ? ? E8 ? ? ? ? C3" };
+    Offset EyePosition =                 { "server.dll", 0x6D980, "55 8B EC 56 8B F1 8B 86 ? ? ? ? C1 E8 0B A8 01 74 05 E8 ? ? ? ? 8B 45 08 F3" };
     Offset ServerPlayerEyeAngles =       { "server.dll", 0x7B0F0,
         "55 8B EC 83 EC 64 A1 ? ? ? ? 33 C5 89 45 FC 56 57 8B F9 8B 0D ? ? ? ? E8 ? ? ? ? 84 C0 74 64 80 3D ? ? ? ? 00 75 5B 8B 87 ? ? ? ? 83 F8 FF 74 50",
         0,
@@ -278,19 +280,21 @@ public:
         0,
         true
     };
-    Offset FindUseEntity =               { "server.dll", 0x34E6C0,
+    Offset FindUseEntity =               { "server.dll", 0x34E790,
         "55 8B EC B8 80 13 00 00 E8 ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 0F 57 C9 F3 0F 10 45 0C 0F 2F C8 F3 0F 10 55 08",
         0,
         true
     };
-    Offset PlayerUse =                   { "server.dll", 0x312AC0,
+    Offset PlayerUse =                   { "server.dll", 0x312BB0,
         "55 8B EC 81 EC 94 00 00 00 A1 ? ? ? ? 33 C5 89 45 FC 53 56 8B F1 8B 9E B8 1C 00 00 8B 06 8B 90 28 01 00 00",
         0,
         true
     };
     // Server CBaseEntity helpers used by VR-only roomscale movement on local/listen servers.
-    Offset CBaseEntity_GetAbsOrigin_Server = { "server.dll", 0x28D10,
-        "56 8B F1 8B 86 ? ? ? ? C1 E8 0B A8 01 74 05 E8 ? ? ? ? 8D 86 ? ? ? ? 5E C3",
+    // 2.0.12: the field offset (m_vecAbsOrigin, 0x2CC) is part of the pattern;
+    // masked, three other accessors with the same body matched too (E15).
+    Offset CBaseEntity_GetAbsOrigin_Server = { "server.dll", 0x28D20,
+        "56 8B F1 8B 86 ? ? ? ? C1 E8 0B A8 01 74 05 E8 ? ? ? ? 8D 86 CC 02 00 00 5E C3",
         0,
         true
     };
@@ -333,23 +337,25 @@ public:
         0,
         true
     };
-    Offset CBaseEntity_SetOrigin_Server = { "server.dll", 0x521A0,
-        "55 8B EC 8B 01 8B 55 08 8B 80 ? ? ? ? 6A 00 6A 00 52 FF D0 5D C2 04 00",
+    // 2.0.12: the vtable slot (0x1D8) is part of the pattern; masked,
+    // a second forwarder through slot 0x71C matched too (E15).
+    Offset CBaseEntity_SetOrigin_Server = { "server.dll", 0x521B0,
+        "55 8B EC 8B 01 8B 55 08 8B 80 D8 01 00 00 6A 00 6A 00 52 FF D0 5D C2 04 00",
         0,
         true
     };
     // CBaseEntity::SetAbsOrigin (client) - used for viewmodel stabilization.
-    Offset CBaseEntity_SetAbsOrigin_Client = { "client.dll", 0,
+    Offset CBaseEntity_SetAbsOrigin_Client = { "client.dll", 0x46930,
         "55 8B EC 56 57 8B F1 E8 ?? ?? ?? ?? 8B 7D 08 F3 0F 10 07",
         0
     };
 
-    Offset GetRenderTarget =             { "materialsystem.dll", 0x2CD30, "83 79 4C 00" };
-    Offset Viewport =                    { "materialsystem.dll", 0x2E010, "55 8B EC 83 EC 28 8B C1" };
-    Offset GetViewport =                 { "materialsystem.dll", 0x2D240, "55 8B EC 8B 41 4C 8B 49 40 8D 04 C0 83 7C 81 ? ?" };
-    Offset PushRenderTargetAndViewport = { "materialsystem.dll", 0x2D5F0, "55 8B EC 83 EC 24 8B 45 08 8B 55 10 89" };
-    Offset PopRenderTargetAndViewport =  { "materialsystem.dll", 0x2CE80, "56 8B F1 83 7E 4C 00" };
+    Offset GetRenderTarget =             { "materialsystem.dll", 0x2CD90, "83 79 4C 00" };
+    Offset Viewport =                    { "materialsystem.dll", 0x2E070, "55 8B EC 83 EC 28 8B C1" };
+    Offset GetViewport =                 { "materialsystem.dll", 0x2D2A0, "55 8B EC 8B 41 4C 8B 49 40 8D 04 C0 83 7C 81 ? ?" };
+    Offset PushRenderTargetAndViewport = { "materialsystem.dll", 0x2D650, "55 8B EC 83 EC 24 8B 45 08 8B 55 10 89" };
+    Offset PopRenderTargetAndViewport =  { "materialsystem.dll", 0x2CEE0, "56 8B F1 83 7E 4C 00" };
 
-    Offset DrawModelExecute =            { "engine.dll", 0xE05E0, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 10 56 8B 75 08 57 8B" };
-    Offset VGui_Paint =                  { "engine.dll", 0x115CE0, "55 8B EC E8 ? ? ? ? 8B 10 8B C8 8B 52 38" };
+    Offset DrawModelExecute =            { "engine.dll", 0xE0600, "55 8B EC 81 EC ? ? ? ? A1 ? ? ? ? 33 C5 89 45 FC 8B 45 10 56 8B 75 08 57 8B" };
+    Offset VGui_Paint =                  { "engine.dll", 0x115D10, "55 8B EC E8 ? ? ? ? 8B 10 8B C8 8B 52 38" };
 };

@@ -63,6 +63,9 @@
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
+#include "vr_weapon_reserve.h"
+#include "vr_frame_perf.h"
+#include "vr_backend/reference_space_rebase.h"
 #include "vr_opus_voice.h"
 #include "vr_config_lock.h"
 #include "vector.h"
@@ -531,6 +534,11 @@ public:
 
 	Vector m_HmdPosCorrectedPrev = { 0,0,0 };
 	Vector m_HmdPosLocalPrev = { 0,0,0 };
+	// 2.0.12 (E16): OpenXR reference-space change re-base (vr_backend/reference_space_rebase.h).
+	l4d2vr_space_rebase::Rebaser m_SpaceRebaser{};
+	uint32_t m_SpaceRebaseSeenSequence = 0;
+	float m_SpaceRebasePrevRawYaw = 0.0f;
+	bool m_SpaceRebasePrevRawYawValid = false;
 	Vector m_LeftControllerPosSmoothed = { 0,0,0 };
 	Vector m_RightControllerPosSmoothed = { 0,0,0 };
 	QAngle m_LeftControllerAngSmoothed = { 0,0,0 };
@@ -3252,14 +3260,22 @@ public:
 	// Whether each wrist overlay was shown last frame (gates clearing the floating HUD).
 	std::array<std::atomic<bool>, 2> m_NativeWristHudShown{};
 	std::atomic<bool> m_NativeWristHudWanted{ false };
-	// 2.0.4: the native wrist HUD never produced a texture in a real 2.0.3 session
-	// (gone from the wrists). If it is wanted in game for 4 s without one, the
-	// wrists fall back to the custom panels for the session (logged once with
-	// the last reason the capture stopped).
-	bool m_NativeWristHudFallback = false;
+	// 2.0.12 (issue 16): each wrist shows the native crop whenever a fresh one
+	// exists and the custom panel otherwise, decided every frame (2.0.4-2.0.11
+	// latched the custom panels for the whole process 4 s after joining).
+	// The policies only time the log lines, and only while a capture can succeed.
+	std::array<l4d2vr_native_wrist_hud::SourcePolicy, 2> m_NativeWristHudSource{};
+	std::array<bool, 2> m_NativeWristHudSourceNative{};   // last decision per wrist (for the switch log)
+	bool m_NativeWristHudSourceAlive = false;              // spawn detection: timers restart
+	// HUD walk results (main thread) for the wrist log lines (overlay update).
+	std::atomic<uint64_t> m_NativeWristHudLastWalkMs{ 0 };
+	std::mutex m_NativeWristHudSummaryMutex;
+	l4d2vr_native_wrist_hud::CaptureSummary m_NativeWristHudSummary{};
+	l4d2vr_native_wrist_hud::CaptureReport m_NativeWristHudCaptureReport{};
+	uint64_t m_NativeWristHudNoPanelSinceMs = 0;           // walk found no panel at all since
+	bool m_NativeWristHudTreeDumped = false;               // the 10 s "no panel" tree dump ran
 	std::atomic<bool> m_NativeWristHudRightBlank{ false }; // the weapon panel crop read back empty 4 times in a row
 	int m_NativeWristTrimEmptyReads = 0;
-	uint64_t m_NativeWristHudWantedSinceMs = 0;
 	std::atomic<const char*> m_NativeWristHudLastGate{ "never painted" };
 	void NoteNativeWristHudGate(const char* reason);
 	// Self-test: dump the HUD and both wrist textures on the next copy.

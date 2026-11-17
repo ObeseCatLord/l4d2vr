@@ -14,6 +14,10 @@
 #include <limits>
 #include <cstdint>
 #include <mutex>
+#include <condition_variable>
+#include <thread>
+#include "vr_log_filter.h"
+#include "vr_frame_perf.h"
 #include <string>
 #include <vector>
 
@@ -772,6 +776,8 @@ static void* TryInterfaceNoError(const char* dllname, const char* interfacename)
     return CreateInterface(interfacename, &returnCode);
 }
 
+#include "game_log_share.inl"
+
 namespace
 {
     constexpr int kFcvarServerCanExecute = (1 << 28);
@@ -1131,6 +1137,11 @@ namespace
         &OnVROptionsCommand,
         "Opens the L4D2VR VR Options menu (in VR, or a window in desktop mode).",
         0);
+    SourceRegisteredConCommand g_SaveLogsCommand(
+        "l4d2vr_save_logs",
+        &OnSaveLogsCommand,
+        "Saves the L4D2VR and game logs, VR settings and a system summary to VR\\shared-logs (folder + .zip) for a bug report.",
+        0);
     SourceRegisteredConCommand g_CachePrintSummaryCommand(
         kCachePrintSummaryCommandName,
         &OnCachePrintSummaryCommand,
@@ -1177,6 +1188,8 @@ namespace
                 cvar->RegisterConCommand(&g_VRConfigCommand);
             if (!cvar->FindCommandBase(kVROptionsCommandName))
                 cvar->RegisterConCommand(&g_VROptionsCommand);
+            if (!cvar->FindCommandBase("l4d2vr_save_logs"))
+                cvar->RegisterConCommand(&g_SaveLogsCommand);
             if (!cvar->FindCommandBase(l4d2vr_voice::kAckCommand))
                 cvar->RegisterConCommand(&g_L4D2VRVoiceAckCommand);
             if (!cvar->FindCommandBase(l4d2vr_voice::kPeersCommand))
@@ -1305,6 +1318,113 @@ void* Game::GetInterface(const char* dllname, const char* interfacename)
     return GetInterfaceSafe(dllname, interfacename);
 }
 
+// === Log writer (2.0.12, E20) ===
+// logMsg formats on the calling thread and queues the line; one writer thread
+// appends and flushes, so no game, render or input thread waits on file I/O
+// (vrmod_log.txt under Wine was a synchronous write + flush per line).
+namespace
+{
+    std::mutex g_LogQueueMutex;
+    std::condition_variable g_LogQueueCv;
+    std::vector<std::string> g_LogQueue;
+    size_t g_LogQueueBytes = 0;
+    std::once_flag g_LogWriterOnce;
+    FILE* g_LogFile = nullptr;
+    constexpr size_t kLogQueueMaxBytes = 4u * 1024u * 1024u;
+
+    // Called with logMutex held.
+    void LogOpenFileLocked()
+    {
+        // One handle for the whole session. The previous session's log is kept
+        // as vrmod_log.prev.txt: a player whose game crashed usually restarts
+        // it before sending the log (2.0.11, review S24).
+        std::call_once(logResetOnce, []()
+            {
+                const std::wstring& path = VrLogPath();
+                std::wstring previous = path;
+                const size_t dot = previous.rfind(L'.');
+                previous = (dot == std::wstring::npos ? previous : previous.substr(0, dot)) + L".prev.txt";
+                MoveFileExW(path.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
+                g_LogFile = _wfopen(path.c_str(), L"w");
+            });
+        if (!g_LogFile)
+            g_LogFile = _wfopen(VrLogPath().c_str(), L"a");
+    }
+
+    void LogWriteLocked(const std::vector<std::string>& lines)
+    {
+        LogOpenFileLocked();
+        if (!g_LogFile)
+            return;
+        for (const std::string& line : lines)
+            fwrite(line.data(), 1, line.size(), g_LogFile);
+        fflush(g_LogFile);
+    }
+
+    // Lock order: logMutex (the file) before g_LogQueueMutex, so lines are
+    // written in order and a drain never overtakes the writer.
+    void LogDrain(bool wait)
+    {
+        std::unique_lock<std::mutex> fileLock(logMutex, std::defer_lock);
+        if (wait)
+            fileLock.lock();
+        else if (!fileLock.try_lock())
+            return;
+        std::vector<std::string> lines;
+        {
+            std::unique_lock<std::mutex> queueLock(g_LogQueueMutex, std::defer_lock);
+            if (wait)
+                queueLock.lock();
+            else if (!queueLock.try_lock())
+                return;
+            lines.swap(g_LogQueue);
+            g_LogQueueBytes = 0;
+        }
+        LogWriteLocked(lines);
+    }
+
+    void LogWriterMain()
+    {
+        std::vector<std::string> lines;
+        for (;;)
+        {
+            {
+                std::unique_lock<std::mutex> queueLock(g_LogQueueMutex);
+                g_LogQueueCv.wait(queueLock, [] { return !g_LogQueue.empty(); });
+            }
+            std::lock_guard<std::mutex> fileLock(logMutex);
+            {
+                std::lock_guard<std::mutex> queueLock(g_LogQueueMutex);
+                lines.swap(g_LogQueue);
+                g_LogQueueBytes = 0;
+            }
+            LogWriteLocked(lines);
+            lines.clear();
+        }
+    }
+
+    void LogQueuePush(std::string&& line)
+    {
+        bool writeNow = false;
+        std::call_once(g_LogWriterOnce, []()
+            {
+                try { std::thread(LogWriterMain).detach(); }
+                catch (...) {}
+            });
+        {
+            std::lock_guard<std::mutex> queueLock(g_LogQueueMutex);
+            g_LogQueueBytes += line.size();
+            g_LogQueue.push_back(std::move(line));
+            // A runaway producer or a writer that never started: write here.
+            writeNow = g_LogQueueBytes > kLogQueueMaxBytes;
+        }
+        if (writeNow)
+            LogDrain(true);
+        else
+            g_LogQueueCv.notify_one();
+    }
+}
+
 // === Thread-safe Log Message with Timestamp ===
 void Game::logMsg(const char* fmt, ...)
 {
@@ -1322,53 +1442,69 @@ void Game::logMsg(const char* fmt, ...)
         (!Hooks::m_VR || !Hooks::m_VR->m_VrHandsDebugLog))
         return;
 
-    std::lock_guard<std::mutex> lock(logMutex);
-    // One handle for the whole session, flushed per line (it used to reopen the
-    // file for every line). The previous session's log is kept as
-    // vrmod_log.prev.txt: a player whose game crashed usually restarts it
-    // before sending the log (2.0.11, review S24).
-    static FILE* s_LogFile = nullptr;
-    std::call_once(logResetOnce, []()
-        {
-            const std::wstring& path = VrLogPath();
-            std::wstring previous = path;
-            const size_t dot = previous.rfind(L'.');
-            previous = (dot == std::wstring::npos ? previous : previous.substr(0, dot)) + L".prev.txt";
-            MoveFileExW(path.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
-            s_LogFile = _wfopen(path.c_str(), L"w");
-        });
+    // 2.0.12 (E20): per call site rate limits for the chattiest diagnostics
+    // (vr_log_filter.h); VrHandsDebugLog writes every line.
+    const bool verbose = Hooks::m_VR && Hooks::m_VR->m_VrHandsDebugLog;
+    uint32_t suppressedBefore = 0;
+    if (l4d2vr_logfilter::FindRule(fmt))
+    {
+        static std::mutex s_FilterMutex;
+        static l4d2vr_logfilter::RateLimiter s_Filter;
+        std::lock_guard<std::mutex> filterLock(s_FilterMutex);
+        const l4d2vr_logfilter::RateLimiter::Decision decision = s_Filter.Check(fmt, GetTickCount64(), verbose);
+        if (!decision.allow)
+            return;
+        suppressedBefore = decision.suppressedBefore;
+    }
 
+    const auto formatStart = std::chrono::steady_clock::now();
     auto now = std::chrono::system_clock::now();
     std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-    char timebuf[20] = {};
-    std::strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now_c));
-
-#ifdef _DEBUG
-    printf("[%s] ", timebuf);
-
-    va_list args;
-    va_start(args, fmt);
-    vprintf(fmt, args);
-    va_end(args);
-
-    printf("\n");
-#endif
-
-    if (!s_LogFile)
-        s_LogFile = _wfopen(VrLogPath().c_str(), L"a");
+    std::tm localNow{};
+    localtime_s(&localNow, &now_c);
+    char line[2048];
+    int used = (int)std::strftime(line, sizeof(line), "[%Y-%m-%d %H:%M:%S] ", &localNow);
     {
-        FILE* file = s_LogFile;
-        if (!file)
-            return;
-
-        fprintf(file, "[%s] ", timebuf);
-        va_list args2;
-        va_start(args2, fmt);
-        vfprintf(file, fmt, args2);
-        va_end(args2);
-        fprintf(file, "\n");
-        fflush(file);
+        va_list args;
+        va_start(args, fmt);
+        const int n = vsnprintf(line + used, sizeof(line) - (size_t)used, fmt, args);
+        va_end(args);
+        std::string text;
+        if (n >= (int)(sizeof(line) - (size_t)used))
+        {
+            // Longer than the stack buffer (layout dumps): format again on the heap.
+            text.assign(line, (size_t)used);
+            text.resize((size_t)used + (size_t)n + 1);
+            va_list args2;
+            va_start(args2, fmt);
+            vsnprintf(&text[(size_t)used], (size_t)n + 1, fmt, args2);
+            va_end(args2);
+            text.resize((size_t)used + (size_t)n);
+        }
+        else
+            text.assign(line, (size_t)used + (size_t)(n > 0 ? n : 0));
+        if (suppressedBefore > 0)
+            text += " (+" + std::to_string(suppressedBefore) + " similar line(s) left out; VrHandsDebugLog=true writes all)";
+        text += '\n';
+#ifdef _DEBUG
+        fputs(text.c_str(), stdout);
+#endif
+        LogQueuePush(std::move(text));
     }
+    l4d2vr_frame_perf::AddLog(std::chrono::steady_clock::now() - formatStart);
+}
+
+// Writes everything logged so far to vrmod_log.txt (before it is copied).
+void Game::FlushLog()
+{
+    LogDrain(true);
+}
+
+// DLL_PROCESS_DETACH: the other threads are gone and may have died holding a
+// lock, so only try (never wait) to write what is still queued.
+void Game::FlushLogAtExit()
+{
+    LogDrain(false);
 }
 
 // === Error Message ===
@@ -3473,6 +3609,8 @@ void Game::FlushDeferredServerCmds(bool recordMainThread)
         m_MainThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     else if (m_MainThreadId.load(std::memory_order_acquire) != GetCurrentThreadId())
         return;
+    // 2.0.12: "Save logs for sharing" finished on its worker: tell the console.
+    L4D2VR_FlushSaveLogsConsole(this);
     static thread_local std::vector<std::pair<std::string, bool>> s_Pending;
     {
         std::lock_guard<std::mutex> lock(m_DeferredServerCmdMutex);

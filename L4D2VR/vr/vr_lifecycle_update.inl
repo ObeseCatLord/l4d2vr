@@ -1619,6 +1619,7 @@ extern "C" void __cdecl L4D2VR_ShutdownSystemMouseInputSuppression()
 
 void VR::Update()
 {
+    l4d2vr_frame_perf::Scope perfUpdateScope(l4d2vr_frame_perf::kVrUpdateUs);
     if (!m_IsInitialized || !g_Game)
     {
         // Desktop mode runs no tracking, yet a desktop listen host still serves

@@ -30,7 +30,7 @@
 namespace l4d2vr_options_menu
 {
     enum class RowKind { Toggle, Slider, Choice, Action, Info };
-    enum class RowAction { None, Recenter, OpenAdvanced };
+    enum class RowAction { None, Recenter, OpenAdvanced, SaveLogs };
 
     struct Row
     {
@@ -145,6 +145,7 @@ namespace l4d2vr_options_menu
         { "StickCrouchToggle", RowKind::Toggle, "Stick crouch toggles", "Stick down toggles crouching instead of holding it.", 0, 0, 0, "true", nullptr, "StickJumpCrouch" },
         { "HolsterReleaseDrop", RowKind::Toggle, "Drop on grip release", "Letting go of the grip away from a holster drops the item.", 0, 0, 0, "true" },
         { "MotionOnlyMeleeAndShove", RowKind::Toggle, "Swing to melee and shove", "Melee and shoves only come from real swings.", 0, 0, 0, "true" },
+        { nullptr, RowKind::Action, "Save logs for sharing", "Copies the logs, your VR settings and a system summary to VR\\shared-logs (a folder and a .zip) to send with a bug report. No passwords. Console: l4d2vr_save_logs.", 0, 0, 0, "", nullptr, nullptr, false, "", RowAction::SaveLogs },
     };
 
     inline const Row kAdvancedRows[] = {

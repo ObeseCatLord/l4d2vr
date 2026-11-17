@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 // Native wrist HUD layout (WristHudStyle=native). The wrist panels reuse the
@@ -350,5 +352,172 @@ namespace l4d2vr_native_wrist_hud
         if (c.usedW <= 0 || c.usedH <= 0 || !(widthMeters > 0.0f))
             return 0.0f;
         return widthMeters * (float)c.usedH / (float)c.usedW;
+    }
+
+    // ---- 2.0.12 (review s12 issue 16): native or custom, decided every frame ----
+    //
+    // 2.0.4-2.0.11 latched the custom panels for the whole process when no
+    // native crop arrived within 4 s of the wrist wanting one. Those 4 s are
+    // the join (spectator -> team -> spawn, MOTD with the cursor up), when no
+    // crop can exist, so the native HUD never came back. Now each wrist shows
+    // the native crop whenever a fresh one exists and the custom panel
+    // otherwise; the timers below only decide when to *log*, and they only
+    // run while a capture could succeed.
+    struct SourceInputs
+    {
+        uint64_t nowMs = 0;
+        bool cropFresh = false;   // a native crop for this wrist is recent enough to show
+        bool playable = false;    // in game, alive on a team, no menu or cursor UI
+        bool captureRan = false;  // the HUD walk ran recently (the capture is not gated)
+    };
+
+    struct SourceDecision
+    {
+        bool native = false;        // show the native crop (else the custom panel)
+        bool logFallback = false;   // custom for kFallbackLogMs while the walk ran: say what it found
+        bool logNotRunning = false; // custom for kNotRunningLogMs while the walk did not run: say why
+        bool logRecovered = false;  // the native crop is back after a logged fallback
+        uint64_t waitedMs = 0;      // capture-possible time without a crop (for the log)
+    };
+
+    class SourcePolicy
+    {
+    public:
+        static constexpr uint64_t kFallbackLogMs = 4000;
+        static constexpr uint64_t kNotRunningLogMs = 10000;
+        // A hitch or a long menu must not count as waiting time.
+        static constexpr uint64_t kMaxStepMs = 250;
+
+        SourceDecision Update(const SourceInputs& in)
+        {
+            SourceDecision out;
+            const uint64_t step = (m_LastMs != 0 && in.nowMs > m_LastMs) ? (std::min)(in.nowMs - m_LastMs, kMaxStepMs) : 0;
+            m_LastMs = in.nowMs;
+            if (in.cropFresh)
+            {
+                out.native = true;
+                out.logRecovered = m_FallbackLogged || m_NotRunningLogged;
+                m_FallbackLogged = false;
+                m_NotRunningLogged = false;
+                m_WaitCaptureMs = 0;
+                m_WaitRunMs = 0;
+                return out;
+            }
+            if (in.playable && in.captureRan)
+            {
+                m_WaitCaptureMs += step;
+                m_WaitRunMs = 0;
+                if (m_WaitCaptureMs >= kFallbackLogMs && !m_FallbackLogged)
+                {
+                    m_FallbackLogged = true;
+                    out.logFallback = true;
+                }
+            }
+            else if (in.playable)
+            {
+                m_WaitRunMs += step;
+                if (m_WaitRunMs >= kNotRunningLogMs && !m_NotRunningLogged)
+                {
+                    m_NotRunningLogged = true;
+                    out.logNotRunning = true;
+                }
+            }
+            out.waitedMs = in.captureRan ? m_WaitCaptureMs : m_WaitRunMs;
+            return out;
+        }
+
+        // Spawn, map change, a new capture gate reason: restart the timers.
+        // A logged fallback stays logged, so its recovery is still reported.
+        void Reset()
+        {
+            m_LastMs = 0;
+            m_WaitCaptureMs = 0;
+            m_WaitRunMs = 0;
+        }
+
+        bool FallbackLogged() const { return m_FallbackLogged || m_NotRunningLogged; }
+
+    private:
+        uint64_t m_LastMs = 0;
+        uint64_t m_WaitCaptureMs = 0;
+        uint64_t m_WaitRunMs = 0;
+        bool m_FallbackLogged = false;
+        bool m_NotRunningLogged = false;
+    };
+
+    // What one HUD walk found, for the "native capture:" log line.
+    struct CaptureSummary
+    {
+        bool localPlayer = false;  // the LocalPlayer panel
+        int healthParts = 0;       // of HealthIcon / HealthNumber / Health
+        int teamPlayers = 0;       // TeamPlayer* panels with a bar or a name
+        bool weapon = false;       // HudWeaponSelection
+        int visited = 0;
+        int leftW = 0, leftH = 0;  // composed wrist crops (0 = none)
+        int rightW = 0, rightH = 0;
+
+        bool AnyPanel() const { return localPlayer || teamPlayers > 0 || weapon; }
+        // The parts that make a result "distinct" (sizes and counts of
+        // visited panels change every frame and are left out).
+        uint32_t Key() const
+        {
+            return (localPlayer ? 1u : 0u) | ((uint32_t)(healthParts & 3) << 1) |
+                ((uint32_t)(teamPlayers < 15 ? teamPlayers : 15) << 3) | (weapon ? 0x80u : 0u) |
+                (leftW > 0 ? 0x100u : 0u) | (rightW > 0 ? 0x200u : 0u);
+        }
+    };
+
+    // Logs each distinct capture result once (plus the first), at most one
+    // line per kMinIntervalMs; a result that flickers back and forth is
+    // logged once per value, not once per frame.
+    class CaptureReport
+    {
+    public:
+        static constexpr uint64_t kMinIntervalMs = 2000;
+
+        static constexpr uint32_t kCropBits = 0x300u; // CaptureSummary::Key: a left or right crop
+
+        bool ShouldLog(uint32_t key, uint64_t nowMs)
+        {
+            if (m_HasLast && key == m_LastKey)
+                return false;
+            bool seen = false;
+            for (int i = 0; i < m_SeenCount; ++i)
+                seen = seen || m_Seen[i] == key;
+            // A result seen before is only worth a line again when it brings
+            // a crop back after a logged result without one (a recovery).
+            const bool recovery = seen && (key & kCropBits) != 0 && (m_LastKey & kCropBits) == 0;
+            if (seen && !recovery)
+                return false;
+            if (m_HasLast && nowMs - m_LastLogMs < kMinIntervalMs)
+                return false;
+            if (!seen && m_SeenCount < kMaxSeen)
+                m_Seen[m_SeenCount++] = key;
+            m_HasLast = true;
+            m_LastKey = key;
+            m_LastLogMs = nowMs;
+            return true;
+        }
+
+        void Reset() { m_HasLast = false; m_SeenCount = 0; }
+
+    private:
+        static constexpr int kMaxSeen = 16;
+        uint32_t m_Seen[kMaxSeen] = {};
+        int m_SeenCount = 0;
+        bool m_HasLast = false;
+        uint32_t m_LastKey = 0;
+        uint64_t m_LastLogMs = 0;
+    };
+
+    // Formats the capture summary (std-only so the wording is tested).
+    inline int FormatCaptureSummary(char* out, size_t size, const CaptureSummary& s)
+    {
+        return std::snprintf(out, size,
+            "visited=%d panels LocalPlayer=%s(health parts %d/3) TeamPlayer=%d weapon=HudWeaponSelection:%s -> left crop %s, right crop %s",
+            s.visited, s.localPlayer ? "found" : "not found", s.healthParts, s.teamPlayers,
+            s.weapon ? "found" : "not found",
+            s.leftW > 0 ? (std::to_string(s.leftW) + "x" + std::to_string(s.leftH)).c_str() : "none",
+            s.rightW > 0 ? (std::to_string(s.rightW) + "x" + std::to_string(s.rightH)).c_str() : "none");
     }
 }

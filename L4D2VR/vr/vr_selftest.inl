@@ -1947,10 +1947,10 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
     if (step.rfind("wriststyle=", 0) == 0)
     {
         m_WristHudNativeStyle = step.substr(11) != "custom";
-        m_NativeWristHudFallback = false;
+        for (auto& policy : m_NativeWristHudSource)
+            policy.Reset();
         m_NativeWristHudRightBlank.store(false, std::memory_order_release);
         m_NativeWristTrimEmptyReads = 0;
-        m_NativeWristHudWantedSinceMs = 0;
         Game::logMsg("[VR][SelfTest] wrist HUD style: %s", m_WristHudNativeStyle ? "native" : "custom");
         return true;
     }
@@ -1970,7 +1970,7 @@ bool VR::RunSelfTestStep(const std::string& step, float t, C_BasePlayer* player)
         const uint32_t usedL = m_NativeWristHudUsedSize[0].load(std::memory_order_acquire);
         const uint32_t usedR = m_NativeWristHudUsedSize[1].load(std::memory_order_acquire);
         std::snprintf(detail, sizeof(detail), "style=%s fallback=%d gate='%s' left=%ux%u ready=%d shown=%d right=%ux%u ready=%d shown=%d",
-            m_WristHudNativeStyle ? "native" : "custom", m_NativeWristHudFallback ? 1 : 0,
+            m_WristHudNativeStyle ? "native" : "custom", (m_NativeWristHudSourceNative[0] && m_NativeWristHudSourceNative[1]) ? 0 : 1,
             m_NativeWristHudLastGate.load(std::memory_order_acquire), usedL >> 16, usedL & 0xFFFFu,
             m_NativeWristHudTexReady[0].load() ? 1 : 0, m_NativeWristHudShown[0].load() ? 1 : 0,
             usedR >> 16, usedR & 0xFFFFu, m_NativeWristHudTexReady[1].load() ? 1 : 0, m_NativeWristHudShown[1].load() ? 1 : 0);

@@ -274,6 +274,11 @@
     };
 
     std::mutex g_HooksWorldPoseWeaponHandMutex;
+    // Last time any player's VR weapon hand was published (2.0.12, issue 11):
+    // the weapon SetupBones hook runs for every animating entity (each common
+    // infected, each eye and shadow pass), and without a hand published in the
+    // last 500 ms no candidate can match, so it returns before any lookup.
+    std::atomic<std::uint64_t> g_HooksWorldPoseWeaponHandLastPublishMs{ 0u };
     std::array<
         HooksWorldPoseWeaponHandState,
         Game::kMaxPlayers> g_HooksWorldPoseWeaponHandStates{};
@@ -2764,6 +2769,9 @@
                 activeWeapon);
         published.updatedTickMs =
             static_cast<std::uint64_t>(GetTickCount64());
+        g_HooksWorldPoseWeaponHandLastPublishMs.store(
+            published.updatedTickMs,
+            std::memory_order_release);
         published.controllerToFinalHandValid =
             controllerRelationFinite;
         published.playerOrigin = info.origin;
@@ -3173,6 +3181,17 @@
         const std::uint64_t stereoSceneGeneration =
             g_HooksWorldPoseStereoSceneGeneration.load(
                 std::memory_order_acquire);
+        {
+            const std::uint64_t lastPublish =
+                g_HooksWorldPoseWeaponHandLastPublishMs.load(
+                    std::memory_order_acquire);
+            if (lastPublish == 0u ||
+                now < lastPublish ||
+                now - lastPublish > 500u)
+            {
+                return false;
+            }
+        }
         const std::uint32_t renderFrameSequence =
             vr->m_RenderFrameSeq.load(
                 std::memory_order_acquire) &
@@ -7154,6 +7173,8 @@
             outBones = bones;
             return true;
         }
+        // A full solve (the per-scene cache missed): counted for [VR][Perf].
+        l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kWorldPoseSolves, 1);
         HooksWorldPoseCalibration& calibration =
             g_HooksWorldPoseCalibrations[
                 static_cast<size_t>(info.entity_index)];

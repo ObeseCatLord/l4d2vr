@@ -448,6 +448,8 @@ public:
 
     // === Logging ===
     static void logMsg(const char* fmt, ...);
+    static void FlushLog();
+    static void FlushLogAtExit();
     static void errorMsg(const char* msg);
     static bool InstallVertexFormatWarningFilter();
     static void UninstallVertexFormatWarningFilter();

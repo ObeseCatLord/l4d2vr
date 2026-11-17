@@ -1538,6 +1538,7 @@ void VR::ShowMenuPointerVisuals(const l4d2vr_overlay_pointer::Panel& panel, cons
 
 void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBinds)
 {
+    l4d2vr_frame_perf::Scope perfHudScope(l4d2vr_frame_perf::kHudUs);
     // Debug: hand HUD update diagnostics (rate-limited).
     const auto dbgNow = std::chrono::steady_clock::now();
     m_HandHudDebugLastCall = dbgNow;
@@ -1591,8 +1592,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     const bool worldQuad = m_HandHudWorldQuadEnabled;
     const bool worldQuadAttachControllers = worldQuad && m_HandHudWorldQuadAttachToControllers && !m_MouseModeEnabled;
     // Native wrist HUD (crops of the game's HUD) needs the GPU texture path.
-    // Falls back to the custom panels when the native crops never arrive (2.0.4).
-    const bool nativeWristHud = m_WristHudNativeStyle && worldQuad && g_D3DVR9 && !m_NativeWristHudFallback;
+    // Without a fresh native crop a wrist shows the custom panel for that
+    // frame and returns to the native crop as soon as one arrives (2.0.12).
+    const bool nativeWristHud = m_WristHudNativeStyle && worldQuad && g_D3DVR9;
     m_NativeWristHudWanted.store(false, std::memory_order_release);
     m_NativeWristHudShown[0].store(false, std::memory_order_release);
     m_NativeWristHudShown[1].store(false, std::memory_order_release);
@@ -1902,7 +1904,10 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if (dbgTick)
             Game::logMsg("[VR][HandHUD] tick: not in game -> hide overlays (lastLUpload=%.2fs lastRUpload=%.2fs)", secsSince(m_HandHudDebugLastLeftUpload), secsSince(m_HandHudDebugLastRightUpload));
         resetHandHudCache();
-        m_NativeWristHudWantedSinceMs = 0;
+        // Map change / disconnect: the wrist timers start again on the next map.
+        for (auto& policy : m_NativeWristHudSource)
+            policy.Reset();
+        m_NativeWristHudSourceAlive = false;
         m_HandHudLeftConsecutiveRawFails = 0;
         m_HandHudRightConsecutiveRawFails = 0;
         l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
@@ -1947,6 +1952,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if (dbgTick)
             Game::logMsg("[VR][HandHUD] tick: localPlayer dead lifeState=%u -> hide overlays", (unsigned)lifeState);
         resetHandHudCache();
+        m_NativeWristHudSourceAlive = false;
         l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         leftVisible = false;
         l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
@@ -1958,6 +1964,14 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
         DestroyWorldQuadTextures();
         return;
+    }
+
+    if (!m_NativeWristHudSourceAlive)
+    {
+        // Spawned (or respawned from a rescue closet): the wrist timers restart.
+        m_NativeWristHudSourceAlive = true;
+        for (auto& policy : m_NativeWristHudSource)
+            policy.Reset();
     }
 
     // Standalone special infected intent sense HUD. It is anchored near the game HUD's upper-right corner
@@ -2352,33 +2366,49 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             const vr::VROverlayHandle_t handle = left ? m_LeftWristHudHandle : m_RightAmmoHudHandle;
             const vr::TrackedDeviceIndex_t device = left ? offHandIndex : gunHandIndex;
             m_NativeWristHudWanted.store(true, std::memory_order_release);
-            // Wanted in game but no fresh native crop for 4 s: use the custom
-            // wrist panels instead of showing nothing (2.0.4).
-            auto notShown = [&](const char* why) -> bool
-                {
-                    const uint64_t nowMs = GetTickCount64();
-                    if (m_NativeWristHudWantedSinceMs == 0)
-                        m_NativeWristHudWantedSinceMs = nowMs;
-                    else if (nowMs - m_NativeWristHudWantedSinceMs > 4000u && !m_NativeWristHudFallback)
-                    {
-                        m_NativeWristHudFallback = true;
-                        Game::logMsg("[VR][WristHUD] no native wrist HUD for 4 s in game (%s; last capture gate: %s): using the custom wrist panels",
-                            why, m_NativeWristHudLastGate.load(std::memory_order_acquire));
-                    }
-                    return false;
-                };
-            if (!m_NativeWristHudTexReady[side].load(std::memory_order_acquire))
-                return notShown("no wrist texture yet");
             // Menus and cursor UI stop the capture (they paint over the HUD):
-            // keep showing the last crops meanwhile instead of hiding the wrists.
+            // keep showing the last crops meanwhile instead of switching panels.
             const bool menuUp = (m_Game->m_EngineClient && m_Game->m_EngineClient->IsPaused()) ||
                 (m_Game->m_VguiSurface && m_Game->m_VguiSurface->IsCursorVisible());
+            const uint64_t nowMs = GetTickCount64();
+            const bool texReady = m_NativeWristHudTexReady[side].load(std::memory_order_acquire);
             const uint64_t contentMs = m_NativeWristHudContentMs[side].load(std::memory_order_acquire);
-            if (contentMs == 0)
-                return notShown("no HUD crop yet");
-            if (!menuUp && GetTickCount64() - contentMs > 1000u)
-                return notShown("the HUD crop is older than 1 s");
-            m_NativeWristHudWantedSinceMs = 0;
+            const char* why = !texReady ? "no wrist texture yet"
+                : contentMs == 0 ? "no HUD crop yet"
+                : (!menuUp && nowMs - contentMs > 1000u) ? "the HUD crop is older than 1 s"
+                : nullptr;
+            // The timers restart on spawn and map change; a changing gate reason
+            // does not restart them (transient gates such as a busy texture lock
+            // alternate with the real one and would keep the log from ever firing).
+            const char* gate = m_NativeWristHudLastGate.load(std::memory_order_acquire);
+            int team = 0;
+            const bool onTeam = TryReadInt(pBase, kTeamNumOffset, team) && (team == 2 || team == 3);
+            l4d2vr_native_wrist_hud::SourceInputs inputs;
+            inputs.nowMs = nowMs;
+            inputs.cropFresh = why == nullptr;
+            inputs.playable = onTeam && !menuUp;
+            inputs.captureRan = nowMs - m_NativeWristHudLastWalkMs.load(std::memory_order_acquire) <= 1000u;
+            const l4d2vr_native_wrist_hud::SourceDecision decision = m_NativeWristHudSource[side].Update(inputs);
+            if (decision.logFallback || decision.logNotRunning || decision.logRecovered)
+            {
+                l4d2vr_native_wrist_hud::CaptureSummary summary;
+                {
+                    std::lock_guard<std::mutex> lock(m_NativeWristHudSummaryMutex);
+                    summary = m_NativeWristHudSummary;
+                }
+                char found[256];
+                l4d2vr_native_wrist_hud::FormatCaptureSummary(found, sizeof(found), summary);
+                if (decision.logRecovered)
+                    Game::logMsg("[VR][WristHUD] %s wrist: native HUD crop is back (%s)", left ? "left" : "right", found);
+                else if (decision.logFallback)
+                    Game::logMsg("[VR][WristHUD] %s wrist: custom panel for %.1f s while the capture ran (%s; last gate: %s); native capture: %s",
+                        left ? "left" : "right", decision.waitedMs / 1000.0, why ? why : "?", gate, found);
+                else
+                    Game::logMsg("[VR][WristHUD] %s wrist: custom panel for %.1f s, the HUD capture is not running (%s; last gate: %s)",
+                        left ? "left" : "right", decision.waitedMs / 1000.0, why ? why : "?", gate);
+            }
+            if (!decision.native)
+                return false;
             const uint32_t used = m_NativeWristHudUsedSize[side].load(std::memory_order_acquire);
             const int usedW = (int)(used >> 16);
             const int usedH = (int)(used & 0xFFFFu);
@@ -2425,15 +2455,20 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             m_NativeWristHudShown[side].store(true, std::memory_order_release);
             return true;
         };
+    // Remembers which panel each wrist shows (self-test report). The custom
+    // panel redraws and rebinds its texture every tick, so a switch needs no
+    // extra invalidation.
+    auto noteWristSource = [&](int side, bool nativeShown)
+        {
+            m_NativeWristHudSourceNative[side] = nativeShown;
+        };
 
     const bool canShowLeft = m_LeftWristHudEnabled && m_LeftWristHudHandle != vr::k_ulOverlayHandleInvalid && (worldQuad || m_MouseModeEnabled || offHandIndex != vr::k_unTrackedDeviceIndexInvalid);
+    bool leftNativeShown = false;
     if (canShowLeft && nativeWristHud)
-    {
-        leftVisible = showNativeWristHud(0);
-        if (!leftVisible)
-            l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
-    }
-    else if (canShowLeft)
+        leftNativeShown = leftVisible = showNativeWristHud(0);
+    noteWristSource(0, leftNativeShown);
+    if (canShowLeft && !leftNativeShown)
     {
         const unsigned char bgA = (unsigned char)std::round((std::max)(0.0f, (std::min)(1.0f, m_LeftWristHudBgAlpha)) * 255.0f);
 
@@ -2951,7 +2986,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
         leftVisible = true;
     }
-    else
+    else if (!leftNativeShown)
     {
         // Force a full redraw next time it becomes visible.
         m_LastHudHealth = -9999;
@@ -2976,13 +3011,11 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
     const bool canShowRight = m_RightAmmoHudEnabled && m_RightAmmoHudHandle != vr::k_ulOverlayHandleInvalid && (worldQuad || m_MouseModeEnabled || gunHandIndex != vr::k_unTrackedDeviceIndexInvalid);
     // The right (ammo) crop can come out empty (seen with mat_queue_mode 2 in the
     // simulator): then the custom ammo panel is drawn instead (2.0.4).
+    bool rightNativeShown = false;
     if (canShowRight && nativeWristHud && !m_NativeWristHudRightBlank.load(std::memory_order_acquire))
-    {
-        rightVisible = showNativeWristHud(1);
-        if (!rightVisible)
-            l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
-    }
-    else if (canShowRight)
+        rightNativeShown = rightVisible = showNativeWristHud(1);
+    noteWristSource(1, rightNativeShown);
+    if (canShowRight && !rightNativeShown)
     {
         const unsigned char bgA = (unsigned char)std::round((std::max)(0.0f, (std::min)(1.0f, m_RightAmmoHudBgAlpha)) * 255.0f);
 
@@ -3002,7 +3035,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         int upg = 0;
         int upgBits = 0;
         int weaponId = -1;
-        bool pistolInfinite = false;
+        // Pistol and magnum: the game's infinite reserve (sentinel 999) shows
+        // as the infinity glyph (2.0.12, one helper for every panel).
+        bool infiniteReserve = false;
 
         if (C_WeaponCSBase* wpn = (C_WeaponCSBase*)localPlayer->GetActiveWeapon())
         {
@@ -3017,8 +3052,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             upg = *reinterpret_cast<const int*>(wBase + kUpgradedPrimaryAmmoLoadedOffset);
             upgBits = *reinterpret_cast<const int*>(wBase + kUpgradeBitVecOffset);
 
-            if (weaponId == (int)C_WeaponCSBase::PISTOL)
-                pistolInfinite = true;
+            infiniteReserve = l4d2vr_weapon::HasInfiniteReserve(weaponId);
         }
 
         auto isAmmoHudEligible = [&](int wid) -> bool
@@ -3101,7 +3135,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
         const int slashW = 16;
         const int clipWMax = sevenSegWidthAuto(digitCountAuto((std::max)(0, m_HudMaxClipObserved)), clipStAuto);
-        const int resWMax = pistolInfinite ? 24 : sevenSegWidthAuto(digitCountAuto((std::max)(0, m_HudMaxReserveObserved)), resStAuto);
+        const int resWMax = infiniteReserve ? 24 : sevenSegWidthAuto(digitCountAuto((std::max)(0, m_HudMaxReserveObserved)), resStAuto);
         const int totalWMax = clipWMax + slashW + resWMax;
         const bool willDrawUpg = rightAmmoEligible && (upg > 0) && (((upgBits & 1) != 0) || ((upgBits & 2) != 0));
 
@@ -3128,7 +3162,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         if (dbgTick)
         {
             Game::logMsg("[VR][HandHUD] right: wid=%d clip=%d res=%d upg=%d bits=0x%X pistolInf=%d changed=%d",
-                weaponId, clip, reserve, upg, upgBits, pistolInfinite ? 1 : 0, changed ? 1 : 0);
+                weaponId, clip, reserve, upg, upgBits, infiniteReserve ? 1 : 0, changed ? 1 : 0);
         }
         m_LastHudClip = clip;
         m_LastHudReserve = reserve;
@@ -3164,7 +3198,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         const int clipLowTh = (std::max)(1, (m_HudMaxClipObserved + 2) / 3);
         const int resLowTh = (std::max)(1, (m_HudMaxReserveObserved + 4) / 5);
         const bool clipLow = (clip > 0 && clip <= clipLowTh);
-        const bool resLow = (!pistolInfinite && reserve >= 0 && reserve <= resLowTh);
+        const bool resLow = (!infiniteReserve && reserve >= 0 && reserve <= resLowTh);
 
         const Rgba clipColor = clipLow ? Rgba{ 255, 80, 80, 255 } : Rgba{ 240, 240, 240, 255 };
         const Rgba resColor = resLow ? Rgba{ 255, 80, 80, 230 } : Rgba{ 200, 200, 200, 230 };
@@ -3187,7 +3221,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             };
 
         const int clipW = sevenSegWidth(digitCount((std::max)(0, clip)), clipSt);
-        const int resW = pistolInfinite ? 24 : sevenSegWidth(digitCount((std::max)(0, reserve)), resSt);
+        const int resW = infiniteReserve ? 24 : sevenSegWidth(digitCount((std::max)(0, reserve)), resSt);
         const int totalW = clipW + slashW + resW;
         const int yBase = 46;
         int x = (std::max)(6, (visW - totalW) / 2);
@@ -3198,7 +3232,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             x += clipW + 2;
             DrawText5x7(s, x, yBase + 4, "/", { 200, 200, 200, 220 }, 2);
             x += slashW;
-            if (pistolInfinite)
+            if (infiniteReserve)
                 DrawInfinity(s, x, yBase + 4, 24, 10, { 240, 240, 240, 230 });
             else
                 Draw7SegInt(s, x, yBase, (std::max)(0, reserve), resSt, resColor);
@@ -3329,7 +3363,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
 
         rightVisible = true;
     }
-    else
+    else if (!rightNativeShown)
     {
         // Force a full redraw next time it becomes visible.
         m_LastHudClip = -9999;

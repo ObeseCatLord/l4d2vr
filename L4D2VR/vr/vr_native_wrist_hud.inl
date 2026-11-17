@@ -268,10 +268,20 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
     const bool logLayout = dump || (m_HandHudDebugLog && nowMs - m_NativeWristHudLastLayoutLogMs >= 5000u);
     if (logLayout)
         m_NativeWristHudLastLayoutLogMs = nowMs;
+    // 2.0.12: the walk found no HUD panel for 10 s (a custom HUD addon?): dump
+    // the first two levels of the panel tree once, so the log shows the names.
+    const bool dumpTopLevels = !logLayout && !m_NativeWristHudTreeDumped && m_NativeWristHudNoPanelSinceMs != 0 &&
+        nowMs - m_NativeWristHudNoPanelSinceMs >= 10000u;
+    if (dumpTopLevels)
+    {
+        m_NativeWristHudTreeDumped = true;
+        Game::logMsg("[VR][WristHUD] no LocalPlayer, TeamPlayer* or HudWeaponSelection panel for 10 s; the first two levels of the HUD panel tree:");
+    }
 
     nwh::Element own{};
     nwh::Rect ownPanel{};
     nwh::Element weaponPanel{};
+    nwh::CaptureSummary summary{};
     // 2.0.11: the walk's scratch vectors are reused from frame to frame (this
     // runs after every HUD paint).
     struct Node { NativeHudVPanel panel; int depth; nwh::Rect parentRect; nwh::PanelMap map; };
@@ -304,7 +314,7 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
         ++visited;
         const char* name = tree.Name(node.panel);
         const nwh::Rect nodeRect = tree.ScreenRect(node.panel);
-        if (logLayout && node.depth <= 7 && *name)
+        if (((logLayout && node.depth <= 7) || (dumpTopLevels && node.depth <= 2)) && *name)
         {
             Game::logMsg("[VR][WristHUD] panel %*s%s %d,%d %dx%d", node.depth * 2, "", name,
                 nodeRect.x, nodeRect.y, nodeRect.w, nodeRect.h);
@@ -324,9 +334,13 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
         if (std::strcmp(name, "LocalPlayer") == 0 && ownPanel.Empty())
         {
             ownPanel = toTex(node.panel, node.map).src;
+            summary.localPlayer = true;
             for (const char* part : { "HealthIcon", "HealthNumber", "Health" })
                 if (const NativeHudVPanel c = tree.FindVisibleChild(node.panel, part))
+                {
                     own = nwh::Union(own, toTex(c, node.map));
+                    ++summary.healthParts;
+                }
             continue;
         }
         if (std::strncmp(name, "TeamPlayer", 10) == 0)
@@ -354,6 +368,7 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
         if (std::strcmp(name, "HudWeaponSelection") == 0 && weaponPanel.Empty())
         {
             weaponPanel = toTex(node.panel, node.map);
+            summary.weapon = true;
             continue;
         }
 
@@ -414,6 +429,33 @@ void VR::OnNativeHudPainted(IMatRenderContext* renderContext)
             job.left.blits.size(), job.left.usedW, job.left.usedH, job.right.blits.size(), job.right.usedW, job.right.usedH,
             job.hide.size());
     }
+
+    // 2.0.12: say what the walk found, once per distinct result (and again
+    // when a crop comes back), so a log shows why a wrist uses its custom panel.
+    summary.visited = visited;
+    summary.teamPlayers = (int)mateList.size();
+    summary.leftW = job.left.usedW; summary.leftH = job.left.usedH;
+    summary.rightW = job.right.usedW; summary.rightH = job.right.usedH;
+    if (job.left.Empty()) summary.leftW = summary.leftH = 0;
+    if (job.right.Empty()) summary.rightW = summary.rightH = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_NativeWristHudSummaryMutex);
+        m_NativeWristHudSummary = summary;
+    }
+    m_NativeWristHudLastWalkMs.store(nowMs, std::memory_order_release);
+    if (m_NativeWristHudCaptureReport.ShouldLog(summary.Key(), nowMs))
+    {
+        char found[256];
+        nwh::FormatCaptureSummary(found, sizeof(found), summary);
+        Game::logMsg("[VR][WristHUD] native capture: painted=1 %s", found);
+    }
+    if (summary.AnyPanel())
+    {
+        m_NativeWristHudNoPanelSinceMs = 0;
+        m_NativeWristHudTreeDumped = false;
+    }
+    else if (m_NativeWristHudNoPanelSinceMs == 0)
+        m_NativeWristHudNoPanelSinceMs = nowMs;
 
     if (job.left.Empty() && job.right.Empty())
         NoteNativeWristHudGate("no health or weapon panels found in the HUD");
@@ -624,6 +666,9 @@ void VR::RenderNativeWristHud(const l4d2vr_native_wrist_hud::Job& job)
                 m_NativeWristTrim[0] = u0; m_NativeWristTrim[1] = v0;
                 m_NativeWristTrim[2] = u1; m_NativeWristTrim[3] = v1;
                 m_NativeWristTrimEmptyReads = 0;
+                // 2.0.12: not a latch any more; the weapon panel painted again.
+                if (m_NativeWristHudRightBlank.exchange(false, std::memory_order_acq_rel))
+                    Game::logMsg("[VR][WristHUD] the weapon panel crop has content again: right wrist uses the native crop");
             }
             else if (++m_NativeWristTrimEmptyReads >= 4 && !m_NativeWristHudRightBlank.load(std::memory_order_acquire))
             {

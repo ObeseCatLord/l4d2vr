@@ -1,5 +1,6 @@
 #include "../L4D2VR/vr_native_wrist_hud.h"
 #include <cstdio>
+#include <string>
 #include <vector>
 
 using namespace l4d2vr_native_wrist_hud;
@@ -122,6 +123,91 @@ int main()
         CHECK(t.src.x == 566 + 30 && t.src.y == 225 + 60 && t.src.w == 45 && t.src.h == 150);
         CHECK(t.w == 90 && t.h == 150);
         CHECK(Trim(panel, 0.0f, 0.0f, 0.0f, 0.0f).src.w == panel.src.w);
+    }
+
+
+    // 2.0.12 (issue 16): per-frame source decision, no latch.
+    {
+        SourcePolicy p;
+        SourceInputs in;
+        // Joining: spectator / MOTD (not playable) for 30 s: custom, no log, timer idle.
+        for (uint64_t t = 1000; t <= 31000; t += 11)
+        {
+            in.nowMs = t; in.playable = false; in.captureRan = false; in.cropFresh = false;
+            const SourceDecision d = p.Update(in);
+            CHECK(!d.native && !d.logFallback && !d.logNotRunning && !d.logRecovered);
+        }
+        // Spawned, capture runs, crop arrives after 6 s: custom for 6 s, then native.
+        p.Reset();
+        int fallbackLogs = 0;
+        uint64_t t = 40000;
+        for (; t < 46000; t += 11)
+        {
+            in.nowMs = t; in.playable = true; in.captureRan = true; in.cropFresh = false;
+            const SourceDecision d = p.Update(in);
+            CHECK(!d.native);
+            fallbackLogs += d.logFallback ? 1 : 0;
+        }
+        CHECK(fallbackLogs == 1);
+        in.nowMs = t; in.cropFresh = true;
+        SourceDecision d = p.Update(in);
+        CHECK(d.native && d.logRecovered);
+        in.nowMs = t + 11;
+        d = p.Update(in);
+        CHECK(d.native && !d.logRecovered);
+        // The crop goes stale (menu closed, HUD hidden): custom immediately, native again later.
+        in.nowMs = t + 22; in.cropFresh = false;
+        CHECK(!p.Update(in).native);
+        in.nowMs = t + 33; in.cropFresh = true;
+        d = p.Update(in);
+        CHECK(d.native && !d.logRecovered);
+    }
+    {
+        // The timer only runs while a capture can succeed: a 3 s wait, 20 s of
+        // menu, another 0.9 s does not reach the 4 s log.
+        SourcePolicy p;
+        SourceInputs in;
+        bool logged = false;
+        uint64_t t = 1000;
+        for (; t < 4000; t += 10) { in.nowMs = t; in.playable = true; in.captureRan = true; logged |= p.Update(in).logFallback; }
+        for (; t < 24000; t += 10) { in.nowMs = t; in.playable = false; logged |= p.Update(in).logFallback; }
+        for (; t < 24900; t += 10) { in.nowMs = t; in.playable = true; logged |= p.Update(in).logFallback; }
+        CHECK(!logged);
+        for (; t < 26000; t += 10) { in.nowMs = t; logged |= p.Update(in).logFallback; }
+        CHECK(logged);
+        // A hitch counts at most kMaxStepMs.
+        SourcePolicy q;
+        in.nowMs = 100000; q.Update(in);
+        in.nowMs = 160000;
+        CHECK(!q.Update(in).logFallback);
+        // Playable but the walk does not run (a gate): logged after 10 s, separately.
+        SourcePolicy r;
+        int notRunning = 0;
+        for (t = 1000; t < 12000; t += 10) { in.nowMs = t; in.playable = true; in.captureRan = false; notRunning += r.Update(in).logNotRunning ? 1 : 0; }
+        CHECK(notRunning == 1);
+    }
+    {
+        // Capture log: once per distinct result, again only on a recovery.
+        CaptureReport report;
+        CaptureSummary none;  // nothing found
+        CaptureSummary found; found.localPlayer = true; found.healthParts = 3; found.teamPlayers = 3; found.weapon = true;
+        found.leftW = 196; found.leftH = 64; found.rightW = 80; found.rightH = 60;
+        CHECK(report.ShouldLog(none.Key(), 1000));
+        CHECK(!report.ShouldLog(none.Key(), 1010));
+        CHECK(!report.ShouldLog(found.Key(), 1500));      // rate limited
+        CHECK(report.ShouldLog(found.Key(), 3100));
+        CHECK(!report.ShouldLog(found.Key(), 9000));
+        CHECK(report.ShouldLog(none.Key(), 9000) == false); // seen, not a recovery
+        CHECK(!report.ShouldLog(found.Key(), 12000));     // last logged key was "found"
+        CaptureSummary partial = found; partial.weapon = false; partial.rightW = partial.rightH = 0;
+        CHECK(report.ShouldLog(partial.Key(), 12000));
+        char line[256];
+        FormatCaptureSummary(line, sizeof(line), found);
+        CHECK(std::string(line).find("LocalPlayer=found(health parts 3/3)") != std::string::npos);
+        CHECK(std::string(line).find("left crop 196x64, right crop 80x60") != std::string::npos);
+        FormatCaptureSummary(line, sizeof(line), none);
+        CHECK(std::string(line).find("weapon=HudWeaponSelection:not found -> left crop none, right crop none") != std::string::npos);
+        CHECK(!none.AnyPanel() && found.AnyPanel());
     }
 
     if (g_failures == 0)

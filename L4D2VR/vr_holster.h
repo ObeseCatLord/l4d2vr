@@ -87,6 +87,25 @@ namespace l4d2vr_holster
         }
     }
 
+    // 2.0.12: the grab-volume shape of a slot, so a layout can put any slot
+    // anywhere (the Pavlov layout carries the long gun on the back).
+    enum class ZoneKind : int
+    {
+        Sling = 0,  // a long gun across the chest: capsule from its grip to its foregrip
+        Hip = 1,    // an item hanging from its grip: capsule down from the socket
+        Pocket = 2, // a chest/vest pocket: sphere at the socket
+        Back = 3,   // the sphere behind the head (head frame), reached over a shoulder
+    };
+
+    // 2.0.12: selectable layouts (HolsterLayout). Adding one = one more table
+    // in MakeLayout plus its name in LayoutKindFromName / LayoutKindName.
+    enum class LayoutKind : int
+    {
+        Forefront = 0, // the default (research/forefront/HOLSTERS.md)
+        Pavlov = 1,    // research/pavlov/inventory/SPEC.md
+        Count = 2
+    };
+
     // Metres, x forward, y toward the DOMINANT side, z up (mirrors for the
     // left-handed). "Root" offsets are from the equipment root (head + (0, 0,
     // rootDropMeters)); "head" offsets are in the headset's own frame. The
@@ -106,13 +125,19 @@ namespace l4d2vr_holster
         // dominant side (0.075) to keep 20 cm between the grenade and the
         // magazine pouch. slot4 keeps its 2.0.4 place on the back (head offset
         // (-0.25, -0.13, -0.39)).
+        // 2.0.12 (review s12 issue 7): slot3 moved down from Forefront's
+        // collar-bone pouch (0.07, 0.10, 0.40) = HMD - 0.20 m, where the gun
+        // hand aims, to Pavlov's top vest row (HMD - 0.31 m).
         Vector socket[kZoneCount] = {
             Vector(0.08f, 0.05f, 0.1075f),      // slot1 sling: the pistol grip (Forefront (0.059, 0.05, 0.1075))
             Vector(-0.025f, 0.225f, 0.0f),      // slot2 dominant hip: the grip (Forefront secondary)
-            Vector(0.07f, 0.10f, 0.40f),        // slot3 dominant upper chest (Forefront grenade pouch (0.025, 0.075, 0.40))
+            Vector(0.05f, 0.15f, 0.29f),        // slot3 dominant chest, Pavlov's top pocket row (HMD - 0.31)
             Vector(-0.25f, -0.13f, 0.21f),      // slot4 back, off shoulder blade (2.0.4)
             Vector(-0.025f, -0.225f, 0.0f),     // slot5 off-hand hip (Forefront's second hip)
         };
+        // The grab-volume shape of each slot.
+        ZoneKind kind[kZoneCount] = { ZoneKind::Sling, ZoneKind::Hip, ZoneKind::Pocket, ZoneKind::Back, ZoneKind::Hip };
+        LayoutKind layoutKind = LayoutKind::Forefront;
         // Chest sling (slot1): the gun runs from the pistol grip down toward the
         // off-hand hip at 45 degrees in the frontal plane, sights up toward the
         // off shoulder, its left side against the body (Forefront's primary
@@ -125,8 +150,9 @@ namespace l4d2vr_holster
         // about 15 cm half extents).
         float hipItemLengthMeters = 0.22f;
         float hipReachMeters = 0.17f;
-        // Chest pocket (slot3): hand centre to the item.
-        float pocketReachMeters = 0.15f;
+        // Chest pocket (slot3): hand centre to the item (2.0.12: 0.15 -> 0.12,
+        // review s12 7.2).
+        float pocketReachMeters = 0.12f;
         // Back (slot4): sphere behind the head, in the head's frame (follows
         // pitch too). The whole sphere is slot4's.
         Vector backCenterHead{ -0.4414f, 0.0f, -0.0948f };
@@ -143,14 +169,92 @@ namespace l4d2vr_holster
         // The magazine pouch on the off-hand upper chest (Forefront's ammo
         // pouch (0.032, -0.075, 0.3175); forward and outward like slot3). The
         // holsters leave a hand there to the magazines.
-        Vector magPouch{ 0.07f, -0.10f, 0.32f };
+        // 2.0.12: on Pavlov's top pocket row too (HMD - 0.33 m), 30 cm from the
+        // grenade (was (0.07, -0.10, 0.32) = HMD - 0.28 m).
+        Vector magPouch{ 0.06f, -0.15f, 0.27f };
         float magPouchReachMeters = 0.15f;
         // 2.0.9: an item hanging on the body is grabbed anywhere on its drawn
         // body (an oriented box around the model in its holstered pose,
         // ItemBodyBox), not only at its handle: the hand's centre within this
         // of the box surface. The handle volumes above still count too.
         float itemGrabMarginMeters = 0.07f;
+        // 2.0.12: the margin around a small pocket item (grenade, pills in a
+        // pocket): 0.07 -> 0.03 (review s12 7.2).
+        float pocketItemGrabMarginMeters = 0.03f;
+        // 2.0.12: nearest grab wins with this much hysteresis toward the item
+        // the hand already hovers (review-2.0.10 B23/B58), so two neighbours
+        // never flicker.
+        float nearestHysteresisMeters = 0.02f;
+        // Pavlov's hand grab sphere (GrabVolume r 11.5 cm).
+        float handGrabSphereMeters = 0.115f;
     };
+
+    inline const char* LayoutKindName(LayoutKind kind)
+    {
+        switch (kind)
+        {
+        case LayoutKind::Pavlov: return "pavlov";
+        default: return "forefront";
+        }
+    }
+
+    // Config value -> layout ("forefront", the default, for anything unknown).
+    inline LayoutKind LayoutKindFromName(const char* name, bool* known = nullptr)
+    {
+        auto eq = [](const char* a, const char* b)
+        {
+            if (!a) return false;
+            for (; *a && *b; ++a, ++b)
+            {
+                char ca = *a, cb = *b;
+                if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca - 'A' + 'a');
+                if (ca != cb) return false;
+            }
+            return *a == '\0' && *b == '\0';
+        };
+        if (known) *known = true;
+        if (eq(name, "forefront")) return LayoutKind::Forefront;
+        if (eq(name, "pavlov")) return LayoutKind::Pavlov;
+        if (known) *known = false;
+        return LayoutKind::Forefront;
+    }
+
+    // The data table of each layout. Root = HMD + (0, 0, rootDropMeters);
+    // sockets are root offsets (forward, dominant, up). A new layout is one
+    // more case here.
+    inline Layout MakeLayout(LayoutKind kind)
+    {
+        Layout layout{};
+        layout.layoutKind = kind;
+        if (kind != LayoutKind::Pavlov)
+            return layout;   // Forefront (the struct defaults above)
+
+        // Pavlov VR (research/pavlov/inventory/SPEC.md sections 2-5): the
+        // inventory root hangs 0.75 m below the HMD with the look-down (8 cm)
+        // and floor-reach (60 cm) push-backs; the rifle goes on the back
+        // (QuickSlot_Back, the sphere behind the head), pistols on the hips,
+        // grenades and kits in vest pockets at HMD - 0.31 .. - 0.54 m, the
+        // magazine pouch on the off-hand hip. HMD-relative numbers below are
+        // Pavlov's socket positions; z = HMD-relative + 0.75.
+        layout.rootDropMeters = -0.75f;
+        layout.lookDownBackMeters = 0.08f;
+        layout.reachFloorBackMeters = 0.60f;
+        layout.kind[0] = ZoneKind::Back;     // slot1 long gun: the back
+        layout.kind[1] = ZoneKind::Hip;      // slot2 dominant hip
+        layout.kind[2] = ZoneKind::Pocket;   // slot3 grenade: dominant top pocket
+        layout.kind[3] = ZoneKind::Pocket;   // slot4 kit: chest centre, low
+        layout.kind[4] = ZoneKind::Pocket;   // slot5 pills: off-hand middle pocket
+        layout.socket[0] = Vector(-0.298f, 0.0f, 0.304f);   // back item rest (-0.298, 0, -0.446)
+        layout.socket[1] = Vector(-0.061f, 0.25f, 0.227f);  // hip item rest (-0.061, +-0.25, -0.523)
+        layout.socket[2] = Vector(0.024f, 0.146f, 0.441f);  // top pocket (0.024, 0.146, -0.309)
+        layout.socket[3] = Vector(0.081f, 0.0f, 0.238f);    // chest centre-low (0.081, 0, -0.512)
+        layout.socket[4] = Vector(0.054f, -0.144f, 0.325f); // middle pocket (0.054, -0.144, -0.425)
+        layout.magPouch = Vector(-0.023f, -0.187f, 0.19f);  // off-hand ammo pouch (-0.023, -0.187, -0.560)
+        layout.hipReachMeters = 0.17f;
+        layout.pocketReachMeters = 0.12f;
+        layout.backRadiusMeters = 0.40f;                    // QuickSlot_Back r 40 at head-local (-0.441, 0, -0.095)
+        return layout;
+    }
 
     struct BodyFrame
     {
@@ -271,15 +375,15 @@ namespace l4d2vr_holster
             d.z / (s * frame.heightScale));
     }
 
-    inline bool IsBackZone(Zone zone)
+    inline ZoneKind KindOf(const Layout& layout, Zone zone)
     {
-        return zone == Zone::Medical;
+        const int slot = SlotIndex(zone);
+        return slot >= 0 && slot < kZoneCount ? layout.kind[slot] : ZoneKind::Pocket;
     }
 
-    inline bool IsHipZone(Zone zone)
-    {
-        return zone == Zone::Secondary || zone == Zone::Consumable;
-    }
+    inline bool IsBackZone(const Layout& layout, Zone zone) { return KindOf(layout, zone) == ZoneKind::Back; }
+    inline bool IsHipZone(const Layout& layout, Zone zone) { return KindOf(layout, zone) == ZoneKind::Hip; }
+    inline bool IsSlingZone(const Layout& layout, Zone zone) { return KindOf(layout, zone) == ZoneKind::Sling; }
 
     inline Vector Normalized(const Vector& v, const Vector& fallback)
     {
@@ -339,7 +443,7 @@ namespace l4d2vr_holster
     // off shoulder).
     inline Vector ZoneCenterWorld(const BodyFrame& frame, const Layout& layout, Zone zone)
     {
-        if (zone == Zone::Medical)
+        if (IsBackZone(layout, zone))
             return HeadToWorld(frame, layout.backReachHead);
         const int slot = SlotIndex(zone);
         return RootToWorld(frame, layout.socket[slot < 0 || slot >= kZoneCount ? 0 : slot]);
@@ -350,12 +454,11 @@ namespace l4d2vr_holster
     // item; back: the sphere centre).
     inline float ZoneReachMeters(const Layout& layout, Zone zone)
     {
-        switch (zone)
+        switch (KindOf(layout, zone))
         {
-        case Zone::Primary: return layout.slingReachMeters;
-        case Zone::Secondary:
-        case Zone::Consumable: return layout.hipReachMeters;
-        case Zone::Medical: return layout.backRadiusMeters + layout.handRadiusMeters;
+        case ZoneKind::Sling: return layout.slingReachMeters;
+        case ZoneKind::Hip: return layout.hipReachMeters;
+        case ZoneKind::Back: return layout.backRadiusMeters + layout.handRadiusMeters;
         default: return layout.pocketReachMeters;
         }
     }
@@ -437,19 +540,19 @@ namespace l4d2vr_holster
             return false;
         const float s = frame.unitsPerMeter;
         float distance = 1.0e9f;
-        if (zone == Zone::Primary)
+        if (IsSlingZone(layout, zone))
         {
             Vector handle{}, foregrip{};
             SlingHandle(frame, layout, handle, foregrip);
             distance = DistanceToSegment(hand, handle, foregrip) / s;
         }
-        else if (IsHipZone(zone))
+        else if (IsHipZone(layout, zone))
         {
             Vector top{}, bottom{};
             HipSegment(frame, layout, zone, top, bottom);
             distance = DistanceToSegment(hand, top, bottom) / s;
         }
-        else if (IsBackZone(zone))
+        else if (IsBackZone(layout, zone))
         {
             const Vector d = hand - HeadToWorld(frame, layout.backCenterHead);
             distance = std::sqrt(DotProduct(d, d)) / s;
@@ -585,13 +688,13 @@ namespace l4d2vr_holster
         ItemPose pose{};
         if (!frame.valid || zone == Zone::None || SlotIndex(zone) < 0 || SlotIndex(zone) >= kZoneCount)
             return pose;
-        // slot1 is the chest sling whatever the item.
-        if (zone == Zone::Primary)
+        // A sling slot is the chest sling whatever the item.
+        if (IsSlingZone(layout, zone))
             return SlingPose(frame, layout);
         const Vector up(0.0f, 0.0f, 1.0f);
         const Vector f = frame.forward;
         const Vector d = frame.dominant;
-        const bool back = IsBackZone(zone);
+        const bool back = IsBackZone(layout, zone);
         // Out of the body: forward on the chest and hips, backward on the back.
         const Vector out = back ? f * -1.0f : f;
         Vector axisY = up;
@@ -602,19 +705,31 @@ namespace l4d2vr_holster
         switch (shape)
         {
         case ItemShape::LongGun:
+            if (back)
+            {
+                // 2.0.12 (Pavlov layout): slung on the back, muzzle up over the
+                // dominant shoulder, sights out of the back.
+                axisZ = Normalized(up * 0.85f + d * 0.5f, up);
+                axisY = f * -1.0f;
+                break;
+            }
+            axisZ = up * -1.0f;
+            axisY = f;
+            gripAtSocket = IsHipZone(layout, zone);
+            break;
         case ItemShape::Pistol:
             // Forefront's secondary: barrel straight down, sights forward,
             // the grip on top (behind the slide).
             axisZ = up * -1.0f;
             axisY = f;
-            gripAtSocket = IsHipZone(zone);
+            gripAtSocket = IsHipZone(layout, zone);
             break;
         case ItemShape::Melee:
             // Blade (local +Y) down and back, local +Z toward the dominant
             // side; the handle on top at the socket.
             axisY = Normalized(up * -0.85f + f * -0.5f, up * -1.0f);
             axisZ = Normalized(d, Vector(0.0f, -1.0f, 0.0f));
-            gripAtSocket = IsHipZone(zone);
+            gripAtSocket = IsHipZone(layout, zone);
             break;
         case ItemShape::Pack:
             // Upright, flat side against the body.
@@ -723,7 +838,7 @@ namespace l4d2vr_holster
         if (!frame.valid || zone == Zone::None || SlotIndex(zone) < 0 || SlotIndex(zone) >= kZoneCount ||
             !l4d2vr_interaction::Finite(hand))
             return 1.0e9f;
-        // slot1 is the chest sling whatever the item (SlingPose: a long gun).
+        // slot1 holds a long gun whatever the item (on the sling: SlingPose).
         if (zone == Zone::Primary)
             shape = ItemShape::LongGun;
         const ItemPose pose = BuildItemPose(frame, layout, zone, shape);
@@ -759,8 +874,10 @@ namespace l4d2vr_holster
         if (items && slot >= 0 && slot < kZoneCount && (items->mask & (1u << slot)) != 0u)
         {
             const float body = ItemBodyDistanceMeters(frame, layout, zone, items->shape[slot], hand);
+            const float margin = KindOf(layout, zone) == ZoneKind::Pocket
+                ? layout.pocketItemGrabMarginMeters : layout.itemGrabMarginMeters;
             if (body < 1.0e8f)
-                score = std::fmin(score, body - layout.itemGrabMarginMeters);
+                score = std::fmin(score, body - margin);
         }
         return score;
     }
@@ -784,9 +901,12 @@ namespace l4d2vr_holster
     // The magazine pouch takes part too: when it wins, no holster takes the
     // hand. outDistanceMeters: the winner's handle distance; outScoreMeters:
     // its score (<= 0).
+    // 2.0.12: hovered = the zone this hand hovered last frame; it keeps
+    // winning until another zone is nearer by more than
+    // layout.nearestHysteresisMeters (no flicker between neighbours).
     inline Zone FindZone(const BodyFrame& frame, const Layout& layout, const Vector& hand,
         std::uint32_t occupiedMask, float* outDistanceMeters = nullptr, const BodyItems* items = nullptr,
-        float* outScoreMeters = nullptr)
+        float* outScoreMeters = nullptr, Zone hovered = Zone::None)
     {
         if (outDistanceMeters)
             *outDistanceMeters = 1.0e9f;
@@ -796,6 +916,7 @@ namespace l4d2vr_holster
             return Zone::None;
         Zone best = Zone::None;
         float bestScore = 1.0e9f, bestDistance = 1.0e9f;
+        float hoveredScore = 1.0e9f, hoveredDistance = 1.0e9f;
         for (int i = 0; i < kZoneCount; ++i)
         {
             if ((occupiedMask & (1u << i)) == 0u)
@@ -805,12 +926,24 @@ namespace l4d2vr_holster
             const float score = GrabScoreMeters(frame, layout, zone, hand, items, &distance);
             if (!(score <= 0.0f))
                 continue;
+            if (zone == hovered)
+            {
+                hoveredScore = score;
+                hoveredDistance = distance;
+            }
             if (score < bestScore)
             {
                 bestScore = score;
                 bestDistance = distance;
                 best = zone;
             }
+        }
+        if (hovered != Zone::None && best != hovered && hoveredScore <= 0.0f &&
+            hoveredScore <= bestScore + layout.nearestHysteresisMeters)
+        {
+            best = hovered;
+            bestScore = hoveredScore;
+            bestDistance = hoveredDistance;
         }
         if (best != Zone::None)
         {
@@ -856,6 +989,10 @@ namespace l4d2vr_holster
         Zone ownZoneUnderHand = Zone::None; // zone under the hand ignoring occupancy (for holstering)
         int activeSlot = -1;           // 0-based slot of the active weapon, -1 unknown
         std::uint32_t occupiedMask = 0u;
+        // 2.0.12 (review s12 7a, G1; Pavlov and Forefront): only an EMPTY hand
+        // takes an item from the body. A hand that holds something only puts
+        // its own item away at its own holster.
+        bool handEmpty = true;
     };
 
     struct GrabOutput
@@ -890,7 +1027,7 @@ namespace l4d2vr_holster
             const bool released = !in.gripDown && m_WasDown;
             m_WasDown = in.gripDown;
 
-            if (pressed && in.handZone != Zone::None)
+            if (pressed && in.handZone != Zone::None && in.handEmpty)
             {
                 const int slot = SlotIndex(in.handZone);
                 m_Holding = true;

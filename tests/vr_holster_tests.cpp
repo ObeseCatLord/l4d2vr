@@ -285,9 +285,9 @@ static void TestHolsterPlacementNearHead()
     CHECK(RootToWorld(frame, layout.socket[2]).x > frame.head.x);
     CHECK(ToLocal(frame, RootToWorld(frame, layout.socket[2])).x > 0.0f);
     // Only the kit is on the back now; the long gun is on the chest.
-    CHECK(IsBackZone(Zone::Medical) && !IsBackZone(Zone::Primary));
-    CHECK(!IsBackZone(Zone::Secondary) && !IsBackZone(Zone::Throwable) && !IsBackZone(Zone::Consumable));
-    CHECK(IsHipZone(Zone::Secondary) && IsHipZone(Zone::Consumable) && !IsHipZone(Zone::Throwable));
+    CHECK(IsBackZone(layout, Zone::Medical) && !IsBackZone(layout, Zone::Primary));
+    CHECK(!IsBackZone(layout, Zone::Secondary) && !IsBackZone(layout, Zone::Throwable) && !IsBackZone(layout, Zone::Consumable));
+    CHECK(IsHipZone(layout, Zone::Secondary) && IsHipZone(layout, Zone::Consumable) && !IsHipZone(layout, Zone::Throwable));
 }
 
 static void TestNearAnyZone()
@@ -605,13 +605,13 @@ static void TestItemOrientationRealisticBody()
         const Vector gp = centre(grenade, ItemShape::Equipment);
         CHECK(pp.y < -0.15f && gp.y > 0.05f);                // pills off-hand hip, grenade dominant side
         CHECK(gp.x > 0.0f);                                  // on the chest, in front of the eyes' plane
-        CHECK(gp.z < -0.15f && gp.z > -0.30f);               // upper chest
+        CHECK(gp.z < -0.28f && gp.z > -0.36f);               // 2.0.12: Pavlov's top pocket row (HMD - 0.31)
         CHECK(pp.z < -0.5f && pp.z > -0.7f);                 // hip
-        // The magazine pouch: off-hand upper chest, 20 cm from the grenade.
+        // The magazine pouch: off-hand upper chest, 30 cm from the grenade (2.0.12).
         const Vector mp = local(RootToWorld(f, layout.magPouch));
         CHECK(mp.y < -0.05f && mp.z < -0.2f && mp.z > -0.35f && mp.x > 0.0f);
         const Vector gm = mp - gp;
-        CHECK(std::sqrt(DotProduct(gm, gm)) > 0.2f);
+        CHECK(std::sqrt(DotProduct(gm, gm)) > 0.28f);
         // Left-handed mirrors the world side; the poses stay proper rotations.
         for (const ItemPose* pose : { &pills, &grenade, &pistol, &rifle, &pack, &melee })
         {

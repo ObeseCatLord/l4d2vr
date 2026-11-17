@@ -1727,6 +1727,8 @@ public:
 
     // Pavlov-style holsters (body grip inventory with visible, grabbable items).
     bool m_HolsterPavlovLayoutEnabled = true;
+    bool m_HolsterGrabRequiresEmptyHand = true;   // 2.0.12: only an empty hand takes from the body
+    l4d2vr_holster::Zone m_HolsterHoverZone[2] = { l4d2vr_holster::Zone::None, l4d2vr_holster::Zone::None }; // [0] free, [1] item hand (nearest-wins hysteresis)
     bool m_HolsterItemsVisible = true;
     bool m_HolsterInstantDraw = true;
     float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the head yaw every frame (Forefront)

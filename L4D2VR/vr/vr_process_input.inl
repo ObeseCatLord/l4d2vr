@@ -811,9 +811,28 @@ void VR::ProcessInput()
                     HandAtStowedItem(frame, m_LeftControllerPosAbs, occupied & ~(1u << activeSlot), leftItems);
                 if (m_HolsterEmptyHands && activeSlot >= 0)
                     occupied &= ~(1u << activeSlot);
-                const l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
-                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied, nullptr, leftItems);
+                l4d2vr_holster::Zone zone = stowedNearest ? l4d2vr_holster::Zone::None :
+                    l4d2vr_holster::FindZone(frame, m_HolsterLayout, m_LeftControllerPosAbs, occupied, nullptr, leftItems,
+                        nullptr, m_HolsterHoverZone[0]);
                 LogHolsterGripPress(true, &frame, m_LeftControllerPosAbs, true, static_cast<int>(zone), activeSlot);
+                // 2.0.12 (review s12 7a, G1): only an empty hand takes from the
+                // body. This hand is not empty while it holds the left pistol,
+                // the foregrip or a magazine/shell. Without ambidextrous items
+                // the drawn item goes to the item hand, which must be empty too.
+                if (zone != l4d2vr_holster::Zone::None && m_HolsterGrabRequiresEmptyHand)
+                {
+                    const bool leftEmpty = !leftHeldPistol && !dualPistolsActive && !m_VrHandsTwoHandedGripActive &&
+                        !m_MagazineInteractionLeftHandHolding && !IsMagazineInteractionLeftHandActive();
+                    const bool itemHandEmpty = activeSlot < 0 || (ChestSlingActive() && StowedSlot() == activeSlot);
+                    const char* refused = !leftEmpty ? "the hand holds something" :
+                        (!m_AmbidextrousItemHands && !itemHandEmpty) ? "the item hand holds something" : nullptr;
+                    if (refused)
+                    {
+                        Game::logMsg("[VR][Holster] free hand at slot%d: no take (%s)",
+                            l4d2vr_holster::SlotIndex(zone) + 1, refused);
+                        zone = l4d2vr_holster::Zone::None;
+                    }
+                }
                 if (zone != l4d2vr_holster::Zone::None && m_AmbidextrousItemHands &&
                     l4d2vr_holster::SlotIndex(zone) != activeSlot && !leftHeldPistol && !dualPistolsActive &&
                     ItemHandReady(localPlayer, isObserverOrIdle))
@@ -1844,7 +1863,7 @@ void VR::ProcessInput()
             if (frameValid)
             {
                 grabInput.handZone = l4d2vr_holster::FindZone(frame, m_HolsterLayout,
-                    m_RightControllerPosAbs, drawableMask, nullptr, rightItems);
+                    m_RightControllerPosAbs, drawableMask, nullptr, rightItems, nullptr, m_HolsterHoverZone[1]);
                 // Nearest grab wins (Forefront / Pavlov): a stowed item nearer to
                 // the hand than an overlapping holster (the sling handle sits by
                 // the hip) is taken back by UpdateChestSling, not passed over.
@@ -1865,6 +1884,17 @@ void VR::ProcessInput()
                 if (l4d2vr_holster::OwnHolsterWins(inOwnVolume, grabInput.handZone))
                     grabInput.handZone = l4d2vr_holster::Zone::None;
             }
+            // 2.0.12 (review s12 7a, G1; Pavlov / Forefront): only an empty hand
+            // takes from the body. A hand that holds an item (or a carried prop)
+            // sees no other holster: no draw, no glow, no swap, no hover tick;
+            // its own holster still takes its item back.
+            {
+                const bool carryingOther = localPlayer && activeSlot < 0 && localPlayer->GetActiveWeapon() != nullptr;
+                grabInput.handEmpty = !m_HolsterGrabRequiresEmptyHand || (heldSlot < 0 && !carryingOther);
+                if (!grabInput.handEmpty)
+                    grabInput.handZone = l4d2vr_holster::Zone::None;
+            }
+            m_HolsterHoverZone[1] = grabInput.handZone;
 
             if (l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
             {
@@ -1947,7 +1977,9 @@ void VR::ProcessInput()
                     if (ready && frameValid)
                     {
                         const l4d2vr_holster::Zone zone = l4d2vr_holster::FindZone(frame, m_HolsterLayout, hand,
-                            hoverMask, nullptr, items);
+                            hoverMask, nullptr, items, nullptr, m_HolsterHoverZone[side]);
+                        if (gameplayLeft)
+                            m_HolsterHoverZone[0] = (gameplayLeft ? leftFree : rightFree) ? zone : l4d2vr_holster::Zone::None;
                         key = zone != l4d2vr_holster::Zone::None ? l4d2vr_holster::SlotIndex(zone) + 1 : 0;
                         const int latched = GrabHoverLatchedKey(physicalLeft, l4d2vr_grab_hover::Source::Holster);
                         if (latched > 0 && latched <= l4d2vr_holster::kZoneCount)

@@ -3458,6 +3458,38 @@ void VR::ParseConfigFileUnlocked()
         m_CrosshairColorA = std::clamp(getInt("CrosshairAlpha", 210), 0, 255);
     }
     m_HolsterPavlovLayoutEnabled = getBool("HolsterPavlovLayoutEnabled", true);
+    {
+        // 2.0.12: the body layout (vr_holster.h MakeLayout): forefront (default)
+        // or pavlov. Positions are code tables; the chest pouches can be moved
+        // with HolsterGrenadeOffsetMeters / HolsterMagPouchOffsetMeters
+        // ("auto" = the layout's own place; root-relative forward, dominant, up).
+        const std::string layoutName = getString("HolsterLayout", "forefront");
+        bool knownLayout = true;
+        const l4d2vr_holster::LayoutKind layoutKind =
+            l4d2vr_holster::LayoutKindFromName(layoutName.c_str(), &knownLayout);
+        if (!knownLayout)
+            Game::logMsg("[VR][Holster] HolsterLayout=%s is unknown: using forefront", layoutName.c_str());
+        if (!knownLayout || layoutKind != m_HolsterLayout.layoutKind)
+            Game::logMsg("[VR][Holster] layout %s", l4d2vr_holster::LayoutKindName(layoutKind));
+        m_HolsterLayout = l4d2vr_holster::MakeLayout(layoutKind);
+        auto offsetOverride = [&](const char* key, Vector& target)
+        {
+            const std::string text = getString(key, "auto");
+            if (text.empty() || text == "auto")
+                return;
+            Vector v{};
+            if (std::sscanf(text.c_str(), "%f , %f , %f", &v.x, &v.y, &v.z) == 3 &&
+                std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) &&
+                std::fabs(v.x) < 1.0f && std::fabs(v.y) < 1.0f && std::fabs(v.z) < 1.5f)
+                target = v;
+            else
+                Game::logMsg("[VR][Holster] %s=%s is not \"auto\" or x,y,z metres: ignored", key, text.c_str());
+        };
+        offsetOverride("HolsterGrenadeOffsetMeters", m_HolsterLayout.socket[l4d2vr_holster::SlotIndex(l4d2vr_holster::Zone::Throwable)]);
+        offsetOverride("HolsterMagPouchOffsetMeters", m_HolsterLayout.magPouch);
+        // Review s12 7a / G1: only an empty hand takes from the body.
+        m_HolsterGrabRequiresEmptyHand = getBool("HolsterGrabRequiresEmptyHand", true);
+    }
     m_HolsterItemsVisible = getBool("HolsterItemsVisible", true);
     m_HolsterInstantDraw = getBool("HolsterInstantDraw", true);
     m_AmbidextrousItemHands = getBool("AmbidextrousItemHands", true);

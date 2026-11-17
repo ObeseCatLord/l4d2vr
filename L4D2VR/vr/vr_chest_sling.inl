@@ -63,6 +63,22 @@ bool VR::ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId)
     in.handToSlingMeters = GetChestSlingPoint(handle, foregrip)
         ? (m_RightControllerPosAbs - handle).Length() / (std::max)(1.0f, m_VRScale)
         : -1.0f;
+    if (!l4d2vr_holster::IsSlingZone(m_HolsterLayout, l4d2vr_holster::Zone::Primary))
+    {
+        // 2.0.12 Pavlov layout: the long gun lives on the back; it goes there
+        // only with the hand in the back volume (over a shoulder).
+        l4d2vr_holster::BodyFrame frame{};
+        float distance = 1.0e9f;
+        const bool inBack = in.enabled && GetHolsterBodyFrame(frame) &&
+            l4d2vr_holster::HandFitsZone(frame, m_HolsterLayout, l4d2vr_holster::Zone::Primary, m_RightControllerPosAbs, distance);
+        Game::logMsg("[VR][ChestSling] owner squeeze weaponId=%d hand %.2f m from the back volume (reach %.2f): %s",
+            weaponId, distance, l4d2vr_holster::ZoneReachMeters(m_HolsterLayout, l4d2vr_holster::Zone::Primary),
+            inBack ? "on the back" : "not caught (stays in the hand)");
+        if (!inBack)
+            return false;
+        StowActiveWeapon(weaponTag, 0, "let go of the long gun: on the back");
+        return true;
+    }
     const l4d2vr_chest_sling::ReleaseAction action = l4d2vr_chest_sling::OnRelease(in);
     Game::logMsg("[VR][ChestSling] %s weaponId=%d hand %.2f m from the sling (caught within %.2f): %s",
         m_GripToggleEnabled ? "owner squeeze" : "release", weaponId, in.handToSlingMeters, in.dropDistanceMeters,
@@ -122,7 +138,7 @@ bool VR::HandAtStowedItem(const l4d2vr_holster::BodyFrame& frame, const Vector& 
     const int slot = StowedSlot();
     if (slot < 0 || slot >= l4d2vr_holster::kZoneCount || !frame.valid)
         return false;
-    if (slot == 0)
+    if (slot == 0 && l4d2vr_holster::IsSlingZone(m_HolsterLayout, l4d2vr_holster::Zone::Primary))
     {
         Vector handle{}, foregrip{};
         l4d2vr_holster::SlingHandle(frame, m_HolsterLayout, handle, foregrip);
@@ -180,7 +196,8 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
     if (slung == 0u)
         return;
     const int stowedSlot = m_StowedSlot.load(std::memory_order_acquire);
-    const bool onSling = stowedSlot == 0;
+    const bool onSling = stowedSlot == 0 &&
+        l4d2vr_holster::IsSlingZone(m_HolsterLayout, l4d2vr_holster::Zone::Primary);
     C_BaseCombatWeapon* const active = localPlayer ? localPlayer->GetActiveWeapon() : nullptr;
     const bool alive = ready && localPlayer != nullptr;
     const bool optionOn = onSling ? (m_ChestSlingEnabled || m_HolsterEmptyHands) : m_HolsterEmptyHands;

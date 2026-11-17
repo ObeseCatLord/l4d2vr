@@ -546,6 +546,18 @@ ConsumableGiveEnabled=true
 // Bring pills to your mouth or stab adrenaline into your chest/other arm to use them (the trigger still works).
 ConsumableGesturesEnabled=true
 HolsterPavlovLayoutEnabled=true
+// Where the holsters sit on your body: forefront (rifle on a chest sling, pistol on the dominant hip, grenade and
+// magazines on the upper chest at Pavlov's top pocket row, kits on the back, pills on the other hip) or pavlov
+// (Pavlov VR: rifle on your back over the shoulder, pistol on the hip, grenade/kit/pills in vest pockets 31-54 cm
+// below your eyes, magazines on the other hip). HolsterYawFollowSpeed=20 adds Pavlov's slight turn lag.
+HolsterLayout=forefront
+// Only an empty hand takes things from your body (Pavlov and Forefront): squeezing at a holster while the hand
+// holds something does nothing (except putting that item away at its own holster). The other, empty hand may draw.
+HolsterGrabRequiresEmptyHand=true
+// Move the grenade pocket / magazine pouch: auto = the layout's place, or forward,toward-your-gun-hand,up metres
+// from the holster root (0.60 m below your eyes in forefront, 0.75 m in pavlov), e.g. 0.05,0.15,0.29.
+HolsterGrenadeOffsetMeters=auto
+HolsterMagPouchOffsetMeters=auto
 HolsterItemsVisible=true
 // No weapon switch plays the draw animation: the item is simply in your hand.
 HolsterInstantDraw=true

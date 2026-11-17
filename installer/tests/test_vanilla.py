@@ -72,6 +72,7 @@ class WrapperScriptTests(Temp):
 class LaunchOptionsTests(unittest.TestCase):
     WRAPPER = Path("/home/u/.config/l4d2vr-installer/l4d2vr-steam-wrapper.sh")
 
+    @unittest.skipIf(sys.platform.startswith("win"), "the Steam wrapper is Linux-only (POSIX paths)")
     def test_wrapper_goes_in_front_of_command(self):
         merged = launchopts.merge_launch_options("MANGOHUD=1 gamemoderun %command% -novid")[0]
         out = vanilla.with_wrapper(merged, self.WRAPPER)
@@ -81,6 +82,7 @@ class LaunchOptionsTests(unittest.TestCase):
         self.assertEqual(vanilla.with_wrapper(out, self.WRAPPER), out)  # idempotent
         self.assertTrue(launchopts.has_required_options(out))  # still counts as VR-ready
 
+    @unittest.skipIf(sys.platform.startswith("win"), "the Steam wrapper is Linux-only (POSIX paths)")
     def test_wrapper_with_space_is_quoted(self):
         out = vanilla.with_wrapper(launchopts.RECOMMENDED, Path("/home/a b/l4d2vr-steam-wrapper.sh"))
         self.assertIn("'/home/a b/l4d2vr-steam-wrapper.sh' %command%", out)

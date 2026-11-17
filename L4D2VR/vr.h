@@ -63,6 +63,7 @@
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
+#include "vr_pavlov_feel.h"
 #include "vr_grab_volumes.h"
 #include "vr_debug_volumes.h"
 #include "vr_overlay_pointer.h"
@@ -2391,6 +2392,23 @@ public:
 	HapticMixState m_LeftHapticMix{};
 	HapticMixState m_RightHapticMix{};
 	float m_HapticMixMinIntervalSeconds = 0.005f;
+	// 2.0.14 Pavlov haptic envelopes (vr_pavlov_feel.h), Physical mode:
+	// [physical hand 0 left / 1 right][channel 0 shots / 1 handling]. Polled
+	// by FlushHapticMixer every frame. weapon.pavlov_envelopes in
+	// haptics_config.txt (default on) gives shots Pavlov's shot curves.
+	bool m_PavlovFireHapticsEnabled = true;
+	std::mutex m_HapticEnvelopeMutex;
+	l4d2vr_pavlov_feel::EnvelopePlayer m_HapticEnvelopes[2][2];
+	float m_HapticEnvelopeFrequency[2][2] = { { 0.0f, 0.0f }, { 0.0f, 0.0f } };
+	double m_LastShotHapticStart[2] = { 0.0, 0.0 };
+	bool m_LastShotHapticValid[2] = { false, false };
+	std::chrono::steady_clock::time_point m_HapticEnvelopeClockBase = std::chrono::steady_clock::now();
+	std::atomic<uint32_t> m_PavlovHapticEffectCount{ 0u };
+	double HapticEnvelopeNow() const;
+	// Physical mode only (no-op in classic): plays a Pavlov effect on a physical hand.
+	void PlayPavlovHaptic(bool physicalLeftHand, l4d2vr_pavlov_feel::Effect effect, float scale = 1.0f,
+		int channel = 1, float frequency = 0.0f);
+	void PumpHapticEnvelopes();
 
 	TrackedDevicePoseData m_HmdPose;
 	TrackedDevicePoseData m_LeftControllerPose;
@@ -3198,6 +3216,17 @@ public:
 	float m_MagazineInteractionBoltMaxPullDistance = 0.0f;
 	bool m_MagazineInteractionBoltGrabRequiresGripRelease = false;
 	bool m_MagazineInteractionBoltReachedRear = false;
+	// 2.0.14 Pavlov handle feel (vr_pavlov_feel.h): travel ticks, handle
+	// sounds, the magazine slide cues, a slide/bolt locked open (drawn back
+	// while it waits, released by the magazine/bolt release button) and the
+	// HK lock-open (MP5, military sniper racked with the magazine out).
+	l4d2vr_pavlov_feel::HandleTravelTicker m_HandleTravelTicker;
+	l4d2vr_pavlov_feel::HandleSoundTracker m_HandleSoundTracker;
+	l4d2vr_pavlov_feel::MagazineSlideCue m_MagazineSlideCue;
+	bool m_MagazineInteractionBoltLockedOpen = false;
+	bool m_HkRackBeforeMagazine = false;
+	bool m_HkBoltLockedOpen = false;
+	uintptr_t m_HkBoltLockedWeapon = 0u;
 	bool m_MagazineInteractionBoltPullAxisSignLocked = false;
 	bool m_MagazineInteractionBoltStageBeforeBackendReloadComplete = false;
 	bool m_MagazineInteractionBoltCompletedBeforeBackendReload = false;

@@ -137,7 +137,7 @@ static void TestHandleTicks()
     float last = 0.0f;
     for (int i = 0; i <= 380; ++i)
     {
-        if (ticker.Update(i * 0.001f, 0.5f, 1.0f, amp))
+        if (ticker.Update(static_cast<float>(i) * 0.001f, 0.5f, 1.0f, amp))
         {
             ++pulses;
             CHECK(amp >= last - 1e-6f);
@@ -189,7 +189,7 @@ static void TestWallPulse()
         if (t.Update(true, 1.0f / 90.0f))
         {
             if (pulses == 0)
-                firstAt = frame / 90.0f;
+                firstAt = static_cast<float>(frame) / 90.0f;
             ++pulses;
         }
     }
@@ -259,6 +259,47 @@ static void TestMagBoltRelease()
     CHECK(HkRackRelease(true, true) == HkRackResult::Chambered);
 }
 
+static void TestMagazineSlideCue()
+{
+    MagazineSlideCue cue;
+    MagazineSlideEvents e = cue.Update(0.30f, 0.10f);
+    CHECK(!e.start && !e.half);
+    e = cue.Update(0.09f, 0.10f);
+    CHECK(e.start && !e.half);
+    e = cue.Update(0.08f, 0.10f);
+    CHECK(!e.start && !e.half);
+    e = cue.Update(0.04f, 0.10f);
+    CHECK(!e.start && e.half);
+    e = cue.Update(0.11f, 0.10f);                         // inside the 20 % margin: no re-arm
+    CHECK(!e.start && !e.half);
+    e = cue.Update(0.02f, 0.10f);
+    CHECK(!e.start && !e.half);
+    e = cue.Update(0.13f, 0.10f);                         // left: re-arms
+    e = cue.Update(0.03f, 0.10f);                         // straight in: start and half at once
+    CHECK(e.start && e.half);
+    cue.Reset();
+    CHECK(!cue.Update(0.5f, 0.0f).start);
+}
+
+static void TestSoundsAndLockedGrab()
+{
+    // Taken locked open (at the cock point): no grab or lock sound, but the
+    // way back below half the cock point is the release.
+    HandleSoundTracker s;
+    s.Grab(0.38f, 0.38f);
+    HandleSoundEvents e = s.Update(0.37f, 0.38f);
+    CHECK(!e.grab && !e.lock && !e.release);
+    e = s.Update(0.1f, 0.38f);
+    CHECK(e.release);
+    for (int id : {1, 32, 2, 7, 33, 5, 26, 9, 34, 6, 10, 37})
+        CHECK(HandleLockSound(id) != nullptr);
+    for (int id : {3, 4, 8, 11, 35, 36, 19})
+        CHECK(HandleLockSound(id) == nullptr);
+    CHECK(LightForegripFoley(1) && LightForegripFoley(33) && !LightForegripFoley(26) && !LightForegripFoley(3));
+    CHECK(ForegripGrabSound(1) != ForegripGrabSound(26));
+    CHECK(ForegripGrabVolume(1) < ForegripGrabVolume(26));
+}
+
 int main()
 {
     TestEnvelopeShapes();
@@ -269,6 +310,8 @@ int main()
     TestWallPulse();
     TestReleaseEase();
     TestMagBoltRelease();
+    TestMagazineSlideCue();
+    TestSoundsAndLockedGrab();
     if (g_failures)
     {
         std::printf("%d failure(s)\n", g_failures);

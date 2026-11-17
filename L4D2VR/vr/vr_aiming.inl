@@ -4594,10 +4594,55 @@ void VR::TriggerPhysicalHandHapticPulse(bool leftHand, float durationSeconds, fl
     mix.durationSeconds = std::max(mix.durationSeconds, safeDuration * 0.6f);
 }
 
+double VR::HapticEnvelopeNow() const
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_HapticEnvelopeClockBase).count();
+}
+
+void VR::PlayPavlovHaptic(bool physicalLeftHand, l4d2vr_pavlov_feel::Effect effect, float scale, int channel, float frequency)
+{
+    if (!m_IsVREnabled || !PhysicalGameplayActive() || effect == l4d2vr_pavlov_feel::Effect::None)
+        return;
+    const int hand = physicalLeftHand ? 0 : 1;
+    const int ch = channel == 0 ? 0 : 1;
+    {
+        std::lock_guard<std::mutex> lock(m_HapticEnvelopeMutex);
+        m_HapticEnvelopes[hand][ch].Start(effect, scale, HapticEnvelopeNow());
+        m_HapticEnvelopeFrequency[hand][ch] = std::clamp(frequency, 0.0f, 320.0f);
+    }
+    m_PavlovHapticEffectCount.fetch_add(1u, std::memory_order_relaxed);
+    if (m_VrHandsDebugLog)
+        Game::logMsg("[VR][Haptics] %s hand: Pavlov %s x%.2f", physicalLeftHand ? "left" : "right",
+            l4d2vr_pavlov_feel::EffectName(effect), scale);
+}
+
+// Every frame before the mixer flush: each running envelope adds the pulse
+// due now (a short tick that fell between two frames is still sent).
+void VR::PumpHapticEnvelopes()
+{
+    struct Due { bool left; float duration; float frequency; float amplitude; };
+    Due due[4]{};
+    int count = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_HapticEnvelopeMutex);
+        const double now = HapticEnvelopeNow();
+        for (int hand = 0; hand < 2; ++hand)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                l4d2vr_pavlov_feel::Pulse pulse{};
+                if (m_HapticEnvelopes[hand][ch].Poll(now, pulse))
+                    due[count++] = { hand == 0, pulse.durationSeconds, m_HapticEnvelopeFrequency[hand][ch], pulse.amplitude };
+            }
+    }
+    for (int i = 0; i < count; ++i)
+        TriggerPhysicalHandHapticPulse(due[i].left, due[i].duration, due[i].frequency, due[i].amplitude, 2);
+}
+
 void VR::FlushHapticMixer()
 {
     if (!m_IsVREnabled || !m_System)
         return;
+    PumpHapticEnvelopes();
 
     const auto now = std::chrono::steady_clock::now();
     const float minInterval = std::max(0.0f, m_HapticMixMinIntervalSeconds);
@@ -4675,6 +4720,27 @@ void VR::TriggerWeaponFireHaptics(int weaponId, bool leftHand)
 
     const WeaponHapticsProfile profile = GetWeaponHapticsProfile(weaponId);
     const bool physicalLeftHand = IsGameplayHandLeftPhysical(leftHand);
+    // 2.0.14 (Physical mode): Pavlov's shot curve at full strength on the gun
+    // hand and, while the support hand holds the foregrip, the same curve at
+    // full strength on it too; at most once per half the fire interval. The
+    // weapon.* profile keeps its frequency.
+    const l4d2vr_pavlov_feel::Effect shotEffect = l4d2vr_pavlov_feel::ShotEffectForWeapon(weaponId);
+    if (m_PavlovFireHapticsEnabled && PhysicalGameplayActive() && shotEffect != l4d2vr_pavlov_feel::Effect::None)
+    {
+        const int hand = physicalLeftHand ? 0 : 1;
+        {
+            std::lock_guard<std::mutex> lock(m_HapticEnvelopeMutex);
+            const double now = HapticEnvelopeNow();
+            if (!l4d2vr_pavlov_feel::ShotHapticDue(now, m_LastShotHapticStart[hand], m_LastShotHapticValid[hand], weaponId))
+                return;
+            m_LastShotHapticStart[hand] = now;
+            m_LastShotHapticValid[hand] = true;
+        }
+        PlayPavlovHaptic(physicalLeftHand, shotEffect, 1.0f, 0, profile.frequency);
+        if (IsVrHandsTwoHandedGripPoseActive())
+            PlayPavlovHaptic(!physicalLeftHand, shotEffect, 1.0f, 0, profile.frequency);
+        return;
+    }
     TriggerPhysicalHandHapticPulse(physicalLeftHand, profile.durationSeconds, profile.frequency, profile.amplitude);
     if (IsVrHandsTwoHandedGripPoseActive())
     {

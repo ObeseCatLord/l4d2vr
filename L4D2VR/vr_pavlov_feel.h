@@ -351,11 +351,14 @@ namespace l4d2vr_pavlov_feel
     class HandleSoundTracker
     {
     public:
-        void Grab()
+        // initialInput: where the handle is taken (a slide locked open is
+        // taken at its cock point: no grab or lock sound then).
+        void Grab(float initialInput = 0.0f, float cockInput = 0.0f)
         {
-            m_GrabPlayed = false;
-            m_Locked = false;
-            m_LastInput = 0.0f;
+            const float input = std::isfinite(initialInput) ? initialInput : 0.0f;
+            m_GrabPlayed = input > kGrabSoundInput;
+            m_Locked = cockInput > 0.0f && input >= cockInput;
+            m_LastInput = input;
             m_Held = true;
         }
 
@@ -401,6 +404,94 @@ namespace l4d2vr_pavlov_feel
         bool m_Locked = false;
         bool m_Held = false;
     };
+
+    // ---- Magazine slide cues (SPEC 3.3) -----------------------------------------
+    // The MagSlide curve on the magazine hand when the held magazine enters the
+    // well's capture bounds (Pavlov MagSlideBounds, the slide-in start) and
+    // again half way to the well (MagHalfSlideSoundThreshold 0.5). Leaving the
+    // bounds by 20 % re-arms both.
+    struct MagazineSlideEvents
+    {
+        bool start = false;
+        bool half = false;
+    };
+
+    class MagazineSlideCue
+    {
+    public:
+        MagazineSlideEvents Update(float distanceMeters, float boundMeters)
+        {
+            MagazineSlideEvents e{};
+            if (!std::isfinite(distanceMeters) || !(boundMeters > 0.0f))
+                return e;
+            if (distanceMeters > boundMeters * 1.2f)
+            {
+                m_Started = false;
+                m_Half = false;
+                return e;
+            }
+            if (!m_Started && distanceMeters <= boundMeters)
+            {
+                m_Started = true;
+                e.start = true;
+            }
+            if (m_Started && !m_Half && distanceMeters <= boundMeters * 0.5f)
+            {
+                m_Half = true;
+                e.half = true;
+            }
+            return e;
+        }
+        void Reset() { m_Started = false; m_Half = false; }
+
+    private:
+        bool m_Started = false;
+        bool m_Half = false;
+    };
+
+    // ---- Sounds (the game's own samples only) -----------------------------------
+    // The click when a racked handle reaches its cock point (Pavlov
+    // BoltLockSound): the gun family's magazine-lock click. Null where the gun
+    // has none (shotguns, bolt-action rifles: they have their own cues).
+    inline const char* HandleLockSound(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 1: return "weapons/pistol/gunother/pistol_clip_locked_1.wav";
+        case 32: return "weapons/magnum/gunother/pistol_clip_locked_1.wav";
+        case 2: case 33: return "weapons/smg/gunother/smg_clip_locked_1.wav";
+        case 7: return "weapons/smg_silenced/gunother/smg_clip_locked_1.wav";
+        case 5: case 34: return "weapons/rifle/gunother/rifle_clip_locked_1.wav";
+        case 26: return "weapons/rifle_ak47/gunother/rifle_clip_locked_1.wav";
+        case 9: return "weapons/rifle_desert/gunother/rifle_clip_locked_1.wav";
+        case 6: return "weapons/hunting_rifle/gunother/hunting_rifle_cliplocked.wav";
+        case 10: return "weapons/sniper_military/gunother/sniper_military_clip_locked_1.wav";
+        case 37: return "weapons/machinegun_m60/gunother/rifle_clip_locked_1.wav";
+        default: return nullptr;
+        }
+    }
+
+    // Pavlov TwoHandGripSound: a light grab foley for pistols and SMGs
+    // (Grab_TwoHand_Small), a heavier one for long guns (_Medium).
+    inline bool LightForegripFoley(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 1: case 32: case 2: case 7: case 33:
+            return true;
+        default:
+            return false;
+        }
+    }
+    inline const char* ForegripGrabSound(int weaponId)
+    {
+        return LightForegripFoley(weaponId) ? "physics/body/body_medium_impact_soft1.wav"
+                                            : "physics/metal/weapon_impact_soft1.wav";
+    }
+    inline float ForegripGrabVolume(int weaponId) { return LightForegripFoley(weaponId) ? 0.35f : 0.45f; }
+
+    // A put-away or draw the holster refuses (Pavlov Put/GetFailureSound).
+    constexpr const char* kHolsterFailureSound = "weapons/clipempty_pistol.wav";
 
     // ---- Gun inside a wall (SPEC 2.4) -------------------------------------------
     // Firing is refused while the gun overlaps the world; the gun hand gets the

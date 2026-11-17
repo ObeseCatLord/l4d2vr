@@ -1469,6 +1469,11 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
                     ? m_VR->ChestSlingCatchRelease(activeWeaponTag, activeWeaponId)
                     : m_VR->HolsterCatchRelease(activeWeaponTag, activeWeaponId)));
             const bool gripDropRequested = gripReleaseRequested && !slingCaught;
+            // 2.0.14 (pavlov layout, Physical): the owner's squeeze over another
+            // holster keeps the item and says so (Pavlov PutFailure cue).
+            if (gripDropRequested && pistolDropHand == l4d2vr_dual::Hand::None &&
+                m_VR->m_HolsterHandOverWrongZone.load(std::memory_order_acquire))
+                m_VR->PlayHolsterFailureFeedback();
 			// Hand throw: tap the trigger (pin), let go of the grip to throw; or
 			// hold the trigger through the swing and let go of it.
 			bool handThrowNow = false;

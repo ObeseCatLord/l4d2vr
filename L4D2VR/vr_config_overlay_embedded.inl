@@ -371,7 +371,7 @@ namespace
         { "ManualReloadMagazineHandRotationOffsetDeg", CfgOptionType::Vec3, "Hands / Manual Reload", "Spare magazine turn in hand (x,y,z)", -180.0f, 180.0f, "0,0,0" },
         { "StickJumpCrouch", CfgOptionType::Bool, "Controls", "Right stick jump / crouch", 0.0f, 0.0f, "true" },
         { "StickCrouchToggle", CfgOptionType::Bool, "Controls", "Stick crouch toggles", 0.0f, 0.0f, "true" },
-        { "HolsterYawFollowSpeed", CfgOptionType::Float, "Hands / Holsters", "Holster turn follow speed (0 = instant)", 0.0f, 60.0f, "0" },
+        { "HolsterYawFollowSpeed", CfgOptionType::Float, "Hands / Holsters", "Holster turn follow speed (0 = layout default, -1 = instant)", -1.0f, 60.0f, "0" },
         { "HolsterHeightScale", CfgOptionType::Float, "Hands / Holsters", "Holster height scale", 0.5f, 1.6f, "1.0" },
         { "MagazineEmptyGlowEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Glow empty magazine", 0.0f, 0.0f, "true" },
         { "MagazineDropEnabled", CfgOptionType::Bool, "Hands / Manual Reload", "Drop released magazines", 0.0f, 0.0f, "true" },

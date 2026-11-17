@@ -1791,6 +1791,9 @@ void VR::ProcessInput()
             // holds anything (UpdateChestSling lets a hand take it back).
             const bool activeStowed = activeSlot >= 0 && StowedSlot() == activeSlot;
             const int heldSlot = activeStowed ? -1 : activeSlot;
+            // 2.0.14 (pavlov layout): the sidearm's hip is no magazine pouch
+            // while the sidearm hangs there.
+            m_PavlovSidearmOnBody.store((occupiedMask & 2u) != 0u && heldSlot != 1, std::memory_order_release);
             // The active item is in the hand (or stowed, taken back by
             // UpdateChestSling): only the other occupied slots are drawn here.
             const std::uint32_t drawableMask =
@@ -1814,6 +1817,22 @@ void VR::ProcessInput()
                 if (activeStowed && grabInput.handZone != l4d2vr_holster::Zone::None &&
                     HandAtStowedItem(frame, m_RightControllerPosAbs, drawableMask, rightItems))
                     grabInput.handZone = l4d2vr_holster::Zone::None;
+                // 2.0.14 (pavlov layout, Physical): the sidearm goes on either hip
+                // (Pavlov's two Holsters slots): a hand holding it inside the
+                // other hip's capsule makes that hip its holster.
+                if (heldSlot == 1 && m_HolsterLayout.pavlovHips)
+                {
+                    bool offSide = m_HolsterLayout.secondaryOffHip;
+                    const float hipDistance = l4d2vr_holster::SidearmHipDistanceMeters(frame, m_HolsterLayout,
+                        m_RightControllerPosAbs, offSide);
+                    if (hipDistance <= l4d2vr_holster::HipCapsuleReachMeters(m_HolsterLayout) &&
+                        offSide != m_HolsterLayout.secondaryOffHip)
+                    {
+                        m_PavlovSidearmOffHip = offSide;
+                        m_HolsterLayout.secondaryOffHip = offSide;
+                        Game::logMsg("[VR][Holster] sidearm holster: %s hip", offSide ? "off-hand" : "dominant");
+                    }
+                }
                 // The held item's own holster takes it back when the hand is in
                 // its grab volume (Forefront: the item returns to its slot).
                 const bool inOwnVolume = heldSlot >= 0 && l4d2vr_holster::HandInHolsterVolume(frame,
@@ -1874,6 +1893,11 @@ void VR::ProcessInput()
                 std::memory_order_release);
             m_HolsterHandInOwnZone.store(frameValid && heldSlot >= 0 &&
                 grabInput.ownZoneUnderHand == static_cast<l4d2vr_holster::Zone>(heldSlot), std::memory_order_release);
+            // 2.0.14: the hand that holds an item is over another holster (a
+            // put-away there fails: the item stays, Pavlov PutFailure cue).
+            m_HolsterHandOverWrongZone.store(frameValid && heldSlot >= 0 &&
+                grabInput.ownZoneUnderHand != l4d2vr_holster::Zone::None &&
+                grabInput.ownZoneUnderHand != static_cast<l4d2vr_holster::Zone>(heldSlot), std::memory_order_release);
             const l4d2vr_holster::GrabOutput grab = m_HolsterGrab.Update(grabInput);
             UpdateChestSling(localPlayer, ready, frameValid ? &frame : nullptr, drawableMask, m_WeaponGripPhysicalDown,
                 grab.selectSlot >= 0 || grab.holsterTo >= 0 || grab.putAwaySlot >= 0 ||
@@ -1968,7 +1992,12 @@ void VR::ProcessInput()
                     if (m_GrabHoverLatch[hand][src].Update(key, over, !m_WeaponGripPhysicalDown, ownNowMs, settings) &&
                         m_HolsterHoverHapticAmplitude > 0.0f && m_GrabHoverGate[hand].Allow(ownNowMs, settings))
                     {
-                        TriggerPhysicalHandHapticPulse(itemLeft, 0.045f, 160.0f, m_HolsterHoverHapticAmplitude, 1);
+                        // 2.0.14 (pavlov layout, Physical): Pavlov's InteractBegin
+                        // pulse (0.27 for 100 ms, 0.08 for 100 ms).
+                        if (m_HolsterLayout.pavlovHips && PhysicalGameplayActive())
+                            PlayPavlovHaptic(itemLeft, l4d2vr_pavlov_feel::Effect::GenericPulse);
+                        else
+                            TriggerPhysicalHandHapticPulse(itemLeft, 0.045f, 160.0f, m_HolsterHoverHapticAmplitude, 1);
                         ++m_HolsterHoverPulseCount;
                         Game::logMsg("[VR][Holster] held item over its own holster slot%d pulse=%.2f",
                             key, m_HolsterHoverHapticAmplitude);
@@ -2051,7 +2080,7 @@ void VR::ProcessInput()
                 if (target >= 0 && target < l4d2vr_holster::kZoneCount && target != activeSlot)
                 {
                     if (m_HolsterGrabHapticAmplitude > 0.0f)
-                        TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(true), 0.03f, 120.0f, m_HolsterGrabHapticAmplitude, 2);
+                        HolsterTakePutHaptic(IsGameplayHandLeftPhysical(true), 0.03f, 120.0f, m_HolsterGrabHapticAmplitude);
                     if (m_HolsterInstantDraw)
                     {
                         m_HolsterInstantDrawSlot.store(target, std::memory_order_release);
@@ -2070,7 +2099,7 @@ void VR::ProcessInput()
                 NoteHolsterDrawRequest(grab.selectSlot, localPlayer && localPlayer->Weapon_GetSlot(grab.selectSlot)
                     ? reinterpret_cast<uintptr_t>(localPlayer->Weapon_GetSlot(grab.selectSlot)) : 0u, false);
                 if (m_HolsterGrabHapticAmplitude > 0.0f)
-                    TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.03f, 120.0f, m_HolsterGrabHapticAmplitude, 2);
+                    HolsterTakePutHaptic(IsGameplayHandLeftPhysical(false), 0.03f, 120.0f, m_HolsterGrabHapticAmplitude);
                 if (m_HolsterInstantDraw)
                 {
                     m_HolsterInstantDrawSlot.store(grab.selectSlot, std::memory_order_release);
@@ -2087,7 +2116,7 @@ void VR::ProcessInput()
                 // Forefront / Pavlov: putting the item away leaves the hand empty.
                 // L4D2 keeps it the active weapon, hidden on the body (stowed).
                 if (m_HolsterGrabHapticAmplitude > 0.0f)
-                    TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f, 2);
+                    HolsterTakePutHaptic(IsGameplayHandLeftPhysical(false), 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f);
                 StowActiveWeapon(reinterpret_cast<uintptr_t>(localPlayer->GetActiveWeapon()), activeSlot,
                     "put away in its holster");
                 Game::logMsg("[VR][Holster] holstered slot=%d -> empty hand", activeSlot + 1);
@@ -2095,7 +2124,7 @@ void VR::ProcessInput()
             else if (grab.holsterTo >= 0 && grab.holsterTo < l4d2vr_holster::kZoneCount)
             {
                 if (m_HolsterGrabHapticAmplitude > 0.0f)
-                    TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f, 2);
+                    HolsterTakePutHaptic(IsGameplayHandLeftPhysical(false), 0.02f, 90.0f, m_HolsterGrabHapticAmplitude * 0.7f);
                 if (m_HolsterInstantDraw)
                 {
                     m_HolsterInstantDrawSlot.store(grab.holsterTo, std::memory_order_release);

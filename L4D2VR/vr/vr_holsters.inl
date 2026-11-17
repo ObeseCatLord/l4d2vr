@@ -190,6 +190,26 @@ void VR::RefreshHolsterBodyItems(C_BasePlayer* localPlayer)
     m_HolsterBodyItems = items;
 }
 
+void VR::HolsterTakePutHaptic(bool physicalLeft, float durationSeconds, float frequency, float amplitude)
+{
+    // 2.0.14 (pavlov layout, Physical): Pavlov's AmmoGrab pattern (0.39, 0.20,
+    // 0, 0.20 at 100 ms steps) on holster get and put.
+    if (m_HolsterLayout.pavlovHips && PhysicalGameplayActive())
+        PlayPavlovHaptic(physicalLeft, l4d2vr_pavlov_feel::Effect::AmmoGrab);
+    else
+        TriggerPhysicalHandHapticPulse(physicalLeft, durationSeconds, frequency, amplitude, 2);
+}
+
+void VR::PlayHolsterFailureFeedback()
+{
+    // 2.0.14 (pavlov layout, Physical): Pavlov PutFailureSound + AmmoGrab.
+    if (!m_HolsterLayout.pavlovHips || !PhysicalGameplayActive())
+        return;
+    TryPlayKillSoundSpec(std::string("game:") + l4d2vr_pavlov_feel::kHolsterFailureSound, 0.6f, nullptr, false);
+    PlayPavlovHaptic(IsGameplayHandLeftPhysical(false), l4d2vr_pavlov_feel::Effect::AmmoGrab);
+    Game::logMsg("[VR][Holster] put-away refused: another holster is under the hand (the item stays in the hand)");
+}
+
 bool VR::GrabHoverUpdate(bool physicalLeft, l4d2vr_grab_hover::Source source, int key, float overMeters, bool handFree)
 {
     const int src = static_cast<int>(source);
@@ -206,7 +226,12 @@ bool VR::GrabHoverUpdate(bool physicalLeft, l4d2vr_grab_hover::Source source, in
         return false;
     if (!m_GrabHoverGate[hand].Allow(nowMs, settings))
         return false;
-    TriggerPhysicalHandHapticPulse(physicalLeft, settings.durationSeconds, settings.frequency, settings.amplitude, 1);
+    // 2.0.14 (pavlov layout, Physical): Pavlov's selection tick (the 50 ms
+    // GenericHaptic double tick) on a holstered item.
+    if (source == l4d2vr_grab_hover::Source::Holster && m_HolsterLayout.pavlovHips && PhysicalGameplayActive())
+        PlayPavlovHaptic(physicalLeft, l4d2vr_pavlov_feel::Effect::GenericTick);
+    else
+        TriggerPhysicalHandHapticPulse(physicalLeft, settings.durationSeconds, settings.frequency, settings.amplitude, 1);
     ++m_GrabHoverPulseCount;
     return true;
 }

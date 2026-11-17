@@ -194,6 +194,21 @@ namespace l4d2vr_holster
         float nearestHysteresisMeters = 0.02f;
         // Pavlov's hand grab sphere (GrabVolume r 11.5 cm).
         float handGrabSphereMeters = 0.115f;
+        // 2.0.14 (pavlov layout, research/pavlov/handling SPEC 7): Pavlov's hip
+        // volumes. Each hip is a capsule (radius, half-height with its caps) at
+        // hipVolumeCenter (root offset, dominant side; mirrored for the off
+        // hip) tested against the hand's grab sphere (~31.5 cm reach). Both
+        // hips are magazine pouches for the gun in the other hand unless the
+        // sidearm hangs there, and the slot2 item may sit on either hip.
+        bool pavlovHips = false;
+        Vector hipVolumeCenter{ -0.225f, 0.352f, 0.06f };
+        float hipCapsuleRadiusMeters = 0.20f;
+        float hipCapsuleHalfHeightMeters = 0.44f;
+        // Runtime (pavlov hips): the slot2 item was put on the off-hand hip.
+        bool secondaryOffHip = false;
+        // Body yaw follow speed when HolsterYawFollowSpeed is 0 (forefront:
+        // the head yaw every frame; pavlov: RInterpTo 20).
+        float defaultYawFollowSpeed = 0.0f;
     };
 
     inline const char* LayoutKindName(LayoutKind kind)
@@ -258,6 +273,14 @@ namespace l4d2vr_holster
         layout.socket[4] = Vector(0.054f, -0.144f, 0.325f); // middle pocket (0.054, -0.144, -0.425)
         layout.magPouch = Vector(-0.023f, -0.187f, 0.19f);  // off-hand ammo pouch (-0.023, -0.187, -0.560)
         layout.hipReachMeters = 0.17f;
+        // 2.0.14: Pavlov's hip capsules (r 20 cm, half-height 44 cm at HMD
+        // (-0.225, +-0.352, -0.69)) against the 11.5 cm hand sphere; both hips
+        // are pouches; the body follows the head yaw at RInterpTo 20.
+        // (The game turns pavlovHips off while Classic mode is active, so
+        // Classic keeps the 2.0.13 pavlov layout.)
+        layout.pavlovHips = true;
+        layout.hipVolumeCenter = Vector(-0.225f, 0.352f, 0.06f);
+        layout.defaultYawFollowSpeed = 20.0f;
         layout.pocketReachMeters = 0.12f;
         layout.backRadiusMeters = 0.40f;                    // QuickSlot_Back r 40 at head-local (-0.441, 0, -0.095)
         return layout;
@@ -410,6 +433,46 @@ namespace l4d2vr_holster
         return std::sqrt(DotProduct(d, d));
     }
 
+    // 2.0.14: a slot's rest socket; the slot2 item on the off-hand hip (pavlov
+    // hips, secondaryOffHip) mirrors the dominant hip's.
+    inline Vector SocketOf(const Layout& layout, Zone zone)
+    {
+        const int slot = SlotIndex(zone);
+        Vector socket = layout.socket[slot < 0 || slot >= kZoneCount ? 0 : slot];
+        if (zone == Zone::Secondary && layout.pavlovHips && layout.secondaryOffHip)
+            socket.y = -socket.y;
+        return socket;
+    }
+
+    // 2.0.14 (pavlov hips): the capsule's segment of a hip (offSide: the off
+    // hand's hip), world units.
+    inline void HipCapsuleSegment(const BodyFrame& frame, const Layout& layout, bool offSide, Vector& top, Vector& bottom)
+    {
+        const Vector c(layout.hipVolumeCenter.x, offSide ? -layout.hipVolumeCenter.y : layout.hipVolumeCenter.y,
+            layout.hipVolumeCenter.z);
+        const Vector center = RootToWorld(frame, c);
+        const float half = (std::fmax)(0.0f, layout.hipCapsuleHalfHeightMeters - layout.hipCapsuleRadiusMeters) *
+            frame.unitsPerMeter * frame.heightScale;
+        top = center + Vector(0.0f, 0.0f, half);
+        bottom = center - Vector(0.0f, 0.0f, half);
+    }
+
+    // Hand centre to a hip capsule's axis (metres); within reach when <=
+    // radius + the hand's grab sphere.
+    inline float HipCapsuleDistanceMeters(const BodyFrame& frame, const Layout& layout, bool offSide, const Vector& hand)
+    {
+        if (!frame.valid || !l4d2vr_interaction::Finite(hand))
+            return 1.0e9f;
+        Vector top{}, bottom{};
+        HipCapsuleSegment(frame, layout, offSide, top, bottom);
+        return DistanceToSegment(hand, top, bottom) / frame.unitsPerMeter;
+    }
+
+    inline float HipCapsuleReachMeters(const Layout& layout)
+    {
+        return layout.hipCapsuleRadiusMeters + layout.handGrabSphereMeters;
+    }
+
     // The slung long gun's axes (world): barrel (Z) down toward the off-hand
     // hip, sights (Y) up toward the off shoulder, X = Y x Z = the gun's left
     // side, against the body.
@@ -435,7 +498,7 @@ namespace l4d2vr_holster
     // The hip item's grip (top) and lower end (world).
     inline void HipSegment(const BodyFrame& frame, const Layout& layout, Zone zone, Vector& top, Vector& bottom)
     {
-        top = RootToWorld(frame, layout.socket[SlotIndex(zone)]);
+        top = RootToWorld(frame, SocketOf(layout, zone));
         bottom = top - Vector(0.0f, 0.0f, layout.hipItemLengthMeters * frame.unitsPerMeter * frame.heightScale);
     }
 
@@ -452,8 +515,7 @@ namespace l4d2vr_holster
     {
         if (IsBackZone(layout, zone))
             return HeadToWorld(frame, layout.backReachHead);
-        const int slot = SlotIndex(zone);
-        return RootToWorld(frame, layout.socket[slot < 0 || slot >= kZoneCount ? 0 : slot]);
+        return RootToWorld(frame, SocketOf(layout, zone));
     }
 
     // How close (metres) the hand's centre must be to the zone's geometry
@@ -464,7 +526,7 @@ namespace l4d2vr_holster
         switch (KindOf(layout, zone))
         {
         case ZoneKind::Sling: return layout.slingReachMeters;
-        case ZoneKind::Hip: return layout.hipReachMeters;
+        case ZoneKind::Hip: return layout.pavlovHips ? HipCapsuleReachMeters(layout) : layout.hipReachMeters;
         case ZoneKind::Back: return layout.backRadiusMeters + layout.handRadiusMeters;
         default: return layout.pocketReachMeters;
         }
@@ -484,6 +546,33 @@ namespace l4d2vr_holster
         const float error = l4d2vr_interaction::WrapYaw(headYaw - yaw);
         const float alpha = (!std::isfinite(dt) || dt <= 0.0f) ? 0.0f : std::fmin(1.0f, dt * speed);
         return l4d2vr_interaction::WrapYaw(yaw + error * alpha);
+    }
+
+    // 2.0.14: HolsterYawFollowSpeed > 0 is used as is; 0 is the layout's
+    // default (forefront: the head yaw every frame; pavlov: 20); below 0 the
+    // head yaw every frame for any layout.
+    inline float EffectiveYawFollowSpeed(const Layout& layout, float configured)
+    {
+        if (!std::isfinite(configured))
+            return layout.defaultYawFollowSpeed;
+        if (configured > 0.0f)
+            return configured;
+        return configured < 0.0f ? 0.0f : layout.defaultYawFollowSpeed;
+    }
+
+    // 2.0.14 (pavlov hips): putting the slot2 item away: the hip it goes to
+    // (offSide) and the hand's distance to it. Either hip takes it (Pavlov's
+    // two Holsters slots), the nearer one wins.
+    inline float SidearmHipDistanceMeters(const BodyFrame& frame, const Layout& layout, const Vector& hand,
+        bool& offSide)
+    {
+        offSide = layout.secondaryOffHip;
+        if (!layout.pavlovHips)
+            return 1.0e9f;
+        const float dominant = HipCapsuleDistanceMeters(frame, layout, false, hand);
+        const float off = HipCapsuleDistanceMeters(frame, layout, true, hand);
+        offSide = off < dominant;
+        return offSide ? off : dominant;
     }
 
     // Smoothed body yaw. Inside the dead band the body keeps its yaw; beyond it
@@ -521,17 +610,64 @@ namespace l4d2vr_holster
 
     // The hand is at the magazine pouch (off-hand upper chest). The holsters
     // leave such a hand to the magazines when the pouch is the nearest grab.
-    inline float MagazinePouchDistanceMeters(const BodyFrame& frame, const Layout& layout, const Vector& hand)
+    // 2.0.14 (pavlov hips): the hip pouch a hand reaches, for the gun in the
+    // other hand: the nearer hip capsule, except the hip where the slot2 item
+    // hangs (that is a draw). point: the nearest point of that hip's axis.
+    inline bool PavlovHipPouch(const BodyFrame& frame, const Layout& layout, const Vector& hand,
+        bool secondaryOnBody, Vector& point, float& distanceMeters, bool* offSideOut = nullptr)
+    {
+        distanceMeters = 1.0e9f;
+        if (!layout.pavlovHips || !frame.valid || !l4d2vr_interaction::Finite(hand))
+            return false;
+        bool found = false;
+        for (int side = 0; side < 2; ++side)
+        {
+            const bool offSide = side == 1;
+            if (secondaryOnBody && offSide == layout.secondaryOffHip)
+                continue;
+            Vector top{}, bottom{};
+            HipCapsuleSegment(frame, layout, offSide, top, bottom);
+            const float d = DistanceToSegment(hand, top, bottom) / frame.unitsPerMeter;
+            if (!(d < distanceMeters))
+                continue;
+            distanceMeters = d;
+            const Vector ab = bottom - top;
+            const float len2 = DotProduct(ab, ab);
+            float t = len2 > 1e-9f ? DotProduct(hand - top, ab) / len2 : 0.0f;
+            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+            point = top + ab * t;
+            if (offSideOut)
+                *offSideOut = offSide;
+            found = true;
+        }
+        return found;
+    }
+
+    inline float MagazinePouchDistanceMeters(const BodyFrame& frame, const Layout& layout, const Vector& hand,
+        bool secondaryOnBody = false)
     {
         if (!frame.valid || !l4d2vr_interaction::Finite(hand))
             return 1.0e9f;
+        if (layout.pavlovHips)
+        {
+            Vector point{};
+            float distance = 1.0e9f;
+            return PavlovHipPouch(frame, layout, hand, secondaryOnBody, point, distance) ? distance : 1.0e9f;
+        }
         const Vector d = hand - RootToWorld(frame, layout.magPouch);
         return std::sqrt(DotProduct(d, d)) / frame.unitsPerMeter;
     }
 
+    // The pouch's reach: the hip capsule's against the hand sphere with
+    // Pavlov's hips, else the pouch sphere's.
+    inline float PouchReachMeters(const Layout& layout)
+    {
+        return layout.pavlovHips ? HipCapsuleReachMeters(layout) : layout.magPouchReachMeters;
+    }
+
     inline bool HandAtMagazinePouch(const BodyFrame& frame, const Layout& layout, const Vector& hand)
     {
-        return MagazinePouchDistanceMeters(frame, layout, hand) <= layout.magPouchReachMeters;
+        return MagazinePouchDistanceMeters(frame, layout, hand) <= PouchReachMeters(layout);
     }
 
     // Distance (metres) from the hand centre to a zone's geometry; true when it
@@ -555,9 +691,18 @@ namespace l4d2vr_holster
         }
         else if (IsHipZone(layout, zone))
         {
-            Vector top{}, bottom{};
-            HipSegment(frame, layout, zone, top, bottom);
-            distance = DistanceToSegment(hand, top, bottom) / s;
+            if (layout.pavlovHips)
+            {
+                // 2.0.14: Pavlov's hip capsule (the slot2 item's hip).
+                distance = HipCapsuleDistanceMeters(frame, layout,
+                    zone == Zone::Secondary ? layout.secondaryOffHip : SocketOf(layout, zone).y < 0.0f, hand);
+            }
+            else
+            {
+                Vector top{}, bottom{};
+                HipSegment(frame, layout, zone, top, bottom);
+                distance = DistanceToSegment(hand, top, bottom) / s;
+            }
         }
         else if (IsBackZone(layout, zone))
         {
@@ -570,7 +715,7 @@ namespace l4d2vr_holster
         }
         else
         {
-            const Vector d = hand - RootToWorld(frame, layout.socket[SlotIndex(zone)]);
+            const Vector d = hand - RootToWorld(frame, SocketOf(layout, zone));
             distance = std::sqrt(DotProduct(d, d)) / s;
         }
         outDistanceMeters = distance;
@@ -715,8 +860,10 @@ namespace l4d2vr_holster
             if (back)
             {
                 // 2.0.12 (Pavlov layout): slung on the back, muzzle up over the
-                // dominant shoulder, sights out of the back.
-                axisZ = Normalized(up * 0.85f + d * 0.5f, up);
+                // dominant shoulder, sights out of the back. 2.0.14: Pavlov's
+                // back socket lies 33 deg off vertical (was ~30).
+                axisZ = layout.pavlovHips ? Normalized(up * 0.8387f + d * 0.5446f, up)
+                                          : Normalized(up * 0.85f + d * 0.5f, up);
                 axisY = f * -1.0f;
                 break;
             }
@@ -729,6 +876,13 @@ namespace l4d2vr_holster
             // the grip on top (behind the slide).
             axisZ = up * -1.0f;
             axisY = f;
+            // 2.0.14 (pavlov hips): Pavlov's hip socket pitch -66.7 deg: grip
+            // up, the muzzle forward and down like a drop-leg holster.
+            if (layout.pavlovHips && IsHipZone(layout, zone))
+            {
+                axisZ = Normalized(f * 0.3960f + up * -0.9182f, up * -1.0f);
+                axisY = Normalized(f * 0.9182f + up * 0.3960f, f);
+            }
             gripAtSocket = IsHipZone(layout, zone);
             break;
         case ItemShape::Melee:
@@ -763,7 +917,7 @@ namespace l4d2vr_holster
         CrossProduct(axisY, axisZ, axisX);
         axisX = Normalized(axisX, d);
 
-        const Vector socket = RootToWorld(frame, layout.socket[SlotIndex(zone)]);
+        const Vector socket = RootToWorld(frame, SocketOf(layout, zone));
         if (gripAtSocket)
         {
             // The reference bone sits at the grip end of pistols and melee
@@ -890,12 +1044,14 @@ namespace l4d2vr_holster
     }
 
     // The magazine pouch on the same scale (a sphere of magPouchReachMeters).
-    inline float MagazinePouchScoreMeters(const BodyFrame& frame, const Layout& layout, const Vector& hand)
+    inline float MagazinePouchScoreMeters(const BodyFrame& frame, const Layout& layout, const Vector& hand,
+        bool secondaryOnBody = false)
     {
-        if (!(layout.magPouchReachMeters > 0.0f))
+        const float reach = PouchReachMeters(layout);
+        if (!(reach > 0.0f))
             return 1.0e9f;
-        const float pouch = MagazinePouchDistanceMeters(frame, layout, hand);
-        return pouch < 1.0e8f ? (pouch / layout.magPouchReachMeters - 1.0f) * kNominalReachMeters : 1.0e9f;
+        const float pouch = MagazinePouchDistanceMeters(frame, layout, hand, secondaryOnBody);
+        return pouch < 1.0e8f ? (pouch / reach - 1.0f) * kNominalReachMeters : 1.0e9f;
     }
 
     // The zone the hand takes from (occupiedMask bit i = slot i holds an item
@@ -954,7 +1110,9 @@ namespace l4d2vr_holster
         }
         if (best != Zone::None)
         {
-            const float pouch = MagazinePouchScoreMeters(frame, layout, hand);
+            // 2.0.14 (pavlov hips): the hip where the slot2 item hangs is no
+            // pouch: a holstered pistol wins there (Pavlov: Get first).
+            const float pouch = MagazinePouchScoreMeters(frame, layout, hand, (occupiedMask & 2u) != 0u);
             if (pouch <= 0.0f && pouch < bestScore)
                 return Zone::None;
         }

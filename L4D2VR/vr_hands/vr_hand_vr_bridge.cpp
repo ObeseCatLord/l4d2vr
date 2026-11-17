@@ -877,6 +877,12 @@ namespace
         // it on top of the grenade holster.
         const Vector pouchLocal = vr->m_HolsterLayout.magPouch;
         point = l4d2vr_holster::RootToWorld(frame, pouchLocal);
+        // 2.0.14 (pavlov layout, Physical): both hips are pouches; the spare is
+        // at the hip the support hand reaches (UpdateMagazineInteraction).
+        if (vr->m_HolsterLayout.pavlovHips && vr->m_PavlovHipPouchValid.load(std::memory_order_acquire))
+            point = Vector(vr->m_PavlovHipPouchPos[0].load(std::memory_order_relaxed),
+                vr->m_PavlovHipPouchPos[1].load(std::memory_order_relaxed),
+                vr->m_PavlovHipPouchPos[2].load(std::memory_order_relaxed));
         forward = frame.forward;
         right = VrHandMath::Normalize(Vector(frame.forward.y, -frame.forward.x, 0.0f));
         return l4d2vr_interaction::Finite(point) && right.Length() > 0.5f;
@@ -892,7 +898,7 @@ namespace
         Vector point{}, forward{}, right{};
         const float range = std::max(0.0f, vr->m_MagazineInteractionFreshMagazineGrabRangeMeters);
         return MagazineInteractionResolvePavlovPouch(vr, point, forward, right)
-            ? std::min(range + kPavlovHandRadiusMeters, vr->m_HolsterLayout.magPouchReachMeters) : range;
+            ? std::min(range + kPavlovHandRadiusMeters, l4d2vr_holster::PouchReachMeters(vr->m_HolsterLayout)) : range;
     }
 
     bool MagazineInteractionBuildFreshMagazinePickupBox(
@@ -4969,7 +4975,10 @@ void VR::UpdateBodyInventoryPose()
         // (speed 20, no dead band); stick/snap turns move it immediately.
         m_BodyInventoryYaw = l4d2vr_holster::FollowBodyYaw(m_BodyInventoryYaw, m_BodyInventoryPoseValid,
             m_BodyInventoryHeadYaw = l4d2vr_holster::HeadYawDegrees(m_HmdForward, m_BodyInventoryYaw),
-            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt, m_HolsterYawFollowSpeed);
+            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt,
+            // 2.0.14: 0 = the layout's default (pavlov: Pavlov's RInterpTo 20) in Physical mode.
+            PhysicalGameplayActive() ? l4d2vr_holster::EffectiveYawFollowSpeed(m_HolsterLayout, m_HolsterYawFollowSpeed)
+                                     : std::max(0.0f, m_HolsterYawFollowSpeed));
     }
     else
     {
@@ -9192,6 +9201,29 @@ bool VR::UpdateMagazineInteraction(
     };
     auto updateFreshAmmoPouch = [&](bool allowTake) -> bool
     {
+        // 2.0.14 (pavlov layout, Physical): Pavlov's hips are both pouches for
+        // the gun in this hand's other hand: the one the support hand reaches,
+        // except the hip where the sidearm hangs.
+        if (m_HolsterLayout.pavlovHips)
+        {
+            l4d2vr_holster::BodyFrame pouchFrame{};
+            Vector pouchPoint{};
+            float pouchDistance = 0.0f;
+            const bool pouchValid = GetHolsterBodyFrame(pouchFrame) &&
+                l4d2vr_holster::PavlovHipPouch(pouchFrame, m_HolsterLayout, supportPosition,
+                    m_PavlovSidearmOnBody.load(std::memory_order_acquire), pouchPoint, pouchDistance);
+            if (pouchValid)
+            {
+                m_PavlovHipPouchPos[0].store(pouchPoint.x, std::memory_order_relaxed);
+                m_PavlovHipPouchPos[1].store(pouchPoint.y, std::memory_order_relaxed);
+                m_PavlovHipPouchPos[2].store(pouchPoint.z, std::memory_order_relaxed);
+            }
+            m_PavlovHipPouchValid.store(pouchValid, std::memory_order_release);
+        }
+        else
+        {
+            m_PavlovHipPouchValid.store(false, std::memory_order_release);
+        }
         const int maxClip = MagazineInteractionDefaultMaxClip(activeWeaponId, m_MagazineInteractionMagazineModelName);
         int pouchReserve = 0;
         bool pouchInfinite = false;
@@ -9347,6 +9379,7 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionFreshGrabbedAt = now;
         m_PouchLastTakeAt = now;
         m_FreshAmmoReleasedAt = {};
+        playPavlovSupport(l4d2vr_pavlov_feel::Effect::AmmoGrab);   // 2.0.14 Pavlov AmmoGrab_Haptic
         m_FreshAmmoInsertGate.Reset();
         if (m_MagazineInteractionShotgunShellMode) m_ShellRetryContact.Reset();
         m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);

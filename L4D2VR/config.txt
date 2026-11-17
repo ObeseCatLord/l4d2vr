@@ -569,7 +569,11 @@ HolsterPavlovLayoutEnabled=true
 // Where the holsters sit on your body: forefront (rifle on a chest sling, pistol on the dominant hip, grenade and
 // magazines on the upper chest at Pavlov's top pocket row, kits on the back, pills on the other hip) or pavlov
 // (Pavlov VR: rifle on your back over the shoulder, pistol on the hip, grenade/kit/pills in vest pockets 31-54 cm
-// below your eyes, magazines on the other hip). HolsterYawFollowSpeed=20 adds Pavlov's slight turn lag.
+// below your eyes, magazines on the other hip). 2.0.14, pavlov in Physical mode: Pavlov's hip volumes (about 31 cm
+// reach around each hip), both hips are magazine pouches for the gun in your other hand (a hip with the
+// pistol on it is a draw), the pistol goes on whichever hip you put it, the pistol hangs muzzle forward-down
+// and the rifle diagonally on the back, the rig follows your head's turn with Pavlov's slight lag, and a
+// put-away over another holster clicks and keeps the item in your hand.
 HolsterLayout=forefront
 // Only an empty hand takes things from your body (Pavlov and Forefront): squeezing at a holster while the hand
 // holds something does nothing (except putting that item away at its own holster). The other, empty hand may draw.
@@ -602,7 +606,8 @@ VrOptionsMenuHoldSeconds=0.8
 # Holsters are placed like Forefront's equipment (60 cm straight below the head: rifle sling across
 # the chest, pistol/melee on the dominant hip, grenade on the upper chest, pills on the other hip,
 # magazines on the off-hand upper chest; medkit/defib stays on the back). Their facing follows your
-# head yaw: 0 = every frame (Forefront), higher = smoothed at this speed (Pavlov: 20).
+# head yaw: 0 = the layout's default (forefront: every frame; pavlov in Physical mode: Pavlov's 20),
+# higher = smoothed at this speed, -1 = every frame for either layout.
 HolsterYawFollowSpeed=0
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4

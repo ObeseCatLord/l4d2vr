@@ -194,6 +194,13 @@ void VR::UpdateGameplayMode(bool inGame)
     // Idempotent: also applies the overlay at start-up (the first resolved
     // mode equals the initial PendingClassic) and after a config reload.
     ApplyGameplayModeOverrides(classic);
+    // 2.0.14: Pavlov's hips (capsule reach, both hips as pouches, the sidearm
+    // on either hip, Pavlov's slot poses) are Physical-only: Classic keeps the
+    // 2.0.13 pavlov layout. Re-applied every frame (a config parse rebuilds
+    // the layout).
+    m_HolsterLayout.pavlovHips = m_HolsterLayout.layoutKind == l4d2vr_holster::LayoutKind::Pavlov &&
+        r.effective == Effective::Physical;
+    m_HolsterLayout.secondaryOffHip = m_HolsterLayout.pavlovHips && m_PavlovSidearmOffHip;
     if (changed)
     {
         m_GameplayModeEffective.store(static_cast<uint8_t>(r.effective), std::memory_order_release);

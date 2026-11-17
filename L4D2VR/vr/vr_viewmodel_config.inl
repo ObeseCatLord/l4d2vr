@@ -3499,7 +3499,7 @@ void VR::ParseConfigFileUnlocked()
     m_VrOptionsMenuHoldSeconds = std::clamp(getFloat("VrOptionsMenuHoldSeconds", 0.8f), 0.0f, 5.0f);
     // Forefront's equipment takes the head yaw every frame (0); Pavlov's
     // inventory interpolates toward it at speed 20.
-    m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 0.0f), 0.0f, 60.0f);
+    m_HolsterYawFollowSpeed = std::clamp(getFloat("HolsterYawFollowSpeed", 0.0f), -1.0f, 60.0f);
     m_HolsterHeightScale = std::clamp(getFloat("HolsterHeightScale", 1.0f), 0.5f, 1.6f);
     m_HolsterHoverHapticAmplitude = std::clamp(getFloat("HolsterHoverHapticAmplitude", 0.4f), 0.0f, 1.0f);
     m_HolsterGrabHapticAmplitude = std::clamp(getFloat("HolsterGrabHapticAmplitude", 0.6f), 0.0f, 1.0f);

@@ -1797,7 +1797,21 @@ public:
     l4d2vr_holster::Zone m_HolsterHoverZone[2] = { l4d2vr_holster::Zone::None, l4d2vr_holster::Zone::None }; // [0] free, [1] item hand (nearest-wins hysteresis)
     bool m_HolsterItemsVisible = true;
     bool m_HolsterInstantDraw = true;
-    float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the head yaw every frame (Forefront)
+    float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the layout's default (forefront: head yaw every frame; pavlov 20), -1 = instant
+    // 2.0.14 (pavlov layout, Physical): the slot2 item sits on the off-hand hip
+    // (put away there); the slot2 item hangs on the body (its hip is no
+    // pouch); the hip pouch point nearest the support hand this frame.
+    bool m_PavlovSidearmOffHip = false;
+    std::atomic<bool> m_PavlovSidearmOnBody{ false };
+    std::atomic<bool> m_PavlovHipPouchValid{ false };
+    std::atomic<float> m_PavlovHipPouchPos[3] = { { 0.0f }, { 0.0f }, { 0.0f } };
+    // A squeeze of the owning hand over another holster with its item kept
+    // (Pavlov PutFailure): a click and the AmmoGrab pattern.
+    std::atomic<bool> m_HolsterHandOverWrongZone{ false };
+    void PlayHolsterFailureFeedback();
+    // Pavlov AmmoGrab on a holster take or put with the pavlov layout in
+    // Physical mode, else the given pulse.
+    void HolsterTakePutHaptic(bool physicalLeft, float durationSeconds, float frequency, float amplitude);
     float m_HolsterHeightScale = 1.0f;
     float m_HolsterHighlightBrightness = 1.6f;
     float m_HolsterHoverHapticAmplitude = 0.4f;

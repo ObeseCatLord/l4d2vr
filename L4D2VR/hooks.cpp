@@ -9,6 +9,7 @@
 #include "vr_vrik_lower_body.h"
 #include "vr_body_ik.h"
 #include "vr_grip_release.h"
+#include "vr_drop_policy.h"
 #include "vr_pistol_detachment.h"
 #include "vr_interaction_geometry.h"
 #include "vr_interaction_protocol.h"

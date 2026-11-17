@@ -520,10 +520,10 @@ PhysicalShoveEnabled=true
 GunBashSweepEnabled=true
 HolsterReleaseDrop=true
 # Toggle grips (Pavlov's toggle grip mode): a squeeze takes an item from a holster or the
-# sling and the hand keeps it without holding the grip; that hand's next squeeze lets it go:
-# at its own holster it is put away (a long gun anywhere near your body hangs on the sling), elsewhere it drops
-# at your hand. Letting go of the grip never drops anything. The other hand's grip on the
-# gun is only the foregrip. Off: hold the grip to keep the item (letting go puts away/drops).
+# sling and the hand keeps it without holding the grip; that hand's next squeeze puts it
+# away at its own holster (a long gun anywhere near your body hangs on the sling). Since
+# 2.0.12 nothing is ever dropped: away from a holster the item stays in your hand. The other
+# hand's grip on the gun is only the foregrip. Off: hold the grip to keep the item.
 GripToggle=true
 # Pavlov VR reload feel: per-weapon slide/bolt pull, chamber return and magazine
 # insert depth taken from Pavlov (your own per-weapon overrides still win).
@@ -557,7 +557,7 @@ ItemHandLeftArmModel=true
 ChestSlingEnabled=true
 // Empty hands (Forefront / Pavlov): putting an item away in its holster leaves your hand empty; it stays on your body until a hand takes it back.
 HolsterEmptyHands=true
-// Letting go of a long gun with the hand farther than this from its sling (arm stretched out) drops it instead (with GripToggle=false also sidearms and the hip).
+// Letting go of a long gun within this distance of its sling hangs it there (with GripToggle=false also sidearms at the hip). Farther away it stays in your hand (2.0.12: nothing is dropped).
 ChestSlingDropDistanceMeters=0.6
 // How close a squeezing hand must be to the slung gun's handle or foregrip to take it.
 ChestSlingGrabRadiusMeters=0.15

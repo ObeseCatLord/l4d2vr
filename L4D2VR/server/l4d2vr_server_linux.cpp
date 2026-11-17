@@ -1522,6 +1522,8 @@ namespace
                 actions.melee.gate == MeleeSwingGate::Result::Cooldown ? "cooldown" : "burst-limit");
         if (actions.melee.sweep)
             RunMeleeSweep(self, weaponAfter, actions.melee);
+        if (actions.dropRefusedSidearm && ClientLogAllowed(index))
+            Log("drop refused player=%d weapon=%d (slot-2 items are never dropped)", index, post.weaponIdAfter);
         if (actions.drop && weaponAfter && g_N.getActiveWeapon(self) == weaponAfter)
         {
             const Vector velocity = ToVector(actions.dropRequest.velocity);

@@ -1526,6 +1526,13 @@ public:
 	l4d2vr_grip_toggle::Toggle m_GripToggle;
 	std::atomic<uint32_t> m_GripToggleAdoptSerial{ 0u };   // contact pickups adopted by the grip
 	std::atomic<uint32_t> m_GripToggleHeldTag{ 0u };       // 2.0.11: the item the toggle grip holds (0 = none / not settled)
+	// 2.0.12 (vr_drop_policy.h): a release no holster caught keeps the item;
+	// CreateMove asks the toggle grip to hold it again.
+	std::atomic<bool> m_GripToggleRehold{ false };
+	std::atomic<uint32_t> m_GripReleaseKeptCount{ 0u };
+	// Hook for the later dedicated drop button/chord (nothing sets it yet).
+	std::atomic<bool> m_DeliberateDropRequested{ false };
+	bool ConsumeDeliberateDropRequest() { return m_DeliberateDropRequested.exchange(false, std::memory_order_acq_rel); }
 	std::atomic<uint32_t> m_GripTogglePickupSerial{ 0u };  // contact pickups requested
     std::atomic<uint32_t> m_GripPickupOfferTimeMs{ 0 };
     std::atomic<uint32_t> m_LeftPistolPickupOfferTimeMs{ 0 };

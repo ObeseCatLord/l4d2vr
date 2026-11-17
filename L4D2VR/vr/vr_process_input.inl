@@ -689,6 +689,12 @@ void VR::ProcessInput()
             m_ItemHandAdoptGrip = false;
             m_GripToggle.Adopt(rightGripValid && rightGripDown, toggleApplies && m_ItemHandAdoptHeld);
         }
+        if (m_GripToggleRehold.exchange(false, std::memory_order_acq_rel) && toggleApplies)
+        {
+            // 2.0.12: the squeeze let go away from any holster and nothing is
+            // dropped: the hand keeps the item, held as before.
+            m_GripToggle.Adopt(rightGripValid && rightGripDown, true);
+        }
         const bool wasHeld = m_GripToggle.Held();
         const bool virtualDown = m_GripToggle.Update(toggleInput);
         m_GripToggleHeldTag.store(toggleApplies ? m_GripToggle.PinnedTag() : 0u, std::memory_order_release);

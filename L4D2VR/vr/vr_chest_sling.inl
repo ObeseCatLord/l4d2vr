@@ -64,9 +64,9 @@ bool VR::ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId)
         ? (m_RightControllerPosAbs - handle).Length() / (std::max)(1.0f, m_VRScale)
         : -1.0f;
     const l4d2vr_chest_sling::ReleaseAction action = l4d2vr_chest_sling::OnRelease(in);
-    Game::logMsg("[VR][ChestSling] %s weaponId=%d hand %.2f m from the sling (drop beyond %.2f): %s",
+    Game::logMsg("[VR][ChestSling] %s weaponId=%d hand %.2f m from the sling (caught within %.2f): %s",
         m_GripToggleEnabled ? "owner squeeze" : "release", weaponId, in.handToSlingMeters, in.dropDistanceMeters,
-        action == l4d2vr_chest_sling::ReleaseAction::Sling ? "slung" : "dropped");
+        action == l4d2vr_chest_sling::ReleaseAction::Sling ? "slung" : "not caught (stays in the hand)");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
     StowActiveWeapon(weaponTag, 0, "let go of the long gun: on the chest sling");
@@ -106,9 +106,9 @@ bool VR::HolsterCatchRelease(uintptr_t weaponTag, int weaponId)
         return false;
     Game::logMsg("[VR][EmptyHands] %s weaponId=%d hand %.2f m from the hip holster (%s %.2f) at %.1f m/s: %s",
         in.toggleGrip ? "owner squeeze" : "release", weaponId, handToHolster,
-        in.toggleGrip ? "put away within" : "drop beyond",
+        in.toggleGrip ? "put away within" : "caught within",
         in.toggleGrip ? in.putAwayReachMeters : in.dropDistanceMeters, in.handSpeedMetersPerSecond,
-        action == l4d2vr_chest_sling::ReleaseAction::Sling ? "holstered" : "dropped");
+        action == l4d2vr_chest_sling::ReleaseAction::Sling ? "holstered" : "not caught (stays in the hand)");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
     StowActiveWeapon(weaponTag, l4d2vr_holster::SlotIndex(l4d2vr_holster::Zone::Secondary),

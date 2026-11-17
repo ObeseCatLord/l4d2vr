@@ -147,6 +147,13 @@ namespace l4d2vr_server
             return (id >= 1 && id <= 11) || id == 21 || id == 26 || (id >= 32 && id <= 37) || id == 45;
         }
         inline bool IsGiveable(int id) { return id == kPainPills || id == kAdrenaline; }
+        // 2.0.12 (review s12 12/13): slot-2 items (pistol, magnum, melee, the
+        // chainsaw) are never dropped on a client's request, whatever the client
+        // sends (client: vr_drop_policy.h IsNeverDroppable).
+        inline bool IsNeverDroppable(int id)
+        {
+            return id == kPistol || id == kMagnum || id == kMelee || id == kChainsaw;
+        }
         // Matches the client's ManualInventoryThrowWeaponIdIsSupported minus the
         // carry props, i.e. ManualInventoryThrowWeaponIdRequiresCustomDrop.
         inline bool IsInventoryDroppable(int id)

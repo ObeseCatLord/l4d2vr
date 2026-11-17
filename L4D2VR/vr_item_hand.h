@@ -28,6 +28,7 @@ namespace l4d2vr_item_hand
         SelfTest,         // -l4d2vrselftest itemhand= / heldhand= (puts the item where a photo needs it)
         Reset,            // death, spectating, VR off, mouse mode, option off
         DrawCancel,       // 2.0.11: a free-hand holster draw that never drew: the item returns to its hand
+        AutoReturn,       // 2.0.12: the game switched the active item by itself: it goes to the hand that last held it
     };
 
     inline const char* ReasonName(Reason reason)
@@ -39,6 +40,7 @@ namespace l4d2vr_item_hand
         case Reason::SelfTest: return "self-test";
         case Reason::Reset: return "reset";
         case Reason::DrawCancel: return "draw cancelled";
+        case Reason::AutoReturn: return "auto return";
         default: return "none";
         }
     }
@@ -47,7 +49,8 @@ namespace l4d2vr_item_hand
     inline bool ChangesHands(Reason reason)
     {
         return reason == Reason::HolsterDraw || reason == Reason::SlingTake ||
-            reason == Reason::SelfTest || reason == Reason::Reset || reason == Reason::DrawCancel;
+            reason == Reason::SelfTest || reason == Reason::Reset || reason == Reason::DrawCancel ||
+            reason == Reason::AutoReturn;
     }
 
     // The new item hand already squeezes what it took (the slung or stowed
@@ -57,8 +60,96 @@ namespace l4d2vr_item_hand
     // grip state it had.
     inline bool AdoptsGrip(Reason reason)
     {
-        return reason == Reason::SlingTake || reason == Reason::SelfTest || reason == Reason::DrawCancel;
+        return reason == Reason::SlingTake || reason == Reason::SelfTest || reason == Reason::DrawCancel ||
+            reason == Reason::AutoReturn;
     }
+
+    // 2.0.12 (review s12 issue 15, E13, G5): every item remembers the physical
+    // hand that last held it. When the GAME changes the active item by itself
+    // (heal / pills / adrenaline / defib finished, a grenade thrown, an upgrade
+    // pack deployed, a primary run dry, the M60 or chainsaw used up, a pickup,
+    // a server-side switch, dismounting a mounted gun) the new item goes to
+    // its own hand, never to the hand that happened to hold the consumable.
+    // A switch the mod asked for (a holster draw, a sling take, a grip pickup:
+    // the caller reports it with ModSelected) makes the drawing hand the owner.
+    // Unknown items go to the dominant hand; while incapacitated the pistol
+    // goes to the dominant hand.
+    class OwnerHands
+    {
+    public:
+        static constexpr int kSlots = 5;
+        static constexpr std::uint64_t kModSwitchWindowMs = 1500u;
+
+        struct Decision
+        {
+            bool autoSwitch = false;   // the game changed the active item by itself
+            bool change = false;       // ... and it belongs to the other hand now
+            bool physicalLeft = false; // the hand it goes to
+        };
+
+        void Reset()
+        {
+            for (int& o : m_Owner) o = -1;
+            m_LastItem = 0u;
+            m_ModValid = false;
+        }
+        // owner: -1 unknown, 0 right, 1 left (physical).
+        int Owner(int slot) const { return slot >= 0 && slot < kSlots ? m_Owner[slot] : -1; }
+        void Note(int slot, bool physicalLeft)
+        {
+            if (slot >= 0 && slot < kSlots)
+                m_Owner[slot] = physicalLeft ? 1 : 0;
+        }
+        // The mod is about to switch the active item (holster draw, pickup).
+        void ModSelected(std::uint64_t nowMs)
+        {
+            m_ModMs = nowMs;
+            m_ModValid = true;
+        }
+
+        // Every frame: the active item (0 = none) and its slot (-1 unknown),
+        // the physical hand that holds the active item now, the dominant hand.
+        Decision Update(std::uintptr_t item, int slot, bool currentLeft, bool dominantLeft, bool switchPending,
+            bool incapacitated, bool akimbo, std::uint64_t nowMs)
+        {
+            Decision d{};
+            // No item for a moment (between a throw and the switch back) is
+            // not a new life: only Reset() forgets the previous item.
+            if (item == 0u || item == m_LastItem)
+                return d;
+            const bool hadItem = m_LastItem != 0u;
+            m_LastItem = item;
+            if (slot < 0 || slot >= kSlots)
+                return d;
+            const bool modRequested = m_ModValid && nowMs >= m_ModMs && nowMs - m_ModMs <= kModSwitchWindowMs;
+            if (modRequested || switchPending || akimbo)
+            {
+                // The hand that drew it (or the pair of pistols) owns it.
+                m_ModValid = false;
+                Note(slot, currentLeft);
+                return d;
+            }
+            if (!hadItem)
+            {
+                // Spawned or respawned with it: nothing moved it out of a hand.
+                Note(slot, currentLeft);
+                return d;
+            }
+            const int owner = m_Owner[slot];
+            const bool target = incapacitated ? dominantLeft : (owner >= 0 ? owner == 1 : dominantLeft);
+            d.autoSwitch = true;
+            d.physicalLeft = target;
+            d.change = target != currentLeft;
+            Note(slot, target);
+            return d;
+        }
+
+    private:
+        int m_Owner[kSlots] = { -1, -1, -1, -1, -1 };
+        std::uintptr_t m_LastItem = 0u;
+        std::uint64_t m_ModMs = 0u;
+        bool m_ModValid = false;
+    };
 
     // 2.0.11: a free-hand holster draw moves the item hand first and draws one
     // or two frames later through the weapon-hand holster logic. If that draw

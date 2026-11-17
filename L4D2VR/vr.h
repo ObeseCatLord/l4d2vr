@@ -2412,6 +2412,9 @@ public:
 	bool m_ItemHandForceGripUpFrame = false; // a holster draw: the new item hand presses afresh next frame
 	bool m_ItemHandFreshPress = false;       // 2.0.11: ... and the toggle forgets the old hand's raw grip
 	l4d2vr_item_hand::DrawWatch m_ItemHandDrawWatch; // 2.0.11: undo a free-hand draw that never drew
+	l4d2vr_item_hand::OwnerHands m_ItemOwners;      // 2.0.12: the hand each item returns to after a game-side switch
+	uint32_t m_ItemOwnerModSerial = 0u;
+	std::atomic<uint32_t> m_ItemAutoReturnCount{ 0u };
 	// Gameplay right hand (the item hand) is the physical left controller.
 	bool ItemHandIsPhysicalLeft() const
 	{

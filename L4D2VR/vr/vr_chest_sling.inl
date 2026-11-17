@@ -294,6 +294,7 @@ void VR::UpdateChestSling(C_BasePlayer* localPlayer, bool ready, const l4d2vr_ho
         m_ChestSlingTakeCount.fetch_add(1u, std::memory_order_acq_rel);
     m_HolsterUnstowCount.fetch_add(1u, std::memory_order_acq_rel);
     const bool physicalLeft = IsGameplayHandLeftPhysical(hand == 0);
+    m_ItemOwners.Note(stowedSlot, physicalLeft);   // 2.0.12: this hand owns it now
     if (hand == 0)
     {
         // The other hand takes it from the body: it becomes the trigger hand

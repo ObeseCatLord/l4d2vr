@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 from typing import List, Optional
 
-from . import DEFAULT_REPO, __version__, actions, install, launchopts, openxr, settings, shortcut, sources, steam, vrlaunch
+from . import DEFAULT_REPO, __version__, actions, install, launchopts, openxr, settings, shortcut, sources, steam, vanilla, vrlaunch
 from .fsutil import InstallerError, atomic_write_json, read_json, user_config_dir
 
 IS_WINDOWS = sys.platform.startswith("win")
@@ -93,6 +93,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=("show", "apply", "restore"), nargs="?", default="show")
     p.add_argument("--tool", help="compat tool to force for L4D2 (default: proton_hotfix, else proton_experimental)")
     _add_game_arg(p)
+    _add_dry_run(p)
+
+    p = sub.add_parser("play-vanilla", help="start Left 4 Dead 2 WITHOUT the mod and without -insecure "
+                                             "(VAC-safe: join VAC-secured servers)")
+    _add_game_arg(p)
+    _add_dry_run(p)
+    p = sub.add_parser("restore-mod", help="put the mod back after 'play-vanilla' (done automatically by "
+                                            "the next VR launch and installer start)")
     _add_dry_run(p)
 
     p = sub.add_parser("launch", help="start the game in VR")
@@ -330,8 +338,15 @@ def cmd_launch_options(args, saved) -> int:
             state = "OK" if launchopts.has_required_options(current) else "missing VR settings"
             print(f"{label}: {state}\n  current: {current or '(empty)'}")
             continue
-        func = launchopts.apply_vr_launch_options if args.action == "apply" else launchopts.remove_vr_launch_options
-        change = func(user.localconfig, steam_running=running, dry_run=args.dry_run, state_dir=user_config_dir())
+        if args.action == "apply":
+            # Also the VAC-safe launch wrapper (installer 1.1.5): "play-vanilla" then works without
+            # touching the launch options again.
+            wrapper = vanilla.install_wrapper(user_config_dir(), dry_run=args.dry_run)
+            change = launchopts.apply_vr_launch_options(user.localconfig, steam_running=running, dry_run=args.dry_run,
+                                                        state_dir=user_config_dir(), wrapper=wrapper)
+        else:
+            change = launchopts.remove_vr_launch_options(user.localconfig, steam_running=running,
+                                                         dry_run=args.dry_run, state_dir=user_config_dir())
         for note in change.notes:
             print("Note: " + note)
         if not change.changed:
@@ -364,8 +379,22 @@ def cmd_proton(args, saved) -> int:
     return 0
 
 
+def cmd_play_vanilla(args, saved) -> int:
+    game = actions.require_game_dir(args.game_dir, saved.get("game_dir"))
+    actions.play_vanilla(game, dry_run=args.dry_run, log=print)
+    return 0
+
+
+def cmd_restore_mod(args, saved) -> int:
+    actions.restore_mod_after_vanilla(dry_run=args.dry_run, log=print)
+    return 0
+
+
 def cmd_launch(args, saved) -> int:
     game = actions.require_game_dir(args.game_dir, saved.get("game_dir"))
+    # The mod back after a launch without it (installer 1.1.5).
+    vanilla.prepare_vr_launch(windows=IS_WINDOWS, state_dir=user_config_dir(), game_running=steam.is_game_running,
+                              dry_run=args.dry_run, log=print)
     route = args.route or saved.get("route") or "steamvr"
     password = args.password or os.environ.get("L4D2VR_SERVER_PASSWORD")
     extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
@@ -477,7 +506,7 @@ COMMANDS = {
     "update": cmd_install, "restore": cmd_restore, "uninstall": cmd_uninstall,
     "launch-options": cmd_launch_options, "proton": cmd_proton, "launch": cmd_launch, "shortcut": cmd_shortcut,
     "install-server": cmd_install_server, "xrizer": cmd_xrizer, "self-update-check": cmd_self_update,
-    "make-manifest": cmd_make_manifest,
+    "make-manifest": cmd_make_manifest, "play-vanilla": cmd_play_vanilla, "restore-mod": cmd_restore_mod,
 }
 
 
@@ -502,6 +531,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_gui()
     saved = settings.load()
     try:
+        if IS_WINDOWS and args.command not in ("play-vanilla", "restore-mod"):
+            # A launch without the mod (installer 1.1.5) is undone once the game has closed,
+            # also after a crash in between.
+            vanilla.auto_restore(user_config_dir(), steam.is_game_running, log=print)
         return COMMANDS[args.command](args, saved) or 0
     except InstallerError as error:
         print(f"ERROR: {error}", file=sys.stderr)

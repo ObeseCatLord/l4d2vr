@@ -1505,9 +1505,10 @@ void VR::UpdateTracking()
 
     if (!suppressTeleportCameraClip)
     {
-        // Check if camera is clipping inside wall. A detached scout camera deliberately
-        // crosses the space between the body and target, so this correction must not run
-        // while scouting.
+        // Keep the camera out of walls: the line from the player's origin to the head
+        // (extended 10 units past it) must be clear, or the camera is pulled back to
+        // the wall. (2.0.13: the detached scout camera that skipped this is removed;
+        // a head moved too far from the body is recentered below.)
         CGameTrace trace;
         Ray_t ray;
         CTraceFilterSkipNPCsAndPlayers tracefilter((IHandleEntity*)localPlayer, 0);
@@ -1526,8 +1527,7 @@ void VR::UpdateTracking()
         }
     }
 
-    // Reset camera if it somehow gets too far. Detached scout view is allowed to
-    // exceed the normal roomscale safety radius until the user presses teleport again.
+    // Reset camera if it somehow gets too far from the body.
     {
         auto isFiniteVector = [](const Vector& value)
             {

@@ -30,6 +30,7 @@
 #include "sdk/ivdebugoverlay.h"
 #include "vr_opus_voice_client.h"
 #include "server_core/vr_server_voice.h"
+#include "server_core/vr_net_channel.h"
 
 static_assert(sizeof(edict_t) == sizeof(l4d2vr_edict::Layout32), "Unexpected L4D2 native edict size");
 static_assert(offsetof(CBaseEdict, m_NetworkSerialNumber) == 4u, "Unexpected L4D2 native serial offset");
@@ -1023,8 +1024,11 @@ namespace
     void __cdecl OnL4D2VRVoiceRxCommand(const SourceCCommand& command)
     {
         std::uint32_t player = 0u;
-        if (command.ArgC() == 3 && l4d2vr_voice::ParseUnsigned(command.Arg(1), l4d2vr_voice::kMaxPlayers, player))
-            OpusVoiceClient::OnFrame(static_cast<int>(player), command.Arg(2));
+        // Protocol 1: one frame; protocol 2 (2.0.12): up to three, oldest first.
+        if (l4d2vr_voice::ValidRxArgCount(command.ArgC()) &&
+            l4d2vr_voice::ParseUnsigned(command.Arg(1), l4d2vr_voice::kMaxPlayers, player))
+            for (int i = 2; i < command.ArgC(); ++i)
+                OpusVoiceClient::OnFrame(static_cast<int>(player), command.Arg(i));
     }
     // +voicerecord / -voicerecord (the game's voice key and the VR voice
     // combo) also key Opus push-to-talk; the originals still run, so players
@@ -2410,6 +2414,153 @@ namespace
         }
     }
 
+    // ---- 2.0.12: the relay's downlink in the unreliable stream, and its team
+    // rule (server_core/vr_net_channel.h, vr_server_voice.h). Every engine
+    // function is checked by its code bytes before the first call; anything
+    // unexpected keeps the reliable ClientCommand path.
+    bool ListenCodeInEngine(const void* code, std::size_t length)
+    {
+        const auto module = reinterpret_cast<std::uintptr_t>(GetModuleHandleA("engine.dll"));
+        if (!module || !code) return false;
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 0x100000) return false;
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(module + dos->e_lfanew);
+        if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+        return l4d2vr_recv::Contains(module, nt->OptionalHeader.SizeOfImage, reinterpret_cast<std::uintptr_t>(code), length);
+    }
+
+    const void* ListenVtableEntry(const void* object, int slot)
+    {
+        __try { return object ? (*reinterpret_cast<const void* const* const*>(object))[slot] : nullptr; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+
+    const void* ListenVtable(const void* object)
+    {
+        __try { return object ? *reinterpret_cast<const void* const*>(object) : nullptr; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+
+    void* ListenNetChannelRaw(void* engineServer, int index)
+    {
+        __try
+        {
+            using Fn = void* (__thiscall*)(void*, int);
+            const auto fn = reinterpret_cast<Fn>((*reinterpret_cast<void***>(engineServer))[l4d2vr_netchan::kEngineServerGetPlayerNetInfoSlot]);
+            return fn(engineServer, index);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+
+    // 1 = written, 0 = the unreliable stream is full (dropped), -1 = fault.
+    int ListenSendDataRaw(void* channel, void* message)
+    {
+        __try
+        {
+            using Fn = bool (__thiscall*)(void*, void*, bool);
+            const auto fn = reinterpret_cast<Fn>((*reinterpret_cast<void***>(channel))[l4d2vr_netchan::kMsvcSendDataSlot]);
+            return fn(channel, message, false) ? 1 : 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+
+    int ListenReliableBitsRaw(void* channel)
+    {
+        __try
+        {
+            using Fn = int (__thiscall*)(void*, bool);
+            const auto fn = reinterpret_cast<Fn>((*reinterpret_cast<void***>(channel))[l4d2vr_netchan::kMsvcNumBitsWrittenSlot]);
+            return fn(channel, true);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+
+    int ListenTeamRaw(void* manager, edict_t* edict)
+    {
+        __try
+        {
+            using GetInfo = void* (__thiscall*)(void*, edict_t*);
+            void* info = reinterpret_cast<GetInfo>((*reinterpret_cast<void***>(manager))[0])(manager, edict);
+            if (!info) return -1;
+            using GetTeam = int (__thiscall*)(void*);
+            const int team = reinterpret_cast<GetTeam>((*reinterpret_cast<void***>(info))[3])(info);
+            return team >= 0 && team <= 3 ? team : -1;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+
+    // server.dll "PlayerInfoManager002": GetPlayerInfo is slot 0, IPlayerInfo::GetTeamIndex slot 3.
+    void* ListenPlayerInfoManager()
+    {
+        static void* manager = TryInterfaceNoError("server.dll", "PlayerInfoManager002");
+        return manager;
+    }
+
+    struct ListenNetChanCheck
+    {
+        bool infoChecked = false, infoOk = false;
+        const void* vtable = nullptr;
+        bool sendOk = false, bitsOk = false;
+        std::uint32_t streamFull = 0u;
+    };
+    ListenNetChanCheck g_ListenNetChan;
+
+    void* ListenNetChannel(int index)
+    {
+        void* engine = VRPoseCommandEngine();
+        if (!engine || index < 1 || index > l4d2vr_voice::kMaxPlayers) return nullptr;
+        if (!g_ListenNetChan.infoChecked)
+        {
+            g_ListenNetChan.infoChecked = true;
+            const auto* code = static_cast<const std::uint8_t*>(ListenVtableEntry(engine, l4d2vr_netchan::kEngineServerGetPlayerNetInfoSlot));
+            g_ListenNetChan.infoOk = ListenCodeInEngine(code, 16u) && l4d2vr_netchan::MsvcGetPlayerNetInfoCode(code, 16u);
+            if (!g_ListenNetChan.infoOk)
+                Game::logMsg("[VR][Voice] listen host: Opus voice downlink uses reliable commands (GetPlayerNetInfo not recognised)");
+        }
+        if (!g_ListenNetChan.infoOk) return nullptr;
+        void* channel = ListenNetChannelRaw(engine, index);
+        if (!channel) return nullptr;
+        const void* vtable = ListenVtable(channel);
+        if (!vtable) return nullptr;
+        if (vtable != g_ListenNetChan.vtable)
+        {
+            g_ListenNetChan.vtable = vtable;
+            const auto* send = static_cast<const std::uint8_t*>(ListenVtableEntry(channel, l4d2vr_netchan::kMsvcSendDataSlot));
+            const auto* bits = static_cast<const std::uint8_t*>(ListenVtableEntry(channel, l4d2vr_netchan::kMsvcNumBitsWrittenSlot));
+            g_ListenNetChan.sendOk = ListenCodeInEngine(send, 16u) && l4d2vr_netchan::MsvcSendDataCode(send, 16u);
+            g_ListenNetChan.bitsOk = ListenCodeInEngine(bits, 16u) && l4d2vr_netchan::MsvcNumBitsWrittenCode(bits, 16u);
+            Game::logMsg("[VR][Voice] listen host: Opus voice downlink %s (CNetChan::SendData %s, reliable backlog %s)",
+                g_ListenNetChan.sendOk ? "packed frames in the unreliable stream" : "reliable commands",
+                g_ListenNetChan.sendOk ? "recognised" : "not recognised", g_ListenNetChan.bitsOk ? "measured" : "not measured");
+        }
+        return channel;
+    }
+
+    bool ListenSendUnreliable(int index, const char* text)
+    {
+        void* channel = ListenNetChannel(index);
+        if (!channel || !g_ListenNetChan.sendOk || !text) return false;
+        alignas(4) std::uint8_t buffer[l4d2vr_netchan::kMaxMessageBytes + 8];
+        const int bits = l4d2vr_netchan::BuildStringCmd(text, buffer, sizeof(buffer));
+        if (bits <= 0) return false;
+        l4d2vr_netchan::BfWrite32 message = l4d2vr_netchan::MakeBfWrite(
+            static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(buffer)), static_cast<int>(sizeof(buffer)), bits);
+        const int result = ListenSendDataRaw(channel, &message);
+        if (result < 0) { g_ListenNetChan.sendOk = false; return false; }
+        if (result == 0 && g_ListenNetChan.streamFull++ % 500u == 0u)
+            Game::logMsg("[VR][Voice] listen host: player %d unreliable stream full, %u voice lines dropped", index,
+                static_cast<unsigned>(g_ListenNetChan.streamFull));
+        return true;
+    }
+
+    int ListenPendingReliableBytes(int index)
+    {
+        void* channel = ListenNetChannel(index);
+        if (!channel || !g_ListenNetChan.bitsOk) return -1;
+        const int bits = ListenReliableBitsRaw(channel);
+        return bits < 0 ? -1 : bits / 8;
+    }
+
     struct ListenVoiceSlot { edict_t* entity = nullptr; unsigned serial = 0u; };
 
     class ListenVoiceHost final : public l4d2vr_voice_server::RelayHost
@@ -2433,6 +2584,32 @@ namespace
         bool CanHear(int receiver, int sender) const override { return ListenVoiceCanHear(receiver, sender); }
         std::uint64_t NowMs() const override { return VRPoseTickMs(); }
         void Log(const char* line) override { Game::logMsg("[VR][Voice] listen host: %s", line); }
+        bool SendUnreliable(int index, const char* text) override { return Connected(index) && ListenSendUnreliable(index, text); }
+        bool UnreliableAvailable(int index) override
+        {
+            return Connected(index) && ListenNetChannel(index) && g_ListenNetChan.sendOk;
+        }
+        int PendingReliableBytes(int index) const override { return ListenPendingReliableBytes(index); }
+        // Edicts are one array: any known voice slot gives its base; the
+        // identity check rejects a wrong guess.
+        int Team(int index) const override
+        {
+            void* manager = ListenPlayerInfoManager();
+            if (!manager || index < 1 || index > l4d2vr_voice::kMaxPlayers) return l4d2vr_voice_server::kTeamUnknown;
+            for (int k = 1; k <= l4d2vr_voice::kMaxPlayers; ++k)
+            {
+                edict_t* known = slots[static_cast<std::size_t>(k)].entity;
+                if (!known) continue;
+                edict_t* edict = known - k + index;
+                int current = -1;
+                unsigned serial = 0u;
+                if (!VRPoseRelayReadEdictIdentity(edict, current, serial) || current != index)
+                    return l4d2vr_voice_server::kTeamUnknown;
+                return ListenTeamRaw(manager, edict);
+            }
+            return l4d2vr_voice_server::kTeamUnknown;
+        }
+        int AllTalk() const override { return g_Game ? g_Game->GetConVarInt("sv_alltalk", -1) : -1; }
     };
 
     ListenVoiceHost g_ListenVoiceHost;
@@ -2512,6 +2689,15 @@ void Game::UpdateOpusVoice()
 {
     if (!m_EngineClient) return;
     PruneListenVoiceRelay();
+    {
+        // Listen host: the frames queued for protocol-2 listeners since the last frame.
+        std::lock_guard<std::recursive_mutex> lock(g_ListenVoiceMutex);
+        if (g_ListenVoiceRelay.Enabled() && m_ServerPluginHelpers)
+        {
+            g_ListenVoiceHost.helpers = m_ServerPluginHelpers;
+            g_ListenVoiceRelay.Flush(g_ListenVoiceHost);
+        }
+    }
     // Main thread, MinHook initialized: hook the stock voice receive once.
     OpusVoiceClient::InstallStockVoiceFilter();
     // VR players: the game's voice to open mic once ever (CreateMove runs in a
@@ -2541,8 +2727,10 @@ void Game::UpdateOpusVoice()
             // Options > Audio "Microphone sensitivity" (1..2000, lower = more sensitive):
             // drives OpusVoiceVadSensitivity=game (2.0.11).
             const float threshold = GetConVarFloat("voice_threshold", -1.0f);
+            const int modEnable = GetConVarInt("voice_modenable", -1);
             if (enable >= 0 && vox >= 0 && std::isfinite(scale) && scale >= 0.0f)
             {
+                s_GameVoice.modEnable = modEnable;
                 s_GameVoice.known = true;
                 s_GameVoice.enabled = enable != 0;
                 s_GameVoice.openMic = vox != 0;

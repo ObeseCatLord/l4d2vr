@@ -6961,7 +6961,13 @@ void VR::UpdateVoiceRecordCommandState()
     if (!m_Game)
         return;
 
-    const bool wantVoiceRecord = m_VoiceRecordActive || m_AutoVoiceRecordRequested;
+    // 2.0.12: in the game's open mic (voice_vox 1) the voice button/combo does
+    // not key +voicerecord: the matching -voicerecord stopped the game's own
+    // microphone capture (a thumb resting on the trackpad did it 39 times in 5
+    // minutes). The button still forces Opus voice open (SetControllerPushToTalk).
+    // Speech-to-text broadcasts (voice_inputfromfile) still key it.
+    const bool gameOpenMic = OpusVoiceClient::GameOpenMic();
+    const bool wantVoiceRecord = (m_VoiceRecordActive && !gameOpenMic) || m_AutoVoiceRecordRequested;
     if (wantVoiceRecord && !m_VoiceRecordCmdOwned)
     {
         m_Game->ClientCmd_Unrestricted("+voicerecord");

@@ -36,10 +36,17 @@ namespace l4d2vr_server
         // False when the host has no view-yaw source at all (relay-only):
         // v3 hellos are then refused, because v3 -> v2 needs the yaw.
         virtual bool HasViewYawSource() const { return true; }
-        // Opus voice: may `receiver` hear `sender` (1-based)? The game's own
-        // voice rules (IVoiceServer::GetClientListening); hosts without one
-        // let everyone hear everyone.
+        // Opus voice: the game's own voice mask for `receiver` hearing `sender`
+        // (1-based; IVoiceServer::GetClientListening); hosts without one let
+        // everyone hear everyone. The relay applies its own rule on top
+        // (vr_server_voice.h, 2.0.12).
         virtual bool VoiceCanHear(int receiver, int sender) const { (void)receiver; (void)sender; return true; }
+        // 2.0.12 voice transport and rule inputs (see l4d2vr_voice_server::RelayHost).
+        virtual bool VoiceSendUnreliable(int index, const char* text) { (void)index; (void)text; return false; }
+        virtual bool VoiceUnreliableAvailable(int index) { (void)index; return false; }
+        virtual int VoicePendingReliableBytes(int index) const { (void)index; return -1; }
+        virtual int VoiceTeam(int index) const { (void)index; return -1; }
+        virtual int VoiceAllTalk() const { return -1; }
     protected:
         ~SessionHost() = default;
     };
@@ -192,6 +199,7 @@ namespace l4d2vr_server
                 if (c.havePendingUpload)
                     FlushPendingUpload(index);
             }
+            m_Voice.Flush(m_VoiceHost);
         }
 
         // The shell reports every decoded VR usercmd: the bundle arrived.
@@ -268,6 +276,14 @@ namespace l4d2vr_server
             bool CanHear(int receiver, int sender) const override { return m_Session.m_Host.VoiceCanHear(receiver, sender); }
             std::uint64_t NowMs() const override { return m_Session.m_Host.NowMs(); }
             void Log(const char* line) override { m_Session.m_Host.Log(line); }
+            bool SendUnreliable(int index, const char* text) override
+            {
+                return Connected(index) && m_Session.m_Host.VoiceSendUnreliable(index, text);
+            }
+            bool UnreliableAvailable(int index) override { return Connected(index) && m_Session.m_Host.VoiceUnreliableAvailable(index); }
+            int PendingReliableBytes(int index) const override { return m_Session.m_Host.VoicePendingReliableBytes(index); }
+            int Team(int index) const override { return m_Session.m_Host.VoiceTeam(index); }
+            int AllTalk() const override { return m_Session.m_Host.VoiceAllTalk(); }
         private:
             Session& m_Session;
         };

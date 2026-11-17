@@ -160,6 +160,11 @@ namespace l4d2vr_openxr_input
     // defaults for the bindings players run on Linux today).
     constexpr float kValueClickPress = 0.25f;
     constexpr float kValueClickRelease = 0.20f;
+    // 2.0.12: an Index trackpad reports 0.25-0.31 force under a resting thumb
+    // (39 accidental push-to-talk presses in 5 minutes at 0.25): a trackpad
+    // "click" needs a real press.
+    constexpr float kTrackpadForcePress = 0.60f;
+    constexpr float kTrackpadForceRelease = 0.40f;
     // Binary inputs (click/touch) report exactly 0 or 1.
     constexpr float kClickPress = 0.5f;
     constexpr float kClickRelease = 0.5f;
@@ -409,9 +414,9 @@ namespace l4d2vr_openxr_input
                 Bind(p, Action::Flashlight, Hand::Left, "/input/a/click");
                 Bind(p, Action::Pause, Hand::Left, "/input/b/click");
                 // OpenXR has no trackpad click on Index: SteamVR's click is a force threshold.
-                Bind(p, Action::Scoreboard, Hand::Left, "/input/trackpad/force");
+                Bind(p, Action::Scoreboard, Hand::Left, "/input/trackpad/force", kTrackpadForcePress, kTrackpadForceRelease);
                 // Opus voice push-to-talk: pressing the (otherwise unused) right trackpad.
-                Bind(p, Action::VoicePushToTalk, Hand::Right, "/input/trackpad/force");
+                Bind(p, Action::VoicePushToTalk, Hand::Right, "/input/trackpad/force", kTrackpadForcePress, kTrackpadForceRelease);
                 Both(p.legal, { "/input/system/click", "/input/system/touch", "/input/a/click", "/input/a/touch",
                     "/input/b/click", "/input/b/touch", "/input/squeeze/value", "/input/squeeze/force",
                     "/input/trigger/click", "/input/trigger/value", "/input/trigger/touch", "/input/thumbstick",

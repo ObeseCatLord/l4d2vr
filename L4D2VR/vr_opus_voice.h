@@ -15,6 +15,8 @@
 //   client -> server  l4d2vr_voice_up <frame>                 one 20 ms frame,
 //                     sent unreliably (IVEngineClient::ServerCmd(.., false))
 //   server -> client  l4d2vr_voice_rx <player> <frame>        relayed frame
+//                     (2.0.12, relay protocol 2: <frame> [<frame> [<frame>]],
+//                     sent in the net channel's unreliable stream, see below)
 //   server -> client  l4d2vr_voice_peers <lo> <hi>            players (bit i-1)
 //                     that may send Opus: while their Opus voice is actually
 //                     arriving, their stock voice is dropped by this client
@@ -24,6 +26,17 @@
 //   [4] talkspurt id [5] Opus bytes N        [6..] N Opus bytes (N = 0 only with End)
 // IVEngineClient::ServerCmd formats "cmd %s" into 255 bytes, so a voice_up
 // command stays below 250 characters: kMaxOpusBytes caps the encoder.
+//
+// Relay protocol (2.0.12): the hello carries the client's relay protocol
+// (kRelayProtocolVersion = 2), the ack the one the server uses. Protocol 1
+// (2.0.5-2.0.11 clients, and 2.0.11 servers, which ack 1 to any hello) relays
+// every frame as its own reliable server command. Protocol 2 sends the rx
+// lines as net_StringCmd in the listener's *unreliable* stream, up to
+// kMaxRxFramesPerCommand frames per line, once per server frame: no head-of-
+// line blocking behind a lost datagram, and no clump of 50 commands after a
+// stall that overflows the client's command buffer. A lost line is concealed
+// by FEC/PLC; the line may repeat the talker's previous frame (redundancy,
+// dropped as a duplicate when the original arrived).
 
 #include <algorithm>
 #include <array>
@@ -41,7 +54,12 @@ namespace l4d2vr_voice
     constexpr int kSampleRate = 48000;
     constexpr int kFrameMs = 20;
     constexpr int kFrameSamples = kSampleRate * kFrameMs / 1000;   // 960
-    constexpr unsigned kProtocolVersion = 1u;
+    constexpr unsigned kProtocolVersion = 1u;          // frame format, and the oldest relay protocol
+    constexpr unsigned kRelayProtocolVersion = 2u;     // 2.0.12: packed rx lines in the unreliable stream
+    constexpr int kMaxRxFramesPerCommand = 3;
+    // Source's tokenizer takes 512 characters per command (COMMAND_MAX_LENGTH):
+    // a packed rx line holds as many frames (at most 3) as fit below this.
+    constexpr int kMaxRxLineChars = 500;
     constexpr int kHeaderBytes = 6;
     constexpr int kMaxOpusBytes = 160;          // 64 kbps peak per 20 ms frame
     constexpr int kMaxFrameBytes = kHeaderBytes + kMaxOpusBytes;
@@ -65,6 +83,8 @@ namespace l4d2vr_voice
 
     // The engine's ServerCmd buffer is 255 bytes including "cmd ".
     static_assert(sizeof(kUpCommand) - 1 + 1 + kMaxFrameTextChars < 250, "voice_up must fit IVEngineClient::ServerCmd");
+    // Two frames of the largest size always fit one packed rx line.
+    static_assert(sizeof(kRxCommand) - 1 + 4 + 2 * (kMaxFrameTextChars + 1) + 1 < kMaxRxLineChars, "rx line");
 
     struct Frame
     {
@@ -403,6 +423,7 @@ namespace l4d2vr_voice
         float receiveScale = 1.0f;    // voice_scale ("Voice receive volume")
         float masterVolume = 1.0f;    // volume (the game's master volume also scales its voice)
         float micThreshold = -1.0f;   // voice_threshold ("Microphone sensitivity"; < 0 = not read) (2.0.11)
+        int modEnable = -1;           // voice_modenable (the server's voice manager lets this client hear others; -1 = not read) (2.0.12)
     };
 
     // ---- microphone sensitivity (2.0.11) ------------------------------------------------
@@ -434,7 +455,7 @@ namespace l4d2vr_voice
     {
         return a.known == b.known && a.enabled == b.enabled && a.openMic == b.openMic &&
             std::fabs(a.receiveScale - b.receiveScale) < 1e-3f && std::fabs(a.masterVolume - b.masterVolume) < 1e-3f &&
-            std::fabs(a.micThreshold - b.micThreshold) < 1e-2f;
+            std::fabs(a.micThreshold - b.micThreshold) < 1e-2f && a.modEnable == b.modEnable;
     }
 
     // The settings in effect: OpusVoiceEnabled and the game's voice switch,
@@ -467,17 +488,39 @@ namespace l4d2vr_voice
     // it was a peer, so an open-mic talker (stock voice on, Opus waiting for
     // push-to-talk) was heard by no one with the mod. Now its stock voice is
     // dropped only from its first Opus frame until a moment after the last.
-    constexpr double kStockVoiceHoldMs = 1500.0;    // after an Opus frame (covers bursty arrival)
+    constexpr double kStockVoiceHoldMs = 1500.0;    // after an Opus frame (covers bursty arrival on the reliable relay)
+    // 2.0.12: with the unreliable downlink (relay protocol 2) frames arrive
+    // every server tick, so the game's voice comes back 300 ms after Opus stops
+    // (was 1.5 s: during a stall the listener heard neither).
+    constexpr double kStockVoiceHoldUnreliableMs = 300.0;
     constexpr double kStockVoiceEndHoldMs = 400.0;  // after the End frame (the jitter buffer's tail)
 
-    inline double StockVoiceHoldUntil(bool endFrame, double nowMs)
+    inline double StockVoiceHoldUntil(bool endFrame, double nowMs, bool unreliableRelay = false)
     {
-        return nowMs + (endFrame ? kStockVoiceEndHoldMs : kStockVoiceHoldMs);
+        return nowMs + (endFrame ? kStockVoiceEndHoldMs : (unreliableRelay ? kStockVoiceHoldUnreliableMs : kStockVoiceHoldMs));
     }
 
-    inline bool DropStockVoice(bool peer, double nowMs, double holdUntilMs)
+    // starved: the talker's jitter buffer is waiting for frames that have not
+    // come (concealing with nothing buffered): the game's voice is not held
+    // back meanwhile (2.0.12).
+    inline bool DropStockVoice(bool peer, double nowMs, double holdUntilMs, bool starved = false)
     {
-        return peer && nowMs < holdUntilMs;
+        return peer && !starved && nowMs < holdUntilMs;
+    }
+
+    // ---- console notices (2.0.12) ---------------------------------------------------------
+    // "echo <text>" for ClientCmd: ';' would end the echo and run the rest as a
+    // command ("Unknown command: your"), '"' and line breaks would split it too.
+    inline std::string EchoLine(const std::string& text)
+    {
+        std::string out = "echo ";
+        for (char c : text)
+        {
+            if (c == '"') continue;
+            if (c == ';' || c == '\n' || c == '\r') c = ',';
+            out.push_back(c);
+        }
+        return out;
     }
 
     // ---- VR voice defaults, once (2.0.10) ------------------------------------------------
@@ -537,13 +580,16 @@ namespace l4d2vr_voice
     // the last kNoiseWindowFrames (minimum statistics): the short pauses between
     // words keep it at the room's level while someone talks, and steady noise
     // (a fan, hum) has no pauses, so the floor rises to it and the gate closes.
+    // 2.0.12 (soft word endings were clipped while talking over game noise):
+    // a 3 s window (was 1.2 s: 1.2 s of continuous sound raised the floor) and
+    // a 600 ms hangover (was 400 ms).
     class Vad
     {
     public:
         static constexpr int kOpenFrames = 2;
-        static constexpr int kHangoverFrames = 20;     // 400 ms
+        static constexpr int kHangoverFrames = 30;     // 600 ms
         static constexpr int kPrerollFrames = 5;       // 100 ms
-        static constexpr int kNoiseWindowFrames = 60;  // 1.2 s
+        static constexpr int kNoiseWindowFrames = 150; // 3 s
         static constexpr float kCloseFraction = 0.55f; // closes below this part of the open level
         static constexpr float kMinNoise = 5.0f;
 
@@ -764,25 +810,38 @@ namespace l4d2vr_voice
     // Pull-driven: the playback clock calls Next() once per 20 ms of audio it
     // needs, so the device clock paces playout. Arrival times only decide when
     // a talkspurt starts and how deep the buffer is kept (adaptive target).
+    // 2.0.12 (22% of the frames were thrown away on a bursty link): 1.28 s of
+    // room (was 480 ms), and a burst after a stall is no longer cut back to the
+    // target: the excess is played out slightly faster instead (one frame per
+    // kAccelIntervalMs is decoded and not played, only right after a quiet
+    // frame); only an excess beyond kHardExcessFrames is skipped. Copies of
+    // frames already received (the relay's redundancy) count as duplicates,
+    // not as late.
     class JitterBuffer
     {
     public:
-        static constexpr int kCapacity = 24;          // 480 ms
+        static constexpr int kCapacity = 64;          // 1.28 s (was 24 = 480 ms)
         static constexpr int kMinTargetMs = 60;
         static constexpr int kMaxTargetMs = 300;
         static constexpr int kMaxEmptyConceal = 8;    // 160 ms waiting with nothing buffered, then stop
         static constexpr double kSilenceResetMs = 600.0;
+        static constexpr int kAccelExcessFrames = 3;  // buffered beyond the target before playing faster
+        static constexpr double kAccelIntervalMs = 200.0;
+        static constexpr int kHardExcessFrames = 40;  // 800 ms beyond the target: skip to the target
+        // A decoded frame below this RMS (16-bit) is "quiet": a frame after it may be dropped.
+        static constexpr float kQuietFrameRms = 400.0f;
 
         enum class Action { None, Decode, DecodeFec, Conceal, End };
         struct Output
         {
             Action action = Action::None;
             Frame frame{};   // Decode: the frame; DecodeFec: the NEXT frame (its FEC carries the missing one)
+            bool discard = false;   // Decode: decode (decoder state) but do not play (time compression)
         };
         struct Stats
         {
             std::uint32_t inserted = 0, duplicates = 0, late = 0, overflow = 0;
-            std::uint32_t decoded = 0, fec = 0, concealed = 0, skipped = 0, talkspurts = 0, underruns = 0, stalls = 0;
+            std::uint32_t decoded = 0, fec = 0, concealed = 0, skipped = 0, accelerated = 0, talkspurts = 0, underruns = 0, stalls = 0;
         };
 
         void Reset()
@@ -791,19 +850,23 @@ namespace l4d2vr_voice
             m_Playing = false;
             m_EmptyConceal = 0;
             m_HaveSpurt = false;
+            m_SeenAny = false;
+            m_SeenMask = 0u;
         }
 
         void Insert(const Frame& f, double nowMs)
         {
             if (!ValidFrame(f)) return;
-            if (!m_HaveSpurt || nowMs - m_LastArrival > kSilenceResetMs)
-            {
-                // First frame, or after a long silence: start clean.
-                Reset();
-                BeginSpurt(f, nowMs);
-            }
+            // First frame, or a long silence with nothing left to play: start
+            // clean (2.0.12: frames still buffered after a long stall are kept).
+            const bool fresh = !m_HaveSpurt || (nowMs - m_LastArrival > kSilenceResetMs && m_Count == 0);
+            if (fresh) Reset();
+            if (!MarkSeen(f.sequence)) { ++m_Stats.duplicates; return; }
+            if (fresh) BeginSpurt(f, nowMs);
             else if (f.talkspurt != m_Spurt)
             {
+                // A straggler of an older talkspurt never restarts the current one.
+                if (SequenceDelta(f.sequence, m_SpurtBaseSeq) < 0) { ++m_Stats.late; return; }
                 // The next talkspurt: sequence numbers continue across spurts, so
                 // frames of the old one still buffered keep their order.
                 BeginSpurt(f, nowMs);
@@ -828,7 +891,9 @@ namespace l4d2vr_voice
             ++m_Stats.inserted;
         }
 
-        Output Next(double nowMs)
+        // lastQuiet: the last frame played was quiet (a pause between words),
+        // so dropping the next one is not heard.
+        Output Next(double nowMs, bool lastQuiet = false)
         {
             Output out;
             if (!m_Playing)
@@ -841,11 +906,13 @@ namespace l4d2vr_voice
                 m_Playing = true;
                 m_Expected = m_Frames[0].sequence;
                 m_EmptyConceal = 0;
+                m_LastAccelMs = nowMs;
             }
-            // Far too much buffered (a burst after a stall): skip ahead to the target.
-            if (m_Count * kFrameMs > m_TargetMs + 6 * kFrameMs)
+            const int targetFrames = std::max(1, m_TargetMs / kFrameMs);
+            // Far too much buffered (a very long stall): skip ahead to the target.
+            if (m_Count - targetFrames > kHardExcessFrames)
             {
-                while (m_Count > 1 && m_Count * kFrameMs > m_TargetMs)
+                while (m_Count > targetFrames)
                 {
                     DropOldest();
                     ++m_Stats.skipped;
@@ -874,6 +941,16 @@ namespace l4d2vr_voice
                 }
                 out.action = Action::Decode;
                 ++m_Stats.decoded;
+                // Time compression: more than the target buffered (a burst after
+                // a stall): this frame is decoded and not played, at most once per
+                // kAccelIntervalMs and only right after a quiet frame.
+                if (lastQuiet && m_Count + 1 - targetFrames > kAccelExcessFrames && nowMs - m_LastAccelMs >= kAccelIntervalMs &&
+                    !(out.frame.flags & kFlagStart))
+                {
+                    out.discard = true;
+                    m_LastAccelMs = nowMs;
+                    ++m_Stats.accelerated;
+                }
                 return out;
             }
             if (m_Count > 0)
@@ -918,11 +995,31 @@ namespace l4d2vr_voice
         }
 
         bool Playing() const { return m_Playing; }
+        // Playing, nothing buffered, concealing while waiting for frames (2.0.12).
+        bool Starved() const { return m_Playing && m_Count == 0 && m_EmptyConceal > 0; }
         int Count() const { return m_Count; }
         int TargetMs() const { return m_TargetMs; }
         const Stats& GetStats() const { return m_Stats; }
 
     private:
+        // Remembers the last 64 sequence numbers received; false = seen before.
+        bool MarkSeen(std::uint16_t seq)
+        {
+            if (!m_SeenAny) { m_SeenAny = true; m_SeenTop = seq; m_SeenMask = 1u; return true; }
+            const int d = SequenceDelta(seq, m_SeenTop);
+            if (d > 0)
+            {
+                m_SeenMask = d >= 64 ? 0u : (m_SeenMask << d);
+                m_SeenMask |= 1u;
+                m_SeenTop = seq;
+                return true;
+            }
+            if (-d >= 64) return true;   // too old to tell (the late check decides)
+            const std::uint64_t bit = std::uint64_t{ 1 } << (-d);
+            if (m_SeenMask & bit) return false;
+            m_SeenMask |= bit;
+            return true;
+        }
         int Find(std::uint16_t seq) const
         {
             for (int i = 0; i < m_Count; ++i) if (m_Frames[i].sequence == seq) return i;
@@ -968,9 +1065,13 @@ namespace l4d2vr_voice
         std::uint16_t m_SpurtBaseSeq = 0u;
         double m_FirstArrival = 0.0, m_LastArrival = -1e30;
         double m_TransitMin = 1e30, m_TransitMax = -1e30;
+        double m_LastAccelMs = -1e30;
         int m_TargetMs = kMinTargetMs;
         int m_Impairment = 0;
         int m_EmptyConceal = 0;
+        bool m_SeenAny = false;
+        std::uint16_t m_SeenTop = 0u;
+        std::uint64_t m_SeenMask = 0u;
         Stats m_Stats{};
     };
 
@@ -1008,6 +1109,7 @@ namespace l4d2vr_voice
             if (!want)
             {
                 m_Acked = false;
+                m_AckVersion = 0u;
                 m_Peers = 0u;
                 if (m_SentFlags > 0) { m_SentFlags = 0; m_Attempts = 0; return 0; }   // opt out once
                 m_SentFlags = -1;
@@ -1032,12 +1134,21 @@ namespace l4d2vr_voice
 
         // A new server feature ack (map change, reconnect), or a client stall
         // long enough to be a map change (2.0.11): handshake again.
-        void Restart() { m_SentFlags = -1; m_Acked = false; m_Attempts = 0; m_Peers = 0u; }
+        void Restart() { m_SentFlags = -1; m_Acked = false; m_AckVersion = 0u; m_Attempts = 0; m_Peers = 0u; }
         // The same server repeated its capability bundle: say hello again (the
         // relay may have been reset) but keep the session running meanwhile.
         void Refresh() { if (m_SentFlags > 0) m_Refresh = true; }
 
-        void OnAck(std::uint32_t version) { if (version >= kProtocolVersion && m_SentFlags > 0) m_Acked = true; }
+        // 2.0.11 servers ack 1 to any hello (reliable relay); 2.0.12 servers
+        // ack the protocol both sides have (2 = packed lines, unreliable stream).
+        void OnAck(std::uint32_t version)
+        {
+            if (version >= kProtocolVersion && m_SentFlags > 0)
+            {
+                m_Acked = true;
+                m_AckVersion = std::min(version, kRelayProtocolVersion);
+            }
+        }
         void OnPeers(std::uint32_t lo, std::uint32_t hi) { if (m_Acked) m_Peers = (std::uint64_t{ hi } << 32) | lo; }
 
         bool Active() const { return m_Acked && m_SentFlags > 0; }
@@ -1046,14 +1157,83 @@ namespace l4d2vr_voice
         // Stock voice from this player (1-based) duplicates its Opus voice.
         bool DropStockVoiceFrom(int playerIndex) const { return (Peers() & PlayerBit(playerIndex)) != 0u; }
         int SentFlags() const { return m_SentFlags; }
+        // The relay sends packed frames in the unreliable stream (protocol 2).
+        bool UnreliableRelay() const { return Active() && m_AckVersion >= 2u; }
+        std::uint32_t AckVersion() const { return Active() ? m_AckVersion : 0u; }
 
     private:
+        std::uint32_t m_AckVersion = 0u;
         int m_SentFlags = -1;
         bool m_Refresh = false;
         int m_Attempts = 0;
         double m_LastHelloMs = 0.0;
         bool m_Acked = false;
         std::uint64_t m_Peers = 0u;
+    };
+
+    // l4d2vr_voice_rx argument count: "<player> <frame>" (protocol 1) or up to
+    // kMaxRxFramesPerCommand frames (protocol 2).
+    inline bool ValidRxArgCount(int argc) { return argc >= 3 && argc <= 2 + kMaxRxFramesPerCommand; }
+
+    // ---- link quality (2.0.12) -------------------------------------------------------------
+    // The encoder's FEC strength (OPUS_SET_PACKET_LOSS_PERC) follows the loss
+    // this client measures on the voice it receives (the relay's downlink is
+    // lossy since protocol 2; the uplink takes a similar path): at least
+    // OpusVoiceExpectedLossPercent, raised up to kMaxEncoderLossPercent.
+    constexpr int kMaxEncoderLossPercent = 20;
+    inline int EncoderLossPercent(bool fec, int configuredPercent, double measuredPercent)
+    {
+        if (!fec) return 0;
+        const int base = std::max(1, configuredPercent);
+        if (!std::isfinite(measuredPercent) || measuredPercent <= double(base)) return base;
+        return std::max(base, std::min(kMaxEncoderLossPercent, static_cast<int>(std::lround(measuredPercent))));
+    }
+
+    // Loss of received frames over a window (jitter buffer stat deltas): frames
+    // rebuilt from FEC or concealed while later frames were there. Stalls (a
+    // late frame waited for) are not loss. < 0: too few frames to tell.
+    inline double ReceiveLossPercent(std::uint32_t decoded, std::uint32_t fec, std::uint32_t concealed, std::uint32_t stalls)
+    {
+        const std::uint32_t lost = fec + (concealed > stalls ? concealed - stalls : 0u);
+        const std::uint32_t total = decoded + lost;
+        return total >= 50u ? 100.0 * double(lost) / double(total) : -1.0;
+    }
+
+    // ---- the relay went silent (2.0.12) -------------------------------------------------------
+    // The 57-minute outage of 2.0.11 left no client log line: the relay was
+    // active, peers' game voice kept arriving, and no Opus frame came. One
+    // event when that starts, one when Opus frames come back.
+    class SilenceWatch
+    {
+    public:
+        static constexpr double kOpusSilentMs = 20000.0;
+        static constexpr double kPeerVoiceRecentMs = 3000.0;
+        enum class Event { None, Silent, Recovered };
+
+        void OnOpusFrame(double nowMs) { m_LastOpusMs = nowMs; }
+        void OnPeerStockVoice(double nowMs) { m_LastPeerStockMs = nowMs; }
+        Event Update(bool active, double nowMs)
+        {
+            if (!active)
+            {
+                m_Silent = false;
+                m_LastOpusMs = nowMs;   // the 20 s count from the (next) ack
+                return Event::None;
+            }
+            if (m_Silent && nowMs - m_LastOpusMs < 1000.0) { m_Silent = false; return Event::Recovered; }
+            if (!m_Silent && nowMs - m_LastOpusMs > kOpusSilentMs && nowMs - m_LastPeerStockMs < kPeerVoiceRecentMs)
+            {
+                m_Silent = true;
+                return Event::Silent;
+            }
+            return Event::None;
+        }
+        bool Silent() const { return m_Silent; }
+        double SilentForMs(double nowMs) const { return nowMs - m_LastOpusMs; }
+
+    private:
+        double m_LastOpusMs = 0.0, m_LastPeerStockMs = -1e30;
+        bool m_Silent = false;
     };
 
     // ---- microphone device policy (2.0.11) -----------------------------------------------

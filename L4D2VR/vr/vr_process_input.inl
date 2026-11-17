@@ -2384,8 +2384,10 @@ void VR::ProcessInput()
     bool voicePttJustPressed = false;
     const bool voicePttValid = getActionState(&m_ActionVoicePushToTalk, voicePttData, voicePttDown, voicePttJustPressed);
     m_VoicePushToTalkDown = voicePttValid && voicePttDown;
-    OpusVoiceClient::SetControllerPushToTalk(m_VoicePushToTalkDown);
     const bool voiceComboActive = (voiceComboValid && voicePrimaryDown && voiceSecondaryDown) || m_VoicePushToTalkDown;
+    // 2.0.12: the combo and the button force the Opus gate open directly, so
+    // in the game's open mic they need no +voicerecord (see UpdateVoiceRecordCommandState).
+    OpusVoiceClient::SetControllerPushToTalk(voiceComboActive);
     const bool voiceComboJustActivated = (voiceComboValid && ((voicePrimaryJustPressed && voiceSecondaryDown) || (voiceSecondaryJustPressed && voicePrimaryDown))) ||
         (voicePttValid && voicePttJustPressed && voicePttDown);
     vr::InputDigitalActionData_t speechToTextActionData{};

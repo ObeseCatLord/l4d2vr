@@ -2655,6 +2655,28 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
     // the listen host when it runs the command).
     if (m_VR)
         RecoilCacheShotPose(cmd->command_number, (cmd->buttons & 1) != 0);
+    // 2.0.13: the stock-usercmd gate (vr_gameplay_mode.h). In classic nothing
+    // above should have set a protocol impulse or marker bit; if anything did,
+    // it never leaves the client.
+    if (m_VR && m_VR->m_IsVREnabled)
+    {
+        const auto wire = m_VR->GameplayWirePolicy();
+        const bool releaseReloadGate = Hooks::s_ServerUnderstandsVR &&
+            m_VR->ServerFeature(l4d2vr_features::StickyReloadGate);
+        const int impulseBefore = cmd->impulse;
+        const int buttonsBefore = cmd->buttons;
+        int impulse = cmd->impulse;
+        int buttons = cmd->buttons;
+        if (l4d2vr_gameplay_mode::SanitizeStockUsercmd(wire, impulse, buttons, releaseReloadGate))
+        {
+            cmd->impulse = static_cast<decltype(cmd->impulse)>(impulse);
+            cmd->buttons = buttons;
+            const uint32_t hits = m_VR->m_StockWireGateHits.fetch_add(1u, std::memory_order_acq_rel) + 1u;
+            if (hits <= 8u || (hits % 500u) == 0u)
+                Game::logMsg("[VR][GameplayMode] stock usercmd gate: removed impulse %d / buttons 0x%X (hit %u)",
+                    impulseBefore & 0xff, static_cast<unsigned>(buttonsBefore) & l4d2vr_gameplay_mode::kProtocolButtonBits, hits);
+        }
+    }
 	s_lastButtons = cmd->buttons;
 
 	return result;

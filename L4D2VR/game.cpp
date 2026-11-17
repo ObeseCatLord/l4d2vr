@@ -3771,6 +3771,21 @@ void Game::ServerCmd(const char* szCmdString, bool reliable)
 {
     if (!m_EngineClient || !szCmdString || !*szCmdString)
         return;
+    // 2.0.13: classic never sends an l4d2vr_* transaction (vr_gameplay_mode.h);
+    // the pose hello answers a server-initiated ack, relay features follow the
+    // server's own offer.
+    if (m_VR && !l4d2vr_gameplay_mode::AllowServerCommand(m_VR->GameplayWirePolicy(), szCmdString))
+    {
+        const uint32_t hits = m_VR->m_StockWireGateHits.fetch_add(1u, std::memory_order_acq_rel) + 1u;
+        if (hits <= 8u || (hits % 500u) == 0u)
+        {
+            char name[48]{};
+            std::snprintf(name, sizeof(name), "%s", szCmdString);
+            for (char& ch : name) if (ch == ' ') { ch = '\0'; break; }
+            Game::logMsg("[VR][GameplayMode] classic: dropped server command %s (hit %u)", name, hits);
+        }
+        return;
+    }
     const DWORD mainThread = m_MainThreadId.load(std::memory_order_acquire);
     if (mainThread != 0u && GetCurrentThreadId() != mainThread)
     {
@@ -3810,8 +3825,12 @@ void Game::FlushDeferredServerCmds(bool recordMainThread)
     }
     if (m_EngineClient)
     {
+        // Queued before a switch to classic: the gate applies when they leave.
+        const auto wire = m_VR ? m_VR->GameplayWirePolicy() : l4d2vr_gameplay_mode::PolicyFor(
+            l4d2vr_gameplay_mode::Effective::Vanilla, 0u, false);
         for (const auto& command : s_Pending)
-            m_EngineClient->ServerCmd(command.first.c_str(), command.second);
+            if (l4d2vr_gameplay_mode::AllowServerCommand(wire, command.first.c_str()))
+                m_EngineClient->ServerCmd(command.first.c_str(), command.second);
     }
     s_Pending.clear();
 }

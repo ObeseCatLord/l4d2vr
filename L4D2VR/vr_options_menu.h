@@ -94,6 +94,7 @@ namespace l4d2vr_options_menu
     };
 
     inline const Row kWeaponRows[] = {
+        { "GameplayMode", RowKind::Choice, "Gameplay mode", "Auto: physical reloads, holsters and recoil on servers with the L4D2VR plugin and in your own games; classic (buttons, the game's own spread and reloads) everywhere else. Classic: always the simple controls.", 0, 0, 0, "auto", "auto:Auto|physical:Physical|classic:Classic" },
         { "RecoilEnabled", RowKind::Toggle, "Recoil", "Guns kick in your hand on each shot (Pavlov VR values).", 0, 0, 0, "true" },
         { "RecoilScale", RowKind::Slider, "Recoil strength", "1 is Pavlov's kick, 0 none.", 0.0f, 4.0f, 0.1f, "1.0", nullptr, "RecoilEnabled", false, "x" },
         { "RecoilStanceEnabled", RowKind::Toggle, "Stance recoil", "Crouching, moving and jumping change the kick.", 0, 0, 0, "true", nullptr, "RecoilEnabled" },

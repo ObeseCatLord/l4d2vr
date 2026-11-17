@@ -753,6 +753,7 @@ vr::EVROverlayError VR::L4D2VRSetOverlayTransformTrackedDeviceRelative(vr::VROve
 #include "vr/vr_recoil.inl"
 #include "vr/vr_native_wrist_hud.inl"
 #include "vr/vr_viewmodel_config.inl"
+#include "vr/vr_gameplay_mode.inl"
 
 namespace
 {

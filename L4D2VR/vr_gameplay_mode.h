@@ -168,14 +168,25 @@ namespace l4d2vr_gameplay_mode
         return value >= kFirstProtocolImpulse && value <= kLastProtocolImpulse;
     }
 
+    constexpr int kAllowNativeReloadImpulse = 246;
+
     // Final usercmd guard: with no protocol impulses allowed, a protocol impulse
     // becomes 0 and the marker bits are cleared. Returns true when it changed
     // anything (the caller logs it: the gate should never have to act).
-    inline bool SanitizeStockUsercmd(const WirePolicy& policy, int& impulse, int& buttons)
+    // releaseReloadGate: a server that acknowledged the plugin and keeps a
+    // sticky reload block per player (StickyReloadGate) may still get the
+    // "allow native reload" impulse in classic, so a block left from physical
+    // play cannot stop the game's own reload. Never true on a plain server.
+    inline bool SanitizeStockUsercmd(const WirePolicy& policy, int& impulse, int& buttons,
+        bool releaseReloadGate = false)
     {
         if (policy.protocolImpulses) return false;
         bool changed = false;
-        if (IsProtocolImpulse(impulse)) { impulse = 0; changed = true; }
+        if (IsProtocolImpulse(impulse) && !(releaseReloadGate && (impulse & 0xff) == kAllowNativeReloadImpulse))
+        {
+            impulse = 0;
+            changed = true;
+        }
         const std::uint32_t b = static_cast<std::uint32_t>(buttons);
         if ((b & kProtocolButtonBits) != 0u)
         {

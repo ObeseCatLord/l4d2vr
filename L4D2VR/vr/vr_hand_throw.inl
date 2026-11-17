@@ -126,6 +126,8 @@ void VR::SendGrenadeThrowFeatureRequest()
     const int wanted = GrenadeArcMode() ? 1 : 0;
     if (wanted == m_GrenadeFeatureRequestSent)
         return;
+    if (!GameplayWirePolicy().gameplayCommands)
+        return;   // 2.0.13: classic: sent once physical starts
     // Nothing to opt back into: never ask a server that has not opted us out.
     if (wanted == 0 && m_GrenadeFeatureRequestSent < 0)
     {

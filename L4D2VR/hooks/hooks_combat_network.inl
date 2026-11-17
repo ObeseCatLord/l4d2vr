@@ -2359,7 +2359,10 @@ float __fastcall Hooks::dProcessUsercmds(void* ecx, void* edx, edict_t* player,
 
 	Hooks::s_ServerUnderstandsVR = true;
 	if (m_VR)
+	{
 		m_VR->m_ServerFeatureMask.fetch_or(ListenHostFeatureMask(), std::memory_order_acq_rel);
+		m_VR->m_ListenHostActive.store(true, std::memory_order_release);   // 2.0.13: this game hosts the server
+	}
 
 	// Function pointer for CBaseEntity::entindex
 	typedef int(__thiscall* tEntindex)(void* thisptr);
@@ -2849,7 +2852,10 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
 
 	Hooks::s_ServerUnderstandsVR = true;
 	if (m_VR)
+	{
 		m_VR->m_ServerFeatureMask.fetch_or(ListenHostFeatureMask(), std::memory_order_acq_rel);
+		m_VR->m_ListenHostActive.store(true, std::memory_order_release);   // 2.0.13: this game hosts the server
+	}
 	hkReadUsercmd.fOriginal(buf, move, from);
 	if (move && move->tick_count < 0)
 		m_ServerPacketSawVRUsercmd = true;
@@ -3371,8 +3377,11 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 
     // Until the local decoder or an explicit server ACK proves capability,
     // preserve the ordinary command exactly, including startup/reconnect.
+    // 2.0.13: classic (and every server that did not acknowledge) writes the
+    // game's own usercmd untouched (vr_gameplay_mode.h).
     const bool canEncode = m_VR && m_VR->m_IsVREnabled && m_VR->m_EncodeVRUsercmd &&
         !m_VR->m_ForceNonVRServerMovement && s_ServerUnderstandsVR &&
+        m_VR->GameplayWirePolicy().encodeUsercmd &&
         m_Game->m_Offsets->g_pppInput.valid;   // B39: no CInput after a game update
     if (!canEncode)
         return hkWriteUsercmd.fOriginal(buf, to, from);

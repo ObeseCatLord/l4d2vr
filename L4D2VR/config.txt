@@ -1,3 +1,10 @@
+// Gameplay mode (2.0.13): auto = the full physical mechanics on servers with the L4D2VR plugin and on games you host,
+// classic everywhere else (simple controls: reload / shove / melee / throw on buttons with the game's own auto reload,
+// the game's spread with the crosshair, holsters select weapons with the normal draw, no recoil system, no akimbo,
+// no gestures). A server without the plugin only ever receives the game's own usercmds and commands.
+// physical = always the full mechanics when the server supports them (classic on servers without the plugin).
+// classic = always classic.
+GameplayMode=auto
 VRScale=43.2
 VRNearClipAdaptive=false
 VRNearClipSelfBody=true

@@ -51,6 +51,7 @@
 #include "vr_sight_correction.h"
 #include "vr_iron_sights.h"
 #include "vr_server_features.h"
+#include "vr_gameplay_mode.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
 #include "vr_dual_reload.h"
@@ -1483,6 +1484,44 @@ public:
     {
         return (m_ServerFeatureMask.load(std::memory_order_acquire) & bit) == bit && bit != 0u;
     }
+    // 2.0.13 gameplay mode (vr_gameplay_mode.h): GameplayMode=auto|physical|classic.
+    // PhysicalGameplayActive() is the one gate for every physical subsystem;
+    // Classic applies the config overlay below (ApplyGameplayModeOverrides) and
+    // keeps the wire stock (GameplayWirePolicy).
+    l4d2vr_gameplay_mode::Config m_GameplayModeConfig = l4d2vr_gameplay_mode::Config::Auto;
+    std::atomic<uint8_t> m_GameplayModeEffective{ static_cast<uint8_t>(l4d2vr_gameplay_mode::Effective::PendingClassic) };
+    l4d2vr_gameplay_mode::Reason m_GameplayModeReason = l4d2vr_gameplay_mode::Reason::NotInGame;
+    std::atomic<bool> m_ListenHostActive{ false };          // this process ran a server command this session
+    std::atomic<uint32_t> m_GameplayModeGeneration{ 0u };   // bumped on every change (CreateMove resets its state)
+    std::atomic<uint32_t> m_StockWireGateHits{ 0u };        // the final usercmd/command gate had to act (should stay 0)
+    uint64_t m_GameplayModeJoinMs = 0u;
+    uint64_t m_GameplayModeNoticeUntilMs = 0u;
+    std::string m_GameplayModeNoticeText;
+    mutable std::mutex m_GameplayModeNoticeMutex;
+    static constexpr uint64_t kGameplayModeAckGraceMs = 4000u;
+    static constexpr uint64_t kGameplayModeNoticeMs = 6000u;
+    bool m_ClassicOverridesApplied = false;
+    l4d2vr_gameplay_mode::Effective GameplayModeEffective() const
+    {
+        return static_cast<l4d2vr_gameplay_mode::Effective>(m_GameplayModeEffective.load(std::memory_order_acquire));
+    }
+    bool PhysicalGameplayActive() const
+    {
+        return GameplayModeEffective() == l4d2vr_gameplay_mode::Effective::Physical;
+    }
+    bool ClassicGameplayActive() const
+    {
+        return l4d2vr_gameplay_mode::ClassicLike(GameplayModeEffective());
+    }
+    l4d2vr_gameplay_mode::WirePolicy GameplayWirePolicy() const;
+    // UpdateTracking: resolve the mode, log and announce changes, reset the
+    // physical state when classic starts.
+    void UpdateGameplayMode(bool inGame);
+    // Classic: the physical options read as off (the parsed values are kept and
+    // come back with Physical). Re-applied after every config parse.
+    void ApplyGameplayModeOverrides(bool classic);
+    void ResetPhysicalStateForClassic();
+    bool GetGameplayModeNotice(std::string& text) const;
 	bool m_MagazineReleaseButtonRequired = true;
 	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
 	bool m_MagazineEmptyGlowEnabled = true;

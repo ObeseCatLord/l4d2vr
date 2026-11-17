@@ -849,6 +849,10 @@ void VR::ParseConfigFileUnlocked()
     const bool loadedConfig2 = parseConfigPath("VR\\config2.txt");
     if (!loadedConfig && !loadedConfig2)
         return;
+    // 2.0.13: options default to their physical values while parsing; classic
+    // puts its overlay back afterwards (ApplyGameplayModeOverrides).
+    const bool classicOverlayWasApplied = m_ClassicOverridesApplied;
+    ApplyGameplayModeOverrides(false);
     // Self-test overrides (cfg= step): option names match in any case.
     for (const auto& o : SelfTestConfigOverrides())
     {
@@ -3918,7 +3922,8 @@ void VR::ParseConfigFileUnlocked()
         0.0f, 1.0f);
 
     m_ConfigForceNonVRServerMovement = getBool("ForceNonVRServerMovement", m_ConfigForceNonVRServerMovement);
-    m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement || m_ServerHookFallbackForcedNonVRServerMovement;
+    m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement || m_ServerHookFallbackForcedNonVRServerMovement ||
+        ClassicGameplayActive();
 
     // Non-VR server movement: make client-side bullet/muzzle effects originate from controller (visual-only).
     m_NonVRServerMovementEffectsFromController = getBool("NonVRServerMovementEffectsFromController", m_NonVRServerMovementEffectsFromController);
@@ -4231,6 +4236,17 @@ void VR::ParseConfigFileUnlocked()
     if (m_AutoFlashlightBrightThreshold < m_AutoFlashlightDarkThreshold + 5.0f)
         m_AutoFlashlightBrightThreshold = std::min(255.0f, m_AutoFlashlightDarkThreshold + 5.0f);
     m_AutoFlashlightDebugLog = getBool("AutoFlashlightDebugLog", m_AutoFlashlightDebugLog);
+
+    {
+        // GameplayMode=auto|physical|classic (vr_gameplay_mode.h).
+        const std::string modeText = getString("GameplayMode", "auto");
+        l4d2vr_gameplay_mode::Config mode = l4d2vr_gameplay_mode::Config::Auto;
+        if (!l4d2vr_gameplay_mode::ParseConfig(modeText, mode))
+            Game::logMsg("[VR][Config] GameplayMode=%s is not auto, physical or classic: auto", modeText.c_str());
+        m_GameplayModeConfig = mode;
+    }
+    if (classicOverlayWasApplied)
+        ApplyGameplayModeOverrides(true);
 
     ParseHapticsConfigFile();
 }

@@ -788,9 +788,11 @@ void VR::UpdateTracking()
         m_ServerHookFallbackPending = true;
         m_ServerHookFallbackForcedNonVRServerMovement = false;
         m_ServerHookFallbackCheckTime = {};
-        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement;
+        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement || ClassicGameplayActive();
     }
     m_WasInGamePrev = inGameNow;
+    // 2.0.13: Physical or Classic for this server (vr_gameplay_mode.inl).
+    UpdateGameplayMode(inGameNow);
     int playerIndex = inGameNow ? m_Game->m_EngineClient->GetLocalPlayer() : -1;
     C_BasePlayer* localPlayer =
         (inGameNow && playerIndex > 0)
@@ -874,7 +876,7 @@ void VR::UpdateTracking()
         m_ServerHookFallbackPending = false;
         m_ServerHookFallbackForcedNonVRServerMovement = false;
         m_ServerHookFallbackCheckTime = {};
-        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement;
+        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement || ClassicGameplayActive();
     }
     else if (m_ServerHookFallbackPending)
     {

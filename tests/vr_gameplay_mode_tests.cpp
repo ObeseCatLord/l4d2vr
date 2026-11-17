@@ -150,6 +150,22 @@ static void TestClassicWirePolicy()
     }
 }
 
+// Forced classic on a server with the sticky reload gate: only the release passes.
+static void TestReloadGateRelease()
+{
+    const WirePolicy p = PolicyFor(Effective::Classic, 0u, false);
+    for (int impulse = kFirstProtocolImpulse; impulse <= kLastProtocolImpulse; ++impulse)
+    {
+        int imp = impulse, buttons = 0;
+        SanitizeStockUsercmd(p, imp, buttons, true);
+        CHECK(imp == (impulse == l4d2vr_grip::kAllowNativeReloadImpulse ? impulse : 0));
+        imp = impulse;
+        SanitizeStockUsercmd(p, imp, buttons, false);
+        CHECK(imp == 0);
+    }
+    CHECK(kAllowNativeReloadImpulse == l4d2vr_grip::kAllowNativeReloadImpulse);
+}
+
 // A partial plugin: the relay features it offers are used in classic too.
 static void TestPartialPluginFeatures()
 {
@@ -185,6 +201,7 @@ int main()
     TestReasons();
     TestLateAckAndSessionReset();
     TestClassicWirePolicy();
+    TestReloadGateRelease();
     TestPartialPluginFeatures();
     TestPhysicalAndDesktopUnchanged();
     if (g_failures)

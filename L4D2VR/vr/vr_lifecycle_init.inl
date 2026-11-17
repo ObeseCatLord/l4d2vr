@@ -1579,8 +1579,9 @@ void VR::ApplyVrVoiceDefaultsOnce()
     // Save them in config.cfg now (the game otherwise writes it when it quits).
     m_Game->ClientCmd_Unrestricted("host_writeconfig");
     // Tell the player once: the microphone is now open (it was push to talk).
-    m_Game->ClientCmd_Unrestricted("echo [L4D2VR] Voice chat is now open mic for VR (no button to hold). "
-        "Change it in Options > Audio > Voice; your choice is kept.");
+    // 2.0.12: EchoLine (a ';' in the text ran the rest as a command: "Unknown command: your").
+    m_Game->ClientCmd_Unrestricted(l4d2vr_voice::EchoLine("[L4D2VR] Voice chat is now open mic for VR (no button to hold). "
+        "Change it in Options > Audio > Voice. Your choice is kept.").c_str());
     Game::logMsg("[VR][Voice] VR voice defaults applied once:%s (open mic; change it in Options > Audio, it is kept)",
         applied.c_str());
 }

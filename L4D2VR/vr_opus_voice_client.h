@@ -32,6 +32,12 @@ namespace OpusVoiceClient
         double maxArrivalGapMs = 0.0;   // longest wait between two received frames of one talkspurt (since the last stats line)
         double loopbackToneDb = -100.0;   // tone vs off-tone of this client's own voice played back (loopback)
         std::uint32_t loopbackSamples = 0;
+        // 2.0.12: the jitter buffers' own counts (all talkers), the relay's
+        // transport and the FEC strength in use.
+        std::uint32_t late = 0, overflow = 0, skipped = 0, accelerated = 0, duplicates = 0, stalls = 0;
+        std::uint32_t jitterDecoded = 0, jitterFec = 0, jitterConcealed = 0;
+        bool unreliableRelay = false;
+        int encoderLossPercent = -1;      // measured on received voice (-1 = not yet)
     };
 
     struct FrameInputs
@@ -72,6 +78,9 @@ namespace OpusVoiceClient
     void OnAck(std::uint32_t version);
     void OnPeers(std::uint32_t lo, std::uint32_t hi);
     void OnFrame(int player, const char* text);
+
+    // The game's open mic (voice_vox 1) as last read; false when unknown (2.0.12).
+    bool GameOpenMic();
 
     // Push-to-talk sources: the game's +voicerecord (desktop voice key and the
     // VR voice combo), the OpenXR VoicePushToTalk action, the self-test.

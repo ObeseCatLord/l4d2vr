@@ -3,6 +3,7 @@
 // AGC and the server relay (vr_opus_voice.h, server_core/vr_server_voice.h).
 #include "../L4D2VR/vr_opus_voice.h"
 #include "../L4D2VR/server_core/vr_server_voice.h"
+#include "../L4D2VR/server_core/vr_net_channel.h"
 
 #include <cmath>
 #include <cstdio>
@@ -207,6 +208,13 @@ static void TestStockVoiceGate()
     hold = StockVoiceHoldUntil(true, 5000.0);
     Check(DropStockVoice(true, 5000.0 + kStockVoiceEndHoldMs - 1.0, hold));
     Check(!DropStockVoice(true, 5000.0 + kStockVoiceEndHoldMs + 1.0, hold));
+    // 2.0.12: the unreliable relay holds the game's voice back 300 ms only,
+    // and never while the talker's jitter buffer starves.
+    hold = StockVoiceHoldUntil(false, 8000.0, true);
+    Check(DropStockVoice(true, 8000.0 + kStockVoiceHoldUnreliableMs - 1.0, hold));
+    Check(!DropStockVoice(true, 8000.0 + kStockVoiceHoldUnreliableMs + 1.0, hold));
+    Check(!DropStockVoice(true, 8001.0, hold, true));
+    Check(kStockVoiceHoldUnreliableMs == 300.0 && kStockVoiceHoldMs == 1500.0);
 }
 
 // 2.0.10: the VR voice defaults run once (vr/config_migrations_applied.txt).
@@ -319,7 +327,7 @@ static void TestVad()
     for (int i = 0; i < Vad::kHangoverFrames - 1; ++i) { FillNoise(pcm, kFrameSamples, 150, rng); Check(vad.Update(pcm, kFrameSamples, 0.55f)); }
     FillNoise(pcm, kFrameSamples, 150, rng);
     Check(!vad.Update(pcm, kFrameSamples, 0.55f));
-    Check(Vad::kHangoverFrames * kFrameMs == 400 && Vad::kPrerollFrames * kFrameMs == 100);
+    Check(Vad::kHangoverFrames * kFrameMs == 600 && Vad::kPrerollFrames * kFrameMs == 100);   // 2.0.12: 600 ms hangover
     // Quiet speech: a sensitive gate opens, an insensitive one does not.
     Vad sensitive, deaf;
     for (int i = 0; i < 100; ++i)
@@ -532,13 +540,15 @@ struct Playout
 {
     std::vector<JitterBuffer::Action> actions;
     std::vector<std::uint16_t> sequences;
+    std::vector<bool> discarded;
 };
 
-static void Pull(JitterBuffer& jb, double now, Playout& p)
+static void Pull(JitterBuffer& jb, double now, Playout& p, bool lastQuiet = false)
 {
-    const JitterBuffer::Output o = jb.Next(now);
+    const JitterBuffer::Output o = jb.Next(now, lastQuiet);
     p.actions.push_back(o.action);
     p.sequences.push_back(o.frame.sequence);
+    p.discarded.push_back(o.discard);
 }
 
 static int CountAction(const Playout& p, JitterBuffer::Action a)
@@ -611,24 +621,55 @@ static void TestJitterOrderAndDuplicates()
     Playout p;
     for (int tick = 0; tick < 7; ++tick) Pull(jb, 100.0 + tick * 20.0, p);
     for (int i = 0; i < 7; ++i) Check(p.actions[i] == JitterBuffer::Action::Decode && p.sequences[i] == i);
-    // A frame arriving after its slot played is dropped as late.
-    jb.Insert(MakeFrame(2, 1, 0, 20), 300.0);
+    // A frame arriving after its slot played (7 was rebuilt from 8's FEC) is late.
+    jb.Insert(MakeFrame(8, 1, 0, 20), 240.0);
+    jb.Insert(MakeFrame(9, 1, 0, 20), 240.0);
+    Pull(jb, 240.0, p);
+    Check(p.actions.back() == JitterBuffer::Action::DecodeFec && p.sequences.back() == 8);
+    jb.Insert(MakeFrame(7, 1, 0, 20), 250.0);
     Check(jb.GetStats().late == 1);
+    // 2.0.12: a second copy of a frame already received (the relay's
+    // redundancy) is a duplicate, played or not, never "late".
+    jb.Insert(MakeFrame(2, 1, 0, 20), 260.0);
+    jb.Insert(MakeFrame(9, 1, 0, 20), 260.0);
+    Check(jb.GetStats().late == 1 && jb.GetStats().duplicates == 3);
 }
 
 static void TestJitterBurstAndGap()
 {
     // A 400 ms stall then everything at once (reliable channel after loss):
-    // the buffer skips ahead instead of keeping 400 ms of extra delay.
-    JitterBuffer jb;
-    for (int i = 0; i < 5; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 3, i == 0 ? kFlagStart : 0, 20), i * 20.0);
-    Playout p;
-    for (int tick = 0; tick < 4; ++tick) Pull(jb, 100.0 + tick * 20.0, p);
-    for (int i = 5; i < 30; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 3, 0, 20), 560.0);
-    Check(jb.TargetMs() > JitterBuffer::kMinTargetMs);   // the spread raised the target
-    Pull(jb, 580.0, p);
-    Check(jb.GetStats().skipped > 0);
-    Check(jb.Count() * kFrameMs <= jb.TargetMs());
+    // 2.0.12: nothing is thrown away. While the frames are loud every one is
+    // played; after quiet frames the excess plays out faster (one frame per
+    // 200 ms decoded and not played) until the buffer is back near its target.
+    for (bool quiet : { false, true })
+    {
+        JitterBuffer jb;
+        for (int i = 0; i < 5; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 3, i == 0 ? kFlagStart : 0, 20), i * 20.0);
+        Playout p;
+        for (int tick = 0; tick < 4; ++tick) Pull(jb, 100.0 + tick * 20.0, p);
+        for (int i = 5; i < 30; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 3, 0, 20), 560.0);
+        Check(jb.TargetMs() > JitterBuffer::kMinTargetMs);   // the spread raised the target
+        for (int tick = 0; tick < 26; ++tick) Pull(jb, 580.0 + tick * 20.0, p, quiet);
+        Check(jb.GetStats().skipped == 0 && jb.GetStats().overflow == 0 && jb.GetStats().late == 0);
+        Check(CountAction(p, JitterBuffer::Action::Decode) == 30);   // every frame decoded, in order
+        std::uint16_t seq = 0;
+        for (std::size_t i = 0; i < p.actions.size(); ++i)
+            if (p.actions[i] == JitterBuffer::Action::Decode) Check(p.sequences[i] == seq++);
+        int discarded = 0;
+        for (bool d : p.discarded) discarded += d;
+        Check(static_cast<std::uint32_t>(discarded) == jb.GetStats().accelerated);
+        if (!quiet) Check(discarded == 0);
+        else Check(discarded >= 1 && discarded <= 3);   // at most one per 200 ms, only over the target
+    }
+    // A very long stall (64 frames at once) is cut to the target.
+    {
+        JitterBuffer jb;
+        for (int i = 0; i < JitterBuffer::kCapacity; ++i) jb.Insert(MakeFrame(static_cast<std::uint16_t>(i), 4, i == 0 ? kFlagStart : 0, 20), 0.0);
+        Playout p;
+        Pull(jb, 0.0, p);
+        Check(jb.GetStats().skipped == static_cast<std::uint32_t>(JitterBuffer::kCapacity - jb.TargetMs() / kFrameMs));
+        Check(p.actions[0] == JitterBuffer::Action::Decode);
+    }
     // Many frames lost upstream: jump to the next frame instead of 600 ms of PLC.
     JitterBuffer gap;
     Playout g;
@@ -699,6 +740,14 @@ static void TestNegotiation()
     Check(n.Peers() == 0u);                                        // not before the ack
     n.OnAck(1);
     Check(n.Active() && n.TransmitAllowed());
+    // 2.0.12: a 2.0.11 server acks 1 (reliable relay), a 2.0.12 one 2.
+    Check(!n.UnreliableRelay() && n.AckVersion() == 1u);
+    n.OnAck(2);
+    Check(n.UnreliableRelay() && n.AckVersion() == 2u);
+    n.OnAck(7);   // a future server: what this client knows
+    Check(n.AckVersion() == kRelayProtocolVersion);
+    n.OnAck(1);
+    Check(!n.UnreliableRelay());
     in.nowMs = 9000.0;
     Check(n.Update(in) == -1);                                     // acked: no retries
     n.OnPeers(0x5u, 0x1u);
@@ -991,7 +1040,7 @@ static void TestRelay()
     Check(host.Count(3, "l4d2vr_voice_rx") == 0);        // vanilla client never gets Opus
     Check(host.Count(4, "l4d2vr_voice_rx") == 0);        // game rules: cannot hear
     Check(relay.RelayedTotal() == 1 && relay.DeliveredTotal() == 1);
-    Check(relay.Client(1)->deliveredFrames == 1u && !relay.Client(1)->loggedUnheard);
+    Check(relay.Client(1)->deliveredFrames == 1u && relay.Client(1)->blockedMask == PlayerBit(4));
 
     // A listener cannot send; malformed frames are rejected.
     Check(Dispatch(relay, host, 2, { "l4d2vr_voice_up", text }));
@@ -1005,7 +1054,7 @@ static void TestRelay()
     Check(Dispatch(relay, host, 1, { "l4d2vr_voice_up", text }));
     Check(host.Count(1, "l4d2vr_voice_rx 1 ") == 1);
 
-    // Rate limit: a flood is cut to the burst, then refills at 60/s.
+    // Rate limit: a flood is cut to the burst, then refills at 60/s (one second: 60 more).
     Relay flood;
     flood.SetEnabled(true);
     flood.SetClientMax(8);
@@ -1017,7 +1066,7 @@ static void TestRelay()
     Check(h2.Count(2, "l4d2vr_voice_rx") == static_cast<int>(Relay::kBurstFrames));
     h2.now += 1000u;
     for (int i = 0; i < 100; ++i) Dispatch(flood, h2, 1, { "l4d2vr_voice_up", text });
-    Check(h2.Count(2, "l4d2vr_voice_rx") == static_cast<int>(Relay::kBurstFrames) * 2);
+    Check(h2.Count(2, "l4d2vr_voice_rx") == static_cast<int>(Relay::kBurstFrames + Relay::kFramesPerSecond));
     // Steady 50 frames/s are never limited.
     Relay steady;
     steady.SetEnabled(true);
@@ -1028,22 +1077,24 @@ static void TestRelay()
     for (int i = 0; i < 500; ++i) { h3.now += 20u; Dispatch(steady, h3, 1, { "l4d2vr_voice_up", text }); }
     Check(h3.Count(2, "l4d2vr_voice_rx") == 500);
 
-    // 2.0.10 log: copies delivered, and once when no Opus listener may hear the talker.
+    // 2.0.10 log: copies delivered.
     int relayedLogs = 0;
-    for (const auto& l : h3.logs) relayedLogs += l.find("player 1 Opus voice frames relayed 0 (delivered 0 copies, rejected 0)") != std::string::npos;
+    for (const auto& l : h3.logs) relayedLogs += l.find("player 1 Opus voice frames relayed 0 (delivered 0 copies, 0 by the relay rule, rejected 0)") != std::string::npos;
     Check(relayedLogs == 1);
+    // 2.0.12: a deliberate mute (the receiver's game mask row hears player 3
+    // but not 1) is kept, and logged once with its reason.
     Relay muted;
     muted.SetEnabled(true);
     FakeHost h4;
-    h4.connected[1] = h4.connected[2] = true;
+    h4.connected[1] = h4.connected[2] = h4.connected[3] = true;
     h4.deaf[2][1] = true;
     Dispatch(muted, h4, 1, { "l4d2vr_voice_hello", "1", "3" });
     Dispatch(muted, h4, 2, { "l4d2vr_voice_hello", "1", "3" });
     h4.logs.clear();
     for (int i = 0; i < 3; ++i) { h4.now += 20u; Dispatch(muted, h4, 1, { "l4d2vr_voice_up", text }); }
-    Check(h4.Count(2, "l4d2vr_voice_rx") == 0 && muted.Client(1)->loggedUnheard && muted.Client(1)->deliveredFrames == 0u);
+    Check(h4.Count(2, "l4d2vr_voice_rx") == 0 && muted.Client(1)->blockedMask == PlayerBit(2) && muted.Client(1)->deliveredFrames == 0u);
     int unheardLogs = 0;
-    for (const auto& l : h4.logs) unheardLogs += l.find("cannot hear this player") != std::string::npos;
+    for (const auto& l : h4.logs) unheardLogs += l.find("player 1 Opus voice does not reach player 2: muted by the receiver") != std::string::npos;
     Check(unheardLogs == 1);
 
     // A talker leaving updates everyone's peers; an opt-out (flags 0) too.
@@ -1131,6 +1182,437 @@ static void TestRelay()
     Check(prune.TalkerMask() == 0u && !prune.Client(1)->hello && h8.Count(2, "l4d2vr_voice_peers 0 0") == 1);
 }
 
+
+// ---- 2.0.12 --------------------------------------------------------------------------
+
+// Clumps of 10-50 frames every 0.2-1.0 s (the 2.0.11 reliable relay on Marmot):
+// every frame is still decoded, nothing is skipped or overflows.
+static void TestJitterClumps()
+{
+    JitterBuffer jb;
+    std::uint32_t rng = 99u;
+    const int total = 1500;   // 30 s of speech
+    int generated = 0;
+    double nextClump = 0.0;
+    std::vector<int> pending;
+    int decoded = 0;
+    for (int tick = 0; tick < 6000; ++tick)
+    {
+        const double now = tick * 10.0;
+        while (generated < total && generated * 20.0 <= now) pending.push_back(generated++);
+        if (now >= nextClump && !pending.empty())
+        {
+            for (int seq : pending)
+                jb.Insert(MakeFrame(static_cast<std::uint16_t>(seq), 1, seq == 0 ? kFlagStart : 0, 40), now);
+            pending.clear();
+            rng = rng * 1664525u + 1013904223u;
+            nextClump = now + 200.0 + 20.0 * double((rng >> 16) % 41u);   // 0.2 .. 1.0 s
+        }
+        if (tick % 2 == 0)
+        {
+            const JitterBuffer::Output o = jb.Next(now, false);
+            if (o.action == JitterBuffer::Action::Decode && !o.discard) ++decoded;
+        }
+    }
+    const JitterBuffer::Stats& st = jb.GetStats();
+    if (double(decoded) / st.inserted < 0.98 || st.skipped || st.overflow)
+        std::fprintf(stderr, "clumps: inserted %u decoded %d skipped %u overflow %u late %u\n", st.inserted, decoded, st.skipped, st.overflow, st.late);
+    Check(st.inserted == static_cast<std::uint32_t>(total));
+    Check(double(decoded) / st.inserted >= 0.98);
+    Check(st.skipped == 0u && st.overflow == 0u && st.late == 0u);
+}
+
+// The unreliable downlink: a lost line, redundant copies and FEC.
+static void TestJitterUnreliableLoss()
+{
+    JitterBuffer jb;
+    // Lines of [previous, n, n+1] every 40 ms; the line carrying 10, 11 is lost.
+    Playout p;
+    for (int line = 0; line < 20; ++line)
+    {
+        const double now = 50.0 + line * 40.0;
+        const int first = line * 2;
+        if (line != 5)
+        {
+            if (first > 0) jb.Insert(MakeFrame(static_cast<std::uint16_t>(first - 1), 1, 0, 30), now);   // redundancy
+            jb.Insert(MakeFrame(static_cast<std::uint16_t>(first), 1, first == 0 ? kFlagStart : 0, 30), now);
+            jb.Insert(MakeFrame(static_cast<std::uint16_t>(first + 1), 1, 0, 30), now);
+        }
+        Pull(jb, now, p);
+        Pull(jb, now + 20.0, p);
+    }
+    // 11 came back as the next line's redundant copy, 10 from 11's FEC.
+    Check(jb.GetStats().late == 0u && jb.GetStats().concealed == 0u);
+    Check(jb.GetStats().fec == 1u);
+    Check(jb.GetStats().duplicates >= 15u);
+}
+
+static void TestLinkQuality()
+{
+    Check(EncoderLossPercent(false, 5, 30.0) == 0);
+    Check(EncoderLossPercent(true, 5, -1.0) == 5);         // not measured yet
+    Check(EncoderLossPercent(true, 5, 2.0) == 5);          // never below the setting
+    Check(EncoderLossPercent(true, 5, 12.4) == 12);
+    Check(EncoderLossPercent(true, 5, 60.0) == kMaxEncoderLossPercent);
+    Check(EncoderLossPercent(true, 30, 10.0) == 30);       // a higher setting is kept
+    Check(EncoderLossPercent(true, 0, 0.0) == 1);
+    Check(ReceiveLossPercent(10, 1, 1, 0) < 0.0);          // too few frames
+    Check(std::fabs(ReceiveLossPercent(90, 5, 8, 3) - 10.0) < 1e-9);   // stalls are not loss
+}
+
+static void TestSilenceWatch()
+{
+    SilenceWatch w;
+    Check(w.Update(false, 0.0) == SilenceWatch::Event::None);
+    w.OnOpusFrame(1000.0);
+    // Opus silent for 25 s, but no game voice from peers either: nothing to say.
+    Check(w.Update(true, 26000.0) == SilenceWatch::Event::None);
+    w.OnPeerStockVoice(26500.0);
+    Check(w.Update(true, 27000.0) == SilenceWatch::Event::Silent && w.Silent());
+    Check(w.Update(true, 28000.0) == SilenceWatch::Event::None);   // once
+    w.OnOpusFrame(40000.0);
+    Check(w.Update(true, 40100.0) == SilenceWatch::Event::Recovered && !w.Silent());
+    // Re-activation restarts the count.
+    w.Update(false, 50000.0);
+    w.OnPeerStockVoice(69000.0);
+    Check(w.Update(true, 69500.0) == SilenceWatch::Event::None);   // 19.5 s after the ack
+    Check(w.Update(true, 70100.0) == SilenceWatch::Event::Silent);
+    // Peer voice that stopped long ago does not count.
+    SilenceWatch old;
+    old.Update(false, 0.0);
+    old.OnPeerStockVoice(1000.0);
+    Check(old.Update(true, 30000.0) == SilenceWatch::Event::None);
+}
+
+static void TestEchoAndRx()
+{
+    Check(EchoLine("a; b \"c\"\nd") == "echo a, b c,d");
+    Check(EchoLine("[L4D2VR] Voice chat is now open mic. Your choice is kept.").find(';') == std::string::npos);
+    Check(!ValidRxArgCount(2) && ValidRxArgCount(3) && ValidRxArgCount(5) && !ValidRxArgCount(6));
+}
+
+static void TestNetChannelMessage()
+{
+    using namespace l4d2vr_netchan;
+    std::uint8_t buf[1200];
+    const char* text = "l4d2vr_voice_rx 3 AQIDBAUG ABCD\n";
+    const int bits = BuildStringCmd(text, buf, sizeof(buf));
+    Check(bits == kNetMessageTypeBits + 8 * static_cast<int>(std::strlen(text) + 1));
+    Check((buf[0] & 0x3Fu) == kNetStringCmd);                       // type in the low 6 bits
+    Check(((buf[0] >> 6) | ((buf[1] & 0x3Fu) << 2)) == 'l');        // then the text, LSB first
+    char back[256];
+    Check(ParseStringCmd(buf, bits, back, sizeof(back)) && std::strcmp(back, text) == 0);
+    std::string big(kMaxStringCmdChars + 1, 'x');
+    Check(BuildStringCmd(big.c_str(), buf, sizeof(buf)) == -1);
+    std::uint8_t tiny[8];
+    Check(BuildStringCmd(text, tiny, sizeof(tiny)) == -1);
+    // The code shapes as found in engine_srv.so / engine.dll (2026).
+    const std::uint8_t gccSend[] = { 0x55, 0x89, 0xE5, 0x57, 0x56, 0x53, 0x83, 0xEC, 0x1C, 0x8B, 0x5D, 0x08, 0x8B, 0x7D, 0x0C,
+        0x8B, 0x75, 0x10, 0x8D, 0x83, 0x98, 0x00, 0x00, 0x00, 0x89, 0x04, 0x24 };
+    const std::uint8_t msvcSend[] = { 0x55, 0x8B, 0xEC, 0x56, 0x8B, 0xF1, 0x8D, 0x8E, 0x98, 0x00, 0x00, 0x00, 0xE8, 0xDF, 0xEB, 0x0D };
+    const std::uint8_t gccBits[] = { 0x55, 0x89, 0xE5, 0x8B, 0x55, 0x08, 0x8D, 0x42, 0x44, 0x83, 0xC2, 0x20, 0x80, 0x7D, 0x0C, 0x00 };
+    const std::uint8_t msvcBits[] = { 0x55, 0x8B, 0xEC, 0x80, 0x7D, 0x08, 0x00, 0x74, 0x07, 0x8B, 0x41, 0x2C, 0x5D, 0xC2, 0x04, 0x00 };
+    const std::uint8_t gccInfo[] = { 0x55, 0x31, 0xC0, 0x89, 0xE5, 0x8B, 0x55, 0x0C, 0x85, 0xD2, 0x7E, 0x08 };
+    const std::uint8_t msvcInfo[] = { 0x55, 0x8B, 0xEC, 0x8B, 0x45, 0x08, 0x83, 0xF8, 0x01, 0x7C, 0x1C };
+    Check(GccSendDataCode(gccSend, sizeof(gccSend)) && !MsvcSendDataCode(gccSend, sizeof(gccSend)));
+    Check(MsvcSendDataCode(msvcSend, sizeof(msvcSend)) && !GccSendDataCode(msvcSend, sizeof(msvcSend)));
+    Check(GccNumBitsWrittenCode(gccBits, sizeof(gccBits)) && MsvcNumBitsWrittenCode(msvcBits, sizeof(msvcBits)));
+    Check(GccGetPlayerNetInfoCode(gccInfo, sizeof(gccInfo)) && MsvcGetPlayerNetInfoCode(msvcInfo, sizeof(msvcInfo)));
+    Check(!GccSendDataCode(gccSend, 10));   // too short to tell
+    const BfWrite32 w = MakeBfWrite(0x1000u, 1200, bits);
+    Check(w.curBit == bits && w.dataBits == 9600 && !w.overflow);
+}
+
+namespace
+{
+    // A host with teams, alltalk and an unreliable channel (2.0.12).
+    struct RuleHost final : l4d2vr_voice_server::RelayHost
+    {
+        std::map<int, std::vector<std::string>> reliable, unreliable;
+        bool connected[kMaxPlayers + 1]{};
+        bool stock[kMaxPlayers + 1][kMaxPlayers + 1]{};   // [receiver][sender]
+        int team[kMaxPlayers + 1];
+        int allTalk = 0;
+        bool unreliableOk[kMaxPlayers + 1]{};
+        bool unreliableFails = false;
+        int pending[kMaxPlayers + 1]{};
+        bool trackStream = false;                  // model the unreliable stream (emptied by Datagram())
+        int stream[kMaxPlayers + 1]{};
+        std::uint64_t now = 1000u;
+        std::vector<std::string> logs;
+        RuleHost() { for (int& t : team) t = l4d2vr_voice_server::kTeamUnknown; }
+        bool Connected(int i) const override { return i >= 1 && i <= kMaxPlayers && connected[i]; }
+        void Send(int i, const char* text) override { reliable[i].push_back(text); }
+        bool CanHear(int r, int s) const override { return stock[r][s]; }
+        std::uint64_t NowMs() const override { return now; }
+        void Log(const char* line) override { logs.push_back(line); }
+        bool SendUnreliable(int i, const char* text) override
+        {
+            if (!unreliableOk[i] || unreliableFails) return false;
+            unreliable[i].push_back(text);
+            stream[i] += static_cast<int>(std::strlen(text)) + 2;
+            return true;
+        }
+        int PendingUnreliableBytes(int i) const override { return trackStream ? stream[i] : -1; }
+        void Datagram(int i) { stream[i] = 0; }
+        bool UnreliableAvailable(int i) override { return unreliableOk[i]; }
+        int PendingReliableBytes(int i) const override { return pending[i]; }
+        int Team(int i) const override { return team[i]; }
+        int AllTalk() const override { return allTalk; }
+        void Survivors(std::initializer_list<int> ids) { for (int i : ids) { connected[i] = true; team[i] = l4d2vr_voice_server::kTeamSurvivor; } }
+        int Count(const std::map<int, std::vector<std::string>>& m, int i, const char* prefix) const
+        {
+            auto it = m.find(i);
+            if (it == m.end()) return 0;
+            int n = 0;
+            for (const auto& t : it->second) n += t.rfind(prefix, 0) == 0;
+            return n;
+        }
+        int Logged(const char* what) const
+        {
+            int n = 0;
+            for (const auto& l : logs) n += l.find(what) != std::string::npos;
+            return n;
+        }
+    };
+
+    bool Run(l4d2vr_voice_server::Relay& relay, RuleHost& host, int index, std::vector<std::string> args)
+    {
+        std::vector<const char*> argv;
+        for (const auto& a : args) argv.push_back(a.c_str());
+        return relay.ClientCommand(host, index, static_cast<int>(argv.size()), argv.data());
+    }
+
+    std::string FrameText(std::uint16_t seq, int size = 50)
+    {
+        char text[kMaxFrameTextChars + 1] = {};
+        Check(EncodeFrameText(MakeFrame(seq, 1, seq == 0 ? kFlagStart : 0, size), text, sizeof(text)));
+        return text;
+    }
+}
+
+// 1a: who hears whom.
+static void TestRelayRules()
+{
+    using namespace l4d2vr_voice_server;
+    // (a) The game's mask is all false (VModEnable never answered), same team: delivered.
+    {
+        RuleHost h;
+        h.Survivors({ 1, 2, 3, 4 });   // 3, 4: survivor bots
+        Relay relay;
+        relay.SetEnabled(true);
+        Run(relay, h, 1, { "l4d2vr_voice_hello", "1", "2" });
+        Run(relay, h, 2, { "l4d2vr_voice_hello", "1", "1" });
+        Check(relay.Evaluate(h, 2, 1) == Hearing::OwnRule);
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(0) });
+        Check(h.Count(h.reliable, 2, "l4d2vr_voice_rx 1 ") == 1);
+        Check(relay.Client(1)->ownRuleCopies == 1u && relay.Client(1)->blockedMask == 0u);
+    }
+    // (b) The receiver's row hears the bot 3 but not 1: a mute, kept.
+    {
+        RuleHost h;
+        h.Survivors({ 1, 2, 3 });
+        h.stock[2][3] = true;
+        Relay relay;
+        relay.SetEnabled(true);
+        Run(relay, h, 1, { "l4d2vr_voice_hello", "1", "2" });
+        Run(relay, h, 2, { "l4d2vr_voice_hello", "1", "1" });
+        Check(relay.Evaluate(h, 2, 1) == Hearing::Muted);
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(0) });
+        Check(h.Count(h.reliable, 2, "l4d2vr_voice_rx") == 0);
+        Check(h.Logged("does not reach player 2: muted by the receiver") == 1);
+        Check(h.Logged("receiver's mask row 4 0") == 1);   // the raw row: player 3
+        // The stock bit itself always wins.
+        h.stock[2][1] = true;
+        Check(relay.Evaluate(h, 2, 1) == Hearing::Stock);
+    }
+    // (c) Teams: other team without alltalk is not heard, with alltalk it is;
+    // a spectator (idle player) hears everyone.
+    {
+        RuleHost h;
+        h.Survivors({ 1, 2 });
+        h.connected[5] = true;
+        h.team[5] = kTeamInfected;
+        h.connected[6] = true;
+        h.team[6] = kTeamSpectator;
+        Relay relay;
+        relay.SetEnabled(true);
+        for (int i : { 1, 2, 5, 6 }) Run(relay, h, i, { "l4d2vr_voice_hello", "1", "3" });
+        Check(relay.Evaluate(h, 5, 1) == Hearing::OtherTeam);
+        Check(relay.Evaluate(h, 6, 1) == Hearing::OwnRule);
+        Check(relay.Evaluate(h, 1, 6) == Hearing::OtherTeam);   // a spectator talking is not heard by survivors
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(0) });
+        Check(h.Count(h.reliable, 2, "l4d2vr_voice_rx") == 1 && h.Count(h.reliable, 6, "l4d2vr_voice_rx") == 1);
+        Check(h.Count(h.reliable, 5, "l4d2vr_voice_rx") == 0);
+        Check(h.Logged("does not reach player 5: other team") == 1);
+        h.allTalk = 1;
+        h.now += Relay::kRuleCacheMs;   // the rule inputs refresh once a second
+        Check(relay.Evaluate(h, 5, 1) == Hearing::OwnRule);
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(1) });
+        Check(h.Count(h.reliable, 5, "l4d2vr_voice_rx") == 1);
+        Check(h.Logged("reaches player 5 again") == 1);
+        // Unknown teams (host cannot read them): the row decides.
+        Check(DecideHearing(false, kTeamUnknown, kTeamSurvivor, 0, false) == Hearing::OwnRule);
+        Check(DecideHearing(false, kTeamUnknown, kTeamSurvivor, 0, true) == Hearing::Muted);
+        Check(DecideHearing(false, kTeamSurvivor, kTeamInfected, -1, false) == Hearing::OtherTeam);
+        Check(DecideHearing(true, kTeamSurvivor, kTeamInfected, 0, true) == Hearing::Stock);
+    }
+    // (d) An outage is logged once when it starts, every 30 s while it lasts,
+    // and once when it ends.
+    {
+        RuleHost h;
+        h.Survivors({ 1, 2 });
+        h.connected[3] = true;
+        h.team[3] = kTeamSurvivor;
+        h.stock[2][3] = true;   // 2's row is in use and leaves 1 out
+        Relay relay;
+        relay.SetEnabled(true);
+        Run(relay, h, 1, { "l4d2vr_voice_hello", "1", "2" });
+        Run(relay, h, 2, { "l4d2vr_voice_hello", "1", "1" });
+        for (int i = 0; i < 3100; ++i) { h.now += 20u; Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(static_cast<std::uint16_t>(i)) }); }
+        Check(h.Logged("player 1 Opus voice does not reach player 2") == 3);   // the start + two 30 s repeats
+        Check(h.Logged("still no Opus listener may hear this player") == 2);
+        h.stock[2][1] = true;
+        h.now += Relay::kRuleCacheMs;
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(4000) });
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(4001) });
+        Check(h.Logged("player 1 Opus voice reaches player 2 again") == 1);
+        Check(h.Count(h.reliable, 2, "l4d2vr_voice_rx") == 2);
+    }
+    // Rejects are summed per 30 s (1b.5), the burst is two seconds.
+    {
+        RuleHost h;
+        h.Survivors({ 1, 2 });
+        Relay relay;
+        relay.SetEnabled(true);
+        Run(relay, h, 1, { "l4d2vr_voice_hello", "1", "2" });
+        Run(relay, h, 2, { "l4d2vr_voice_hello", "1", "1" });
+        for (int i = 0; i < 150; ++i) Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(static_cast<std::uint16_t>(i)) });
+        Check(h.Count(h.reliable, 2, "l4d2vr_voice_rx") == static_cast<int>(Relay::kBurstFrames) && Relay::kBurstFrames == 100.0);
+        h.now += 31000u;
+        Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(200) });
+        Check(h.Logged("50 frame(s) rejected in the last") == 1);
+    }
+}
+
+// 1b/1e: protocol 2 (packed lines in the unreliable stream), protocol 1 with
+// the reliable backlog cap, and the negotiation between them.
+static void TestRelayTransport()
+{
+    using namespace l4d2vr_voice_server;
+    RuleHost h;
+    h.Survivors({ 1, 2, 3, 4 });
+    h.unreliableOk[2] = true;    // 2.0.12 client, channel found
+    h.unreliableOk[3] = false;   // 2.0.12 client, no channel (fallback)
+    Relay relay;
+    relay.SetEnabled(true);
+    relay.SetClientMax(8);
+    Run(relay, h, 1, { "l4d2vr_voice_hello", "2", "2" });
+    Run(relay, h, 2, { "l4d2vr_voice_hello", "2", "1" });
+    Run(relay, h, 3, { "l4d2vr_voice_hello", "2", "1" });
+    Run(relay, h, 4, { "l4d2vr_voice_hello", "1", "1" });   // 2.0.11 client
+    Check(h.Count(h.reliable, 2, "l4d2vr_voice_ack 2") == 1);
+    Check(h.Count(h.reliable, 3, "l4d2vr_voice_ack 1") == 1);
+    Check(h.Count(h.reliable, 4, "l4d2vr_voice_ack 1") == 1);
+    Check(relay.Client(2)->unreliable && !relay.Client(3)->unreliable && !relay.Client(4)->unreliable);
+    Check(h.Logged("downlink packed, unreliable stream") == 1 && h.Logged("downlink reliable (unreliable channel unavailable)") == 2 &&   // players 1 and 3
+        h.Logged("downlink reliable (protocol 1 client)") >= 1);
+
+    // Two frames in one server frame: protocol 1 listeners get one command
+    // each at once, protocol 2 one packed line at the flush.
+    const std::string f0 = FrameText(0), f1 = FrameText(1), f2 = FrameText(2), f3 = FrameText(3);
+    Run(relay, h, 1, { "l4d2vr_voice_up", f0 });
+    h.now += 10u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", f1 });
+    Check(h.Count(h.reliable, 3, "l4d2vr_voice_rx 1 ") == 2 && h.Count(h.reliable, 4, "l4d2vr_voice_rx 1 ") == 2);
+    Check(h.unreliable[2].empty() && h.Count(h.reliable, 2, "l4d2vr_voice_rx") == 0);
+    relay.Flush(h);
+    Check(h.unreliable[2] == std::vector<std::string>{ "l4d2vr_voice_rx 1 " + f0 + " " + f1 + "\n" });
+    relay.Flush(h);   // nothing queued
+    Check(h.unreliable[2].size() == 1u);
+    // The next flush repeats the previous frame (redundancy) when it fits.
+    h.now += 30u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", f2 });
+    relay.Flush(h);
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + f1 + " " + f2 + "\n");
+    Check(relay.Client(1)->redundantCopies == 1u);
+    // ... not while the previous line still waits for the same datagram
+    // (the server ticks faster than the client takes packets).
+    h.trackStream = true;
+    h.Datagram(2);
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(40) });
+    relay.Flush(h);
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + f2 + " " + FrameText(40) + "\n");
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(41) });
+    relay.Flush(h);   // no datagram in between: no copy of 40
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + FrameText(41) + "\n");
+    h.Datagram(2);
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(42) });
+    relay.Flush(h);   // a datagram went out: 41 rides along again
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + FrameText(41) + " " + FrameText(42) + "\n");
+    h.trackStream = false;
+    // ... not after a pause (the copy is older than kRedundancyMaxAgeMs).
+    h.now += 500u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", f3 });
+    relay.Flush(h);
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + f3 + "\n");
+    // A host that does not flush: the command path sends what waited kMaxQueueMs.
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(4) });
+    const std::size_t lines = h.unreliable[2].size();
+    h.now += Relay::kMaxQueueMs;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(5) });
+    Check(h.unreliable[2].size() == lines + 1u);
+    // Every line stays below the tokenizer limit and holds at most 3 frames.
+    for (int i = 0; i < 9; ++i) Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(static_cast<std::uint16_t>(10 + i), kMaxOpusBytes) });
+    relay.Flush(h);
+    for (const std::string& line : h.unreliable[2])
+    {
+        Check(line.size() < static_cast<std::size_t>(kMaxRxLineChars));
+        int frames = 0;
+        for (char c : line) frames += c == ' ';
+        Check(frames - 1 >= 1 && frames - 1 <= kMaxRxFramesPerCommand);
+    }
+    // The per-flush budget: at most kMaxUnreliableBytesPerFlush to one listener.
+    {
+        RuleHost b;
+        b.Survivors({ 1, 2, 3, 4, 5, 6, 7 });
+        b.unreliableOk[7] = true;
+        Relay many;
+        many.SetEnabled(true);
+        for (int i = 1; i <= 6; ++i) Run(many, b, i, { "l4d2vr_voice_hello", "2", "2" });
+        Run(many, b, 7, { "l4d2vr_voice_hello", "2", "1" });
+        for (int i = 1; i <= 6; ++i)
+            for (int k = 0; k < 2; ++k) Run(many, b, i, { "l4d2vr_voice_up", FrameText(static_cast<std::uint16_t>(k), kMaxOpusBytes) });
+        many.Flush(b);
+        std::size_t bytes = 0;
+        for (const std::string& line : b.unreliable[7]) bytes += line.size() + 2;
+        Check(bytes <= static_cast<std::size_t>(Relay::kMaxUnreliableBytesPerFlush) && !b.unreliable[7].empty());
+        Check(many.Client(7)->rxDropped > 0u);
+    }
+    // The channel fails: the frames go reliably instead (one per command).
+    h.unreliableFails = true;
+    const int before = h.Count(h.reliable, 2, "l4d2vr_voice_rx 1 ");
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(30) });
+    relay.Flush(h);
+    Check(h.Count(h.reliable, 2, "l4d2vr_voice_rx 1 ") == before + 1);
+    Check(h.Logged("unreliable send failed, frames go reliably") == 1);
+    // 1e: protocol 1 listeners: nothing is added while their reliable stream
+    // already holds kMaxReliableBacklogBytes.
+    h.pending[4] = Relay::kMaxReliableBacklogBytes;
+    const int queued4 = h.Count(h.reliable, 4, "l4d2vr_voice_rx");
+    h.now += 1000u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(31) });
+    Check(h.Count(h.reliable, 4, "l4d2vr_voice_rx") == queued4 && relay.Client(4)->backlogDropped == 1u);
+    Check(h.Logged("reliable stream backed up") == 1);
+    h.pending[4] = 200;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(32) });
+    Check(h.Count(h.reliable, 4, "l4d2vr_voice_rx") == queued4 + 1);
+}
+
 int main()
 {
     TestBase64();
@@ -1158,6 +1640,14 @@ int main()
     TestAgcAndLimit();
     TestTone();
     TestRelay();
+    TestJitterClumps();
+    TestJitterUnreliableLoss();
+    TestLinkQuality();
+    TestSilenceWatch();
+    TestEchoAndRx();
+    TestNetChannelMessage();
+    TestRelayRules();
+    TestRelayTransport();
     std::printf("vr_opus_voice_tests: %d checks passed\n", g_Checks);
     return 0;
 }

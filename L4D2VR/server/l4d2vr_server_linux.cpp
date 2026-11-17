@@ -34,6 +34,7 @@
 #include <unistd.h>
 
 #include "../server_core/vr_elf_image.h"
+#include "../server_core/vr_net_channel.h"
 #include "../server_core/vr_server_exec.h"
 #include "../server_core/vr_server_limits.h"
 #include "../server_core/vr_server_player.h"
@@ -173,6 +174,24 @@ public:
     virtual bool GetClientListening(int receiver, int sender) = 0;   // 1-based entity indices
     virtual bool SetClientListening(int receiver, int sender, bool listen) = 0;
     virtual bool SetClientProximity(int receiver, int sender, bool proximity) = 0;
+};
+
+// server_srv.so "PlayerInfoManager002" (CPlayerInfoManager): GetPlayerInfo is
+// slot 0. IPlayerInfo (the CPlayerInfo subobject GetPlayerInfo returns) has no
+// destructor: GetTeamIndex is slot 3 (both checked against server_srv.so's
+// vtables, 2.0.12). Used for the Opus voice team rule.
+class IPlayerInfoL4D2
+{
+public:
+    virtual const char* GetName() = 0;
+    virtual int GetUserID() = 0;
+    virtual const char* GetNetworkIDString() = 0;
+    virtual int GetTeamIndex() = 0;
+};
+class IPlayerInfoManagerL4D2
+{
+public:
+    virtual IPlayerInfoL4D2* GetPlayerInfo(edict_t* edict) = 0;
 };
 
 // engine_srv.so "EngineTraceServer003" (CEngineTrace). L4D2 puts TraceRay in
@@ -588,6 +607,7 @@ namespace
 
     IVEngineServer* g_Engine = nullptr;
     IVoiceServer* g_VoiceServer = nullptr;   // optional (Opus voice listening rules)
+    IPlayerInfoManagerL4D2* g_PlayerInfo = nullptr;   // optional (Opus voice team rule, 2.0.12)
     IEngineTraceLinux* g_EngineTrace = nullptr;   // optional (hand wall trace)
     ServerConfig g_Config{};
     l4d2vr_linux::FeatureResolution g_Resolved{};
@@ -792,6 +812,88 @@ namespace
     bool g_DecodeHaveOrigin = false;
     Vec3 g_DecodeOrigin{};
 
+    // ---- Opus voice downlink in the unreliable stream (2.0.12) --------------------------
+    // See server_core/vr_net_channel.h. Every engine function is checked by its
+    // code bytes before the first call; anything unexpected keeps the reliable
+    // ClientCommand path (logged once).
+    namespace voice_net
+    {
+        using FnSendData = bool (*)(void* channel, void* message, bool reliable);
+        using FnNumBits = int (*)(void* channel, bool reliable);
+        bool g_NetInfoChecked = false, g_NetInfoOk = false;
+        void* g_CheckedVtable = nullptr;
+        bool g_SendOk = false, g_BitsOk = false;
+        std::uint32_t g_StreamFull = 0u;
+
+        void Reset() { g_NetInfoChecked = false; g_NetInfoOk = false; g_CheckedVtable = nullptr; g_SendOk = g_BitsOk = false; }
+
+        void* Channel(int index)
+        {
+            if (!g_Engine || !IsValidPlayerIndex(index)) return nullptr;
+            if (!g_NetInfoChecked)
+            {
+                g_NetInfoChecked = true;
+                const auto* vt = *reinterpret_cast<void* const* const*>(g_Engine);
+                g_NetInfoOk = l4d2vr_netchan::GccGetPlayerNetInfoCode(
+                    static_cast<const std::uint8_t*>(vt[l4d2vr_netchan::kEngineServerGetPlayerNetInfoSlot]), 16u);
+                if (!g_NetInfoOk) Log("Opus voice downlink: reliable commands (IVEngineServer::GetPlayerNetInfo not recognised)");
+            }
+            if (!g_NetInfoOk) return nullptr;
+            void* channel = g_Engine->GetPlayerNetInfo(index);
+            if (!channel) return nullptr;   // bots, connecting clients
+            void* const* vt = *reinterpret_cast<void* const* const*>(channel);
+            if (vt != g_CheckedVtable)
+            {
+                g_CheckedVtable = const_cast<void*>(static_cast<const void*>(vt));
+                g_SendOk = l4d2vr_netchan::GccSendDataCode(static_cast<const std::uint8_t*>(vt[l4d2vr_netchan::kGccSendDataSlot]), 32u);
+                g_BitsOk = l4d2vr_netchan::GccNumBitsWrittenCode(static_cast<const std::uint8_t*>(vt[l4d2vr_netchan::kGccNumBitsWrittenSlot]), 16u);
+                Log("Opus voice downlink: %s (CNetChan::SendData %s, reliable backlog %s)",
+                    g_SendOk ? "packed frames in the unreliable stream" : "reliable commands",
+                    g_SendOk ? "recognised" : "not recognised", g_BitsOk ? "measured" : "not measured");
+            }
+            return channel;
+        }
+
+        bool Send(int index, const char* text)
+        {
+            void* channel = Channel(index);
+            if (!channel || !g_SendOk || !text) return false;
+            alignas(4) std::uint8_t buffer[l4d2vr_netchan::kMaxMessageBytes + 8];
+            const int bits = l4d2vr_netchan::BuildStringCmd(text, buffer, sizeof(buffer));
+            if (bits <= 0) return false;
+            l4d2vr_netchan::BfWrite32 message = l4d2vr_netchan::MakeBfWrite(
+                static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(buffer)), static_cast<int>(sizeof(buffer)), bits);
+            const auto fn = reinterpret_cast<FnSendData>((*reinterpret_cast<void* const* const*>(channel))[l4d2vr_netchan::kGccSendDataSlot]);
+            // false = the unreliable stream is full: the frame is lost like a
+            // dropped datagram (the client conceals it); the channel works.
+            if (!fn(channel, &message, false) && g_StreamFull++ % 500u == 0u)
+                Log("Opus voice downlink: player %d unreliable stream full, %u lines dropped", index, static_cast<unsigned>(g_StreamFull));
+            return true;
+        }
+
+        int PendingBytes(int index, bool reliable)
+        {
+            void* channel = Channel(index);
+            if (!channel || !g_BitsOk) return -1;
+            const auto fn = reinterpret_cast<FnNumBits>((*reinterpret_cast<void* const* const*>(channel))[l4d2vr_netchan::kGccNumBitsWrittenSlot]);
+            const int bits = fn(channel, reliable);
+            return bits > 0 ? (bits + 7) / 8 : 0;
+        }
+
+        int Team(int index)
+        {
+            if (!g_PlayerInfo || !IsValidPlayerIndex(index)) return -1;
+            edict_t* base = EdictBase();
+            if (!base || (g_EdictList && index >= g_EdictCount)) return -1;
+            edict_t* edict = &base[index];
+            if ((edict->m_fStateFlags & 2) != 0 || !edict->m_pUnk) return -1;   // FL_EDICT_FREE / empty
+            IPlayerInfoL4D2* info = g_PlayerInfo->GetPlayerInfo(edict);
+            if (!info) return -1;
+            const int team = info->GetTeamIndex();
+            return team >= 0 && team <= 3 ? team : -1;
+        }
+    }
+
     // ---- Session host ------------------------------------------------------------------
     class Host final : public SessionHost
     {
@@ -828,6 +930,11 @@ namespace
         {
             return !g_VoiceServer || g_VoiceServer->GetClientListening(receiver, sender);
         }
+        bool VoiceSendUnreliable(int index, const char* text) override { return voice_net::Send(index, text); }
+        bool VoiceUnreliableAvailable(int index) override { return voice_net::Channel(index) && voice_net::g_SendOk; }
+        int VoicePendingReliableBytes(int index) const override { return voice_net::PendingBytes(index, true); }
+        int VoicePendingUnreliableBytes(int index) const override { return voice_net::PendingBytes(index, false); }
+        int VoiceTeam(int index) const override { return voice_net::Team(index); }
     };
 
     Host g_Host;
@@ -1988,7 +2095,7 @@ namespace
     class L4D2VRServerPlugin final : public IServerPluginCallbacks
     {
     public:
-        bool Load(CreateInterfaceFn interfaceFactory, CreateInterfaceFn) override
+        bool Load(CreateInterfaceFn interfaceFactory, CreateInterfaceFn gameServerFactory) override
         {
             ResetPlayers();
             g_Session.ResetAll();
@@ -1999,8 +2106,17 @@ namespace
             g_EdictCount = 0;
             g_Engine = nullptr;
             g_VoiceServer = nullptr;
+            g_PlayerInfo = nullptr;
+            voice_net::Reset();
             g_EngineTrace = nullptr;
             for (LogBudget& b : g_LogBudgets) b.Reset();
+            if (gameServerFactory)
+            {
+                int code = IFACE_FAILED;
+                g_PlayerInfo = static_cast<IPlayerInfoManagerL4D2*>(gameServerFactory("PlayerInfoManager002", &code));
+                if (!g_PlayerInfo)
+                    Log("PlayerInfoManager002 unavailable; the Opus voice relay cannot read teams (it then applies the game voice mask and mute rows only)");
+            }
             if (interfaceFactory)
             {
                 int code = IFACE_FAILED;

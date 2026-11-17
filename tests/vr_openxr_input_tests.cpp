@@ -271,6 +271,23 @@ int main()
         xi::Thresholds(*BindingsOf(idx, Action::WeaponGrip, Hand::Right)[0], press, release);
         Check(Near(press, 0.85f) && Near(release, 0.50f), "index weapon grip 0.85/0.50 (force_input value)");
         Check(std::strcmp(BindingsOf(idx, Action::WeaponGrip, Hand::Right)[0]->input, "/input/squeeze/value") == 0, "index grip uses the value");
+        // 2.0.12: a resting thumb (0.25-0.31 force) never presses the trackpad buttons.
+        for (Action a : { Action::VoicePushToTalk, Action::Scoreboard })
+        {
+            const auto bound = BindingsOf(idx, a, a == Action::VoicePushToTalk ? Hand::Right : Hand::Left);
+            Check(bound.size() == 1u, "one trackpad binding");
+            xi::Thresholds(*bound[0], press, release);
+            Check(Near(press, 0.60f) && Near(release, 0.40f), "index trackpad force 0.60/0.40");
+            bool down = false;
+            for (float v : { 0.25f, 0.31f, 0.30f, 0.45f, 0.59f }) down = xi::NextClick(down, v, press, release);
+            Check(!down, "a resting thumb (0.25-0.59) does not press");
+            down = xi::NextClick(down, 0.70f, press, release);
+            Check(down, "0.70 presses");
+            down = xi::NextClick(down, 0.45f, press, release);
+            Check(down, "0.45 holds");
+            down = xi::NextClick(down, 0.30f, press, release);
+            Check(!down, "0.30 releases");
+        }
 
         // bindings_oculus_touch.json
         const xi::Profile& touch = P(xi::ProfileId::Touch);

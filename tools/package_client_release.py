@@ -174,6 +174,10 @@ CHANGES = [
     "2.0.12: vrmod_log.txt is written by its own thread (no game or render thread waits on the file any more) and is about a third of the size: the chattiest diagnostics (muzzle smoke, grip reads, melee candidates, holster draw counters) are written at most every few seconds unless VrHandsDebugLog=true. A frame that takes more than 3 display periods logs one [VR][Perf] line (at most one per second) with where the time went.",
     "2.0.12: when the VR runtime recentres its tracking space (the SteamVR/Monado recentre), the game no longer teleports or turns you; the room-scale origin and turn are re-based on the spot, and the runtime's bursts of recentre events are one log line.",
     "2.0.12: the magnum shows the infinity sign for its reserve on the wrist like the pistol (it showed 999).",
+    "2.0.12: voice chat no longer goes silent for the rest of a session: the server no longer relies on the game's voice mask alone (it could stay empty and silently block every player); it applies its own team rule, keeps real mutes, and logs why a player cannot be heard.",
+    "2.0.12: voice chat no longer cuts out every few seconds: with a 2.0.12 server or host, voice travels in the fast unreliable stream, several frames per message, with a deeper jitter buffer that plays a backlog slightly faster instead of throwing it away; no more \"Cbuf_AddTextWithMarkers: buffer overflow\" in the console. Older servers and clients keep working as before.",
+    "2.0.12: Valve Index: a thumb resting on the right trackpad no longer triggers push-to-talk (a firm press is needed now; the left trackpad's scoreboard too), and in the game's open mic the voice button no longer stops the game's own microphone.",
+    "2.0.12: open mic keeps soft word endings while you talk over game noise, and the console message about open mic no longer runs a bogus command (\"Unknown command: your\").",
 ]
 
 

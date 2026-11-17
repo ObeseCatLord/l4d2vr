@@ -1,6 +1,7 @@
 #include "../L4D2VR/vr_gun_hand_anchor.h"
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
 
 using namespace l4d2vr_gun_hand_anchor;
 

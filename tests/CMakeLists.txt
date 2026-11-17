@@ -958,6 +958,13 @@ if (MSVC)
 endif()
 add_test(NAME vr_log_share COMMAND vr_log_share_tests)
 
+add_executable(vr_frame_perf_tests vr_frame_perf_tests.cpp)
+target_compile_features(vr_frame_perf_tests PRIVATE cxx_std_17)
+if (MSVC)
+    target_compile_options(vr_frame_perf_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME vr_frame_perf COMMAND vr_frame_perf_tests)
+
 add_executable(vr_item_hand_tests vr_item_hand_tests.cpp)
 target_compile_features(vr_item_hand_tests PRIVATE cxx_std_17)
 if(MSVC)

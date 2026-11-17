@@ -810,6 +810,11 @@ int Hooks::initSourceHooks()
 
 	LPVOID DrawModelExecuteAddr = (LPVOID)(m_Game->m_Offsets->DrawModelExecute.address);
 	hkDrawModelExecute.createHook(DrawModelExecuteAddr, &dDrawModelExecute);
+	if (hkDrawModelExecute.fOriginal && !s_PerfRealDrawModelExecute)
+	{
+		s_PerfRealDrawModelExecute = hkDrawModelExecute.fOriginal;
+		hkDrawModelExecute.fOriginal = reinterpret_cast<tDrawModelExecute>(&HooksPerfTimedDrawModelExecute);
+	}
 
 	LPVOID PushRenderTargetAddr = (LPVOID)(m_Game->m_Offsets->PushRenderTargetAndViewport.address);
 	hkPushRenderTargetAndViewport.createHook(PushRenderTargetAddr, &dPushRenderTargetAndViewport);

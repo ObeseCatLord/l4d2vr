@@ -171,6 +171,7 @@ CHANGES = [
     "2.0.12: the game's own wrist HUD comes back: while no crop of the game's HUD is available (joining, the MOTD, spectating) a wrist shows the drawn panel and switches back to the game's HUD as soon as it is there again (2.0.4-2.0.11 gave up for the whole session 4 s after joining). vrmod_log.txt says which HUD panels were found and why a wrist uses the drawn panel.",
     "2.0.12: the game-code locations the mod looks for are updated for the current Left 4 Dead 2 build (faster start, no \"signature moved\" lines), and a location that matches several places in the game is never guessed any more: that feature stays off with one log line.",
     "2.0.12: VR Options > Controls > Save logs for sharing (or l4d2vr_save_logs in the console) puts the mod's and the game's logs, your VR settings and a system summary into one folder and a .zip under VR\\shared-logs, ready to send with a bug report; passwords and tokens are left out and big logs keep only their end.",
+    "2.0.12: vrmod_log.txt is written by its own thread (no game or render thread waits on the file any more) and is about a third of the size: the chattiest diagnostics (muzzle smoke, grip reads, melee candidates, holster draw counters) are written at most every few seconds unless VrHandsDebugLog=true. A frame that takes more than 3 display periods logs one [VR][Perf] line (at most one per second) with where the time went.",
     "2.0.12: the magnum shows the infinity sign for its reserve on the wrist like the pistol (it showed 999).",
 ]
 

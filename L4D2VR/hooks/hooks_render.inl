@@ -2364,6 +2364,29 @@ void __fastcall Hooks::dDrawScreenSpaceRectangle(
 		DebugTextureName(afterCopy0), DebugTextureName(afterCopy1));
 }
 
+static void HooksPerfFrameBoundary(VR* vr)
+{
+	using clock = std::chrono::steady_clock;
+	static clock::time_point s_lastStart{};
+	static l4d2vr_frame_perf::SlowFrameLog s_slowLog;
+	const clock::time_point now = clock::now();
+	l4d2vr_frame_perf::Sample sample;
+	l4d2vr_frame_perf::Take(sample);
+	if (s_lastStart != clock::time_point{})
+		sample.frameUs = l4d2vr_frame_perf::ToUs(now - s_lastStart);
+	s_lastStart = now;
+	if (!vr || sample.frameUs == 0)
+		return;
+	const float hz = vr->GetHmdDisplayFrequencyHz();
+	if (!s_slowLog.ShouldLog(sample.frameUs, hz, static_cast<uint64_t>(GetTickCount64())))
+		return;
+	char line[768];
+	l4d2vr_frame_perf::Format(line, sizeof(line), sample, hz, s_slowLog.TakeSlowCount(), vr->m_IsThirdPersonCamera,
+		vr->m_RenderTpObserver.load(std::memory_order_relaxed) != 0,
+		vr->m_RenderPlayerIncap.load(std::memory_order_relaxed) != 0);
+	Game::logMsg("%s", line);
+}
+
 void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CViewSetup& hudViewSetup, int nClearFlags, int whatToDraw)
 {
 	// No config hot reload while this view reads the settings (review B05).
@@ -2519,6 +2542,12 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 
 		return hkRenderView.fOriginal(ecx, setup, hudViewSetup, nClearFlags, whatToDraw);
 	}
+
+	// 2.0.12 (issue 11): frame-time breakdown. The outer RenderView starts a
+	// frame: the counters of the frame that just ended are taken and a slow
+	// one is logged ([VR][Perf], at most once per second).
+	HooksPerfFrameBoundary(m_VR);
+	l4d2vr_frame_perf::Scope perfRenderViewScope(l4d2vr_frame_perf::kRenderViewUs);
 
 	// RenderView can outlive CreateMove during disconnect/loading. Clear the
 	// process-wide registration immediately when there is no live VR game
@@ -5666,11 +5695,14 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 		drawPostEyeWork(1, m_VR->m_RightEyeTexture, rightEyeView);
 	}
 	timingStereoSceneMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stereoSceneStartTime).count();
+	l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kStereoUs, static_cast<uint64_t>(timingStereoSceneMs * 1000.0));
+	l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kPasses, rightEyeCopiedFromLeft ? 1u : 2u);
 
 	auto renderToTexture_SetRT = [&](ITexture* target, int texW, int texH, QAngle passAngles,
 		CViewSetup& view, CViewSetup& hud, HooksNekoPostPass nekoPostPass,
 		const PhysicalScopeRenderSnapshot* physicalScope = nullptr)
 		{
+			l4d2vr_frame_perf::Scope perfPassScope(l4d2vr_frame_perf::kExtraPassUs, l4d2vr_frame_perf::kPasses);
 			// Scope/rear-mirror RTTs are allowed in queued rendering. Do not touch
 			// EngineClient viewangles in queueMode!=0; CViewSetup already carries
 			// the offscreen camera pose for the render thread.

@@ -7154,6 +7154,8 @@
             outBones = bones;
             return true;
         }
+        // A full solve (the per-scene cache missed): counted for [VR][Perf].
+        l4d2vr_frame_perf::Add(l4d2vr_frame_perf::kWorldPoseSolves, 1);
         HooksWorldPoseCalibration& calibration =
             g_HooksWorldPoseCalibrations[
                 static_cast<size_t>(info.entity_index)];

@@ -64,6 +64,7 @@
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
 #include "vr_weapon_reserve.h"
+#include "vr_frame_perf.h"
 #include "vr_opus_voice.h"
 #include "vr_config_lock.h"
 #include "vector.h"

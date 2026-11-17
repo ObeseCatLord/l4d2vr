@@ -3962,6 +3962,7 @@ BOOL APIENTRY DllMain(HMODULE hModule,
     case DLL_THREAD_DETACH:
         break;
     case DLL_PROCESS_DETACH:
+        Game::FlushLogAtExit();
         L4D2VR_ShutdownReShadeVRBridge();
         L4D2VR_ShutdownSystemMouseInputSuppression();
         Game::UninstallVertexFormatWarningFilter();

@@ -1538,6 +1538,7 @@ void VR::ShowMenuPointerVisuals(const l4d2vr_overlay_pointer::Panel& panel, cons
 
 void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBinds)
 {
+    l4d2vr_frame_perf::Scope perfHudScope(l4d2vr_frame_perf::kHudUs);
     // Debug: hand HUD update diagnostics (rate-limited).
     const auto dbgNow = std::chrono::steady_clock::now();
     m_HandHudDebugLastCall = dbgNow;

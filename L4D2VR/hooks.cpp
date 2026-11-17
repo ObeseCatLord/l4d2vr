@@ -3008,6 +3008,24 @@ static bool TryGetExecutingPistolNativeReload(void* owner, int index,
 static bool TryGetExecutingPistolPickup(void* owner, int& index, l4d2vr_pistol::Hand& hand);
 static void RefreshGripPickupContact(VR* vr, Game* game, C_BasePlayer* player, bool left);
 
+// 2.0.12 (issue 11): DrawModelExecute timing for the [VR][Perf] line. The
+// hook's fOriginal is routed through this wrapper, which times the engine's
+// own draw of the outermost model (nested draws count as engine time), so
+// the mod's own per-model cost is the hook's inclusive time minus this.
+static thread_local int t_PerfModelDrawDepth = 0;
+static tDrawModelExecute s_PerfRealDrawModelExecute = nullptr;
+static void __fastcall HooksPerfTimedDrawModelExecute(void* ecx, void* /*edx*/, void* state,
+	const ModelRenderInfo_t& info, void* pCustomBoneToWorld)
+{
+	if (t_PerfModelDrawDepth == 1)
+	{
+		l4d2vr_frame_perf::Scope engineScope(l4d2vr_frame_perf::kModelEngineUs);
+		s_PerfRealDrawModelExecute(ecx, state, info, pCustomBoneToWorld);
+		return;
+	}
+	s_PerfRealDrawModelExecute(ecx, state, info, pCustomBoneToWorld);
+}
+
 #include "hooks/hooks_recoil_state.inl"
 #include "hooks/hooks_background_audio.inl"
 #include "hooks/hooks_init.inl"

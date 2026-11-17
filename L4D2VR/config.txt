@@ -152,6 +152,9 @@ FixedHudYOffset=0.25
 FixedHudDistanceOffset=0.25
 ControllerSmoothing=0.0
 WeaponAimPitchOffsetDeg=-45.0
+// Pistols, the magnum, the Uzi and the MAC-10 sit this much steeper in the hand than long guns (Pavlov VR holds
+// pistols 70 degrees and long guns 60 degrees nose-down from the grip; 2.0.12). 0 = the same as long guns.
+WeaponAimPistolPitchOffsetDeg=-10.0
 WeaponAimYawOffsetDeg=0.0
 WeaponAimRollOffsetDeg=0.0
 BulletAimOffset=0,0,0

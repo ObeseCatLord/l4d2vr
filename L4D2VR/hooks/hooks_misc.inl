@@ -26995,9 +26995,34 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
             rightController.m[row][col] = VrHandMath::Get(rightWorld, row, col);
             leftController.m[row][col] = VrHandMath::Get(leftWorld, row, col);
         }
+    // 2.0.12 (review s12 issue 6): the left gun mirrors the right hand's hold
+    // (lateral offset negated) instead of copying it into the left palm; this
+    // is the native-hands path too (no glove wrist needed).
+    {
+        // 2.0.12: the left gun takes the same per-class barrel pitch as the right
+        // gun's aim basis (vr_tracking.inl); rotate its controller frame (right,
+        // up, back) about its right axis the same way.
+        const float classPitch = l4d2vr_gun_hand_anchor::ClassAimPitchExtraDeg(
+            vr->m_ActiveGunWeaponId.load(std::memory_order_acquire), vr->m_WeaponAimPistolPitchOffsetDeg);
+        if (leftTracked && classPitch != 0.0f)
+        {
+            const Vector right(leftController.m[0][0], leftController.m[1][0], leftController.m[2][0]);
+            Vector up(leftController.m[0][1], leftController.m[1][1], leftController.m[2][1]);
+            Vector forward(-leftController.m[0][2], -leftController.m[1][2], -leftController.m[2][2]);
+            forward = VectorRotate(forward, right, classPitch);
+            up = VectorRotate(up, right, classPitch);
+            for (int row = 0; row < 3; ++row)
+            {
+                leftController.m[row][1] = up[row];
+                leftController.m[row][2] = -forward[row];
+            }
+        }
+    }
+    // With the GLB gloves the glove wrist below aligns the copied hold instead.
+    const bool gloveAlign = vr->m_VrHandsEnabled && vr->m_VrHandsGlovesEnabled;
     const bool canRetarget = rightTracked && leftTracked &&
-        l4d2vr_dual::Retarget(rightController, leftController, primary, other, delta);
-    if (canRetarget && primaryWrist >= 0)
+        l4d2vr_dual::Retarget(rightController, leftController, primary, other, delta, !gloveAlign);
+    if (canRetarget && primaryWrist >= 0 && gloveAlign)
     {
         vr_vm_stabilize::Mat3x4 wristWorld{};
         Vector gloveWrist{};

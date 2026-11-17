@@ -180,8 +180,15 @@ namespace l4d2vr_dual
 
     // Build the second gun's target from the first gun's calibrated relation
     // to its controller. Each gun then follows its own controller transform.
+    // 2.0.12 (review s12 issue 6; Pavlov grip SPEC 1.3): mirrorLateral reflects
+    // that relation across the hand's sagittal plane before applying it: the
+    // controller-right (column 0 of the right/up/back basis) component of the
+    // gun's offset is negated, the rotation is kept (the bore follows the
+    // target controller's aim basis). A gun that sits toward the fingers of
+    // the right hand then sits toward the fingers of the left hand instead of
+    // in its palm.
     template<class Matrix> bool Retarget(const Matrix& sourceController, const Matrix& targetController,
-        const Matrix& sourceGun, const Matrix& destinationGun, Matrix& delta)
+        const Matrix& sourceGun, const Matrix& destinationGun, Matrix& delta, bool mirrorLateral = false)
     {
         if (!Finite(sourceController) || !Finite(targetController) || !Finite(sourceGun) || !Finite(destinationGun))
             return false;
@@ -210,7 +217,10 @@ namespace l4d2vr_dual
         };
         Matrix controllerInverse{}, gunInverse{};
         if (!inverse(sourceController, controllerInverse) || !inverse(destinationGun, gunInverse)) return false;
-        const Matrix targetGun = Multiply(targetController, Multiply(controllerInverse, sourceGun));
+        Matrix local = Multiply(controllerInverse, sourceGun);
+        if (mirrorLateral)
+            local.m[0][3] = -local.m[0][3];
+        const Matrix targetGun = Multiply(targetController, local);
         delta = Multiply(targetGun, gunInverse);
         return Finite(delta);
     }

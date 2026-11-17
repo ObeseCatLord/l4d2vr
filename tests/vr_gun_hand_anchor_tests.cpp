@@ -14,6 +14,11 @@ static bool Near(const Vec3& a, const Vec3& b, float eps = 1e-4f)
 
 int main()
 {
+    // 2.0.12: Pavlov's per-class barrel pitch (pistols 70, long guns 60).
+    for (int id : { 1, 32, 2, 7 })
+        CHECK(ClassAimPitchExtraDeg(id, -10.0f) == -10.0f);
+    for (int id : { 3, 4, 5, 6, 8, 9, 10, 11, 21, 26, 33, 34, 35, 36, 37, 19, 12 })
+        CHECK(ClassAimPitchExtraDeg(id, -10.0f) == 0.0f);
     // The hand pose offset is (right, up, back): 10 cm back, 8 cm down, 3 cm left
     // is (forward -0.10, right -0.03, up -0.08), not (forward -0.03, ...).
     CHECK(Near(HandOffsetToForwardRightUp(Vec3{ -0.03f, -0.08f, 0.10f }), Vec3{ -0.10f, -0.03f, -0.08f }));

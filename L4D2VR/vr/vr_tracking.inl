@@ -1845,6 +1845,16 @@ void VR::UpdateTracking()
 		m_RightControllerUp,
 		m_RightControllerRight,
 		m_WeaponAimPitchOffsetDeg);
+	{
+		// 2.0.12: Pavlov's per-class barrel pitch (vr_gun_hand_anchor.h).
+		const float classPitch = l4d2vr_gun_hand_anchor::ClassAimPitchExtraDeg(
+			m_ActiveGunWeaponId.load(std::memory_order_acquire), m_WeaponAimPistolPitchOffsetDeg);
+		if (classPitch != 0.0f)
+		{
+			m_RightControllerForward = VectorRotate(m_RightControllerForward, m_RightControllerRight, classPitch);
+			m_RightControllerUp = VectorRotate(m_RightControllerUp, m_RightControllerRight, classPitch);
+		}
+	}
 	m_RightControllerRight = VectorRotate(
 		m_RightControllerRight,
 		m_RightControllerForward,

@@ -3147,6 +3147,7 @@ void VR::ParseConfigFileUnlocked()
         getFloat("WeaponAimPitchOffsetDeg", m_WeaponAimPitchOffsetDeg),
         -90.0f,
         90.0f);
+    m_WeaponAimPistolPitchOffsetDeg = std::clamp(getFloat("WeaponAimPistolPitchOffsetDeg", m_WeaponAimPistolPitchOffsetDeg), -30.0f, 30.0f);
     m_WeaponAimYawOffsetDeg = l4d2vr_calibration::ClampFinite(
         getFloat("WeaponAimYawOffsetDeg", m_WeaponAimYawOffsetDeg),
         -180.0f,

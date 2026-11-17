@@ -509,6 +509,7 @@ public:
 	// Rotates the logical weapon hand's OpenVR grip pose around its local right
 	// axis before the pose is used by the viewmodel, aim line, and gameplay aim.
 	float m_WeaponAimPitchOffsetDeg = -45.0f;
+	float m_WeaponAimPistolPitchOffsetDeg = -10.0f;   // 2.0.12: pistol-class guns 10 deg steeper (Pavlov 70 vs 60)
 	// Additional aim-basis offsets layered on top of the default pitch tweak.
 	float m_WeaponAimYawOffsetDeg = 0.0f;
 	float m_WeaponAimRollOffsetDeg = 0.0f;

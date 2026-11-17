@@ -9294,8 +9294,11 @@ bool VR::UpdateMagazineInteraction(
                 boltDistance = MagazineInteractionNearestLeftHandProbeDistanceSourceUnits(
                     boltBox, supportPosition, supportAngles, m_VRScale, this);
         }
-        const bool atPouch = l4d2vr_magazine::MayTakeFreshAmmo(freshGrabDistance, freshGrabRange, boltDistance, boltRange,
-            m_VRScale);
+        // 2.0.14 (pavlov hips): a holstered item nearer to the hand than the
+        // hip pouch (a vest pocket, the sidearm) takes the squeeze instead.
+        const bool holsterNearer = m_HolsterLayout.pavlovHips && m_HolsterHoverZone[0] != l4d2vr_holster::Zone::None;
+        const bool atPouch = !holsterNearer &&
+            l4d2vr_magazine::MayTakeFreshAmmo(freshGrabDistance, freshGrabRange, boltDistance, boltRange, m_VRScale);
         const bool quickFreshAutoGrab = m_MagazineInteractionQuickReloadMode && atPouch;
         if (!quickFreshAutoGrab && !(leftGripJustPressed && atPouch))
         {

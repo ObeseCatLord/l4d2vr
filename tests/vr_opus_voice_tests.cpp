@@ -1336,6 +1336,8 @@ namespace
         bool unreliableOk[kMaxPlayers + 1]{};
         bool unreliableFails = false;
         int pending[kMaxPlayers + 1]{};
+        bool trackStream = false;                  // model the unreliable stream (emptied by Datagram())
+        int stream[kMaxPlayers + 1]{};
         std::uint64_t now = 1000u;
         std::vector<std::string> logs;
         RuleHost() { for (int& t : team) t = l4d2vr_voice_server::kTeamUnknown; }
@@ -1348,8 +1350,11 @@ namespace
         {
             if (!unreliableOk[i] || unreliableFails) return false;
             unreliable[i].push_back(text);
+            stream[i] += static_cast<int>(std::strlen(text)) + 2;
             return true;
         }
+        int PendingUnreliableBytes(int i) const override { return trackStream ? stream[i] : -1; }
+        void Datagram(int i) { stream[i] = 0; }
         bool UnreliableAvailable(int i) override { return unreliableOk[i]; }
         int PendingReliableBytes(int i) const override { return pending[i]; }
         int Team(int i) const override { return team[i]; }
@@ -1531,6 +1536,24 @@ static void TestRelayTransport()
     relay.Flush(h);
     Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + f1 + " " + f2 + "\n");
     Check(relay.Client(1)->redundantCopies == 1u);
+    // ... not while the previous line still waits for the same datagram
+    // (the server ticks faster than the client takes packets).
+    h.trackStream = true;
+    h.Datagram(2);
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(40) });
+    relay.Flush(h);
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + f2 + " " + FrameText(40) + "\n");
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(41) });
+    relay.Flush(h);   // no datagram in between: no copy of 40
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + FrameText(41) + "\n");
+    h.Datagram(2);
+    h.now += 20u;
+    Run(relay, h, 1, { "l4d2vr_voice_up", FrameText(42) });
+    relay.Flush(h);   // a datagram went out: 41 rides along again
+    Check(h.unreliable[2].back() == "l4d2vr_voice_rx 1 " + FrameText(41) + " " + FrameText(42) + "\n");
+    h.trackStream = false;
     // ... not after a pause (the copy is older than kRedundancyMaxAgeMs).
     h.now += 500u;
     Run(relay, h, 1, { "l4d2vr_voice_up", f3 });

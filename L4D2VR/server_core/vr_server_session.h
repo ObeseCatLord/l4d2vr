@@ -45,6 +45,7 @@ namespace l4d2vr_server
         virtual bool VoiceSendUnreliable(int index, const char* text) { (void)index; (void)text; return false; }
         virtual bool VoiceUnreliableAvailable(int index) { (void)index; return false; }
         virtual int VoicePendingReliableBytes(int index) const { (void)index; return -1; }
+        virtual int VoicePendingUnreliableBytes(int index) const { (void)index; return -1; }
         virtual int VoiceTeam(int index) const { (void)index; return -1; }
         virtual int VoiceAllTalk() const { return -1; }
     protected:
@@ -282,6 +283,7 @@ namespace l4d2vr_server
             }
             bool UnreliableAvailable(int index) override { return Connected(index) && m_Session.m_Host.VoiceUnreliableAvailable(index); }
             int PendingReliableBytes(int index) const override { return m_Session.m_Host.VoicePendingReliableBytes(index); }
+            int PendingUnreliableBytes(int index) const override { return m_Session.m_Host.VoicePendingUnreliableBytes(index); }
             int Team(int index) const override { return m_Session.m_Host.VoiceTeam(index); }
             int AllTalk() const override { return m_Session.m_Host.VoiceAllTalk(); }
         private:

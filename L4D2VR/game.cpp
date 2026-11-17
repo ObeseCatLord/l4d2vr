@@ -2464,13 +2464,13 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
     }
 
-    int ListenReliableBitsRaw(void* channel)
+    int ListenStreamBitsRaw(void* channel, bool reliable)
     {
         __try
         {
             using Fn = int (__thiscall*)(void*, bool);
             const auto fn = reinterpret_cast<Fn>((*reinterpret_cast<void***>(channel))[l4d2vr_netchan::kMsvcNumBitsWrittenSlot]);
-            return fn(channel, true);
+            return fn(channel, reliable);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
     }
@@ -2553,12 +2553,12 @@ namespace
         return true;
     }
 
-    int ListenPendingReliableBytes(int index)
+    int ListenPendingBytes(int index, bool reliable)
     {
         void* channel = ListenNetChannel(index);
         if (!channel || !g_ListenNetChan.bitsOk) return -1;
-        const int bits = ListenReliableBitsRaw(channel);
-        return bits < 0 ? -1 : bits / 8;
+        const int bits = ListenStreamBitsRaw(channel, reliable);
+        return bits < 0 ? -1 : (bits + 7) / 8;
     }
 
     struct ListenVoiceSlot { edict_t* entity = nullptr; unsigned serial = 0u; };
@@ -2589,7 +2589,8 @@ namespace
         {
             return Connected(index) && ListenNetChannel(index) && g_ListenNetChan.sendOk;
         }
-        int PendingReliableBytes(int index) const override { return ListenPendingReliableBytes(index); }
+        int PendingReliableBytes(int index) const override { return ListenPendingBytes(index, true); }
+        int PendingUnreliableBytes(int index) const override { return ListenPendingBytes(index, false); }
         // Edicts are one array: any known voice slot gives its base; the
         // identity check rejects a wrong guess.
         int Team(int index) const override

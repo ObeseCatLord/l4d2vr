@@ -871,13 +871,13 @@ namespace
             return true;
         }
 
-        int PendingReliableBytes(int index)
+        int PendingBytes(int index, bool reliable)
         {
             void* channel = Channel(index);
             if (!channel || !g_BitsOk) return -1;
             const auto fn = reinterpret_cast<FnNumBits>((*reinterpret_cast<void* const* const*>(channel))[l4d2vr_netchan::kGccNumBitsWrittenSlot]);
-            const int bits = fn(channel, true);
-            return bits > 0 ? bits / 8 : 0;
+            const int bits = fn(channel, reliable);
+            return bits > 0 ? (bits + 7) / 8 : 0;
         }
 
         int Team(int index)
@@ -932,7 +932,8 @@ namespace
         }
         bool VoiceSendUnreliable(int index, const char* text) override { return voice_net::Send(index, text); }
         bool VoiceUnreliableAvailable(int index) override { return voice_net::Channel(index) && voice_net::g_SendOk; }
-        int VoicePendingReliableBytes(int index) const override { return voice_net::PendingReliableBytes(index); }
+        int VoicePendingReliableBytes(int index) const override { return voice_net::PendingBytes(index, true); }
+        int VoicePendingUnreliableBytes(int index) const override { return voice_net::PendingBytes(index, false); }
         int VoiceTeam(int index) const override { return voice_net::Team(index); }
     };
 

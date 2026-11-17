@@ -71,8 +71,9 @@ namespace l4d2vr_voice_server
         // This listener can be sent unreliable commands (its net channel was
         // found and checked).
         virtual bool UnreliableAvailable(int index) { (void)index; return false; }
-        // Bytes waiting in the listener's reliable stream (-1 = unknown).
+        // Bytes waiting in the listener's reliable / unreliable stream (-1 = unknown).
         virtual int PendingReliableBytes(int index) const { (void)index; return -1; }
+        virtual int PendingUnreliableBytes(int index) const { (void)index; return -1; }
         // Team of the player in the slot (bots too); kTeamUnknown = empty or unreadable.
         virtual int Team(int index) const { (void)index; return kTeamUnknown; }
         // sv_alltalk (-1 = unknown).
@@ -141,6 +142,7 @@ namespace l4d2vr_voice_server
         std::uint32_t rxDropped = 0u;       // frames not sent to this listener (over its budget)
         std::uint32_t backlogDropped = 0u;  // reliable frames not sent: the listener's reliable stream is backed up
         std::uint32_t unreliableLines = 0u, unreliableFailed = 0u;
+        int unreliableMark = -1;            // the listener's unreliable stream right after our last line
         std::uint32_t relayedFrames = 0u;   // frames this talker sent that were forwarded
         std::uint32_t rejectedFrames = 0u;  // malformed or over the rate limit
         std::uint32_t deliveredFrames = 0u; // copies of this talker's frames sent to listeners (2.0.10 log)
@@ -514,7 +516,14 @@ namespace l4d2vr_voice_server
             const char* frames[kMaxQueuedFrames + 1];
             int count = 0;
             bool redundant = false;
-            if (c.haveLastFlushed && (c.lastFlushed.listeners & PlayerBit(r)) && now - c.lastFlushed.ms <= kRedundancyMaxAgeMs)
+            // The copy only helps in another datagram: skipped while the last
+            // line still waits in the listener's unreliable stream (the stream
+            // empties with every datagram; servers often tick faster than
+            // clients take packets).
+            const int pendingNow = host.PendingUnreliableBytes(r);
+            const bool sameDatagram = rc.unreliableMark > 0 && pendingNow >= rc.unreliableMark;
+            if (c.haveLastFlushed && (c.lastFlushed.listeners & PlayerBit(r)) && now - c.lastFlushed.ms <= kRedundancyMaxAgeMs &&
+                !sameDatagram)
             {
                 frames[count++] = c.lastFlushed.text;
                 redundant = true;
@@ -580,6 +589,7 @@ namespace l4d2vr_voice_server
                     spent += len + 2;
                     ++rc.unreliableLines;
                     if (withCopy) ++c.redundantCopies;
+                    rc.unreliableMark = host.PendingUnreliableBytes(r);
                     continue;
                 }
                 // The channel went away: this line's new frames go reliably, one per command.

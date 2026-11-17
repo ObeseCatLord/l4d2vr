@@ -181,13 +181,14 @@ void VR::UpdateGameplayMode(bool inGame)
     const Result r = Resolve(in);
     const Effective previous = GameplayModeEffective();
     const bool changed = r.effective != previous;
+    const bool classic = ClassicLike(r.effective);
+    if (changed && classic && previous == Effective::Physical)
+        ResetPhysicalStateForClassic();
+    // Idempotent: also applies the overlay at start-up (the first resolved
+    // mode equals the initial PendingClassic) and after a config reload.
+    ApplyGameplayModeOverrides(classic);
     if (changed)
     {
-        const bool classic = ClassicLike(r.effective);
-        const bool wasPhysical = previous == Effective::Physical;
-        if (classic && wasPhysical)
-            ResetPhysicalStateForClassic();
-        ApplyGameplayModeOverrides(classic);
         m_GameplayModeEffective.store(static_cast<uint8_t>(r.effective), std::memory_order_release);
         m_GameplayModeGeneration.fetch_add(1u, std::memory_order_acq_rel);
     }

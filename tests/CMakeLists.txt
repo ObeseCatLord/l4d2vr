@@ -422,7 +422,7 @@ file(READ "${pose_render_source}" pose_render_text)
 extract_mirrored_analog_fixture("${mirrored_analog_header_text}"
     "struct TrackedDevicePoseData" "struct VRMeleeTrackingSnapshot" pose_data_type)
 extract_mirrored_analog_fixture("${pose_data_text}"
-    "void VR::GetPoseData(" "void VR::UpdateRearMirrorOverlayTransform()" pose_data_function)
+    "void VR::GetPoseData(" "void VR::UpdateScopeOverlayTransform()" pose_data_function)
 string(REGEX MATCH "if \\(([^\r\n]+)\\)[\r\n \t]*\\{[\r\n \t]*TrackedDevicePoseData hmdPose\\{\\};"
     queued_pose_match "${pose_render_text}")
 set(queued_pose_condition "${CMAKE_MATCH_1}")
@@ -1213,3 +1213,9 @@ if(MSVC)
     target_compile_options(vr_control_watchdog_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME vr_control_watchdog COMMAND vr_control_watchdog_tests)
+add_executable(vr_gameplay_mode_tests vr_gameplay_mode_tests.cpp)
+target_compile_features(vr_gameplay_mode_tests PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(vr_gameplay_mode_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME vr_gameplay_mode COMMAND vr_gameplay_mode_tests)

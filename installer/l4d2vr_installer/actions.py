@@ -394,3 +394,53 @@ def make_manifest(zip_path: Path, version: str, url: str, tag: Optional[str] = N
         manifest.setdefault("channels", {})[channel] = entry
     manifest.setdefault("preserve", [])
     return manifest
+
+
+# ---------------------------------------------------------------------------
+# Play without the mod (VAC-safe launch, installer 1.1.5; vanilla.py)
+# ---------------------------------------------------------------------------
+
+def play_vanilla(game_dir: Path, *, dry_run: bool = False, log: Log = _print, state_dir: Optional[Path] = None,
+                 platform: Optional[str] = None) -> None:
+    from . import vanilla, vrlaunch
+    from .fsutil import user_config_dir
+    windows = steam.is_windows(platform)
+    state = Path(state_dir) if state_dir else user_config_dir()
+    localconfigs: List[Path] = []
+    try:
+        localconfigs = [user.localconfig for user in launch_option_users(game_dir)]
+    except InstallerError as error:
+        if not windows:
+            raise
+        log(f"Note: {error}")
+
+    def write_options(localconfig: Path, value: str):
+        return launchopts.write_launch_options(localconfig, value, steam_running=steam.is_steam_running(),
+                                               dry_run=dry_run, state_dir=state)
+
+    vanilla.play_vanilla(
+        game_dir, windows=windows, state_dir=state, steam_running=steam.is_steam_running,
+        game_running=steam.is_game_running, open_url=lambda url: vrlaunch.open_steam_url(url),
+        localconfigs=localconfigs, read_options=launchopts.read_launch_options, write_options=write_options,
+        merge_vr_options=lambda text: launchopts.merge_launch_options(text)[0], dry_run=dry_run, log=log)
+
+
+def restore_mod_after_vanilla(*, dry_run: bool = False, log: Log = _print, state_dir: Optional[Path] = None,
+                              platform: Optional[str] = None) -> None:
+    from . import vanilla
+    from .fsutil import user_config_dir
+    state = Path(state_dir) if state_dir else user_config_dir()
+    if steam.is_windows(platform):
+        if not vanilla.pending_restore(state):
+            log("The mod's files are in place (nothing to restore).")
+            return
+        if steam.is_game_running():
+            raise InstallerError("Left 4 Dead 2 is running. Quit it first, then restore the mod.")
+        result = vanilla.restore_mod_files(state, dry_run=dry_run, log=log)
+        if result.conflicts:
+            raise InstallerError("Some files could not be put back (see above).")
+        log("The mod is back: the next VR launch uses it.")
+    else:
+        if not dry_run:
+            vanilla.write_mode(state, "vr")
+        log("The next start of Left 4 Dead 2 uses the launch options as set (the mod loads).")

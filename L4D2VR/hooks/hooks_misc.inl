@@ -820,8 +820,6 @@ namespace vr_vm_stabilize
 
 namespace
 {
-    std::mutex s_TrackedConVarTraceMutex;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> s_TrackedConVarTraceLastLog;
 
     inline bool ShouldLogMagazineBoxDiagnostics(const VR* vr)
     {
@@ -862,25 +860,6 @@ namespace
 #else
         return game->GetNetworkClassName(reinterpret_cast<uintptr_t*>(entity));
 #endif
-    }
-
-    inline bool ShouldThrottleTrackedConVarTrace(const std::string& key, float maxHz = 5.0f)
-    {
-        if (key.empty() || maxHz <= 0.0f)
-            return false;
-
-        const auto now = std::chrono::steady_clock::now();
-        const auto minInterval =
-            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<float>(1.0f / maxHz));
-
-        std::lock_guard<std::mutex> lock(s_TrackedConVarTraceMutex);
-        auto& last = s_TrackedConVarTraceLastLog[key];
-        if (last.time_since_epoch().count() != 0 && now - last < minInterval)
-            return true;
-
-        last = now;
-        return false;
     }
 
     inline bool HooksModelNameIsArmsOrHands(const std::string& modelName)
@@ -25908,83 +25887,6 @@ namespace
 
 #include "hooks_world_pose.inl"
 
-    inline std::string DescribeCallerAddress(const void* address)
-    {
-        if (!address)
-            return "unknown";
-
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (VirtualQuery(address, &mbi, sizeof(mbi)) == 0 || !mbi.AllocationBase)
-            return "unknown";
-
-        char path[MAX_PATH] = {};
-        const DWORD pathLen = GetModuleFileNameA(reinterpret_cast<HMODULE>(mbi.AllocationBase), path, MAX_PATH);
-        const char* moduleName = (pathLen > 0) ? path : "unknown";
-        if (pathLen > 0)
-        {
-            const char* slash = std::strrchr(path, '\\');
-            if (slash && slash[1] != '\0')
-                moduleName = slash + 1;
-        }
-
-        char buffer[MAX_PATH + 64] = {};
-        const uintptr_t offset =
-            reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(mbi.AllocationBase);
-        sprintf_s(buffer, "%s+0x%IX", moduleName, offset);
-        return buffer;
-    }
-
-    inline void TraceTrackedConVarWrite(
-        void* convar,
-        const char* requestedValue,
-        const char* hookPath,
-        const void* callerAddress,
-        bool isIConVarThis,
-        bool blocked)
-    {
-        if (!Hooks::m_Game || !Hooks::m_VR || Game::HasConVarWritePermit() || !Hooks::m_VR->m_LocalVScriptConvarsLogEnabled)
-            return;
-
-        const char* name = isIConVarThis
-            ? Hooks::m_Game->GetConVarNameFromIConVarPointer(convar)
-            : Hooks::m_Game->GetConVarNameFromPointer(convar);
-        if (!name || !*name)
-            return;
-
-        std::string expectedValue;
-        if (!Hooks::m_VR->TryGetTrackedProtectedConvarValue(name, expectedValue))
-            return;
-
-        std::string throttleKey = std::string(hookPath ? hookPath : "ConVarTrace") + "|" + name;
-        if (ShouldThrottleTrackedConVarTrace(throttleKey))
-            return;
-
-        const std::string beforeValue = Hooks::m_Game->GetConVarString(name);
-        const std::string caller = DescribeCallerAddress(callerAddress);
-        Game::logMsg(
-            "[VR][LocalVScriptConvars] TraceWrite path=%s name=%s before='%s' expected='%s' requested='%s' caller=%s blocked=%d",
-            hookPath ? hookPath : "unknown",
-            name,
-            beforeValue.c_str(),
-            expectedValue.c_str(),
-            requestedValue ? requestedValue : "",
-            caller.c_str(),
-            blocked ? 1 : 0);
-    }
-
-    inline bool ShouldBlockLockedConVarWrite(void* convar, const char* requestedValue)
-    {
-        if (!Hooks::m_Game || !Hooks::m_VR || Game::HasConVarWritePermit())
-            return false;
-
-        const char* name = Hooks::m_Game->GetConVarNameFromIConVarPointer(convar);
-        if (!name || !*name)
-            return false;
-
-        return Hooks::m_VR->ShouldBlockExternalProtectedConvarWrite(
-            name,
-            requestedValue ? requestedValue : "");
-    }
 }
 
 void Hooks::dAdjustEngineViewport(int& x, int& y, int& width, int& height)
@@ -27899,15 +27801,6 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
                     modelName.c_str(), pCustomBoneToWorld ? 1 : 0, s_Entered, static_cast<unsigned>(info.flags));
             }
         }
-        // In desktop-mirror overlay hide mode, special-infected arrows are cached
-        // from the RenderView hook at a fixed stereo-pass point. Never scan from
-        // DrawModelExecute in that mode: under mat_queue_mode 2 this hook can run
-        // once per model and would multiply client-entity-list scan requests.
-        const bool desktopMirrorOverlayHideActiveEarly =
-            m_VR->m_DesktopMirrorHidePluginOverlays && m_VR->m_DesktopMirrorEnabled;
-        if (!desktopMirrorOverlayHideActiveEarly)
-            m_VR->ScanSpecialInfectedEntitiesFromClientList();
-
         const C_BaseEntity* entity = nullptr;
         if (m_Game->m_ClientEntityList && info.entity_index > 0 && info.entity_index <= 2048)
         {
@@ -28008,7 +27901,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         // Native viewmodel color draw inside a VR eye view: the outer
         // DrawModelExecute wrapper submits the holsters once this draw ends.
         if (teleportSuppressibleViewmodel && !shadowDepthDraw &&
-            !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
+            !m_VR->m_ScopeRenderingPass &&
             !t_HolsterViewmodelStageSubmitting)
             t_HolsterViewmodelStageDrawSeen = true;
         if (teleportSuppressibleViewmodel && m_VR->ShouldSuppressTeleportViewmodelRender())
@@ -28030,18 +27923,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             return;
         }
 
-        const bool suppressDesktopMirrorPluginOverlays =
-            m_VR->m_DesktopMirrorCleanRenderingPass && m_VR->m_DesktopMirrorHidePluginOverlays;
-        const bool desktopMirrorOverlayHideActive =
-            m_VR->m_DesktopMirrorHidePluginOverlays && m_VR->m_DesktopMirrorEnabled;
-        const bool singlePassDesktopMirrorPluginOverlays = false;
         const int queueMode = (m_Game != nullptr) ? m_Game->GetMatQueueMode() : 0;
-        if (queueMode == 0 &&
-            !suppressDesktopMirrorPluginOverlays &&
-            (info.entity_index == -1 || (info.entity_index > 0 && info.entity_index <= 2048)))
-        {
-            m_VR->DrawItemModelLabel(info.entity_index, modelName, info.origin, entity, className);
-        }
         // Scope RTT pass: optionally hide the local player model so scoped view isn't blocked by your own head/body.
         if (m_VR->m_ScopeRenderingPass && m_VR->m_ScopeHideLocalPlayerModelInScope && isPlayerClass && m_Game->m_EngineClient)
         {
@@ -28469,157 +28351,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             pDrawInfo,
             pBonesToWorldFinal);
 
-        const VR::SpecialInfectedType entityInfectedType =
-            entity ? m_VR->GetSpecialInfectedType(entity) : VR::SpecialInfectedType::None;
-        const VR::SpecialInfectedType modelInfectedType = m_VR->GetSpecialInfectedTypeFromModel(modelName);
-        const bool useWitchModelFallback =
-            modelInfectedType == VR::SpecialInfectedType::Witch &&
-            entityInfectedType == VR::SpecialInfectedType::None;
-
-        if (!suppressDesktopMirrorPluginOverlays && !desktopMirrorOverlayHideActive && useWitchModelFallback)
-        {
-            if (m_VR->m_SpecialInfectedArrowDebugLog && m_VR->m_SpecialInfectedArrowDebugLogHz > 0.0f)
-            {
-                static std::unordered_map<int, std::chrono::steady_clock::time_point> s_lastWitchModelDebugLog;
-                const int debugKey = info.entity_index > 0 ? info.entity_index : -1;
-                bool doDebugLog = true;
-                auto& last = s_lastWitchModelDebugLog[debugKey];
-                const auto now = std::chrono::steady_clock::now();
-                if (last.time_since_epoch().count() != 0)
-                {
-                    const float minInterval = 1.0f / std::max(1.0f, m_VR->m_SpecialInfectedArrowDebugLogHz);
-                    const float elapsed = std::chrono::duration<float>(now - last).count();
-                    if (elapsed >= 0.0f && elapsed < minInterval)
-                        doDebugLog = false;
-                }
-                if (doDebugLog)
-                {
-                    last = now;
-                    Game::logMsg(
-                        "[VR][SIArrow][model] idx=%d class=%s model=\"%s\" type=%d origin=(%.1f %.1f %.1f)",
-                        info.entity_index,
-                        (className && *className) ? className : "<null>",
-                        modelName.c_str(),
-                        static_cast<int>(modelInfectedType),
-                        info.origin.x,
-                        info.origin.y,
-                        info.origin.z);
-                }
-            }
-
-            m_VR->RefreshSpecialInfectedPreWarning(info.origin, modelInfectedType, info.entity_index, false);
-
-            bool doOverlay = true;
-            if (!singlePassDesktopMirrorPluginOverlays && info.entity_index > 0 && m_VR->m_SpecialInfectedOverlayMaxHz > 0.0f)
-            {
-                auto& last = m_VR->m_LastSpecialInfectedOverlayTime[info.entity_index];
-                const auto now = std::chrono::steady_clock::now();
-                if (last.time_since_epoch().count() != 0)
-                {
-                    const float minInterval = 1.0f / std::max(1.0f, m_VR->m_SpecialInfectedOverlayMaxHz);
-                    const float elapsed = std::chrono::duration<float>(now - last).count();
-                    if (elapsed >= 0.0f && elapsed < minInterval)
-                        doOverlay = false;
-                }
-                if (doOverlay)
-                    last = now;
-            }
-
-            if (doOverlay)
-            {
-                if (m_VR->m_RearMirrorEnabled && m_VR->m_RearMirrorShowOnlyOnSpecialWarning
-                    && m_VR->m_RearMirrorSpecialShowHoldSeconds > 0.0f && m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-                {
-                    Vector to = info.origin - m_VR->m_HmdPosAbs;
-                    to.z = 0.0f;
-                    const float maxD = m_VR->m_RearMirrorSpecialWarningDistance;
-                    if (!to.IsZero() && to.LengthSqr() <= (maxD * maxD))
-                    {
-                        Vector fwd = m_VR->m_HmdForward;
-                        fwd.z = 0.0f;
-                        if (VectorNormalize(fwd) == 0.0f)
-                            fwd = { 1.0f, 0.0f, 0.0f };
-                        VectorNormalize(to);
-                        if (DotProduct(to, fwd) < 0.0f)
-                            m_VR->NotifyRearMirrorSpecialWarning();
-                        m_VR->m_RearMirrorSawSpecialThisPass = true;
-                    }
-                }
-
-                m_VR->DrawSpecialInfectedArrow(info.origin, modelInfectedType);
-            }
-        }
-
-        if (!suppressDesktopMirrorPluginOverlays && !desktopMirrorOverlayHideActive && entity && entityInfectedType != VR::SpecialInfectedType::None)
-        {
-            if (m_VR->IsEntityAlive(entity))
-            {
-                // 1) 高优先级：自瞄/目标刷新不要被 Overlay 节流影响（否则锁定会飘）
-                // RefreshSpecialInfectedPreWarning 内部会用到 Trace 缓存（TraceMaxHz），所以这里高频调用不会把 CPU 打爆。
-                m_VR->RefreshSpecialInfectedPreWarning(info.origin, entityInfectedType, info.entity_index, isPlayerClass);
-
-                // Rear mirror pop-up: if enabled, show the mirror briefly when a special infected is behind you
-                // within the configured warning distance. This detection runs on the main render pass so the
-                // mirror can wake up without relying on the mirror RTT pass.
-                if (m_VR->m_RearMirrorEnabled && m_VR->m_RearMirrorShowOnlyOnSpecialWarning
-                    && m_VR->m_RearMirrorSpecialShowHoldSeconds > 0.0f && m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-                {
-                    Vector to = info.origin - m_VR->m_HmdPosAbs;
-                    to.z = 0.0f;
-                    const float maxD = m_VR->m_RearMirrorSpecialWarningDistance;
-                    if (!to.IsZero() && to.LengthSqr() <= (maxD * maxD))
-                    {
-                        Vector fwd = m_VR->m_HmdForward;
-                        fwd.z = 0.0f;
-                        if (VectorNormalize(fwd) == 0.0f)
-                            fwd = { 1.0f, 0.0f, 0.0f };
-                        VectorNormalize(to);
-                        // Behind = more likely you want the rear mirror.
-                        if (DotProduct(to, fwd) < 0.0f)
-                            m_VR->NotifyRearMirrorSpecialWarning();
-                    }
-                }
-
-                // 2) 低优先级：视觉 Overlay（箭头/盲区提示）继续按实体节流，避免 dDrawModelExecute 多次调用导致尖峰
-                bool doOverlay = true;
-                if (!singlePassDesktopMirrorPluginOverlays && info.entity_index > 0 && m_VR->m_SpecialInfectedOverlayMaxHz > 0.0f)
-                {
-                    auto& last = m_VR->m_LastSpecialInfectedOverlayTime[info.entity_index];
-                    const auto now = std::chrono::steady_clock::now();
-                    if (last.time_since_epoch().count() != 0)
-                    {
-                        const float minInterval = 1.0f / std::max(1.0f, m_VR->m_SpecialInfectedOverlayMaxHz);
-                        const float elapsed = std::chrono::duration<float>(now - last).count();
-                        if (elapsed < minInterval)
-                            doOverlay = false;
-                    }
-                    if (doOverlay)
-                        last = now;
-                }
-
-                if (doOverlay)
-                {
-                    // Rear-mirror hint: if this special-infected arrow is being rendered during the rear-mirror RTT pass
-                    // and within the configured distance, enlarge the mirror overlay.
-                    if (m_VR->m_RearMirrorRenderingPass && m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-                    {
-                        Vector to = info.origin - m_VR->m_HmdPosAbs;
-                        to.z = 0.0f;
-                        const float maxD = m_VR->m_RearMirrorSpecialWarningDistance;
-                        if (!to.IsZero() && to.LengthSqr() <= (maxD * maxD))
-                            m_VR->m_RearMirrorSawSpecialThisPass = true;
-                    }
-                    if (entityInfectedType != VR::SpecialInfectedType::Tank
-                        && entityInfectedType != VR::SpecialInfectedType::Witch
-                        && entityInfectedType != VR::SpecialInfectedType::Charger)
-                    {
-                        m_VR->RefreshSpecialInfectedBlindSpotWarning(info.origin);
-                    }
-                    m_VR->DrawSpecialInfectedArrow(info.origin, entityInfectedType);
-                }
-            }
-        }
-
+        // 2.0.13: special-infected arrows, warnings and the rear-mirror
+        // special-infected pop-up are removed (they showed what the game does not).
         {
             MagazineInteractionRenderSnapshotScope detachedMagazineSnapshot(queueMode != 0);
             drawMagazineInteractionDetachedMagazine = BuildMagazineInteractionDetachedMagazineBones(
@@ -28734,7 +28467,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     MaybeCaptureViewmodelMuzzleSmokePose(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
     // The meleelag self-test measures the melee weapon as it is drawn: its root
     // bone after every viewmodel bone hook above.
-    if (m_VR && m_VR->m_IsVREnabled && !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
+    if (m_VR && m_VR->m_IsVREnabled && !m_VR->m_ScopeRenderingPass &&
         l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
     {
         const std::string& lowerDrawn = lowerModelName;
@@ -28751,7 +28484,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     // not the CBaseViewModel the class test above knows, so the held gun is
     // recognised by its v_ model as well (never a holstered copy of it).
     // Before 2.0.4 the lens was never captured: no scope ever rendered.
-    if (!m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass && pBonesToWorldFinal)
+    if (!m_VR->m_ScopeRenderingPass && pBonesToWorldFinal)
     {
         const std::string& lowerScopeModel = lowerModelName;
         if ((drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerScopeModel)) &&
@@ -29474,7 +29207,6 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
             ctx->ClearBuffers(true, false, false);
 
             hkVgui_Paint.fOriginal(ecx, paintMode);
-            m_VR->DrawKillIndicators(ctx, hudTexture);
 
             ctx->OverrideAlphaWriteEnable(false, true);
             ctx->SetRenderTarget(prevTarget);
@@ -29587,81 +29319,50 @@ void Hooks::dTextMsg(void* msgData)
     hkTextMsg.fOriginal(msgData);
 }
 
+// 2.0.13: the ConVar hooks pass every write through (the LocalVScriptConvars
+// write blocker and its tracing are removed: server-replicated values apply).
 void Hooks::dConVarSetValueString(void* ecx, void* edx, const char* value)
 {
-    const bool blocked = ShouldBlockLockedConVarWrite(ecx, value);
-    TraceTrackedConVarWrite(ecx, value, "IConVar::SetValue(string)", _ReturnAddress(), true, blocked);
-    if (blocked)
-        return;
-
     hkConVarSetValueString.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarSetValueFloat(void* ecx, void* edx, float value)
 {
-    char buffer[64] = {};
-    sprintf_s(buffer, "%.9g", static_cast<double>(value));
-    const bool blocked = ShouldBlockLockedConVarWrite(ecx, buffer);
-    TraceTrackedConVarWrite(ecx, buffer, "IConVar::SetValue(float)", _ReturnAddress(), true, blocked);
-    if (blocked)
-        return;
-
     hkConVarSetValueFloat.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarSetValueInt(void* ecx, void* edx, int value)
 {
-    char buffer[32] = {};
-    sprintf_s(buffer, "%d", value);
-    const bool blocked = ShouldBlockLockedConVarWrite(ecx, buffer);
-    TraceTrackedConVarWrite(ecx, buffer, "IConVar::SetValue(int)", _ReturnAddress(), true, blocked);
-    if (blocked)
-        return;
-
     hkConVarSetValueInt.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarPrimarySetValueString(void* ecx, void* edx, const char* value)
 {
-    TraceTrackedConVarWrite(ecx, value, "ConVar::SetValue(string)", _ReturnAddress(), false, false);
     hkConVarPrimarySetValueString.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarPrimarySetValueFloat(void* ecx, void* edx, float value)
 {
-    char buffer[64] = {};
-    sprintf_s(buffer, "%.9g", static_cast<double>(value));
-    TraceTrackedConVarWrite(ecx, buffer, "ConVar::SetValue(float)", _ReturnAddress(), false, false);
     hkConVarPrimarySetValueFloat.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarPrimarySetValueInt(void* ecx, void* edx, int value)
 {
-    char buffer[32] = {};
-    sprintf_s(buffer, "%d", value);
-    TraceTrackedConVarWrite(ecx, buffer, "ConVar::SetValue(int)", _ReturnAddress(), false, false);
     hkConVarPrimarySetValueInt.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarInternalSetValueString(void* ecx, void* edx, const char* value)
 {
-    TraceTrackedConVarWrite(ecx, value, "ConVar::InternalSetValue(string)", _ReturnAddress(), false, false);
     hkConVarInternalSetValueString.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarInternalSetValueFloat(void* ecx, void* edx, float value)
 {
-    char buffer[64] = {};
-    sprintf_s(buffer, "%.9g", static_cast<double>(value));
-    TraceTrackedConVarWrite(ecx, buffer, "ConVar::InternalSetValue(float)", _ReturnAddress(), false, false);
     hkConVarInternalSetValueFloat.fOriginal(ecx, value);
 }
 
 void Hooks::dConVarInternalSetValueInt(void* ecx, void* edx, int value)
 {
-    char buffer[32] = {};
-    sprintf_s(buffer, "%d", value);
-    TraceTrackedConVarWrite(ecx, buffer, "ConVar::InternalSetValue(int)", _ReturnAddress(), false, false);
     hkConVarInternalSetValueInt.fOriginal(ecx, value);
 }
 

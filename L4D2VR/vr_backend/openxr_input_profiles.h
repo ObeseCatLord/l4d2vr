@@ -66,10 +66,6 @@ namespace l4d2vr_openxr_input
     X(InventoryGripLeft, "/actions/main/in/InventoryGripLeft", "inventorygripleft", "Inventory Grip Left", Button) \
     X(InventoryGripRight, "/actions/main/in/InventoryGripRight", "inventorygripright", "Inventory Grip Right", Button) \
     X(InventoryQuickSwitch, "/actions/main/in/InventoryQuickSwitch", "inventoryquickswitch", "Inventory Quick Switch", Button) \
-    X(SpecialInfectedAutoAimToggle, "/actions/main/in/SpecialInfectedAutoAimToggle", "specialinfectedautoaimtoggle", "Special Infected Auto Aim Toggle", Button) \
-    X(SpecialInfectedDodgeToggle, "/actions/main/in/SpecialInfectedDodgeToggle", "specialinfecteddodgetoggle", "Special Infected Dodge Toggle", Button) \
-    X(LedgeGuardToggle, "/actions/main/in/LedgeGuardToggle", "ledgeguardtoggle", "Ledge Guard Toggle", Button) \
-    X(EffectiveAttackRangeAutoFireToggle, "/actions/main/in/EffectiveAttackRangeAutoFireToggle", "effectiveattackrangeautofiretoggle", "Effective Range Auto Fire Toggle", Button) \
     X(SpeechToText, "/actions/main/in/SpeechToText", "speechtotext", "Speech To Text", Button) \
     X(MenuSelect, "/actions/main/in/MenuSelect", "menuselect", "Menu Select", Button) \
     X(MenuBack, "/actions/main/in/MenuBack", "menuback", "Menu Back", Button) \

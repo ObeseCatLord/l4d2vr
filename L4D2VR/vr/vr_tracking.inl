@@ -788,9 +788,11 @@ void VR::UpdateTracking()
         m_ServerHookFallbackPending = true;
         m_ServerHookFallbackForcedNonVRServerMovement = false;
         m_ServerHookFallbackCheckTime = {};
-        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement;
+        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement || ClassicGameplayActive();
     }
     m_WasInGamePrev = inGameNow;
+    // 2.0.13: Physical or Classic for this server (vr_gameplay_mode.inl).
+    UpdateGameplayMode(inGameNow);
     int playerIndex = inGameNow ? m_Game->m_EngineClient->GetLocalPlayer() : -1;
     C_BasePlayer* localPlayer =
         (inGameNow && playerIndex > 0)
@@ -816,7 +818,6 @@ void VR::UpdateTracking()
         m_ResetPositionAfterMountedGunExitPending = false;
         CancelTeleportTargeting();
         ClearTeleportServerTarget();
-        ClearTeleportVisualScout();
         m_HadLocalPlayerPrev = false;
         m_ResetPositionStableFrames.store(0u, std::memory_order_release);
         m_ResetPositionStableEyeZValid = false;
@@ -874,7 +875,7 @@ void VR::UpdateTracking()
         m_ServerHookFallbackPending = false;
         m_ServerHookFallbackForcedNonVRServerMovement = false;
         m_ServerHookFallbackCheckTime = {};
-        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement;
+        m_ForceNonVRServerMovement = m_ConfigForceNonVRServerMovement || ClassicGameplayActive();
     }
     else if (m_ServerHookFallbackPending)
     {
@@ -1018,30 +1019,6 @@ void VR::UpdateTracking()
         m_ResetPositionAfterMountedGunExitPending = true;
     m_UsingMountedGunPrev = usingMountedGunNow;
 
-    // The scout camera is temporary and camera-only. If the real body enters any
-    // state that needs immediate feedback or authoritative camera placement, return
-    // before rendering another detached frame.
-    if (m_TeleportVisualScoutActive)
-    {
-        const bool incapacitated = (*reinterpret_cast<const unsigned char*>(base + kIsIncapacitatedOffset) != 0);
-        const bool hangingFromLedge = (*reinterpret_cast<const unsigned char*>(base + kIsHangingFromLedgeOffset) != 0);
-        const int tongueOwner = *reinterpret_cast<const int*>(base + kTongueOwnerOffset);
-        const bool hangingFromTongue = (*reinterpret_cast<const unsigned char*>(base + 0x1F84) != 0);
-        const int carryAttacker = *reinterpret_cast<const int*>(base + kCarryAttackerOffset);
-        const int pummelAttacker = *reinterpret_cast<const int*>(base + kPummelAttackerOffset);
-        const int pounceAttacker = *reinterpret_cast<const int*>(base + kPounceAttackerOffset);
-        const int jockeyAttacker = *reinterpret_cast<const int*>(base + kJockeyAttackerOffset);
-        const bool controlledBySpecialInfected =
-            hangingFromTongue || handleValid(tongueOwner) || handleValid(carryAttacker) ||
-            handleValid(pummelAttacker) || handleValid(pounceAttacker) || handleValid(jockeyAttacker);
-
-        if (isObserver || obsMode != 0 || incapacitated || hangingFromLedge ||
-            controlledBySpecialInfected || usingMountedGunNow)
-        {
-            ExitTeleportVisualScout();
-        }
-    }
-
     m_Game->m_IsMeleeWeaponActive = viewPlayer->IsMeleeWeaponActive();
 
     // Scope weapon classification (non-firearm can still use scope when front-view 3P forces it).
@@ -1078,7 +1055,6 @@ void VR::UpdateTracking()
                 !isObserver &&
                 obsMode == 0 &&
                 !usingMountedGunNow &&
-                !m_TeleportVisualScoutActive &&
                 localPlayer->m_hGroundEntity != -1 &&
                 m_StairStepCameraSmoothMs > 0 &&
                 std::isfinite(eyeOrigin.z);
@@ -1501,25 +1477,15 @@ void VR::UpdateTracking()
             m_RoomscaleActive = false;
     }
 
-    if (m_TeleportVisualScoutActive)
-    {
-        // Keep the detached scout camera fixed at the chosen world-space anchor.
-        // HMD room motion still applies through m_HmdPosLocalInWorld below.
-        m_RoomscaleActive = true;
-        m_CameraAnchor = m_TeleportVisualScoutCameraAnchor;
-    }
-    else
-    {
-        if (!m_RoomscaleActive)
-            m_CameraAnchor += m_SetupOrigin - m_SetupOriginPrev;
+    if (!m_RoomscaleActive)
+        m_CameraAnchor += m_SetupOrigin - m_SetupOriginPrev;
 
-        m_CameraAnchor.z = m_SetupOrigin.z + m_HeightOffset;
-    }
+    m_CameraAnchor.z = m_SetupOrigin.z + m_HeightOffset;
 
     // A real teleport is queued before this frame's local HMD pose is refreshed. Apply
     // its final XY recenter here so the camera lands exactly on the accepted body origin
     // instead of inheriting a stale forward/sideways roomscale offset.
-    if (!m_TeleportVisualScoutActive && m_TeleportPendingCameraPlanarRecenterValid)
+    if (m_TeleportPendingCameraPlanarRecenterValid)
     {
         if (IsFiniteTeleportVector(m_TeleportPendingCameraPlanarRecenterTarget) &&
             IsFiniteTeleportVector(m_HmdPosLocalInWorld))
@@ -1537,11 +1503,12 @@ void VR::UpdateTracking()
 
     m_HmdPosAbs = m_CameraAnchor - Vector(0, 0, 64) + m_HmdPosLocalInWorld;
 
-    if (!m_TeleportVisualScoutActive && !suppressTeleportCameraClip)
+    if (!suppressTeleportCameraClip)
     {
-        // Check if camera is clipping inside wall. A detached scout camera deliberately
-        // crosses the space between the body and target, so this correction must not run
-        // while scouting.
+        // Keep the camera out of walls: the line from the player's origin to the head
+        // (extended 10 units past it) must be clear, or the camera is pulled back to
+        // the wall. (2.0.13: the detached scout camera that skipped this is removed;
+        // a head moved too far from the body is recentered below.)
         CGameTrace trace;
         Ray_t ray;
         CTraceFilterSkipNPCsAndPlayers tracefilter((IHandleEntity*)localPlayer, 0);
@@ -1560,8 +1527,7 @@ void VR::UpdateTracking()
         }
     }
 
-    // Reset camera if it somehow gets too far. Detached scout view is allowed to
-    // exceed the normal roomscale safety radius until the user presses teleport again.
+    // Reset camera if it somehow gets too far from the body.
     {
         auto isFiniteVector = [](const Vector& value)
             {
@@ -1594,7 +1560,6 @@ void VR::UpdateTracking()
         const bool resetStateCandidate =
             (liveLocalPlayer || stableInEyeObserver) &&
             resetVerticalMovementSafe &&
-            !m_TeleportVisualScoutActive &&
             !IsThirdPersonMapLoadCooldownActive();
 
         uint32_t stableFrames = 0u;
@@ -1624,7 +1589,6 @@ void VR::UpdateTracking()
 
     m_SetupOriginToHMD = m_HmdPosAbs - m_SetupOrigin;
     if (m_AutoRecenterSmooth &&
-        !m_TeleportVisualScoutActive &&
         !suppressTeleportCameraClip &&
         !m_IsThirdPersonCamera &&
         !want1to1DecoupledCamera &&
@@ -1658,7 +1622,7 @@ void VR::UpdateTracking()
     const float hardRecenterDistance = std::max(m_AutoRecenterSoftStartDistance + 1.0f, m_AutoRecenterHardDistance);
     Vector hardRecenterDrift = m_SetupOriginToHMD;
     hardRecenterDrift.z = 0.0f;
-    if (!m_TeleportVisualScoutActive && !suppressTeleportCameraClip && VectorLength(hardRecenterDrift) > hardRecenterDistance)
+    if (!suppressTeleportCameraClip && VectorLength(hardRecenterDrift) > hardRecenterDistance)
         ResetPosition();
     // Observer in-eye: when switching spectated target, re-align anchors once.
     if (m_ResetPositionAfterObserverTargetSwitchPending)
@@ -1915,42 +1879,8 @@ void VR::UpdateTracking()
     if (!m_RightControllerForwardUnforced.IsZero())
         m_LastUnforcedAimDirection = m_RightControllerForwardUnforced;
 
-    const bool shouldForceEvadeAim =
-        m_SpecialInfectedWarningActionEnabled &&
-        m_SpecialInfectedWarningActionStep != SpecialInfectedWarningActionStep::None &&
-        m_SpecialInfectedWarningTargetActive;
-    const bool shouldForceAim = m_SpecialInfectedPreWarningActive || shouldForceEvadeAim;
-    const Vector forcedTarget = shouldForceEvadeAim
-        ? m_SpecialInfectedWarningTarget
-        : m_SpecialInfectedPreWarningTarget;
-
-    if (shouldForceAim)
-    {
-        Vector toTarget = forcedTarget - m_RightControllerPosAbs;
-        if (!toTarget.IsZero())
-        {
-            VectorNormalize(toTarget);
-            const float lerpFactor = m_SpecialInfectedDebug
-                ? std::max(0.0f, m_SpecialInfectedAutoAimLerp)
-                : std::clamp(m_SpecialInfectedAutoAimLerp, 0.0f, 1.0f);
-            if (m_SpecialInfectedAutoAimDirection.IsZero())
-                m_SpecialInfectedAutoAimDirection = toTarget;
-            else
-                m_SpecialInfectedAutoAimDirection += (toTarget - m_SpecialInfectedAutoAimDirection) * lerpFactor;
-
-            if (!m_SpecialInfectedAutoAimDirection.IsZero())
-            {
-                VectorNormalize(m_SpecialInfectedAutoAimDirection);
-                QAngle forcedAngles;
-                QAngle::VectorAngles(m_SpecialInfectedAutoAimDirection, m_HmdUp, forcedAngles);
-                QAngle::AngleVectors(forcedAngles, &m_RightControllerForward, &m_RightControllerRight, &m_RightControllerUp);
-            }
-        }
-    }
-    else
-    {
-        m_SpecialInfectedAutoAimDirection = m_RightControllerForward;
-    }
+    // 2.0.13: the special-infected aim assist (pre-warning / evade aim lock) is removed:
+    // the aim is always where the controller points.
 
     Vector pavlovAimForward{};
     Vector pavlovAimRight{};
@@ -2344,21 +2274,6 @@ void VR::UpdateTracking()
 
     QAngle::VectorAngles(m_RightControllerForward, m_RightControllerUp, m_RightControllerAngAbs);
 
-    if (m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled)
-    {
-        m_RearMirrorCameraPosAbs =
-            m_HmdPosAbs
-            + m_HmdForward * m_RearMirrorCameraOffset.x
-            + m_HmdRight * m_RearMirrorCameraOffset.y
-            + m_HmdUp * m_RearMirrorCameraOffset.z;
-
-        QAngle mirrorAng = m_HmdAngAbs;
-        mirrorAng.y += 180.0f;
-        mirrorAng += m_RearMirrorCameraAngleOffset;
-        NormalizeAndClampViewAngles(mirrorAng);
-        m_RearMirrorCameraAngAbs = mirrorAng;
-    }
-
     // Non-VR servers only understand cmd->viewangles. When ForceNonVRServerMovement is enabled,
     // solve an eye-based aim hit point so rendered aim line and real hit point stay consistent.
     UpdateNonVRAimSolution(localPlayer);
@@ -2654,7 +2569,6 @@ void VR::UpdateTracking()
         lifeState == 0 &&
         obsMode == 0 &&
         !m_RoomscaleActive &&
-        !m_TeleportVisualScoutActive &&
         !m_TeleportPendingCameraPlanarRecenterValid &&
         !m_IsThirdPersonCamera &&
         m_ThirdPersonHoldFrames <= 0 &&

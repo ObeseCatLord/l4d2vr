@@ -13,7 +13,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from . import DEFAULT_REPO, __version__, actions, install, launchopts, settings, shortcut, steam, vrlaunch
+from . import DEFAULT_REPO, __version__, actions, install, launchopts, settings, shortcut, steam, vanilla, vrlaunch
 from .fsutil import InstallerError, user_config_dir
 
 IS_WINDOWS = sys.platform.startswith("win")
@@ -164,6 +164,20 @@ class App:
         row.grid(row=3, column=0, columnspan=2, sticky="w")
         self._button(row, "Launch in VR", lambda: self.run(self._launch), row=0, column=0)
         self._button(row, "Create desktop shortcut", lambda: self.run(self._shortcut), row=0, column=1)
+        vac = ttk.LabelFrame(tab, text="Play without the mod (VAC-safe)")
+        vac.grid(row=6, column=0, columnspan=2, sticky="ew", pady=6)
+        vrow = ttk.Frame(vac)
+        vrow.grid(row=0, column=0, sticky="w")
+        self._button(vrow, "Play without the mod (VAC-safe)", lambda: self.run(self._play_vanilla), row=0, column=0)
+        self._button(vrow, "Restore the mod", lambda: self.run(self._restore_mod), row=0, column=1)
+        ttk.Label(vac, text=vanilla.EXPLANATION + (
+            " Windows: the mod's d3d9.dll and openxr_loader.dll are renamed while you play without it and put "
+            "back by the next 'Launch in VR' (or 'Restore the mod'). If your Steam launch options contain "
+            "-insecure, remove it yourself (Properties > General > Launch options): the installer adds it to "
+            "its own VR launches." if IS_WINDOWS else
+            " Linux: the first time, the Steam launch options get a small wrapper script in front of %command% "
+            "(Steam must be closed once; the old options are backed up)."),
+                  wraplength=640, justify="left").grid(row=1, column=0, sticky="w", **PAD)
         ttk.Label(tab, text="The mod uses OpenXR. Windows: the active OpenXR runtime must support 32-bit games "
                             "(SteamVR 2.17 or newer, Virtual Desktop, Meta Quest Link; not Windows Mixed Reality's "
                             "own runtime). Start it, then press Launch. Linux needs the Proton version and launch "
@@ -321,6 +335,11 @@ class App:
 
     # ------------------------------------------------------------------ actions (worker thread)
     def _startup(self, snap):
+        if IS_WINDOWS:
+            try:
+                vanilla.auto_restore(user_config_dir(), steam.is_game_running, log=self.log)
+            except (InstallerError, OSError) as error:
+                self.log(f"Could not put the mod back yet: {error} (use 'Restore the mod').")
         self._detect(snap, quiet=True)
         try:
             self._check_openxr(snap, quiet=True)
@@ -456,8 +475,10 @@ class App:
             raise InstallerError("Steam is running. Exit Steam completely (Steam > Exit), then press this again "
                                  "- or use Copy and paste the options into the game's Properties yourself.")
         user = self._users(snap)[0]
+        wrapper = vanilla.install_wrapper(user_config_dir(), dry_run=snap["dry_run"])
         change = launchopts.apply_vr_launch_options(user.localconfig, steam_running=False,
-                                                    dry_run=snap["dry_run"], state_dir=user_config_dir())
+                                                    dry_run=snap["dry_run"], state_dir=user_config_dir(),
+                                                    wrapper=wrapper)
         for note in change.notes:
             self.log("Note: " + note)
         self.log(f"Launch options for {user.name or user.account_id}: {change.after}"
@@ -533,8 +554,17 @@ class App:
         vrlaunch.install_xrizer_zip(zip_path, dest, dry_run=snap["dry_run"], log=self.log)
         self.queue.put(("set", ("xrizer_dir", str(dest))))
 
+    def _play_vanilla(self, snap):
+        game = self._game(snap)
+        actions.play_vanilla(game, dry_run=snap["dry_run"], log=self.log)
+
+    def _restore_mod(self, snap):
+        actions.restore_mod_after_vanilla(dry_run=snap["dry_run"], log=self.log)
+
     def _launch(self, snap):
         game = self._game(snap)
+        vanilla.prepare_vr_launch(windows=IS_WINDOWS, state_dir=user_config_dir(), game_running=steam.is_game_running,
+                                  dry_run=snap["dry_run"], log=self.log)
         server = snap["server"].strip() or None
         password = snap["password"] or None
         if snap["route"] == "monado" and not IS_WINDOWS:

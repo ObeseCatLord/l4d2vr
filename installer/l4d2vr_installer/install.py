@@ -61,7 +61,6 @@ SERVER_PRESERVE = ("*l4d2vr_server_config.txt", "cfg/*")
 # player's edited copy and writes the new default next to it as <name>.new.
 CLIENT_USER_TUNABLE = (
     "vr/haptics_config.txt",
-    "vr/local_client_convars.nut",
 )
 NEW_SUFFIX = ".new"
 # OpenVR files of the releases before the OpenXR-only 1.3. When a package no

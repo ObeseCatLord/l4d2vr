@@ -34,6 +34,7 @@ REQUIRED_ENV = (("WINEDLLOVERRIDES", OVERRIDE), ("PROTON_USE_WOW64", "1"))
 REQUIRED_ARGS = ("-dx9", "-insecure")  # -insecure: never VAC with the d3d9.dll proxy
 HARMFUL_ARGS = ("-vulkan",)
 RECOMMENDED = 'WINEDLLOVERRIDES="d3d9=n,b" PROTON_USE_WOW64=1 %command% -dx9 -insecure'
+WRAPPER_NAME = "l4d2vr-steam-wrapper.sh"  # vanilla.WRAPPER_NAME (the VAC-safe launch wrapper)
 
 _ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 _SAFE_VALUE = re.compile(r"^[A-Za-z0-9_./:@%+-]*$")
@@ -289,6 +290,8 @@ def strip_launch_options(existing: str) -> str:
     prefix = []
     for token in _tokens(prefix_raw or ""):
         match = _assignment(token)
+        if token.value.replace("\\", "/").rsplit("/", 1)[-1] == WRAPPER_NAME:
+            continue  # the VAC-safe launch wrapper (vanilla.py)
         if match and match.group(1) == "WINEDLLOVERRIDES":
             rewritten = _rewrite_assignment(token, strip_overrides)
             if rewritten:
@@ -413,9 +416,14 @@ def write_launch_options(localconfig: Path, new_value: str, *, steam_running: bo
 
 
 def apply_vr_launch_options(localconfig: Path, *, steam_running: bool, dry_run: bool = False,
-                            state_dir: Optional[Path] = None) -> LaunchOptionsChange:
+                            state_dir: Optional[Path] = None, wrapper: Optional[Path] = None) -> LaunchOptionsChange:
+    """Add the VR requirements; with ``wrapper`` also the VAC-safe launch
+    wrapper in front of ``%command%`` (installer 1.1.5, vanilla.py)."""
     before = read_launch_options(localconfig)
     merged, notes = merge_launch_options(before)
+    if wrapper is not None:
+        from .vanilla import with_wrapper
+        merged = with_wrapper(merged, wrapper)
     return write_launch_options(localconfig, merged, steam_running=steam_running,
                                 dry_run=dry_run, state_dir=state_dir, notes=tuple(notes))
 

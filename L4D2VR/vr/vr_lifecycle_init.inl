@@ -1290,11 +1290,10 @@ VR::VR(Game* game)
 
     // Gun-mounted scope lens overlay (render-to-texture)
     m_Overlay->CreateOverlay("ScopeOverlayKey", "ScopeOverlay", &m_ScopeHandle);
-    m_Overlay->CreateOverlay("RearMirrorOverlayKey", "RearMirrorOverlay", &m_RearMirrorHandle);
     // Hand HUD overlays (raw textures, controller anchored)
     m_Overlay->CreateOverlay("LeftWristHudOverlayKey", "LeftWristHUD", &m_LeftWristHudHandle);
     m_Overlay->CreateOverlay("RightAmmoHudOverlayKey", "RightAmmoHUD", &m_RightAmmoHudHandle);
-    // Standalone HUD panel for special infected intent sense.
+    // Standalone notice panel (2.0.13: the gameplay mode; was the special-infected intent sense panel).
     m_Overlay->CreateOverlay("SpecialInfectedIntentSenseHudOverlayKey", "SpecialInfectedIntentSenseHUD", &m_SpecialInfectedIntentSenseHudHandle);
 
     m_Overlay->SetOverlayInputMethod(m_MainMenuHandle, vr::VROverlayInputMethod_Mouse);
@@ -1306,13 +1305,11 @@ VR::VR(Game* game)
 
     // Scope overlay is purely visual
     m_Overlay->SetOverlayInputMethod(m_ScopeHandle, vr::VROverlayInputMethod_None);
-    m_Overlay->SetOverlayInputMethod(m_RearMirrorHandle, vr::VROverlayInputMethod_None);
     m_Overlay->SetOverlayInputMethod(m_LeftWristHudHandle, vr::VROverlayInputMethod_None);
     m_Overlay->SetOverlayInputMethod(m_RightAmmoHudHandle, vr::VROverlayInputMethod_None);
     m_Overlay->SetOverlayInputMethod(m_SpecialInfectedIntentSenseHudHandle, vr::VROverlayInputMethod_None);
     // Scope lens uses alpha from the RTT post-process so the overlay is a real circular lens.
     m_Overlay->SetOverlayFlag(m_ScopeHandle, vr::VROverlayFlags_IgnoreTextureAlpha, false);
-    m_Overlay->SetOverlayFlag(m_RearMirrorHandle, vr::VROverlayFlags_IgnoreTextureAlpha, true);
 
 
     m_Overlay->SetOverlayFlag(m_MainMenuHandle, vr::VROverlayFlags_SendVRDiscreteScrollEvents, true);
@@ -1427,10 +1424,6 @@ int VR::SetActionManifest(const char* fileName)
         { "/actions/main/in/InventoryGripLeft", &m_ActionInventoryGripLeft, false },
         { "/actions/main/in/InventoryGripRight", &m_ActionInventoryGripRight, false },
         { "/actions/main/in/InventoryQuickSwitch", &m_ActionInventoryQuickSwitch, false },
-        { "/actions/main/in/SpecialInfectedAutoAimToggle", &m_ActionSpecialInfectedAutoAimToggle, false },
-        { "/actions/main/in/SpecialInfectedDodgeToggle", &m_ActionSpecialInfectedDodgeToggle, false },
-        { "/actions/main/in/LedgeGuardToggle", &m_ActionLedgeGuardToggle, false },
-        { "/actions/main/in/EffectiveAttackRangeAutoFireToggle", &m_ActionEffectiveAttackRangeAutoFireToggle, false },
         { "/actions/main/in/SpeechToText", &m_ActionSpeechToText, false },
         { "/actions/main/in/VoicePushToTalk", &m_ActionVoicePushToTalk, false },
         { "/actions/main/in/MenuSelect", &m_MenuSelect, true },

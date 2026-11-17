@@ -198,6 +198,10 @@ CHANGES = [
     "2.0.12: a shell or magazine request that gets no answer is resent after 0.15 s instead of 0.5 s.",
     "2.0.12: if you ever end up with no hands or no control while alive (nothing in the hands, no hands drawn, input stuck, a reload stuck, a holster draw the game refused), the mod notices within a few seconds, fixes it (draws your sidearm, redeploys the item, resets the reload) and logs which gate was stuck; a draw of an empty gun the game refuses now buzzes twice instead of doing nothing.",
     "2.0.12: a long gun with no rounds left at all (clip and reserve empty) switches to your pistol or melee weapon, and reaching for an empty long gun on your back draws the secondary instead, so you are never left with nothing usable in your hands.",
+    "2.0.13: Classic gameplay mode (GameplayMode=auto|physical|classic, VR Options > Weapons): simple controls like the original L4D2VR (reload, shove, melee, throws and pills on buttons with the game's own auto reload; the game's spread with the dynamic spread crosshair; holsters only select weapons, with the normal draw; no recoil system, no akimbo, no gestures). auto (the default) plays Physical on servers with the L4D2VR plugin and on games you host, Classic everywhere else; the headset shows which, and vrmod_log.txt logs it on every join.",
+    "2.0.13: on a server without the L4D2VR plugin the client sends only the game's own usercmds and commands (no VR encoding, no protocol impulses, no l4d2vr_* commands except the answer to a server's own handshake), so vanilla servers that allow -insecure clients can be joined without installing anything.",
+    "2.0.13: removed in every mode: fire-when-on-target, turbo fire, auto spray-push, fast-melee weapon-switch cancel, auto bunny-hop / air-strafe, LedgeGuard, special-infected dodge, auto evade, aim assist, arrows and warnings, item labels, the rear-view mirror, the teleport scout camera, hit and kill markers and sounds, and the shadow / flashlight / VScript cvar tweaks that skipped the cheat check. The mod no longer writes cheat-protected or server-replicated cvars. Their settings are removed from vr/config.txt at start-up.",
+    "2.0.13: installer 1.1.5: Play without the mod (VAC-safe) starts Left 4 Dead 2 with the mod not loaded and without -insecure, so VAC-secured servers can be joined (Linux: a launch wrapper set up once; Windows: the mod's files are switched off and put back by the next VR launch, Restore the mod or the installer's start). The VR mod itself always needs -insecure and cannot be used on VAC-secured servers.",
 ]
 
 
@@ -291,7 +295,7 @@ def main() -> None:
     # The 32-bit Khronos OpenXR loader (and its licences) next to d3d9.dll.
     for name, path in OPENXR_RUNTIME_FILES.items():
         files[name] = (REPO / path).read_bytes()
-    for name in ("haptics_config.txt", "local_client_convars.nut"):
+    for name in ("haptics_config.txt",):
         files[f"vr/{name}"] = (src / name).read_bytes()
     files["vr/config.sample"] = commented_sample((src / "config.txt").read_text(encoding="utf-8")).encode("utf-8")
     files["vr/version.txt"] = args.version.encode("ascii")

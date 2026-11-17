@@ -88,7 +88,8 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
     }
     const l4d2vr_melee_inertia::Params& params = m_MeleeMotionParams;
     // The chainsaw runs while the trigger is held; it never swing-triggers.
-    m_MeleeMotionSwingEligible = meleeActive && params.motionMelee;
+    // 2.0.13: classic melee is the attack button only (no motion swings).
+    m_MeleeMotionSwingEligible = meleeActive && params.motionMelee && !ClassicGameplayActive();
     {
         // Swing gates for this weapon (config values may change at runtime).
         l4d2vr_gesture::SwingParams swingParams = m_MeleeSwing.GetParams();
@@ -461,6 +462,9 @@ void VR::UpdateMeleeMotion(C_BasePlayer* localPlayer)
             Game::logMsg("[VR][Melee] gun bash ignored: the off hand holds the bolt/slide/pump");
         }
     }
+    // 2.0.13: classic shoves with the button only (no motion shove / gun bash).
+    if (shove && ClassicGameplayActive())
+        shove = false;
     if (shove)
     {
         m_PhysicalShoveHoldUntil = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(

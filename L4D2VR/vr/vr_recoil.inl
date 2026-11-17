@@ -107,6 +107,9 @@ void VR::SendShotgunPatternPreference()
     const int wanted = (m_IsVREnabled && m_SpreadDisabled && m_ShotgunPavlovPattern && !m_ForceNonVRServerMovement) ? 1 : 0;
     if (wanted == m_ShotgunPatternSent)
         return;
+    // 2.0.13: no l4d2vr_* transaction in classic; sent once physical starts.
+    if (!GameplayWirePolicy().gameplayCommands)
+        return;
     char command[64];
     std::snprintf(command, sizeof(command), "%s %d", l4d2vr_shotgun_pattern::kOptInCommand, wanted);
     m_Game->ServerCmd(command, true);

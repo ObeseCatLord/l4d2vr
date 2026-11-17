@@ -461,10 +461,6 @@ void VR::RefreshLeftHandedInputActionSwapMaps(bool force)
         m_ActionInventoryGripLeft,
         m_ActionInventoryGripRight,
         m_ActionInventoryQuickSwitch,
-        m_ActionSpecialInfectedAutoAimToggle,
-        m_ActionSpecialInfectedDodgeToggle,
-        m_ActionLedgeGuardToggle,
-        m_ActionEffectiveAttackRangeAutoFireToggle,
         m_ActionSpeechToText,
         m_ActionActivateVR,
         m_MenuSelect,
@@ -1916,7 +1912,6 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         rightVisible = false;
         if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
             l4d2vr_backend::Overlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
-        UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
         m_LastSpecialInfectedIntentSenseHudVisible = false;
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
         DestroyWorldQuadTextures();
@@ -1936,7 +1931,6 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         rightVisible = false;
         if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
             l4d2vr_backend::Overlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
-        UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
         m_LastSpecialInfectedIntentSenseHudVisible = false;
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
         DestroyWorldQuadTextures();
@@ -1959,7 +1953,6 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
         rightVisible = false;
         if (m_SpecialInfectedIntentSenseHudHandle != vr::k_ulOverlayHandleInvalid)
             l4d2vr_backend::Overlay()->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
-        UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
         m_LastSpecialInfectedIntentSenseHudVisible = false;
         m_LastSpecialInfectedIntentSenseHudUploadTime = {};
         DestroyWorldQuadTextures();
@@ -2012,24 +2005,23 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             L4D2VRSetOverlayCurvature(ov, m_SpecialInfectedIntentSenseHudHandle, 0.0f);
             return true;
         };
-    const bool wantsIntentSenseHudOutput =
-        (m_SpecialInfectedIntentSenseEnabled && m_SpecialInfectedIntentSenseHudEnabled) ||
-        m_DesktopIntentSenseHudWindowEnabled;
-
-    if (wantsIntentSenseHudOutput &&
-        m_Game && m_Game->m_ClientEntityList)
-    {
-        ScanSpecialInfectedEntitiesFromClientList();
-    }
-
+    // 2.0.13: the special-infected "intent sense" panel is gone (it showed
+    // threats the game does not show). Its overlay now carries short L4D2VR
+    // notices: the gameplay mode (Physical / Classic) for a few seconds after
+    // joining a server or when it changes.
     {
         std::vector<SpecialInfectedIntentSenseHudLine> intentLines;
         int intentRevision = 0;
-        if (wantsIntentSenseHudOutput)
         {
-            std::lock_guard<std::mutex> lock(m_SpecialInfectedIntentSenseHudMutex);
-            intentLines = m_SpecialInfectedIntentSenseHudLines;
-            intentRevision = m_SpecialInfectedIntentSenseHudRevision;
+            std::string notice;
+            if (GetGameplayModeNotice(notice))
+            {
+                SpecialInfectedIntentSenseHudLine line;
+                line.text = notice;
+                line.color = { 255, 226, 150 };
+                intentLines.push_back(line);
+                intentRevision = static_cast<int>(std::hash<std::string>{}(notice) & 0x7fffffff);
+            }
         }
 
         const bool wantIntentHud = !intentLines.empty() && ensureIntentSenseHudOverlay();
@@ -2041,7 +2033,6 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 if (l4d2vr_backend::IVrOverlay* ov = l4d2vr_backend::Overlay())
                     ov->HideOverlay(m_SpecialInfectedIntentSenseHudHandle);
             }
-            UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
             m_LastSpecialInfectedIntentSenseHudVisible = false;
             m_LastSpecialInfectedIntentSenseHudUploadTime = {};
         }
@@ -2062,7 +2053,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             FillRect(s, 0, 0, w, h, { 8, 12, 18, 210 });
             DrawCornerBrackets(s, 2, 2, w - 4, h - 4, { 255, 86, 56, 235 });
             DrawRect(s, 7, 7, w - 14, h - 14, { 120, 34, 28, 230 }, 1);
-            DrawTextUtf8OutlinedGdiClippedEx(s, 14, 10, w - 28, "\xE6\x9D\x80\xE6\x84\x8F\xE6\x84\x9F\xE7\x9F\xA5", 18, { 255, 210, 190, 255 }, false);
+            DrawTextUtf8OutlinedGdiClippedEx(s, 14, 10, w - 28, "L4D2VR", 18, { 255, 210, 190, 255 }, false);
 
             const int maxLines = std::clamp(m_SpecialInfectedIntentSenseHudMaxLines, 1, 8);
             const int lineH = 26;
@@ -2129,11 +2120,9 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
                 m_LastSpecialInfectedIntentSenseHudRevisionDrawn = intentRevision;
                 m_LastSpecialInfectedIntentSenseHudUploadTime = intentHudNow;
                 m_LastSpecialInfectedIntentSenseHudVisible = (showErr == vr::VROverlayError_None);
-                UpdateDesktopIntentSenseHudWindow(pixels.data(), w, h, true);
             }
             else
             {
-                UpdateDesktopIntentSenseHudWindow(nullptr, 0, 0, false);
                 DestroyIntentSenseHudTexture();
                 if (textureErr == vr::VROverlayError_InvalidHandle || textureErr == vr::VROverlayError_UnknownOverlay)
                     m_SpecialInfectedIntentSenseHudHandle = vr::k_ulOverlayHandleInvalid;
@@ -3492,107 +3481,6 @@ after_right:
         {
             vr::HmdMatrix34_t rel = buildRel(xR, y, z, ang);
             L4D2VRSetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, parentDev, &rel, __LINE__);
-        }
-    }
-
-    // Mouse mode: hand HUDs are not bound to controllers.
-    // Place them side-by-side under the RearMirrorOverlay, inheriting its pose.
-    if (m_MouseModeEnabled && (leftVisible || rightVisible) && m_RearMirrorHandle != vr::k_ulOverlayHandleInvalid)
-    {
-        auto mul34 = [](const vr::HmdMatrix34_t& a, const vr::HmdMatrix34_t& b) -> vr::HmdMatrix34_t
-            {
-                vr::HmdMatrix34_t out{};
-                for (int r = 0; r < 3; ++r)
-                {
-                    for (int c = 0; c < 3; ++c)
-                        out.m[r][c] = a.m[r][0] * b.m[0][c] + a.m[r][1] * b.m[1][c] + a.m[r][2] * b.m[2][c];
-                    out.m[r][3] = a.m[r][0] * b.m[0][3] + a.m[r][1] * b.m[1][3] + a.m[r][2] * b.m[2][3] + a.m[r][3];
-                }
-                return out;
-            };
-
-        auto translate34 = [](float x, float y, float z) -> vr::HmdMatrix34_t
-            {
-                vr::HmdMatrix34_t t{};
-                t.m[0][0] = 1.0f; t.m[0][1] = 0.0f; t.m[0][2] = 0.0f; t.m[0][3] = x;
-                t.m[1][0] = 0.0f; t.m[1][1] = 1.0f; t.m[1][2] = 0.0f; t.m[1][3] = y;
-                t.m[2][0] = 0.0f; t.m[2][1] = 0.0f; t.m[2][2] = 1.0f; t.m[2][3] = z;
-                return t;
-            };
-
-        auto getWidthMeters = [&](vr::VROverlayHandle_t h, float fallback) -> float
-            {
-                float w = 0.0f;
-                if (l4d2vr_backend::Overlay()->GetOverlayWidthInMeters(h, &w) == vr::VROverlayError_None && w > 0.001f)
-                    return w;
-                return fallback;
-            };
-
-        float mirrorW = 0.0f;
-        if (l4d2vr_backend::Overlay()->GetOverlayWidthInMeters(m_RearMirrorHandle, &mirrorW) != vr::VROverlayError_None || mirrorW <= 0.001f)
-            mirrorW = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
-
-        const float wL = leftVisible ? getWidthMeters(m_LeftWristHudHandle, (std::max)(0.01f, m_LeftWristHudWidthMeters)) : 0.0f;
-        const float wR = rightVisible ? getWidthMeters(m_RightAmmoHudHandle, (std::max)(0.01f, m_RightAmmoHudWidthMeters)) : 0.0f;
-
-        const float gapX = 0.01f;
-        float xL = 0.0f;
-        float xR = 0.0f;
-        if (leftVisible && rightVisible)
-        {
-            // Keep the combined bounding box centered.
-            xL = -(wR + gapX) * 0.5f;
-            xR = +(wL + gapX) * 0.5f;
-        }
-
-        const float lAspect = (m_LeftWristHudTexW > 0) ? ((float)m_LeftWristHudTexH / (float)m_LeftWristHudTexW) : 0.5f;
-        const float rAspect = (m_RightAmmoHudTexW > 0) ? ((float)m_RightAmmoHudTexH / (float)m_RightAmmoHudTexW) : 0.5f;
-        const float hL = wL * lAspect;
-        const float hR = wR * rAspect;
-        const float rowH = (std::max)(hL, hR);
-        const float gapY = 0.01f;
-        const float yRow = -(mirrorW * 0.5f + rowH * 0.5f + gapY);
-
-        vr::VROverlayTransformType parentType{};
-        if (l4d2vr_backend::Overlay()->GetOverlayTransformType(m_RearMirrorHandle, &parentType) != vr::VROverlayError_None)
-            parentType = vr::VROverlayTransform_Absolute;
-
-        if (parentType == vr::VROverlayTransform_Absolute)
-        {
-            vr::ETrackingUniverseOrigin origin{};
-            vr::HmdMatrix34_t originToMirror{};
-            if (l4d2vr_backend::Overlay()->GetOverlayTransformAbsolute(m_RearMirrorHandle, &origin, &originToMirror) == vr::VROverlayError_None)
-            {
-                if (leftVisible)
-                {
-                    const vr::HmdMatrix34_t mat = mul34(originToMirror, translate34(xL, yRow, 0.0f));
-                    L4D2VRSetOverlayTransformAbsolute(m_LeftWristHudHandle, origin, &mat, __LINE__);
-                }
-                if (rightVisible)
-                {
-                    const vr::HmdMatrix34_t mat = mul34(originToMirror, translate34(xR, yRow, 0.0f));
-                    L4D2VRSetOverlayTransformAbsolute(m_RightAmmoHudHandle, origin, &mat, __LINE__);
-                }
-            }
-        }
-        else if (parentType == vr::VROverlayTransform_TrackedDeviceRelative)
-        {
-            vr::TrackedDeviceIndex_t parentDev = vr::k_unTrackedDeviceIndexInvalid;
-            vr::HmdMatrix34_t devToMirror{};
-            if (l4d2vr_backend::Overlay()->GetOverlayTransformTrackedDeviceRelative(m_RearMirrorHandle, &parentDev, &devToMirror) == vr::VROverlayError_None
-                && parentDev != vr::k_unTrackedDeviceIndexInvalid)
-            {
-                if (leftVisible)
-                {
-                    const vr::HmdMatrix34_t mat = mul34(devToMirror, translate34(xL, yRow, 0.0f));
-                    L4D2VRSetOverlayTransformTrackedDeviceRelative(m_LeftWristHudHandle, parentDev, &mat, __LINE__);
-                }
-                if (rightVisible)
-                {
-                    const vr::HmdMatrix34_t mat = mul34(devToMirror, translate34(xR, yRow, 0.0f));
-                    L4D2VRSetOverlayTransformTrackedDeviceRelative(m_RightAmmoHudHandle, parentDev, &mat, __LINE__);
-                }
-            }
         }
     }
 

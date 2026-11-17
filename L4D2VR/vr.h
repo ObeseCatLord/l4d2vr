@@ -51,6 +51,7 @@
 #include "vr_sight_correction.h"
 #include "vr_iron_sights.h"
 #include "vr_server_features.h"
+#include "vr_gameplay_mode.h"
 #include "vr_dropped_mags.h"
 #include "vr_dual_pistols.h"
 #include "vr_dual_reload.h"
@@ -455,7 +456,6 @@ public:
 	// Gun-mounted scope overlay (render-to-texture lens)
 	vr::VROverlayHandle_t m_ScopeHandle = vr::k_ulOverlayHandleInvalid;
 	// Rear mirror overlay (off-hand)
-	vr::VROverlayHandle_t m_RearMirrorHandle = vr::k_ulOverlayHandleInvalid;
 	// Hand HUD overlays (raw, controller-anchored)
 	vr::VROverlayHandle_t m_LeftWristHudHandle = vr::k_ulOverlayHandleInvalid;
 	vr::VROverlayHandle_t m_RightAmmoHudHandle = vr::k_ulOverlayHandleInvalid;
@@ -1316,9 +1316,6 @@ public:
 		std::string source;
 	};
 	bool m_EffectiveAttackRangeIndicatorEnabled = true;
-	bool m_EffectiveAttackRangeAutoFireEnabled = false;
-	bool m_EffectiveAttackRangeAutoFireActive = false;
-	bool m_EffectiveAttackRangeAutoFirePrevAttackDown = false;
 	bool m_AimLineEffectiveAttackRangeActive = false;
 	std::chrono::steady_clock::time_point m_AimLineEffectiveAttackRangeHoldUntil{};
 	bool m_AimLineEffectiveAttackRangeCacheValid = false;
@@ -1345,7 +1342,6 @@ public:
 	float m_EffectiveAttackRangeCacheDirectionDot = 0.9990f;
 	float m_EffectiveAttackRangeMeleeDistance = 70.0f;
 	float m_EffectiveAttackRangeMeleeFanAngle = 90.0f;
-	float m_EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds = 0.60f;
 	float m_EffectiveAttackRangeHitPointTolerance = 8.0f;
 	float m_EffectiveAttackRangeHitPointSpreadScale = 0.50f;
 	float m_EffectiveAttackRangeHitPointMaxTolerance = 24.0f;
@@ -1483,6 +1479,44 @@ public:
     {
         return (m_ServerFeatureMask.load(std::memory_order_acquire) & bit) == bit && bit != 0u;
     }
+    // 2.0.13 gameplay mode (vr_gameplay_mode.h): GameplayMode=auto|physical|classic.
+    // PhysicalGameplayActive() is the one gate for every physical subsystem;
+    // Classic applies the config overlay below (ApplyGameplayModeOverrides) and
+    // keeps the wire stock (GameplayWirePolicy).
+    l4d2vr_gameplay_mode::Config m_GameplayModeConfig = l4d2vr_gameplay_mode::Config::Auto;
+    std::atomic<uint8_t> m_GameplayModeEffective{ static_cast<uint8_t>(l4d2vr_gameplay_mode::Effective::PendingClassic) };
+    l4d2vr_gameplay_mode::Reason m_GameplayModeReason = l4d2vr_gameplay_mode::Reason::NotInGame;
+    std::atomic<bool> m_ListenHostActive{ false };          // this process ran a server command this session
+    std::atomic<uint32_t> m_GameplayModeGeneration{ 0u };   // bumped on every change (CreateMove resets its state)
+    std::atomic<uint32_t> m_StockWireGateHits{ 0u };        // the final usercmd/command gate had to act (should stay 0)
+    uint64_t m_GameplayModeJoinMs = 0u;
+    uint64_t m_GameplayModeNoticeUntilMs = 0u;
+    std::string m_GameplayModeNoticeText;
+    mutable std::mutex m_GameplayModeNoticeMutex;
+    static constexpr uint64_t kGameplayModeAckGraceMs = 4000u;
+    static constexpr uint64_t kGameplayModeNoticeMs = 6000u;
+    bool m_ClassicOverridesApplied = false;
+    l4d2vr_gameplay_mode::Effective GameplayModeEffective() const
+    {
+        return static_cast<l4d2vr_gameplay_mode::Effective>(m_GameplayModeEffective.load(std::memory_order_acquire));
+    }
+    bool PhysicalGameplayActive() const
+    {
+        return GameplayModeEffective() == l4d2vr_gameplay_mode::Effective::Physical;
+    }
+    bool ClassicGameplayActive() const
+    {
+        return l4d2vr_gameplay_mode::ClassicLike(GameplayModeEffective());
+    }
+    l4d2vr_gameplay_mode::WirePolicy GameplayWirePolicy() const;
+    // UpdateTracking: resolve the mode, log and announce changes, reset the
+    // physical state when classic starts.
+    void UpdateGameplayMode(bool inGame);
+    // Classic: the physical options read as off (the parsed values are kept and
+    // come back with Physical). Re-applied after every config parse.
+    void ApplyGameplayModeOverrides(bool classic);
+    void ResetPhysicalStateForClassic();
+    bool GetGameplayModeNotice(std::string& text) const;
 	bool m_MagazineReleaseButtonRequired = true;
 	bool m_MagazineInteractionAutoEjectWhenEmpty = false;
 	bool m_MagazineEmptyGlowEnabled = true;
@@ -2026,7 +2060,6 @@ public:
 		Texture_NekoPostSmallInput,
 		Texture_HUD,
 		Texture_Scope,
-		Texture_RearMirror,
 		Texture_DesktopMirror,
 		Texture_Blank
 	};
@@ -2039,7 +2072,6 @@ public:
 	ITexture* m_NekoPostSmallInputTexture = nullptr;
 	ITexture* m_HUDTexture = nullptr;
 	ITexture* m_ScopeTexture = nullptr;
-	ITexture* m_RearMirrorTexture = nullptr;
 	ITexture* m_DesktopMirrorTexture = nullptr;
 	ITexture* m_BlankTexture = nullptr;
 
@@ -2064,7 +2096,6 @@ public:
 	uint32_t m_D9ScopeLensScratchW = 0;
 	uint32_t m_D9ScopeLensScratchH = 0;
 	uint32_t m_D9ScopeLensScratchFormat = 0;
-	IDirect3DSurface9* m_D9RearMirrorSurface = nullptr;
 	IDirect3DSurface9* m_D9DesktopMirrorSurface = nullptr;
 	IDirect3DSurface9* m_D9BlankSurface = nullptr;
 
@@ -2074,16 +2105,12 @@ public:
 	SharedTextureHolder m_VKHUD;
 	SharedTextureHolder m_VKScope;
 	SharedTextureHolder m_VKScopeLens;
-	SharedTextureHolder m_VKRearMirror;
 	SharedTextureHolder m_VKBlankTexture;
 	bool m_BackBufferTextureValid = false;
 
 	// Protects VR texture lifecycle and SteamVR texture submissions when render/update threads overlap.
 	mutable TextureStateMutex m_TextureMutex;
 
-	// If enabled, scope / rear-mirror render-target textures are created only when the feature is enabled.
-	// This can save large chunks of 32-bit VAS when ScopeRTTSize/RearMirrorRTTSize are high.
-	bool m_LazyScopeRearMirrorRTT = true;
 	// Debug: log Virtual Address Space (VAS) stats at key allocation points.
 	bool m_DebugVASLog = false;
 
@@ -2216,39 +2243,6 @@ public:
 
 	bool m_PressedTurn = false;
 	bool m_PushingThumbstick = false;
-	bool m_AutoBunnyHop = false;
-	bool m_AutoAirStrafe = false;
-	bool m_AutoAirStrafeLandingSpeedPreserve = true;
-	float m_AutoAirStrafeMaxGainPerHop = 0.0f;
-	float m_AutoAirStrafeTargetSpeed = 450.0f;
-	float m_AutoAirStrafeSpeedProjection = 0.0f;
-	float m_AutoAirStrafeMaxTurnBrakeProjection = 2.0f;
-	float m_AutoAirStrafeTurnResponsiveness = 0.25f;
-	bool m_AutoAirStrafeFlip = false;
-	bool m_AutoAirStrafeDebugLog = false;
-	float m_AutoAirStrafeDebugLogHz = 4.0f;
-	bool m_AutoAirStrafeDebugWasAirborne = false;
-	float m_AutoAirStrafeDebugAirStartSpeed = 0.0f;
-	float m_AutoAirStrafeDebugAirPeakSpeed = 0.0f;
-	float m_AutoAirStrafeDebugLastSpeed = 0.0f;
-	int m_AutoAirStrafeDebugAirTicks = 0;
-	int m_AutoAirStrafeDebugActiveTicks = 0;
-	std::chrono::steady_clock::time_point m_AutoAirStrafeDebugLastLog{};
-	bool m_AutoAirStrafeDebugHavePrevSpeed = false;
-	int m_AutoAirStrafeDebugPrevCmd = 0;
-	float m_AutoAirStrafeDebugPrevSpeed = 0.0f;
-	float m_AutoAirStrafeDebugPrevVx = 0.0f;
-	float m_AutoAirStrafeDebugPrevVy = 0.0f;
-	float m_AutoAirStrafeDebugPrevYaw = 0.0f;
-	bool m_AutoAirStrafeDebugPrevGround = false;
-	bool m_LedgeGuardEnabled = true;
-	float m_LedgeGuardProbeDistance = 36.0f;
-	float m_LedgeGuardProbeHeight = 18.0f;
-	float m_LedgeGuardDropDistance = 96.0f;
-	float m_LedgeGuardMinMoveSpeed = 1.0f;
-	bool m_LedgeGuardDebugLog = false;
-	float m_LedgeGuardDebugLogHz = 2.0f;
-	std::chrono::steady_clock::time_point m_LedgeGuardDebugLastLog{};
 	// Any locomotion (keyboard WASD, thumbstick, etc.) detected in the current CreateMove.
 	// Used to avoid conflicts with 1:1 roomscale movement/camera decoupling.
 	bool m_LocomotionActive = false;
@@ -2356,10 +2350,6 @@ public:
 	vr::VRActionHandle_t m_ActionInventoryGripLeft = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionInventoryGripRight = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionInventoryQuickSwitch = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpecialInfectedAutoAimToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpecialInfectedDodgeToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionLedgeGuardToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionEffectiveAttackRangeAutoFireToggle = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionSpeechToText = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionVoicePushToTalk = vr::k_ulInvalidActionHandle;   // Opus voice push-to-talk button
 	vr::VRActionHandle_t m_ActionActivateVR = vr::k_ulInvalidActionHandle;
@@ -3528,23 +3518,6 @@ public:
 	int m_LastSpecialInfectedIntentSenseHudRevisionDrawn = 0;
 	std::chrono::steady_clock::time_point m_LastSpecialInfectedIntentSenseHudUploadTime{};
 
-	// Standalone desktop companion windows. They mirror selected plugin HUD surfaces to
-	// normal desktop windows instead of drawing them into the game backbuffer.
-	HWND m_DesktopRearMirrorWindow = nullptr;
-	HWND m_DesktopIntentSenseHudWindow = nullptr;
-	IDirect3DSurface9* m_D9DesktopCompanionRearMirrorReadback = nullptr;
-	std::mutex m_DesktopCompanionHudMutex{};
-	std::vector<uint8_t> m_DesktopCompanionRearMirrorBgra{};
-	std::vector<uint8_t> m_DesktopCompanionIntentHudBgra{};
-	int m_DesktopCompanionRearMirrorW = 0;
-	int m_DesktopCompanionRearMirrorH = 0;
-	int m_DesktopCompanionIntentHudW = 0;
-	int m_DesktopCompanionIntentHudH = 0;
-	bool m_DesktopRearMirrorWindowEnabled = false;
-	bool m_DesktopIntentSenseHudWindowEnabled = false;
-	bool m_DesktopRearMirrorWindowShown = false;
-	bool m_DesktopIntentSenseHudWindowShown = false;
-	std::chrono::steady_clock::time_point m_LastDesktopCompanionRearMirrorCopyTime{};
 
 	std::vector<uint8_t> m_RightAmmoHudBgCache{};
 	int m_RightAmmoHudBgCacheW = 0;
@@ -4123,72 +4096,6 @@ public:
 	bool m_MenuFpsMaxSent = false;
 	int  m_MenuFpsMaxLastHz = 0;
 
-	struct ShadowControlEntityDefaults
-	{
-		bool disableShadows = false;
-		float maxDist = 0.0f;
-		bool enableLocalLightShadows = false;
-	};
-
-	struct EnvProjectedTextureEntityDefaults
-	{
-		bool enableShadows = true;
-		int shadowQuality = 0;
-	};
-
-	// Shadow controls discovered from L4D2's client-side shadow manager / flashlight paths.
-	// We stage config changes here and apply them on the main update thread via VEngineCvar007.
-	bool m_ShadowTweaksEnabled = false;
-	int m_ShadowCvarShadows = 1;
-	int m_ShadowCvarRenderToTexture = 0;
-	int m_ShadowCvarFlashlightDepthTexture = 0;
-	int m_ShadowCvarFlashlightDepthRes = 256;
-	int m_ShadowCvarHalfUpdateRate = 1;
-	int m_ShadowCvarMaxRendered = 0;
-	float m_ShadowCvarMaxRenderableDist = 0.0f;
-	int m_ShadowCvarFlashlightDetailProps = 0;
-	int m_ShadowCvarMobSimpleShadows = 1;
-	int m_ShadowCvarWorldLightShadows = 1;
-	int m_ShadowCvarFlashlightModels = 1;
-	int m_ShadowCvarShadowsOnRenderables = 1;
-	int m_ShadowCvarFlashlightRenderModels = 1;
-	float m_ShadowCvarPlayerShadowDist = 0.0f;
-	int m_ShadowCvarInfectedShadows = 1;
-	float m_ShadowCvarNbShadowBlobbyDist = 493.820007f;
-	float m_ShadowCvarNbShadowCullDist = 500.584991f;
-	int m_ShadowCvarFlashlightInfectedShadows = 1;
-	bool m_ShadowTweaksApplied = false;
-	bool m_ShadowOriginalsCaptured = false;
-	int m_ShadowOrigShadows = 1;
-	int m_ShadowOrigRenderToTexture = 1;
-	int m_ShadowOrigFlashlightDepthTexture = 1;
-	int m_ShadowOrigFlashlightDepthRes = 1024;
-	int m_ShadowOrigHalfUpdateRate = 0;
-	int m_ShadowOrigMaxRendered = 32;
-	float m_ShadowOrigMaxRenderableDist = 3000.0f;
-	int m_ShadowOrigFlashlightDetailProps = 0;
-	int m_ShadowOrigMobSimpleShadows = 0;
-	int m_ShadowOrigWorldLightShadows = 1;
-	int m_ShadowOrigFlashlightModels = 1;
-	int m_ShadowOrigShadowsOnRenderables = 1;
-	int m_ShadowOrigFlashlightRenderModels = 1;
-	float m_ShadowOrigPlayerShadowDist = 3000.0f;
-	int m_ShadowOrigInfectedShadows = 1;
-	float m_ShadowOrigNbShadowBlobbyDist = 3000.0f;
-	float m_ShadowOrigNbShadowCullDist = 3000.0f;
-	int m_ShadowOrigFlashlightInfectedShadows = 1;
-	bool m_ShadowEntityTweaksEnabled = false;
-	bool m_ShadowEntityDisableShadows = false;
-	float m_ShadowEntityMaxDist = 1200.0f;
-	bool m_ShadowEntityLocalLightShadows = false;
-	bool m_ShadowProjectedTextureEnableShadows = true;
-	int m_ShadowProjectedTextureQuality = 0;
-	bool m_ShadowEntityOffsetsLogged = false;
-	bool m_ShadowEntityOverridesApplied = false;
-	std::chrono::steady_clock::time_point m_ShadowEntityLastRefreshTime{};
-	std::unordered_map<int, ShadowControlEntityDefaults> m_ShadowControlEntityDefaults;
-	std::unordered_map<int, EnvProjectedTextureEntityDefaults> m_EnvProjectedTextureEntityDefaults;
-	std::atomic<bool> m_ShadowSettingsDirty{ true };
 
 	// Desktop-window mirror. This copies one VR eye into the implicit D3D9 swapchain
 	// backbuffer before Present(), so the normal desktop game window can show a live
@@ -4215,7 +4122,6 @@ public:
 	bool m_DesktopMirrorCleanRenderingPass = false;
 
 
-	bool m_FlashlightEnhancementEnabled = false;
 	bool m_FlashlightFollowHmd = true;
 	bool m_FlashlightFollowHmdForFirearms = false;
     float m_FlashlightHmdForwardOffsetMeters = 0.18f;
@@ -4223,42 +4129,6 @@ public:
     l4d2vr_flashlight::Pose m_HmdFlashlightPose{};
     void UpdateHmdFlashlightPose(C_BasePlayer* player);
     bool ReadHmdFlashlightPose(uintptr_t owner, l4d2vr_flashlight::Pose& pose) const;
-	bool m_FlashlightEnhancementApplied = false;
-	bool m_FlashlightEnhancementOriginalsCaptured = false;
-	float m_FlashlightEnhancement3rdPersonRange = 300.0f;
-	float m_FlashlightEnhancementBrightness = 0.5f;
-	float m_FlashlightEnhancementFov = 80.0f;
-	float m_FlashlightEnhancementOrig3rdPersonRange = 60.0f;
-	float m_FlashlightEnhancementOrigBrightness = 0.25f;
-	float m_FlashlightEnhancementOrigFov = 53.0f;
-	int m_FlashlightEnhancementOrig3rdPersonRangeFlags = -1;
-	int m_FlashlightEnhancementOrigBrightnessFlags = -1;
-	int m_FlashlightEnhancementOrigFovFlags = -1;
-	std::atomic<bool> m_FlashlightEnhancementSettingsDirty{ true };
-	struct LocalVScriptConvarEntry
-	{
-		std::string name;
-		std::string value;
-		std::string originalValue;
-		int flags = 0;
-		bool lockProtected = false;
-	};
-	bool m_LocalVScriptConvarsEnabled = false;
-	bool m_LocalVScriptConvarsLogEnabled = false;
-	bool m_LocalVScriptConvarsBlockExternalWrites = true;
-	std::string m_LocalVScriptConvarsPath = "VR\\local_client_convars.nut";
-	std::vector<LocalVScriptConvarEntry> m_LocalVScriptConvars{};
-	std::unordered_set<std::string> m_ShadowProtectedConvars{};
-	std::unordered_set<std::string> m_FlashlightEnhancementProtectedConvars{};
-	bool m_LocalVScriptConvarsApplied = false;
-	std::atomic<bool> m_LocalVScriptConvarsDirty{ true };
-	float m_LocalVScriptConvarsMapAuditDelaySeconds = 1.0f;
-	bool m_LocalVScriptConvarsMapAuditPending = false;
-	std::chrono::steady_clock::time_point m_LocalVScriptConvarsMapAuditDueTime{};
-	bool m_LocalVScriptConvarsHadLocalPlayerPrev = false;
-	float m_LocalVScriptConvarsBlockedWriteLogHz = 1.0f;
-	std::unordered_map<std::string, std::chrono::steady_clock::time_point> m_LocalVScriptConvarBlockedWriteLastLog{};
-	mutable std::mutex m_LocalVScriptConvarLockMutex;
 	bool m_AutoFlashlightEnabled = false;
 	float m_AutoFlashlightDarkThreshold = 8.0f;
 	float m_AutoFlashlightBrightThreshold = 8.0f;
@@ -4328,13 +4198,10 @@ public:
 	// ordinary CUserCmd movement when validation rejects the destination.
 	static constexpr int TELEPORT_ARC_SEGMENTS = 96;
 	static constexpr uint32_t TELEPORT_VIEWMODEL_SUPPRESS_MS = 75u;
-	// Config: TeleportMaxDistanceMeters. Shared by real teleport and camera-only scouting.
-	// Keep preview, client validation and server validation on the same runtime value.
+	// Config: TeleportMaxDistanceMeters. Keep preview, client validation and
+	// server validation on the same runtime value. (2.0.13: the camera-only
+	// scout mode is gone.)
 	float m_TeleportMaxDistanceMeters = 20.0f;
-	// Config: TeleportVisualScoutOnNonVRServerEnabled. Disabled by default.
-	// Only when enabled may a server without the VR SetOrigin path fall back to
-	// the detached camera-only scout mode. Real teleport behavior is unchanged.
-	bool m_TeleportVisualScoutOnNonVRServerEnabled = false;
 	std::array<Vector, TELEPORT_ARC_SEGMENTS + 1> m_TeleportArcPoints{};
 	int m_TeleportArcPointCount = 0;
 	bool m_TeleportTargetingActive = false;
@@ -4342,7 +4209,6 @@ public:
 	bool m_TeleportTargetValid = false;
 	// True when the server-side SetOrigin path is unavailable. This preview uses
 	// a collision-free controller ray; releasing teleport enters a camera-only scout view.
-	bool m_TeleportTargetVisualScoutOnly = false;
 	Vector m_TeleportTargetWorld = {};
 	Vector m_TeleportMarkerWorld = {};
 	float m_TeleportFacingYawOffset = 0.0f;
@@ -4368,12 +4234,6 @@ public:
 	// Remote-server fallback: the rendered camera may scout without moving the
 	// authoritative player entity. Teleport may be used repeatedly while detached;
 	// a fresh Use press exits scouting and returns to the real body position.
-	std::atomic<bool> m_TeleportVisualScoutActive{ false };
-	bool m_TeleportVisualScoutUseExitArmed = false;
-	Vector m_TeleportVisualScoutCameraAnchor = {};
-	float m_TeleportVisualScoutReturnRotationOffset = 0.0f;
-	QAngle m_TeleportVisualScoutBodyViewAngles = {};
-	bool m_TeleportVisualScoutBodyViewAnglesValid = false;
 
 	// Debug logging for 1:1 roomscale cmd movement.
 	bool m_Roomscale1To1DebugLog = false;
@@ -4995,29 +4855,6 @@ public:
 	// Latch suppression while attack is held (prevents flicker causing intermittent firing).
 	bool m_FriendlyFireGuardLatched = false;
 
-	// Auto-repeat semi-auto / single-shot guns while holding IN_ATTACK (client-side input pulse).
-	// Config: AutoRepeatSemiAutoFire (true/false)
-	//         AutoRepeatSemiAutoFireHz (float, pulses per second; 0 disables)
-	bool m_AutoRepeatSemiAutoFire = false;
-	float m_AutoRepeatSemiAutoFireHz = 12.0f;
-	bool m_AutoRepeatHoldPrev = false;
-	std::chrono::steady_clock::time_point m_AutoRepeatNextPulse{};
-	// Pump/chrome shotgun + AWP/scout spray-push while auto-repeat is active.
-	// Config:
-	//   AutoRepeatSprayPushEnabled
-	//   AutoRepeatSprayPushDelayTicks
-	//   AutoRepeatSprayPushHoldTicks
-	bool m_AutoRepeatSprayPushEnabled = false;
-	int m_AutoRepeatSprayPushDelayTicks = 0;
-	int m_AutoRepeatSprayPushHoldTicks = 1;
-
-	// Auto fast-melee (client-side hold-to-pulse + optional weapon-switch cancel).
-	// Config:
-	//   AutoFastMelee
-	//   AutoFastMeleeUseWeaponSwitch
-	bool m_AutoFastMelee = false;
-	bool m_AutoFastMeleeUseWeaponSwitch = true;
-
 	// Auto ResetPosition after a level finishes loading.
 	// Config: AutoResetPositionAfterLoadSeconds (0 disables)
 	float m_AutoResetPositionAfterLoadSeconds = 5.0f;
@@ -5379,59 +5216,7 @@ public:
 	void   ToggleMouseModeScope();
 	void   UpdateScopeAimLineState();
 
-	// ----------------------------
-	// Rear mirror (off-hand)
-	// ----------------------------
-	bool  m_RearMirrorEnabled = false;
-	// If enabled, the rear mirror overlay/RTT stays hidden most of the time,
-	// and only pops up briefly when a special infected is detected behind you.
-	bool  m_RearMirrorShowOnlyOnSpecialWarning = false;
-	// Seconds to keep the mirror visible after a special infected warning.
-	float m_RearMirrorSpecialShowHoldSeconds = 0.50f;
-	std::chrono::steady_clock::time_point m_LastRearMirrorAlertTime{};
-	int   m_RearMirrorRTTSize = 512;
-	float m_RearMirrorRTTMaxHz = 45.0f;
-	std::chrono::steady_clock::time_point m_LastRearMirrorRTTRenderTime{};
-	float m_RearMirrorFov = 85.0f;
-	float m_RearMirrorZNear = 6.0f;
-
-	Vector m_RearMirrorCameraOffset = { 0.0f, 0.0f, 0.0f };
-	QAngle m_RearMirrorCameraAngleOffset = { 0.0f, 0.0f, 0.0f };
-
-	float  m_RearMirrorOverlayWidthMeters = 0.10f;
-	float  m_RearMirrorOverlayXOffset = -0.01f;
-	float  m_RearMirrorOverlayYOffset = 0.02f;
-	float  m_RearMirrorOverlayZOffset = 0.08f;
-	QAngle m_RearMirrorOverlayAngleOffset = { 0.0f, 180.0f, 0.0f };
-	float  m_RearMirrorAlpha = 1.0f;
-
-	// If true, mirror the rear-mirror texture horizontally (left/right).
-	bool  m_RearMirrorFlipHorizontal = false;
-
-	// When the aim line/ray intersects the rear-mirror overlay in view, hide the mirror to avoid blocking aim.
-	bool  m_RearMirrorHideWhenAimLineHits = true;
-	float m_RearMirrorAimLineHideHoldSeconds = 0.08f;
-	std::chrono::steady_clock::time_point m_RearMirrorAimLineHideUntil{};
-
-	// Rear mirror hint: when special-infected arrows are visible in the mirror pass,
-	// temporarily enlarge the rear-mirror overlay (2x width).
-	// Distance is in Source units (same as SpecialInfected* distances). <= 0 disables this hint.
-	float  m_RearMirrorSpecialWarningDistance = 180.0f;
-	float  m_RearMirrorSpecialEnlargeHoldSeconds = 0.35f;
 	bool   m_ScopeRenderingPass = false;
-	bool   m_RearMirrorRenderingPass = false;
-	bool   m_RearMirrorSawSpecialThisPass = false;	// set from DrawModelExecute during mirror RTT pass
-	bool   m_RearMirrorSpecialEnlargeActive = false;
-	std::chrono::steady_clock::time_point m_LastRearMirrorSpecialSeenTime{};
-
-	Vector m_RearMirrorCameraPosAbs = { 0.0f, 0.0f, 0.0f };
-	QAngle m_RearMirrorCameraAngAbs = { 0.0f, 0.0f, 0.0f };
-
-	Vector GetRearMirrorCameraAbsPos() const { return m_RearMirrorCameraPosAbs; }
-	QAngle GetRearMirrorCameraAbsAngle() const { return m_RearMirrorCameraAngAbs; }
-	bool   ShouldRenderRearMirror() const;
-	bool   ShouldUpdateRearMirrorRTT();
-	void   NotifyRearMirrorSpecialWarning();
 
 	VR();
 	VR(Game* game);
@@ -5439,21 +5224,7 @@ public:
 	int SetActionManifest(const char* fileName);
 	void InstallApplicationManifest(const char* fileName);
 	void Update();
-	void ApplyShadowSettingsIfNeeded(bool forceApply = false);
-	void ApplyFlashlightEnhancementIfNeeded();
-	void ApplyLocalVScriptConvarsIfNeeded();
 	void ApplyVrRecommendedVideoSettingsIfNeeded(const char* reason);
-	void AuditLocalVScriptConvarsCurrentValues(const char* reason);
-	bool TryGetTrackedProtectedConvarValue(const char* name, std::string& outValue) const;
-	void CaptureFlashlightEnhancementDefaults();
-	void RestoreFlashlightEnhancementDefaults();
-	void RestoreLocalVScriptConvars();
-	bool ShouldBlockExternalProtectedConvarWrite(const char* name, const char* requestedValue);
-	void CaptureShadowCvarDefaults();
-	void RestoreShadowCvarDefaults();
-	void ApplyShadowEntityOverrides(bool forceRefresh);
-	void RestoreShadowEntityDefaults();
-	void ResetShadowEntityOverrideTracking();
 	void UpdateAutoMatQueueMode();
 	void ApplyVrVoiceDefaultsOnce();
 	void ReleaseVRRenderTargetsForDeviceReset();
@@ -5632,7 +5403,6 @@ public:
 	void MarkQueuedHudFresh(uint64_t holdMs = 300);
 	void ClearQueuedHudFresh();
 	bool IsQueuedHudFresh() const;
-	void UpdateRearMirrorOverlayTransform();
 	void UpdateScopeOverlayTransform();
 	void UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBinds = nullptr);
 	void DestroyHandHudWorldQuadTextures();
@@ -5806,13 +5576,9 @@ public:
 	void UpdateAimTeammateHudTarget(C_BasePlayer* localPlayer, const Vector& start, const Vector& end, bool aimLineActive);
 	bool GetAimTeammateHudInfo(int& outPlayerIndex, int& outPercent, char* outName, size_t outNameSize);
 	int GetIncapMaxHealth() const;
-	void BeginPredictedHitFeedbackShot(int commandNumber = 0);
-	void RegisterPotentialKillSoundHit(const Vector& start, const QAngle& angles);
 	void UpdateMeleeHitHaptics();
 	void EnsureMeleeHitHapticsEventListener();
 	void HandleMeleeHitHapticsGameEvent(IGameEvent* event);
-	void UpdateKillSoundFeedback();
-	void EnsureKillSoundEventListener();
 	// End-of-chapter / intermission screens: show the HUD overlay without a gesture.
 	bool m_IntermissionHudEnabled = true;
 	std::atomic<uint64_t> m_IntermissionHudUntilMs{ 0 };
@@ -5825,7 +5591,6 @@ public:
 	{
 		return m_IntermissionHudEnabled && GetTickCount64() < m_IntermissionHudUntilMs.load(std::memory_order_acquire);
 	}
-	void HandleKillSoundGameEvent(IGameEvent* event);
 	void EnsureDamageFeedbackEventListener();
 	void HandleDamageFeedbackGameEvent(IGameEvent* event);
 	void UpdateDamageFeedback();
@@ -5836,23 +5601,12 @@ public:
 	float GetControlledDamageDirectionalBiasScale(ControlledDamageState state) const;
 	void TriggerImpactHapticsBothHands(float amplitude, float frequency, float durationSeconds, int priority = 1);
 	void TriggerDirectionalDamageHaptics(float amplitude, float frequency, float durationSeconds, float rightBias, int priority = 1);
-	void QueuePendingKillSoundEvent(std::uintptr_t entityTag, bool headshot);
-	bool ConsumePendingKillSoundEvent(std::chrono::steady_clock::time_point now, bool& outHeadshot, std::uintptr_t& outEntityTag);
 	bool ReadLocalKillCounters(C_BasePlayer* localPlayer, int& outCommon, int& outSpecial);
 	bool ReadLocalKillCounters(C_BasePlayer* localPlayer, int& outCommon, int& outSpecial, char* outSource);
 	bool ReadLocalHeadshotCounter(C_BasePlayer* localPlayer, int& outHeadshots) const;
-	bool IsKillSoundTargetEntity(const C_BaseEntity* entity) const;
-	bool ConsumePendingKillSoundHit(std::uintptr_t preferredEntityTag, std::chrono::steady_clock::time_point now, Vector* outImpactPos = nullptr);
-	bool FindPendingKillSoundHit(std::uintptr_t preferredEntityTag, std::chrono::steady_clock::time_point now, Vector* outImpactPos = nullptr, uint32_t preferredShotSerial = 0);
-	void PlayHitSound(const Vector* worldPos = nullptr);
-	void PlayKillSound(bool headshot, const Vector* worldPos = nullptr);
 	bool TryPlayKillSoundSpec(const std::string& spec, float baseVolume = 1.0f, const Vector* worldPos = nullptr, bool preferLoadedPathReuse = true);
 	bool TryPlayGameSoundFileLocal(const std::string& soundPath, float baseVolume = 1.0f, const Vector* worldPos = nullptr);
-	void QueueHitSoundPlayback(const Vector* worldPos = nullptr, uint32_t shotSerial = 0, std::uintptr_t entityTag = 0);
-	void FlushPendingHitSound(std::chrono::steady_clock::time_point now);
 	void ComputeFeedbackSoundStereoVolumes(const Vector* worldPos, float baseVolume, int& outLeftVolume, int& outRightVolume) const;
-	void SyncVrmodFeedbackGameSounds() const;
-	void EnsureFeedbackSoundWarmup();
 	void EnsureFeedbackSoundWorkerThread();
 	bool EnqueueFeedbackSoundPlayback(const std::string& resolvedPath, int leftVolume, int rightVolume, bool preferLoadedPathReuse = true);
 	void EnqueueFeedbackSoundWarmupPath(const std::string& resolvedPath);
@@ -5874,13 +5628,7 @@ public:
 	TextToSpeechRuntimeConfig BuildTextToSpeechRuntimeConfig(bool useSpeechToTextSendVoiceProfile) const;
 	bool EnsureTextToSpeechServerReady(const TextToSpeechRuntimeConfig& config);
 	void ShutdownTextToSpeechServer();
-	void SpawnHitIndicator(const Vector& worldPos);
-	void SpawnKillIndicator(bool headshot, const Vector& worldPos);
-	void DrawKillIndicators(IMatRenderContext* renderContext, ITexture* hudTexture);
 	void DrawProjectedItemLabels(IMatRenderContext* renderContext, const CViewSetup& view, int eyeIndex);
-	void RecordProjectedSpecialInfectedArrow(int entityIndex, const Vector& origin, SpecialInfectedType type);
-	void DrawCachedSpecialInfectedArrowsDebugOverlay();
-	void DrawProjectedSpecialInfectedArrows(IMatRenderContext* renderContext, const CViewSetup& view);
 	void DrawPostMirrorPluginOverlays(IMatRenderContext* renderContext, C_BasePlayer* localPlayer, const CViewSetup& view, int eyeIndex);
 	bool PrepareLeftEyeSurvivorGlowCopy();
 	bool CopyLeftEyeSurvivorGlowToRightEye();
@@ -5897,33 +5645,11 @@ public:
 		int colorA,
 		int& outWidth,
 		int& outHeight);
-	void UpdateKillIndicatorOverlays();
-	IMaterial* ResolveHitIndicatorMaterial();
-	IMaterial* ResolveKillIndicatorMaterial(bool headshot);
-	void DestroyKillIndicatorOverlayTextures();
-	void DestroyKillIndicatorOverlayTexture(int materialIndex);
-	bool EnsureKillIndicatorOverlayTexture(int materialIndex, int width, int height);
-	bool UploadKillIndicatorOverlayTexture(int materialIndex, const uint8_t* rgba, int width, int height, uint32_t frameIndex = 0, bool fromDecodedFrames = false);
 	void DestroyItemLabelOverlayTexture();
 	void PublishQueuedProjectedItemLabels(int eyeIndex, std::vector<QueuedProjectedItemLabelDraw> draws);
 	void ClearQueuedProjectedItemLabelEye(int eyeIndex);
 	void ClearQueuedProjectedItemLabels();
 	void DrawQueuedProjectedItemLabelsToSurface(IDirect3DDevice9* device, int eyeIndex, IDirect3DSurface9* target, bool manageScene = true);
-	void PumpDesktopCompanionWindows();
-	void UpdateDesktopRearMirrorWindow(bool visible);
-	void UpdateDesktopIntentSenseHudWindow(const uint8_t* rgba, int width, int height, bool visible);
-	void DestroyDesktopCompanionWindows();
-	static LRESULT CALLBACK DesktopCompanionWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-	void TrimExpiredKillIndicators(std::chrono::steady_clock::time_point now, bool clearAll = false);
-	void MaybeTrimExpiredKillIndicators(std::chrono::steady_clock::time_point now, bool force = false);
-	void MaybeLogKillIndicatorStats(std::chrono::steady_clock::time_point now);
-	void DestroyKillIndicatorOverlay(ActiveKillIndicator& indicator);
-	bool EnsureKillIndicatorOverlaySlot(int slotIndex);
-	int AcquireKillIndicatorOverlaySlot(int materialIndex) const;
-	int FindReusableKillIndicatorIndex(bool preferNonKill) const;
-	void AddOrRecycleKillIndicator(const Vector& worldPos, bool killConfirmed, bool headshot, std::chrono::steady_clock::time_point now, bool preferNonKill);
-	bool BuildKillIndicatorOverlayPixels(IMaterial* material, std::vector<uint8_t>& outPixels, uint32_t& outWidth, uint32_t& outHeight, uint32_t preferredFrameIndex = UINT32_MAX, bool* outUsedDecodedFrames = nullptr);
-	bool ComputeKillIndicatorOverlayTransform(const Vector& worldPos, vr::HmdMatrix34_t& outTransform) const;
 	// Mounted gun helper: returns the entity the player is currently "using" (turret/mounted gun) if any.
 	// Used to skip that entity in aim-related traces so the aim line doesn't collide with the gun platform.
 	bool IsUsingMountedGun(const C_BasePlayer* localPlayer) const;
@@ -5961,34 +5687,7 @@ public:
 	bool TryGetItemModelLabelInfo(const std::string& modelName, ItemModelLabelInfo& out) const;
 	bool IsItemModelLabelBlacklisted(const std::string& label) const;
 	bool IsEntityAlive(const C_BaseEntity* entity) const;
-	void DrawSpecialInfectedArrow(const Vector& origin, SpecialInfectedType type);
-	// Stable wrappers used by core rendering/hooks. They are always defined in vr.cpp.
-	// If special_infected_features.cpp is linked, it registers the real implementations;
-	// otherwise these wrappers safely no-op so stripped builds still link.
-	void DrawItemModelLabel(int entityIndex, const std::string& modelName, const Vector& modelOrigin, const C_BaseEntity* entity, const char* className);
-	void ScanSpecialInfectedEntitiesFromClientList();
-	void ScanItemModelLabelEntitiesFromClientList();
-	void ApplyOptionalCreateMoveFeatures(CUserCmd* cmd, int stage, bool inputJumpHeld, bool hadWalkAxis, float walkNx, float walkNy, bool suppressScopeWalk);
-
-	// Optional implementations supplied by special_infected_features.cpp. Do not call these
-	// directly from core code because stripped builds intentionally omit their definitions.
-	void DrawItemModelLabelImpl(int entityIndex, const std::string& modelName, const Vector& modelOrigin, const C_BaseEntity* entity, const char* className);
-	void ScanSpecialInfectedEntitiesFromClientListImpl();
-	void ScanItemModelLabelEntitiesFromClientListImpl();
-	void ApplyOptionalCreateMoveFeaturesImpl(CUserCmd* cmd, int stage, bool inputJumpHeld, bool hadWalkAxis, float walkNx, float walkNy, bool suppressScopeWalk);
-	void RefreshSpecialInfectedPreWarning(const Vector& infectedOrigin, SpecialInfectedType type, int entityIndex, bool isPlayerClass);
-	void RefreshSpecialInfectedBlindSpotWarning(const Vector& infectedOrigin);
-	void BeginSpecialInfectedIntentSenseScan();
-	void FinishSpecialInfectedIntentSenseScan();
-	void RefreshSpecialInfectedIntentSense(const C_BaseEntity* entity, const Vector& infectedOrigin, SpecialInfectedType type, int entityIndex);
-	bool IsSpecialInfectedTargetingLocalPlayer(const C_BaseEntity* entity, const Vector& infectedOrigin, SpecialInfectedType type, int entityIndex, float& outRightBias, const char*& outDirectionText, float& outDistanceMeters, bool& outFront);
-	bool NotifySpecialInfectedIntentSense(SpecialInfectedType type, const char* directionText, float distanceMeters, float rightBias, bool front, int entityIndex, const Vector& infectedOrigin);
-	bool HasLineOfSightToSpecialInfected(const Vector& infectedOrigin, int entityIndex) const;
-	bool IsSpecialInfectedInBlindSpot(const Vector& infectedOrigin) const;
-	void UpdateSpecialInfectedWarningState();
-	void UpdateSpecialInfectedPreWarningState();
 	Vector GetAimRenderCameraDelta() const;
-	bool ApplyMovementLedgeGuard(CUserCmd* cmd, bool suppressScopeWalk);
 	void ApplyRoomscale1To1Move(CUserCmd* cmd, float inputSampleTime, bool controlLocomotionActive);
 	bool ShouldUseRoomscale1To1ServerMove() const;
 	void QueueRoomscale1To1ServerMoveDelta(const Vector& worldDelta, const Vector& visualWorldDelta);
@@ -6011,14 +5710,8 @@ public:
 	void ConsumeTeleportEngineAnchorCompensation(Vector& engineOriginDelta);
 	void SuppressTeleportViewmodelForMs(uint32_t durationMs);
 	bool ShouldSuppressTeleportViewmodelRender() const;
-	void EnterTeleportVisualScout(const Vector& targetWorld);
-	void ExitTeleportVisualScout();
-	void ClearTeleportVisualScout();
 	void OnPredictionRunCommand(CUserCmd* cmd);
 	void OnPrimaryAttackServerDecision(CUserCmd* cmd, bool fromSecondaryPrediction);
-	void StartSpecialInfectedWarningAction();
-	void UpdateSpecialInfectedWarningAction();
-	void ResetSpecialInfectedWarningAction();
 	void GetAimLineColor(int& r, int& g, int& b, int& a) const;
 	void UpdateAimLineEffectiveAttackRange(C_BasePlayer* localPlayer, C_WeaponCSBase* weapon, C_BaseEntity* hitEntity, const Vector& start, const Vector& end, const Vector& hitPos, bool hasAimHit);
 	bool IsEffectiveAttackRangeTarget(const C_BaseEntity* entity) const;

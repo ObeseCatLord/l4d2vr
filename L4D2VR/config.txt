@@ -607,7 +607,7 @@ VrOptionsMenuHoldSeconds=0.8
 # the chest, pistol/melee on the dominant hip, grenade on the upper chest, pills on the other hip,
 # magazines on the off-hand upper chest; medkit/defib stays on the back). Their facing follows your
 # head yaw: 0 = the layout's default (forefront: every frame; pavlov in Physical mode: Pavlov's 20),
-# higher = smoothed at this speed, -1 = every frame for either layout.
+# a value above 0 smooths it at that speed, and -1 is every frame for either layout.
 HolsterYawFollowSpeed=0
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4

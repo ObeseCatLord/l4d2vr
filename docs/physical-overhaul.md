@@ -64,6 +64,7 @@ Classic value while it is active.
 | Items in the hands | Either hand holds items; empty hands; chest sling | The gun hand holds the active weapon |
 | Object pull | On | Off |
 | Friendly-fire trigger block | Optional | Off |
+| Automatic flashlight, effective-range aim-line colour | Optional | Off |
 | Flashlight | Follows the head | Follows the gun (the game's own beam) |
 | Room-scale walking | Client and server move | Client only (stick-equivalent movement) |
 | Scopes, wrist HUD, third-person views when downed, pinned or healing | On | The same |

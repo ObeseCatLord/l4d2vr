@@ -63,6 +63,9 @@ namespace
         { "MeleeInertiaEnabled", &VR::m_MeleeInertiaEnabled, false },
         // No input filtering: the trigger fires like the mouse button.
         { "BlockFireOnFriendlyAimEnabled", &VR::m_BlockFireOnFriendlyAimEnabled, false },
+        // No automated inputs and no target highlighting.
+        { "AutoFlashlightEnabled", &VR::m_AutoFlashlightEnabled, false },
+        { "EffectiveAttackRangeIndicatorEnabled", &VR::m_EffectiveAttackRangeIndicatorEnabled, false },
         // Needs the plugin.
         { "Roomscale1To1ServerMove", &VR::m_Roomscale1To1ServerMove, false },
         // The flashlight follows the gun (the game's own beam along the aim).

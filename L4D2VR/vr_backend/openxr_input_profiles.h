@@ -167,6 +167,17 @@ namespace l4d2vr_openxr_input
     constexpr float kStickDeadzone = 0.10f;
     constexpr float kDpadPress = 0.70f;
     constexpr float kDpadRelease = 0.60f;
+    // 2.0.12 (review s12 7c, E10): the grips take, put away and hold items, so a
+    // grab is a deliberate squeeze, never a hand resting on the controller.
+    // Index: squeeze/value saturates from the capacitive finger wrap alone
+    // (415 "grip pressed" in an hour); the grab uses squeeze/FORCE instead
+    // (squeeze/value keeps driving the finger curl only).
+    constexpr float kIndexGrabForcePress = 0.30f;
+    constexpr float kIndexGrabForceRelease = 0.12f;
+    // Analog grips (Touch, Quest, Pico, Reverb, Focus 3): a firm squeeze, not
+    // SteamVR's 0.25 button default (a relaxed hand reads 0.1-0.3).
+    constexpr float kGrabValuePress = 0.60f;
+    constexpr float kGrabValueRelease = 0.35f;
 
     struct Binding
     {
@@ -329,8 +340,9 @@ namespace l4d2vr_openxr_input
             Bind(p, Action::ResetPosition, Hand::Left, "/input/thumbstick/click");
             Stick(p, Action::Turn, Hand::Right, "/input/thumbstick");
             Bind(p, Action::Flashlight, Hand::Right, "/input/thumbstick/click");
-            Bind(p, Action::OffHandGrip, Hand::Left, squeezeInput);
-            Bind(p, Action::WeaponGrip, Hand::Right, squeezeInput);
+            const bool analog = EndsWith(squeezeInput, "/value");
+            Bind(p, Action::OffHandGrip, Hand::Left, squeezeInput, analog ? kGrabValuePress : 0.0f, analog ? kGrabValueRelease : 0.0f);
+            Bind(p, Action::WeaponGrip, Hand::Right, squeezeInput, analog ? kGrabValuePress : 0.0f, analog ? kGrabValueRelease : 0.0f);
             Bind(p, Action::PrimaryAttack, Hand::Right, triggerInput);
             Bind(p, Action::SecondaryAttack, Hand::Left, triggerInput);
             Bind(p, Action::Use, Hand::Right, "/input/b/click");
@@ -395,9 +407,10 @@ namespace l4d2vr_openxr_input
                 Bind(p, Action::ResetPosition, Hand::Left, "/input/thumbstick/click");
                 Stick(p, Action::Turn, Hand::Right, "/input/thumbstick");
                 Bind(p, Action::Flashlight, Hand::Right, "/input/thumbstick/click");
-                // force_input=value with the binding file's click thresholds.
-                Bind(p, Action::OffHandGrip, Hand::Left, "/input/squeeze/value", 0.80f, 0.45f);
-                Bind(p, Action::WeaponGrip, Hand::Right, "/input/squeeze/value", 0.85f, 0.50f);
+                // 2.0.12: grab on squeeze FORCE (a real squeeze), not the
+                // capacitive squeeze/value (fingers merely wrapped).
+                Bind(p, Action::OffHandGrip, Hand::Left, "/input/squeeze/force", kIndexGrabForcePress, kIndexGrabForceRelease);
+                Bind(p, Action::WeaponGrip, Hand::Right, "/input/squeeze/force", kIndexGrabForcePress, kIndexGrabForceRelease);
                 Bind(p, Action::PrimaryAttack, Hand::Right, "/input/trigger/value");
                 Bind(p, Action::SecondaryAttack, Hand::Left, "/input/trigger/value");
                 Bind(p, Action::Use, Hand::Right, "/input/b/click");

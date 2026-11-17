@@ -313,7 +313,7 @@ struct ThrowFixture
     bool s_manualCarryThrowPhysicalAttackDown = false, s_manualInventoryThrowPhysicalUseDown = false;
     bool s_manualInventoryThrowArmed = false;
     bool handThrowMode = false, handThrowNow = false;   // hand throws have their own tests
-    bool gripDropRequested = false;
+    bool gripDropRequested = false, gripDropSend = false;
     struct Command { int buttons=0,command_number=1; unsigned char impulse=0; } command;
     void Step(bool carriedProp, bool attack, bool use)
     {

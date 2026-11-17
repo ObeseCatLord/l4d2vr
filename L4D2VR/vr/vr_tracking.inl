@@ -309,6 +309,16 @@ bool VR::ResolvePavlovTwoHandedAimBasis(
         frontGrip += baseUp * (m_VrHandsTwoHandedAimOffhandOffsetMeters.z * scale);
     }
 
+    // 2.0.12 (Pavlov): just after the foregrip is taken, the support point
+    // starts on the bore line and slides onto the hand at 5/s.
+    if (m_TwoHandSupportSlideStart.time_since_epoch().count() != 0)
+    {
+        const float since = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_TwoHandSupportSlideStart).count();
+        const float remaining = since < 2.0f ? l4d2vr_grab::SlideRemaining(since) : 0.0f;
+        if (remaining > 0.001f && VrHandsAimIsFinite(m_TwoHandSupportSlideOffset))
+            frontGrip += m_TwoHandSupportSlideOffset * remaining;
+    }
+
     Vector handDelta = frontGrip - rearGrip;
     float handDistance = VectorLength(handDelta);
     if (!std::isfinite(handDistance) || handDistance <= 0.01f * scale)

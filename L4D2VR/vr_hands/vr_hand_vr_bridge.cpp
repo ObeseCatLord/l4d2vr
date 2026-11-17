@@ -7564,9 +7564,37 @@ bool VR::UpdateMagazineInteraction(
         return true;
     };
 
+    // 2.0.12: Pavlov's per-class foregrip box (vr_grab_volumes.h) in the gun
+    // frame at the gun hand, against the support hand's 11.5 cm sphere.
+    auto supportInGunFrame = [&]() -> l4d2vr_grab::Vec3
+    {
+        // The gun frame's origin is the gun hand's grip, where the drawn hand
+        // sits relative to the controller point (NativeViewmodelRightHandPose-
+        // OffsetMeters: right, up, back), like Pavlov's gun root vs its
+        // controller point.
+        const float s = std::max(0.001f, m_VRScale);
+        const Vector d = supportPosition - gunPosition;
+        const Vector& hand = m_NativeViewmodelRightHandPoseOffsetMeters;
+        return l4d2vr_grab::Vec3{ DotProduct(d, gunForward) / s + hand.z, DotProduct(d, gunRight) / s - hand.x,
+            DotProduct(d, gunUp) / s - hand.y };
+    };
+    auto pavlovForegripBox = [&](l4d2vr_grab::Box& box) -> bool
+    {
+        return m_VrHandsPavlovForegripBoxes && l4d2vr_grab::ForegripBox(activeWeaponIdInt, box) &&
+            l4d2vr_interaction::Finite(gunForward) && l4d2vr_interaction::Finite(gunRight) &&
+            l4d2vr_interaction::Finite(gunUp) && l4d2vr_interaction::Finite(gunPosition);
+    };
+
     auto leftHandTouchesTwoHandedGripTarget = [&](float& outDistance) -> bool
     {
         outDistance = FLT_MAX;
+        l4d2vr_grab::Box pavlovBox{};
+        if (pavlovForegripBox(pavlovBox))
+        {
+            // Source units like the target box: <= 0 when the hand sphere overlaps.
+            outDistance = l4d2vr_grab::SphereGap(supportInGunFrame(), pavlovBox) * m_VRScale;
+            return outDistance <= 0.0f;
+        }
         MagazineInteractionBoxSnapshot targetBox{};
         if (!buildTwoHandedGripTargetBox(targetBox))
             return false;
@@ -7773,9 +7801,23 @@ bool VR::UpdateMagazineInteraction(
         // toggling the two-hand grip off.
         if (m_VrHandsTwoHandedGripActive)
         {
+            // 2.0.12: Pavlov's 30 cm from the foregrip (was 20 cm past the box).
+            l4d2vr_grab::Box ungripBox{};
+            if (pavlovForegripBox(ungripBox))
+            {
+                const l4d2vr_grab::Vec3 hand = supportInGunFrame();
+                if (l4d2vr_grab::AutoUngrip(hand, ungripBox))
+                {
+                    m_VrHandsTwoHandedGripActive = false;
+                    m_VrHandsTwoHandedGripWeaponId = 0;
+                    LogMagazineInteractionEvent("two-hand grip released: support hand %.2f m from the foregrip",
+                        l4d2vr_grab::Distance(hand, ungripBox.center));
+                }
+            }
             constexpr float kTwoHandAutoUngripMeters = 0.20f;
             float targetDistance = FLT_MAX;
-            if (!leftHandTouchesTwoHandedGripTarget(targetDistance) && targetDistance != FLT_MAX &&
+            if (m_VrHandsTwoHandedGripActive && !pavlovForegripBox(ungripBox) &&
+                !leftHandTouchesTwoHandedGripTarget(targetDistance) && targetDistance != FLT_MAX &&
                 targetDistance > kTwoHandAutoUngripMeters * m_VRScale)
             {
                 m_VrHandsTwoHandedGripActive = false;
@@ -7821,6 +7863,13 @@ bool VR::UpdateMagazineInteraction(
                 m_VrHandsTwoHandedGripActive = true;
                 m_VrHandsTwoHandedGripWeaponId = activeWeaponIdInt;
                 m_VrHandsTwoHandedGripWeaponTag = reinterpret_cast<uintptr_t>(activeWeapon);
+                {
+                    // 2.0.12 (Pavlov): the aim's support point starts on the bore
+                    // line and slides onto the real hand at 5/s (no aim jump).
+                    const float along = DotProduct(supportPosition - gunPosition, gunForward);
+                    m_TwoHandSupportSlideOffset = (gunPosition + gunForward * along) - supportPosition;
+                    m_TwoHandSupportSlideStart = now;
+                }
                 if (!foregripSplit && leftGripDown && !m_VrHandsTwoHandedGripHeldMode)
                     m_MagazineInteractionSuppressLeftInputUntilRelease = true;
                 triggerMagazineInteractionHaptic(0.020f, 95.0f, 0.32f, 2);

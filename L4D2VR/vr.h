@@ -60,6 +60,7 @@
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
+#include "vr_grab_volumes.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
@@ -2730,6 +2731,11 @@ public:
 	bool m_VrHandsMotionRangeWithoutController = false;
 	bool m_VrHandsRightUseViewmodelPose = false;
 	float m_VrHandsTwoHandedGripTargetBoxScale = 1.5f;
+	// 2.0.12: Pavlov's per-class foregrip boxes (vr_grab_volumes.h) instead of
+	// the box at the animated left hand; and the support point's bore-line slide.
+	bool m_VrHandsPavlovForegripBoxes = true;
+	Vector m_TwoHandSupportSlideOffset{};
+	std::chrono::steady_clock::time_point m_TwoHandSupportSlideStart{};
 	bool m_VrHandsTwoHandedGripHeldMode = false;
 	bool m_VrHandsRealBulletSpreadEnabled = false;
 	bool m_VrHandsTwoHandedAimMountFriendly = false;

@@ -201,6 +201,10 @@ HideArms=false
 VrHandsEnabled=true
 VrHandsGlovesEnabled=false
 VrHandsTwoHandedGripTargetBoxScale=1.5
+// 2.0.12: the support hand takes the foregrip with Pavlov's per-class boxes (pistols: a large box just ahead
+// of the grip; rifles about 30 cm, shotguns 34-42 cm ahead of it) and an 11.5 cm hand sphere; it lets go 30 cm
+// away. false = the older box at the animated left hand (VrHandsTwoHandedGripTargetBoxScale).
+VrHandsPavlovForegripBoxes=true
 VrHandsTwoHandedGripHeldMode=false
 VrHandsRealBulletSpreadEnabled=false
 VrHandsTwoHandedAimMountFriendly=false

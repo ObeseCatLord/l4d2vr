@@ -2999,6 +2999,7 @@ public:
     bool m_DrawRequestLeft = false;
     l4d2vr_control_watchdog::Watchdog m_ControlWatchdog;
     unsigned m_ControlWatchdogTriedSlots = 0u;
+    unsigned m_ControlWatchdogRedeploys = 0u;   // per no-viewmodel episode
     void NoteHolsterDrawRequest(int slot, uintptr_t weaponTag, bool leftHand);
     void UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits);
     float m_RetainedPullMaxDepth = -1e9f; // furthest it has been out of the well since

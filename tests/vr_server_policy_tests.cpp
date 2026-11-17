@@ -402,6 +402,37 @@ namespace
         PreExecute(reload, &native, 401, 0, Input(weapon::kPistol, kFeatureAllMask), c);
         Check(!reload.reloadLedger.Blocks(0x2000));
 
+        // 2.0.12 (s12 issue 14): the sticky gate. After a sticky block, the
+        // server switches to an empty shotgun on its own (weapon 0x3000):
+        // stale commands that carry nothing keep it blocked; an allow counts
+        // once the server weapon has been held for 300 ms.
+        PlayerVRState sticky{};
+        sticky.isUsingVR = true;
+        CommandPose stickyBlock = Pose(500, Intent::BlockNativeReload);
+        stickyBlock.reload = l4d2vr_server_pistol::ReloadPolicy::StickyBlock;
+        ExecInput grenade = Input(weapon::kPipeBomb, kFeatureAllMask);
+        PreExecute(sticky, &stickyBlock, 500, 0, grenade, c);
+        Check(sticky.reloadLedger.Sticky());
+        ExecInput spas = Input(11, kFeatureAllMask);
+        spas.weaponTag = 0x3000;
+        for (int command = 501; command <= 506; ++command)
+        {
+            CommandPose stale = Pose(command);
+            spas.nowMs = 10000 + (command - 500) * 10;
+            PreExecute(sticky, &stale, command, 0, spas, c);
+        }
+        Check(sticky.reloadLedger.Blocks(0x3000));
+        CommandPose earlyAllow = Pose(507);
+        earlyAllow.reload = l4d2vr_server_pistol::ReloadPolicy::Allow;
+        spas.nowMs = 10100;
+        PreExecute(sticky, &earlyAllow, 507, 0, spas, c);
+        Check(sticky.reloadLedger.Blocks(0x3000));
+        CommandPose lateAllow = Pose(508);
+        lateAllow.reload = l4d2vr_server_pistol::ReloadPolicy::Allow;
+        spas.nowMs = 10400;
+        PreExecute(sticky, &lateAllow, 508, 0, spas, c);
+        Check(!sticky.reloadLedger.Blocks(0x3000));
+
         // Non-VR or unknown commands are inert.
         PlayerVRState desktop{};
         ctx = PreExecute(desktop, &pose, 100, kInAttack, Input(1, kFeatureAllMask), c);

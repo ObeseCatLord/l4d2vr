@@ -11573,7 +11573,8 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
     s.handsStowed = m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
         (activeTag != 0u && ChestSlingHolds(activeTag));
     const uint64_t drawnAt = m_ViewmodelDrawnAtMs.load(std::memory_order_acquire);
-    s.msSinceViewmodelDrawn = drawnAt == 0u || now < drawnAt ? UINT64_MAX / 2u : now - drawnAt;
+    // Never stamped yet (this draw path not seen): unknown, never "stuck".
+    s.msSinceViewmodelDrawn = drawnAt == 0u || now < drawnAt ? 0u : now - drawnAt;
     s.gateBits = gateBits;
     s.controlReady = m_FirstPersonControlReady.load(std::memory_order_acquire);
     s.reloadState = static_cast<int>(m_MagazineInteractionState);
@@ -11588,6 +11589,7 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
 
     const wd::Result r = m_ControlWatchdog.Update(s, now);
     if (s.hasActiveWeapon) m_ControlWatchdogTriedSlots = 0u;
+    if ((r.cleared & wd::kNoViewmodel) != 0u) m_ControlWatchdogRedeploys = 0u;
     if (r.cleared)
         for (uint32_t bit = 1u; bit < wd::kAll; bit <<= 1u)
             if ((r.cleared & bit) != 0u)
@@ -11626,8 +11628,10 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
     }
     if ((r.recover & wd::kNoViewmodel) != 0u && active)
     {
-        // Deploy the held item again: the viewmodel (and the hands drawn from it) comes back.
-        if (const char* cls = weaponClass(active))
+        // Deploy the held item again: the viewmodel (and the hands drawn from
+        // it) comes back. Only once per episode; later repeats only log.
+        const char* cls = m_ControlWatchdogRedeploys++ == 0u ? weaponClass(active) : nullptr;
+        if (cls)
         {
             char command[64];
             std::snprintf(command, sizeof(command), "use %s", cls);

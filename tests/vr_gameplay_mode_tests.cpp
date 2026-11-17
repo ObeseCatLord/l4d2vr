@@ -1,3 +1,6 @@
+#ifdef _MSC_VER
+#pragma warning(disable : 4127) // checks on constexpr policy values are intentionally constant
+#endif
 #include "../L4D2VR/vr_gameplay_mode.h"
 #include "../L4D2VR/vr_server_features.h"
 #include "../L4D2VR/vr_grip_release.h"

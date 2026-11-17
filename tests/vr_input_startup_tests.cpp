@@ -113,6 +113,8 @@ struct VR
     uint64_t m_InputActionStateFrameSerial=0u;
     vr::EVRInputError m_LastInputActionStateError=vr::VRInputError_None;
     bool m_IsVREnabled=true, m_EncodeVRUsercmd=true, m_ForceNonVRServerMovement=false;
+    struct WirePolicy { bool encodeUsercmd=true; };
+    WirePolicy GameplayWirePolicy() const { return {}; }
     std::atomic<uint32_t> m_ServerFeatureMask{0u};
     void RefreshLeftHandedInputActionSwapMaps(bool) {}
     int SetActionManifest(const char*);

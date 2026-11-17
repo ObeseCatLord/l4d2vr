@@ -136,7 +136,7 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
     const bool eligible = handle != 0u && l4d2vr_shell::ValidHandle(handle) && clip >= 0 && clip <= dr::kMaxCapacity &&
         m_IsVREnabled && !m_MouseModeEnabled && !m_SuppressPlayerInput && !paused &&
         m_FirstPersonControlReady.load(std::memory_order_acquire) &&
-        !m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
+        !IncapBlocksPhysicalReload() &&   // 2.0.12: downed survivors reload the dual pistols by hand
         !m_RenderPlayerControlledBySI.load(std::memory_order_relaxed);
     // A new gun (or a new player entity) is a new session: the machine cancels.
     const bool sameSession = owner == m_DualReloadOwner && handle == m_DualReloadHandle;
@@ -414,6 +414,9 @@ void VR::UpdateDualPistolReload(C_BasePlayer* player, bool dualPistolsActive, co
         for (int gun = 0; gun < 2; ++gun)
             render.slidePullUnits[gun] = m_DualReload.SlideHeld() == gun ? m_DualReload.SlidePullM() * scale : 0.0f;
         render.holdRaiseUnits = kDualReloadHoldRaiseMeters * scale;
+        for (int gun = 0; gun < 2; ++gun)
+            render.needsRack[gun] = enabled && m_MagazineEmptyGlowEnabled && m_DualReload.NeedsRack(gun) &&
+                m_DualReload.SlideHeld() != gun;
     }
 }
 

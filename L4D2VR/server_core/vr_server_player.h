@@ -148,6 +148,7 @@ namespace l4d2vr_server
         int pillAimRemaining = 0;
         MeleeSweepState melee{};
         l4d2vr_magazine::NativeReloadLedger reloadLedger{};
+        unsigned stockReloadsEnded = 0u;   // 2.0.12: blocked stock reloads the server ended
         MinIntervalLimiter holsterLimiter{};
         MinIntervalLimiter shoveLimiter{};
         MinIntervalLimiter pillLimiter{};

@@ -31,7 +31,15 @@ namespace l4d2vr_features
     // 2.0.11: the server decodes the exact-pitch usercmd packing
     // (l4d2vr_server::PackPitchZ); clients send it only when advertised.
     constexpr std::uint32_t ExactPitch = 0x4000u;
-    constexpr std::uint32_t kKnownMask = 0x7FFFu;
+    // 2.0.12: the server keeps the stock reload blocked per player until the
+    // client allows it (impulses 245/246) and ends a blocked stock reload.
+    constexpr std::uint32_t StickyReloadGate = 0x8000u;
+    // 2.0.12: the server accepts physical reload transactions from a downed
+    // survivor with a pistol, dual pistols or the magnum.
+    constexpr std::uint32_t IncapReload = 0x10000u;
+    constexpr std::uint32_t kKnownMask = 0x1FFFFu;
+    // Everything a dedicated plugin built before StickyReloadGate advertises.
+    constexpr std::uint32_t kPreStickyReloadGateMask = 0x7FFFu;
     // Everything a dedicated plugin built before ExactPitch advertises.
     constexpr std::uint32_t kPreExactPitchMask = 0x3FFFu;
     // Everything a dedicated plugin built before OpusVoice advertises.
@@ -46,7 +54,7 @@ namespace l4d2vr_features
     // resolved: Hooks::ListenHostFeatureMask).
     constexpr std::uint32_t kListenHostMask =
         MeleeSweepV2 | ShoveAim | AkimboRays | MagTxn | ShellTxn | HolsterDrop | ThrowVelocity | DualMagTxn |
-        OpusVoice | ExactPitch;
+        OpusVoice | ExactPitch | IncapReload;
 
     inline bool ParseMask(const char* text, std::uint32_t& mask)
     {

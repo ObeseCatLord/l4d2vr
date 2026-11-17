@@ -42,6 +42,7 @@
 #include "../server_core/vr_usercmd_codec.h"
 #include "../server_core/vr_x86_prologue.h"
 #include "../vr_shotgun_pattern.h"
+#include "../vr_reload_rules.h"
 #include "l4d2vr_libstdcxx_shims.h"
 #include "l4d2vr_linux_targets.h"
 
@@ -572,7 +573,7 @@ namespace
         int teamNum = -1, lifeState = -1, activeWeapon = -1, incapacitated = -1;
         int ammo = -1, nextAttack = -1, usingMountedGun = -1, usingMountedWeapon = -1;
         int tongueOwner = -1, hangingFromTongue = -1, carryAttacker = -1, pummelAttacker = -1,
-            pounceAttacker = -1, jockeyAttacker = -1;
+            pounceAttacker = -1, jockeyAttacker = -1, hangingFromLedge = -1;
         int clip1 = -1, primaryAmmoType = -1, inReload = -1, nextPrimary = -1, nextSecondary = -1, dualWielding = -1;
         int reloadState = -1;
         // Hand throws: CBaseCSGrenade's throw state machine and the player's velocity.
@@ -724,7 +725,7 @@ namespace
 
     bool HandleValid(std::uint32_t handle) { return handle != 0u && handle != 0xFFFFFFFFu; }
 
-    struct Status { bool live = false, incap = false, controlled = false, mounted = false; };
+    struct Status { bool live = false, incap = false, controlled = false, mounted = false, ledge = false; };
 
     Status ReadStatus(void* player)
     {
@@ -743,7 +744,17 @@ namespace
             HandleValid(Field<std::uint32_t>(player, g_P.jockeyAttacker));
         s.mounted = Field<unsigned char>(player, g_P.usingMountedGun) != 0 ||
             Field<unsigned char>(player, g_P.usingMountedWeapon) != 0;
+        // Unknown ledge state counts as hanging: no physical reload then.
+        s.ledge = g_P.hangingFromLedge <= 0 || Field<unsigned char>(player, g_P.hangingFromLedge) != 0;
         return s;
+    }
+
+    // Downed (not hanging from a ledge) with a sidearm: the physical reload
+    // transactions are accepted (kFeatureIncapReload).
+    bool IncapReloadAllowed(const Status& status, int weaponId)
+    {
+        return (g_Features & kFeatureIncapReload) != 0u && status.incap && !status.ledge &&
+            l4d2vr_reload_rules::UsableWhileIncapacitated(weaponId);
     }
 
     void MarkChanged(void* entity)
@@ -847,10 +858,13 @@ namespace
             PlayerVRState& vr = g_Players[static_cast<std::size_t>(index)];
             if (!player || !vr.isUsingVR) return false;
             const Status status = ReadStatus(player);
-            if (!status.live || status.incap || status.controlled) return false;
+            if (!status.live || status.controlled) return false;
             void* weapon = g_N.getActiveWeapon(player);
             if (!weapon || g_N.getOwner(weapon) != player) return false;
             const int id = WeaponId(weapon);
+            // 2.0.12 (s12 issue 10): a downed survivor reloads the pistol or
+            // magnum by hand, as the base game lets them reload it at all.
+            if (status.incap && !IncapReloadAllowed(status, id)) return false;
             if (id != requestedWeaponId || (magazine ? !l4d2vr_remote_mag::IsDetachable(id) : !l4d2vr_shell::IsShotgun(id)))
                 return false;
             if (magazine && id == weapon::kPistol && g_N.isDualWielding(weapon)) return false;   // native dual fallback
@@ -898,7 +912,8 @@ namespace
             PlayerVRState& vr = g_Players[static_cast<std::size_t>(index)];
             if (!player || !vr.isUsingVR) return false;
             const Status status = ReadStatus(player);
-            if (!status.live || status.incap || status.controlled) return false;
+            if (!status.live || status.controlled) return false;
+            if (status.incap && !IncapReloadAllowed(status, weapon::kPistol)) return false;
             void* weapon = g_N.getActiveWeapon(player);
             if (!weapon || g_N.getOwner(weapon) != player) return false;
             if (WeaponId(weapon) != weapon::kPistol || !g_N.isDualWielding(weapon)) return false;
@@ -1322,6 +1337,43 @@ namespace
         MarkChanged(self);
     }
 
+    // 2.0.12 (s12 issue 14, E6, G3): a stock reload that is running while the
+    // player's sticky gate blocks it (started in a gap: a server-side weapon
+    // switch after a throw, a heal, a pickup, running dry) is ended at once,
+    // so it cannot feed the tube shell by shell or refill a magazine with
+    // none inserted. Physical transactions never leave m_bInReload set.
+    std::array<std::uint64_t, kMaxPlayerSlots + 1> g_StockReloadAbortLogAt{};
+    void EndBlockedStockReload(void* self, void* weapon, int index, int weaponId, PlayerVRState& p, const char* when)
+    {
+        if (!self || !weapon || !g_P.ammoOk || g_P.inReload <= 0 || !weapon::IsFirearm(weaponId) ||
+            !p.reloadLedger.Sticky() || !p.reloadLedger.Blocks(reinterpret_cast<std::uintptr_t>(weapon)) ||
+            !g_N.getOwner || g_N.getOwner(weapon) != self)
+            return;
+        unsigned char& inReload = Field<unsigned char>(weapon, g_P.inReload);
+        const bool shotgun = l4d2vr_shell::IsShotgun(weaponId) && g_P.reloadState >= 0;
+        const int reloadState = shotgun ? Field<int>(weapon, g_P.reloadState) : 0;
+        if (inReload == 0 && reloadState == 0) return;
+        inReload = 0;
+        if (shotgun) Field<int>(weapon, g_P.reloadState) = 0;
+        // The reload pushed the next shot out by its whole duration.
+        const float now = Curtime();
+        if (g_P.nextPrimary > 0 && std::isfinite(now) && now >= 0.0f)
+        {
+            float& primary = Field<float>(weapon, g_P.nextPrimary);
+            if (std::isfinite(primary) && primary > now + 0.2f) primary = now + 0.2f;
+        }
+        MarkChanged(weapon);
+        ++p.stockReloadsEnded;
+        const std::uint64_t ms = SteadyMs();
+        std::uint64_t& last = g_StockReloadAbortLogAt[static_cast<std::size_t>(index)];
+        if (ms - last >= 1000u || last == 0u)
+        {
+            last = ms;
+            Log("stock reload ended player=%d weapon=%d (%s): the physical reload owns this gun (total %u)",
+                index, weaponId, when, p.stockReloadsEnded);
+        }
+    }
+
     // Notes the held weapon's fire timers and the player's attack timer.
     void NoteWeaponReady(void* self, void* weapon, PlayerVRState& p)
     {
@@ -1425,6 +1477,7 @@ namespace
         frame.index = index;
         frame.ctx = PreExecute(p, pose, ucmd->command_number, ucmd->buttons, in, g_Config);
         frame.angles = ToQAngle(frame.ctx.aimAngles);
+        if (weaponBefore) EndBlockedStockReload(self, weaponBefore, index, in.weaponId, p, "before command");
         ucmd->buttons |= frame.ctx.addButtons;
         if (g_Config.verbose && frame.ctx.aim != AimReason::None)
             Log("player=%d command=%d eye override %s", index, ucmd->command_number, AimReasonName(frame.ctx.aim));
@@ -1499,6 +1552,7 @@ namespace
         }
 
         void* weaponAfter = g_N.getActiveWeapon(self);
+        if (weaponAfter) EndBlockedStockReload(self, weaponAfter, index, WeaponId(weaponAfter), p, "after command");
         const Status after = ReadStatus(self);
         PostInput post{};
         post.features = features;
@@ -1638,6 +1692,7 @@ namespace
         g_P.usingMountedWeapon = Netprop(player, "m_usingMountedWeapon");
         g_P.tongueOwner = Netprop(player, "m_tongueOwner");
         g_P.hangingFromTongue = Netprop(player, "m_isHangingFromTongue");
+        g_P.hangingFromLedge = Netprop(player, "m_isHangingFromLedge");
         g_P.carryAttacker = Netprop(player, "m_carryAttacker");
         g_P.pummelAttacker = Netprop(player, "m_pummelAttacker");
         g_P.pounceAttacker = Netprop(player, "m_pounceAttacker");
@@ -1943,6 +1998,8 @@ namespace
         if (!g_Host.HasViewYawSource()) features &= ~kFeaturePoseV3;
         // The exact-pitch packing restores z around the player's origin.
         if (!g_N.absOrigin) features &= ~kFeatureExactPitch;
+        // Downed reloads need the ledge flag (a ledge-hanging survivor is also incapacitated).
+        if (g_P.hangingFromLedge <= 0) features &= ~kFeatureIncapReload;
         SessionCapabilities caps{};
         caps.usercmdDecoder = g_Resolved.usercmdDecoder;
         caps.interaction = g_Resolved.interaction;

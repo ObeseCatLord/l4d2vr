@@ -686,6 +686,12 @@ public:
 	std::atomic<uint32_t> m_RenderRevivingOther{ 0 };
 	std::atomic<uint32_t> m_RenderUsingMountedGun{ 0 };
 	std::atomic<uint32_t> m_RenderPlayerIncap{ 0 };
+    // 2.0.12: hanging from a ledge (also sets m_isIncapacitated): no weapons.
+    std::atomic<uint32_t> m_RenderPlayerLedge{ 0 };
+    // 2.0.12 (s12 issues 9, 10): downed with a pistol, dual pistols or the
+    // magnum the physical reload stays on when the server accepts it
+    // (IncapReload); otherwise the stock reload takes over while down.
+    bool IncapBlocksPhysicalReload() const;
 	std::atomic<uint32_t> m_RenderPlayerControlledBySI{ 0 };
 	std::atomic<uint32_t> m_RenderInThirdPersonMapLoadCooldown{ 0 };
 
@@ -1583,6 +1589,9 @@ public:
         Vector pouch{}, pouchForward{}, pouchRight{};
         float slidePullUnits[2] = { 0.0f, 0.0f };
         float holdRaiseUnits = 0.0f;
+        // 2.0.12 (s12 issue 8): the slide of each gun that must be racked
+        // before it can fire glows (and nothing else on the dual pistols).
+        bool needsRack[2] = { false, false };
     };
     // Viewmodel draw -> logic: the dual model's magazines and slides.
     // `...Local` is in the receiving hand's controller frame (x right, y up, z back).
@@ -2964,6 +2973,19 @@ public:
     // A shell was taken while the pump waited to be cycled; the pump stage
     // (and the fore-end's position) resumes once the shell is in or dropped.
     bool m_ManualPumpShellTakenDuringCycle = false;
+    // 2.0.12 (s12 issue 2): "finished loading" needs a fresh press made at
+    // least 250 ms after the last shell confirm, with the input let go once.
+    std::chrono::steady_clock::time_point m_ShellConfirmedAt{};
+    bool m_ShellFinishRequiresRelease = false;
+    // 2.0.12: Pavlov MagGrabRateMax (one spare per squeeze, 0.15 s on shotguns).
+    std::chrono::steady_clock::time_point m_PouchLastTakeAt{};
+    // 2.0.12: a held spare is sticky; when the input was let go while holding it.
+    std::chrono::steady_clock::time_point m_FreshAmmoReleasedAt{};
+    // 2.0.12: the pouch shows a spare only when a take could succeed (no
+    // phantom shell or magazine with an empty reserve or a full tube).
+    std::atomic<bool> m_PouchSpareAvailable{ true };
+    // 2.0.12: pull the seated magazine out by hand (MagazineHandPullEnabled).
+    bool m_MagazineHandPullEnabled = true;
     // The well or port the last insertion check used.
     VrHandMatrix4 m_MagazineInteractionFitSocketWorld{};
     MagazineInteractionBoxSnapshot m_MagazineInteractionFitSocketBox{};

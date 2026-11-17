@@ -4973,5 +4973,8 @@ uint32_t Hooks::ListenHostFeatureMask()
         mask |= l4d2vr_features::HandThrow;
     if (ListenHostShotgunPatternReady())
         mask |= l4d2vr_features::ShotgunPattern;
+    // 2.0.12: the sticky reload gate needs the host's reload detours.
+    if (hkPhysicalGunReload.isEnabled && hkPhysicalShotgunReload.isEnabled)
+        mask |= l4d2vr_features::StickyReloadGate;
     return mask;
 }

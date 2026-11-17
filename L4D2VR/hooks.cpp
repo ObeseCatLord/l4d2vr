@@ -12,6 +12,7 @@
 #include "vr_pistol_detachment.h"
 #include "vr_interaction_geometry.h"
 #include "vr_interaction_protocol.h"
+#include "vr_reload_rules.h"
 #include "server_core/vr_server_limits.h"
 #include "server_core/vr_usercmd_codec.h"
 #include "vr_ladder_input.h"

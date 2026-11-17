@@ -414,6 +414,8 @@ namespace l4d2vr_linux
         if (has(kGroupMelee) && status && in.meleeOperands) out.features |= kFeatureMeleeSweepV2;
         const bool ammo = has(kGroupAmmo | kGroupReloadGate) && status && in.netpropAmmo;
         if (ammo) out.features |= kFeatureMagTxn | kFeatureDualMagTxn;   // IsDualWielding is in the ammo group
+        // 2.0.12: the sticky reload gate needs the reload detours and m_bInReload.
+        if (ammo) out.features |= kFeatureStickyReloadGate | kFeatureIncapReload;
         if (ammo && in.netpropShell) out.features |= kFeatureShellTxn;
         if (has(kGroupDrop) && status) out.features |= kFeatureHolsterDrop;
         if (has(kGroupThrow)) out.features |= kFeatureThrowVelocity;

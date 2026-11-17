@@ -843,6 +843,10 @@ void VR::ProcessInput()
                     m_ItemHandDrawWatch.Start(m_GripDrawSerial.load(std::memory_order_acquire),
                         reinterpret_cast<uintptr_t>(active), ItemHandIsPhysicalLeft(), m_GripToggle.Held(),
                         GetTickCount64());
+                    m_ItemHandFreeDrawPending = true;
+                    m_ItemHandFreeDrawMs = GetTickCount64();
+                    m_ItemHandFreeDrawPrevLeft = ItemHandIsPhysicalLeft();
+                    m_ItemHandFreeDrawPrevHeld = m_GripToggle.Held();
                     RequestItemHand(IsGameplayHandLeftPhysical(true), l4d2vr_item_hand::Reason::HolsterDraw);
                     s_LeftHolsterLatched = true;
                     offHandGripDown = offHandGripJustPressed = false;
@@ -2035,6 +2039,52 @@ void VR::ProcessInput()
             static const char* kSlotCommands[] = { "slot1", "slot2", "slot3", "slot4", "slot5" };
             // "use <class>" switches directly; "slotN" goes through the HUD's
             // weapon selection, which ignores input while a UI owns the cursor.
+            // 2.0.12 (review s12 G4): a draw the game refuses (an empty primary, the
+            // grenade launcher at 0/0) used to leave the instant-draw state armed
+            // with no feedback. Watch each draw for 300 ms: no switch -> a short
+            // double buzz, one log line, the pending draw cleared, and a hand that
+            // changed for that draw gets its item back (no hand switching).
+            {
+                const uint64_t watchNowMs = GetTickCount64();
+                if (m_HolsterDrawWatchSlot >= 0)
+                {
+                    if (activeSlot == m_HolsterDrawWatchSlot)
+                        m_HolsterDrawWatchSlot = -1;
+                    else if (watchNowMs - m_HolsterDrawWatchMs > 300u)
+                    {
+                        Game::logMsg("[VR][Holster] draw of slot%d refused by the game (active slot%d): cleared",
+                            m_HolsterDrawWatchSlot + 1, activeSlot + 1);
+                        TriggerPhysicalHandHapticPulse(m_HolsterDrawWatchPhysicalLeft, 0.015f, 60.0f, 0.25f, 2);
+                        m_HolsterInstantDrawUntilMs.store(0u, std::memory_order_release);
+                        m_HolsterInstantDrawSlot.store(-1, std::memory_order_release);
+                        if (m_HolsterDrawWatchHandChanged && ItemHandIsPhysicalLeft() != m_HolsterDrawWatchPrevLeft &&
+                            !m_ItemHandSwitch.Pending())
+                        {
+                            m_ItemHandAdoptHeld = m_HolsterDrawWatchPrevHeld;
+                            RequestItemHand(m_HolsterDrawWatchPrevLeft, l4d2vr_item_hand::Reason::DrawCancel);
+                        }
+                        m_HolsterDrawRefusedCount.fetch_add(1u, std::memory_order_acq_rel);
+                        m_HolsterDrawWatchSlot = -1;
+                    }
+                }
+            }
+            auto watchDraw = [&](int slot, bool physicalLeft)
+                {
+                    const uint64_t watchNowMs = GetTickCount64();
+                    // A free-hand draw moved the item hand within the last moment.
+                    const bool handChanged = m_ItemHandFreeDrawPending &&
+                        watchNowMs - m_ItemHandFreeDrawMs < 500u;
+                    m_HolsterDrawWatchHandChanged = handChanged;
+                    if (handChanged)
+                    {
+                        m_HolsterDrawWatchPrevLeft = m_ItemHandFreeDrawPrevLeft;
+                        m_HolsterDrawWatchPrevHeld = m_ItemHandFreeDrawPrevHeld;
+                    }
+                    m_ItemHandFreeDrawPending = false;
+                    m_HolsterDrawWatchSlot = slot;
+                    m_HolsterDrawWatchMs = watchNowMs;
+                    m_HolsterDrawWatchPhysicalLeft = physicalLeft;
+                };
             auto selectInventorySlot = [&](int slot)
                 {
                     C_WeaponCSBase* const weapon = localPlayer
@@ -2069,6 +2119,7 @@ void VR::ProcessInput()
                     }
                     m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
                     selectInventorySlot(target);
+                    watchDraw(target, IsGameplayHandLeftPhysical(false));
                     Game::logMsg("[VR][Holster] off-hand %s slot=%d -> slot=%d",
                         slot == activeSlot ? "holstered" : "swap", slot + 1, target + 1);
                 }
@@ -2085,6 +2136,7 @@ void VR::ProcessInput()
                 m_BodyGripSelectionSerial.fetch_add(1u, std::memory_order_release);
                 m_GripDrawSerial.fetch_add(1u, std::memory_order_release);
                 selectInventorySlot(grab.selectSlot);
+                watchDraw(grab.selectSlot, IsGameplayHandLeftPhysical(false));
                 Game::logMsg("[VR][Holster] grip draw slot=%d", grab.selectSlot + 1);
             }
             if (grab.putAwaySlot >= 0 && grab.putAwaySlot == activeSlot && m_HolsterEmptyHands && localPlayer)

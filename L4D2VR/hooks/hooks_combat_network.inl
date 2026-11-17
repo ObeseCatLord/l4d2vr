@@ -1307,6 +1307,8 @@ void __fastcall Hooks::dPistolPlayerRunCommand(void* owner, void*, CUserCmd* com
         {
             context.reloadValid = true;
             context.reloadBlocked = reloadLedger.Blocks(context.reloadWeapon.pointer);
+            if (context.reloadBlocked)
+                m_Game->EndBlockedStockReload(owner, reinterpret_cast<void*>(context.reloadWeapon.pointer), context.index);
         }
     }
     l4d2vr_pistol::AmmoSnapshot before{};

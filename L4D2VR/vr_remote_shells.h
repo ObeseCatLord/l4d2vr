@@ -128,6 +128,11 @@ namespace l4d2vr_shell
         Reply m_Memo{};
     };
 
+    // 2.0.12 (s12 E17): 5 % of shell requests needed a retry on a real link;
+    // the first retry goes after 150 ms (the host answers a repeat of the same
+    // request from its memo, so it is idempotent), later ones after 500 ms.
+    inline std::uint64_t RetryDelayMs(unsigned retriesSoFar) { return retriesSoFar == 0u ? 150u : 500u; }
+
     class ClientRequest
     {
     public:
@@ -154,7 +159,7 @@ namespace l4d2vr_shell
         bool NextRetry(std::uint64_t now, Request& request)
         {
             if (!m_Pending || m_Ready || m_Retries >= 3u || now < m_Started || now - m_Started >= kReplyTimeoutMs ||
-                now < m_LastRetry || now - m_LastRetry < 500u) return false;
+                now < m_LastRetry || now - m_LastRetry < l4d2vr_shell::RetryDelayMs(m_Retries)) return false;
             ++m_Retries; m_LastRetry = now; request = m_Request;
             return true;
         }

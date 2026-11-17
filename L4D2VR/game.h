@@ -377,6 +377,9 @@ public:
     void OfferRemoteMagazineProtocol(edict_t* entity);
     bool HandleRemoteMagazineCommand(edict_t* entity, const void* command);
     bool HandleDualMagazineCommand(edict_t* entity, const void* command);
+    // 2.0.12 (s12 issue 14): end a stock reload that runs on the host while the
+    // player's sticky reload gate blocks it (listen host).
+    void EndBlockedStockReload(void* owner, void* weapon, int index);
     void ResetRemoteMagazineServerClients();
 
     // === Weapon / Viewmodel State ===

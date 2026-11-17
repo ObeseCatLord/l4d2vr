@@ -195,7 +195,7 @@ namespace l4d2vr_remote_mag
         {
             if (!m_Pending || m_Ready || m_Retries >= 3u || now < m_Started ||
                 now - m_Started >= l4d2vr_shell::kReplyTimeoutMs || now < m_LastRetry ||
-                now - m_LastRetry < 500u) return false;
+                now - m_LastRetry < l4d2vr_shell::RetryDelayMs(m_Retries)) return false;
             ++m_Retries; m_LastRetry = now; request = m_Request; return true;
         }
         void Receive(const Reply& reply)

@@ -772,6 +772,8 @@ static void* TryInterfaceNoError(const char* dllname, const char* interfacename)
     return CreateInterface(interfacename, &returnCode);
 }
 
+#include "game_log_share.inl"
+
 namespace
 {
     constexpr int kFcvarServerCanExecute = (1 << 28);
@@ -1131,6 +1133,11 @@ namespace
         &OnVROptionsCommand,
         "Opens the L4D2VR VR Options menu (in VR, or a window in desktop mode).",
         0);
+    SourceRegisteredConCommand g_SaveLogsCommand(
+        "l4d2vr_save_logs",
+        &OnSaveLogsCommand,
+        "Saves the L4D2VR and game logs, VR settings and a system summary to VR\\shared-logs (folder + .zip) for a bug report.",
+        0);
     SourceRegisteredConCommand g_CachePrintSummaryCommand(
         kCachePrintSummaryCommandName,
         &OnCachePrintSummaryCommand,
@@ -1177,6 +1184,8 @@ namespace
                 cvar->RegisterConCommand(&g_VRConfigCommand);
             if (!cvar->FindCommandBase(kVROptionsCommandName))
                 cvar->RegisterConCommand(&g_VROptionsCommand);
+            if (!cvar->FindCommandBase("l4d2vr_save_logs"))
+                cvar->RegisterConCommand(&g_SaveLogsCommand);
             if (!cvar->FindCommandBase(l4d2vr_voice::kAckCommand))
                 cvar->RegisterConCommand(&g_L4D2VRVoiceAckCommand);
             if (!cvar->FindCommandBase(l4d2vr_voice::kPeersCommand))
@@ -1369,6 +1378,13 @@ void Game::logMsg(const char* fmt, ...)
         fprintf(file, "\n");
         fflush(file);
     }
+}
+
+// Writes everything logged so far to vrmod_log.txt (before it is copied).
+void Game::FlushLog()
+{
+    std::lock_guard<std::mutex> lock(logMutex);
+    fflush(nullptr);
 }
 
 // === Error Message ===
@@ -3473,6 +3489,8 @@ void Game::FlushDeferredServerCmds(bool recordMainThread)
         m_MainThreadId.store(GetCurrentThreadId(), std::memory_order_release);
     else if (m_MainThreadId.load(std::memory_order_acquire) != GetCurrentThreadId())
         return;
+    // 2.0.12: "Save logs for sharing" finished on its worker: tell the console.
+    L4D2VR_FlushSaveLogsConsole(this);
     static thread_local std::vector<std::pair<std::string, bool>> s_Pending;
     {
         std::lock_guard<std::mutex> lock(m_DeferredServerCmdMutex);

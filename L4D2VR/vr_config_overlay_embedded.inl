@@ -6420,6 +6420,28 @@ namespace
         s.dirty = true;
     }
 
+    // 2.0.12: "Save logs for sharing" (game_log_share.inl). The copy runs on
+    // its own thread; CfgPollSaveLogs shows the result when it is done.
+    static void CfgOptSaveLogs(CfgOverlayState& s)
+    {
+        if (L4D2VR_StartSaveLogsForSharing("VR Options"))
+            s.status = s.useChinese ? "\xE6\xAD\xA3\xE5\x9C\xA8\xE4\xBF\x9D\xE5\xAD\x98\xE6\x97\xA5\xE5\xBF\x97..."
+                                    : "Saving the logs to VR\\shared-logs ...";
+        else
+            s.status = s.useChinese ? "\xE6\x97\xA5\xE5\xBF\x97\xE4\xBF\x9D\xE5\xAD\x98\xE4\xB8\xAD" : "Already saving the logs.";
+        s.dirty = true;
+    }
+
+    static void CfgPollSaveLogs(CfgOverlayState& s)
+    {
+        std::string message;
+        if (L4D2VR_TakeSaveLogsMenuStatus(message))
+        {
+            s.status = message;
+            s.dirty = true;
+        }
+    }
+
     static void CfgHandleOptionsClick(CfgOverlayState& s, int mx, int my)
     {
         const std::vector<om::PageRow> rows = CfgOptRows(s);
@@ -6501,6 +6523,8 @@ namespace
         case om::HitKind::Action:
             if (pr && pr->row.action == om::RowAction::Recenter)
                 CfgOptRecenter(s);
+            else if (pr && pr->row.action == om::RowAction::SaveLogs)
+                CfgOptSaveLogs(s);
             else if (pr && pr->row.action == om::RowAction::OpenAdvanced)
             {
                 CfgOptOpenAdvanced(s);
@@ -6693,6 +6717,7 @@ namespace
             case om::RowKind::Action:
                 CfgOptButton(g, om::ActionRect(rr),
                     pr.row.action == om::RowAction::Recenter ? (s.useChinese ? "\xE7\x8E\xB0\xE5\x9C\xA8\xE9\x87\x8D\xE6\x96\xB0\xE5\xB1\x85\xE4\xB8\xAD" : "Recenter now")
+                    : pr.row.action == om::RowAction::SaveLogs ? (s.useChinese ? "\xE4\xBF\x9D\xE5\xAD\x98" : "Save logs")
                                                               : (s.useChinese ? "\xE6\x89\x93\xE5\xBC\x80" : "Open"),
                     f.control, false);
                 break;
@@ -10219,6 +10244,8 @@ namespace
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            if (s.visible)
+                CfgPollSaveLogs(s);
             if (s.visible && s.dirty)
             {
                 CfgRender(s);
@@ -10367,6 +10394,7 @@ namespace
             CfgMarkDirtyIfCalibrationSnapshotChanged(s);
             if (s.panelMode == CfgPanelMode::Config)
                 CfgRefreshRuntimeUsage(s);
+            CfgPollSaveLogs(s);
 
             if (s.dirty)
                 CfgRender(s);

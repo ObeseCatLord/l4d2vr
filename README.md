@@ -69,6 +69,9 @@ What changed for players with OpenXR:
 The exact stereo depth bridge (`ReShadeVRCompat`) works only with ReShade's OpenVR runtime. It is off in the OpenXR release (the setting is ignored and logged), and ReShade keeps its own Generic Depth add-on.
 
 ## Troubleshooting
+### Sending logs for a bug report
+VR Options > Controls > **Save logs for sharing** (or `l4d2vr_save_logs` in the console) copies everything a report needs into `VR\shared-logs\l4d2vr-logs-<date-time>\` and packs it into a `.zip` next to that folder: `vrmod_log.txt` (this and the previous session), the game's `console.log` and `debug.log` (their ends), the DXVK log, your `VR\config.txt` and a short `system-info.txt` (mod version, Windows or Proton, GPU, VR runtime, server). Lines that mention a password, an rcon setting or an auth token are removed. The menu and the console show where the file was saved; in desktop mode the folder opens. Send the `.zip`.
+
 ### If the game isn't loading in VR:
 * Look for `[VR] OpenXR could not start:` in `vrmod_log.txt` (or the `[L4D2VR] VR is off` line in the game console). It names the problem, for example a 64-bit-only OpenXR runtime or a Proton without 32-bit OpenXR. The fixes are in [docs/openxr.md](docs/openxr.md#when-vr-does-not-start).
 * Disable SteamVR theater in [SteamVR settings](https://img.itch.zone/aW1nLzE0MTMyNTY4LnBuZw==/original/pKSXNc.png)

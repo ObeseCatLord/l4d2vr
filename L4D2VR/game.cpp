@@ -28,6 +28,7 @@
 #include "vr_recv_interface.h"
 #include "vr_edict_identity.h"
 #include "vr_client_command.h"
+#include "vr_convar_policy.h"
 #include "offsets.h"
 #include "sigscanner.h"
 #include "vr_pose_protocol.h"
@@ -4158,11 +4159,51 @@ int Game::GetConVarFlags(const char* name) const
     }
 }
 
+namespace
+{
+    int ReadConVarFlagsSafe(SourceConVar* cvar)
+    {
+        __try
+        {
+            SourceConVar* parent = (cvar->m_pParent != nullptr) ? cvar->m_pParent : cvar;
+            return parent->m_nFlags;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return -1;
+        }
+    }
+
+    // 2.0.13 (vr_convar_policy.h): never write a cheat-protected or
+    // server-replicated cvar directly. Logged once per cvar.
+    bool ConVarWriteRefused(SourceConVar* cvar, const char* name)
+    {
+        const int flags = ReadConVarFlagsSafe(cvar);
+        if (l4d2vr_convar_policy::ModMayWrite(flags))
+            return false;
+        static std::mutex s_Mutex;
+        static std::vector<std::string> s_Logged;
+        std::lock_guard<std::mutex> lock(s_Mutex);
+        const std::string key = name ? name : "";
+        if (std::find(s_Logged.begin(), s_Logged.end(), key) == s_Logged.end() && s_Logged.size() < 64)
+        {
+            s_Logged.push_back(key);
+            Game::logMsg("[VR][ConVar] refused to set %s: cheat-protected or server-replicated (flags 0x%X)",
+                key.c_str(), static_cast<unsigned>(flags));
+        }
+        return true;
+    }
+}
+
 bool Game::SetConVarFlags(const char* name, int flags) const
 {
     SourceConVar* cvar = FindConVarInternal(m_Cvar, name);
     if (!cvar)
         return false;
+    const int currentFlags = ReadConVarFlagsSafe(cvar);
+    if (currentFlags < 0)
+        return false;
+    flags = l4d2vr_convar_policy::KeepServerOwnedFlags(currentFlags, flags);
 
     __try
     {
@@ -4181,6 +4222,8 @@ bool Game::SetConVarString(const char* name, const char* value) const
 {
     SourceConVar* cvar = FindConVarInternal(m_Cvar, name);
     if (!cvar)
+        return false;
+    if (ConVarWriteRefused(cvar, name))
         return false;
 
     __try
@@ -4201,6 +4244,8 @@ bool Game::SetConVarInt(const char* name, int value) const
 {
     SourceConVar* cvar = FindConVarInternal(m_Cvar, name);
     if (!cvar)
+        return false;
+    if (ConVarWriteRefused(cvar, name))
         return false;
 
     SourceIConVar* iconvar = AsIConVar(cvar);
@@ -4225,6 +4270,8 @@ bool Game::SetConVarFloat(const char* name, float value) const
 {
     SourceConVar* cvar = FindConVarInternal(m_Cvar, name);
     if (!cvar)
+        return false;
+    if (ConVarWriteRefused(cvar, name))
         return false;
 
     __try

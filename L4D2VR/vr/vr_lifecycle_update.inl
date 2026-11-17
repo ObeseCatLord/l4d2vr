@@ -1768,9 +1768,6 @@ void VR::Update()
     static int s_LastObservedQueueMode = -999;
     if (s_LastObservedQueueMode != queueModeAfterAuto)
     {
-        // The queued shadow profile hardens half-rate updates differently from the
-        // single-threaded profile, so a live queue-mode transition must reapply it.
-        m_ShadowSettingsDirty.store(true, std::memory_order_release);
         const uint32_t completedFrameId = m_RenderCompletedFrameId.load(std::memory_order_acquire);
         if (queueModeAfterAuto != 0 && m_CreatedVRTextures.load(std::memory_order_acquire))
         {
@@ -1812,9 +1809,6 @@ void VR::Update()
         }
         s_LastObservedQueueMode = queueModeAfterAuto;
     }
-    ApplyShadowSettingsIfNeeded();
-    ApplyFlashlightEnhancementIfNeeded();
-    ApplyLocalVScriptConvarsIfNeeded();
     markPresentSpikeUpdatePhase(m_PresentSpikeUpdateSettingsUs);
     if (!posesValid)
     {
@@ -1907,8 +1901,6 @@ void VR::Update()
 			m_ManualInventoryEmptyHandsActive.store(false, std::memory_order_release);
             m_AutoResetPositionPending = false;
             m_AutoResetHadLocalPlayerPrev = false;
-            m_LocalVScriptConvarsMapAuditPending = false;
-            m_LocalVScriptConvarsHadLocalPlayerPrev = false;
             setNativeLeftHandFreezePlaneContextActive(false);
             resetNativeLeftHandFreezeForMapChange();
         }
@@ -2031,20 +2023,6 @@ void VR::Update()
 
             m_AutoResetHadLocalPlayerPrev = hasLocalPlayer;
 
-            if (!m_LocalVScriptConvarsEnabled || !m_LocalVScriptConvarsLogEnabled)
-            {
-                m_LocalVScriptConvarsMapAuditPending = false;
-            }
-            else if (hasLocalPlayer && !m_LocalVScriptConvarsHadLocalPlayerPrev)
-            {
-                m_LocalVScriptConvarsMapAuditPending = true;
-                const int auditDelayMs =
-                    (int)(std::max)(0.0f, m_LocalVScriptConvarsMapAuditDelaySeconds * 1000.0f);
-                m_LocalVScriptConvarsMapAuditDueTime = now + std::chrono::milliseconds(auditDelayMs);
-            }
-
-            m_LocalVScriptConvarsHadLocalPlayerPrev = hasLocalPlayer;
-
             if (m_AutoResetPositionPending && hasLocalPlayer)
             {
                 if (now >= m_AutoResetPositionDueTime)
@@ -2052,12 +2030,6 @@ void VR::Update()
                     ResetPosition();
                     m_AutoResetPositionPending = false;
                 }
-            }
-
-            if (m_LocalVScriptConvarsMapAuditPending && hasLocalPlayer && now >= m_LocalVScriptConvarsMapAuditDueTime)
-            {
-                AuditLocalVScriptConvarsCurrentValues("map_enter");
-                m_LocalVScriptConvarsMapAuditPending = false;
             }
         }
     }
@@ -2943,7 +2915,7 @@ void VR::PublishSourceQueueCompletedFrame(
         const bool desktopMirrorSnapshotRequested =
             m_DesktopMirrorEnabled &&
             m_DesktopMirrorHidePluginOverlaysRequested &&
-            m_ShadowTweaksEnabled &&
+            false &&   // 2.0.13: needed the removed ShadowTweaks
             m_D9DesktopMirrorSurface != nullptr;
 
         if (SUCCEEDED(deviceHr) && device)

@@ -291,7 +291,7 @@ def main() -> None:
     # The 32-bit Khronos OpenXR loader (and its licences) next to d3d9.dll.
     for name, path in OPENXR_RUNTIME_FILES.items():
         files[name] = (REPO / path).read_bytes()
-    for name in ("haptics_config.txt", "local_client_convars.nut"):
+    for name in ("haptics_config.txt",):
         files[f"vr/{name}"] = (src / name).read_bytes()
     files["vr/config.sample"] = commented_sample((src / "config.txt").read_text(encoding="utf-8")).encode("utf-8")
     files["vr/version.txt"] = args.version.encode("ascii")

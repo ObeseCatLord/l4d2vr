@@ -4096,72 +4096,6 @@ public:
 	bool m_MenuFpsMaxSent = false;
 	int  m_MenuFpsMaxLastHz = 0;
 
-	struct ShadowControlEntityDefaults
-	{
-		bool disableShadows = false;
-		float maxDist = 0.0f;
-		bool enableLocalLightShadows = false;
-	};
-
-	struct EnvProjectedTextureEntityDefaults
-	{
-		bool enableShadows = true;
-		int shadowQuality = 0;
-	};
-
-	// Shadow controls discovered from L4D2's client-side shadow manager / flashlight paths.
-	// We stage config changes here and apply them on the main update thread via VEngineCvar007.
-	bool m_ShadowTweaksEnabled = false;
-	int m_ShadowCvarShadows = 1;
-	int m_ShadowCvarRenderToTexture = 0;
-	int m_ShadowCvarFlashlightDepthTexture = 0;
-	int m_ShadowCvarFlashlightDepthRes = 256;
-	int m_ShadowCvarHalfUpdateRate = 1;
-	int m_ShadowCvarMaxRendered = 0;
-	float m_ShadowCvarMaxRenderableDist = 0.0f;
-	int m_ShadowCvarFlashlightDetailProps = 0;
-	int m_ShadowCvarMobSimpleShadows = 1;
-	int m_ShadowCvarWorldLightShadows = 1;
-	int m_ShadowCvarFlashlightModels = 1;
-	int m_ShadowCvarShadowsOnRenderables = 1;
-	int m_ShadowCvarFlashlightRenderModels = 1;
-	float m_ShadowCvarPlayerShadowDist = 0.0f;
-	int m_ShadowCvarInfectedShadows = 1;
-	float m_ShadowCvarNbShadowBlobbyDist = 493.820007f;
-	float m_ShadowCvarNbShadowCullDist = 500.584991f;
-	int m_ShadowCvarFlashlightInfectedShadows = 1;
-	bool m_ShadowTweaksApplied = false;
-	bool m_ShadowOriginalsCaptured = false;
-	int m_ShadowOrigShadows = 1;
-	int m_ShadowOrigRenderToTexture = 1;
-	int m_ShadowOrigFlashlightDepthTexture = 1;
-	int m_ShadowOrigFlashlightDepthRes = 1024;
-	int m_ShadowOrigHalfUpdateRate = 0;
-	int m_ShadowOrigMaxRendered = 32;
-	float m_ShadowOrigMaxRenderableDist = 3000.0f;
-	int m_ShadowOrigFlashlightDetailProps = 0;
-	int m_ShadowOrigMobSimpleShadows = 0;
-	int m_ShadowOrigWorldLightShadows = 1;
-	int m_ShadowOrigFlashlightModels = 1;
-	int m_ShadowOrigShadowsOnRenderables = 1;
-	int m_ShadowOrigFlashlightRenderModels = 1;
-	float m_ShadowOrigPlayerShadowDist = 3000.0f;
-	int m_ShadowOrigInfectedShadows = 1;
-	float m_ShadowOrigNbShadowBlobbyDist = 3000.0f;
-	float m_ShadowOrigNbShadowCullDist = 3000.0f;
-	int m_ShadowOrigFlashlightInfectedShadows = 1;
-	bool m_ShadowEntityTweaksEnabled = false;
-	bool m_ShadowEntityDisableShadows = false;
-	float m_ShadowEntityMaxDist = 1200.0f;
-	bool m_ShadowEntityLocalLightShadows = false;
-	bool m_ShadowProjectedTextureEnableShadows = true;
-	int m_ShadowProjectedTextureQuality = 0;
-	bool m_ShadowEntityOffsetsLogged = false;
-	bool m_ShadowEntityOverridesApplied = false;
-	std::chrono::steady_clock::time_point m_ShadowEntityLastRefreshTime{};
-	std::unordered_map<int, ShadowControlEntityDefaults> m_ShadowControlEntityDefaults;
-	std::unordered_map<int, EnvProjectedTextureEntityDefaults> m_EnvProjectedTextureEntityDefaults;
-	std::atomic<bool> m_ShadowSettingsDirty{ true };
 
 	// Desktop-window mirror. This copies one VR eye into the implicit D3D9 swapchain
 	// backbuffer before Present(), so the normal desktop game window can show a live
@@ -4188,7 +4122,6 @@ public:
 	bool m_DesktopMirrorCleanRenderingPass = false;
 
 
-	bool m_FlashlightEnhancementEnabled = false;
 	bool m_FlashlightFollowHmd = true;
 	bool m_FlashlightFollowHmdForFirearms = false;
     float m_FlashlightHmdForwardOffsetMeters = 0.18f;
@@ -4196,42 +4129,6 @@ public:
     l4d2vr_flashlight::Pose m_HmdFlashlightPose{};
     void UpdateHmdFlashlightPose(C_BasePlayer* player);
     bool ReadHmdFlashlightPose(uintptr_t owner, l4d2vr_flashlight::Pose& pose) const;
-	bool m_FlashlightEnhancementApplied = false;
-	bool m_FlashlightEnhancementOriginalsCaptured = false;
-	float m_FlashlightEnhancement3rdPersonRange = 300.0f;
-	float m_FlashlightEnhancementBrightness = 0.5f;
-	float m_FlashlightEnhancementFov = 80.0f;
-	float m_FlashlightEnhancementOrig3rdPersonRange = 60.0f;
-	float m_FlashlightEnhancementOrigBrightness = 0.25f;
-	float m_FlashlightEnhancementOrigFov = 53.0f;
-	int m_FlashlightEnhancementOrig3rdPersonRangeFlags = -1;
-	int m_FlashlightEnhancementOrigBrightnessFlags = -1;
-	int m_FlashlightEnhancementOrigFovFlags = -1;
-	std::atomic<bool> m_FlashlightEnhancementSettingsDirty{ true };
-	struct LocalVScriptConvarEntry
-	{
-		std::string name;
-		std::string value;
-		std::string originalValue;
-		int flags = 0;
-		bool lockProtected = false;
-	};
-	bool m_LocalVScriptConvarsEnabled = false;
-	bool m_LocalVScriptConvarsLogEnabled = false;
-	bool m_LocalVScriptConvarsBlockExternalWrites = true;
-	std::string m_LocalVScriptConvarsPath = "VR\\local_client_convars.nut";
-	std::vector<LocalVScriptConvarEntry> m_LocalVScriptConvars{};
-	std::unordered_set<std::string> m_ShadowProtectedConvars{};
-	std::unordered_set<std::string> m_FlashlightEnhancementProtectedConvars{};
-	bool m_LocalVScriptConvarsApplied = false;
-	std::atomic<bool> m_LocalVScriptConvarsDirty{ true };
-	float m_LocalVScriptConvarsMapAuditDelaySeconds = 1.0f;
-	bool m_LocalVScriptConvarsMapAuditPending = false;
-	std::chrono::steady_clock::time_point m_LocalVScriptConvarsMapAuditDueTime{};
-	bool m_LocalVScriptConvarsHadLocalPlayerPrev = false;
-	float m_LocalVScriptConvarsBlockedWriteLogHz = 1.0f;
-	std::unordered_map<std::string, std::chrono::steady_clock::time_point> m_LocalVScriptConvarBlockedWriteLastLog{};
-	mutable std::mutex m_LocalVScriptConvarLockMutex;
 	bool m_AutoFlashlightEnabled = false;
 	float m_AutoFlashlightDarkThreshold = 8.0f;
 	float m_AutoFlashlightBrightThreshold = 8.0f;
@@ -5327,21 +5224,7 @@ public:
 	int SetActionManifest(const char* fileName);
 	void InstallApplicationManifest(const char* fileName);
 	void Update();
-	void ApplyShadowSettingsIfNeeded(bool forceApply = false);
-	void ApplyFlashlightEnhancementIfNeeded();
-	void ApplyLocalVScriptConvarsIfNeeded();
 	void ApplyVrRecommendedVideoSettingsIfNeeded(const char* reason);
-	void AuditLocalVScriptConvarsCurrentValues(const char* reason);
-	bool TryGetTrackedProtectedConvarValue(const char* name, std::string& outValue) const;
-	void CaptureFlashlightEnhancementDefaults();
-	void RestoreFlashlightEnhancementDefaults();
-	void RestoreLocalVScriptConvars();
-	bool ShouldBlockExternalProtectedConvarWrite(const char* name, const char* requestedValue);
-	void CaptureShadowCvarDefaults();
-	void RestoreShadowCvarDefaults();
-	void ApplyShadowEntityOverrides(bool forceRefresh);
-	void RestoreShadowEntityDefaults();
-	void ResetShadowEntityOverrideTracking();
 	void UpdateAutoMatQueueMode();
 	void ApplyVrVoiceDefaultsOnce();
 	void ReleaseVRRenderTargetsForDeviceReset();

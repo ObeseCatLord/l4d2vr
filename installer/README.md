@@ -23,8 +23,9 @@ a **Launch in VR** button. It also has a full command line for headless use.
   `viewmodel_auto_grip_cache.txt`, `scope_adjustments.txt`, any
   `vr/*adjustments*.txt` and `vr/*calibration*` are never overwritten once they
   exist. Add your own patterns with `--preserve` (remembered for later updates).
-  If you edited `vr/haptics_config.txt` or `vr/local_client_convars.nut`, an update
-  keeps your copy and writes the new default next to it as `<name>.new`.
+  If you edited `vr/haptics_config.txt`, an update keeps your copy and writes the
+  new default next to it as `<name>.new`. (2.0.13 no longer ships
+  `vr/local_client_convars.nut`; an unchanged copy is removed, an edited one is kept.)
 - **Warns about other VR mods**: a `d3d9.dll` it did not install (an OpenVR VR mod build,
   ReShade, ...), old `openvr_api.dll` files and a subscription to the original L4D2VR
   Workshop item are reported by Install and `status`; the replaced files are backed up.

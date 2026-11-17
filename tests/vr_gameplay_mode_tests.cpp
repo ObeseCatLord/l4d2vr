@@ -1,6 +1,7 @@
 #include "../L4D2VR/vr_gameplay_mode.h"
 #include "../L4D2VR/vr_server_features.h"
 #include "../L4D2VR/vr_grip_release.h"
+#include "../L4D2VR/vr_convar_policy.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -194,8 +195,26 @@ static void TestPhysicalAndDesktopUnchanged()
     CHECK(desk.gameplayCommands && AllowServerCommand(desk, "l4d2vr_pose_hello 3"));
 }
 
+// The mod never writes a cheat-protected or server-replicated cvar directly.
+static void TestConVarPolicy()
+{
+    using namespace l4d2vr_convar_policy;
+    constexpr int kArchive = 1 << 7;
+    CHECK(ModMayWrite(0));
+    CHECK(ModMayWrite(kArchive));
+    CHECK(!ModMayWrite(kFcvarCheat));
+    CHECK(!ModMayWrite(kFcvarReplicated));
+    CHECK(!ModMayWrite(kFcvarCheat | kArchive));
+    CHECK(!ModMayWrite(-1));
+    // Stripping FCVAR_ARCHIVE keeps the cheat / replicated bits.
+    CHECK(KeepServerOwnedFlags(kFcvarCheat | kArchive, 0) == kFcvarCheat);
+    CHECK(KeepServerOwnedFlags(kArchive, 0) == 0);
+    CHECK(KeepServerOwnedFlags(kFcvarReplicated, kFcvarCheat) == kFcvarReplicated);
+}
+
 int main()
 {
+    TestConVarPolicy();
     TestParse();
     TestResolveMatrix();
     TestReasons();

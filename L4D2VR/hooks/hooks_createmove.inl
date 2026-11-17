@@ -1083,6 +1083,17 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		cmd->buttons &= ~(1 << 0); // IN_ATTACK
 	}
 
+	// 2.0.14 (Physical, Pavlov): a gun whose muzzle is inside a wall does not
+	// fire; the trigger gives the gun's dry click. Only the attack button is
+	// held back, so any server sees an ordinary usercmd.
+	if (!localUsingMountedWeapon && !ffDoingUseAction && m_VR->MuzzleWallBlocksFire() &&
+		m_VR->PhysicalGameplayActive())
+	{
+		if ((cmd->buttons & (1 << 0)) != 0 && (s_lastButtons & (1 << 0)) == 0)
+			m_VR->PlayMuzzleWallDryClick();
+		cmd->buttons &= ~(1 << 0); // IN_ATTACK
+	}
+
 	constexpr int kMagazineInteractionInAttack = (1 << 0);
 	constexpr int kMagazineInteractionInReload = (1 << 13);
 	const bool magazineInteractionBlocksFire = m_VR->IsMagazineInteractionBlockingFire();

@@ -490,6 +490,12 @@ namespace l4d2vr_pavlov_feel
     }
     inline float ForegripGrabVolume(int weaponId) { return LightForegripFoley(weaponId) ? 0.35f : 0.45f; }
 
+    // The gun's dry-fire click (Pavlov TriggerSound) when a shot is refused.
+    inline const char* DryFireSound(int weaponId)
+    {
+        return (weaponId == 1 || weaponId == 32) ? "weapons/clipempty_pistol.wav" : "weapons/clipempty_rifle.wav";
+    }
+
     // A put-away or draw the holster refuses (Pavlov Put/GetFailureSound).
     constexpr const char* kHolsterFailureSound = "weapons/clipempty_pistol.wav";
 

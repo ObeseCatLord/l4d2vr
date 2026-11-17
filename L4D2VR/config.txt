@@ -421,6 +421,9 @@ VanillaLaserPlacement=true
 MeleeAimLineEnabled=false
 BlockFireOnFriendlyAimEnabled=false
 BlockFireOnFriendlyAimRadiusMeters=0.1
+// 2.0.14 (Physical mode, as in Pavlov VR): a gun whose muzzle is inside a wall does not fire (the trigger
+// clicks dry, the gun hand pulses every 0.75 s, the scope picture is off), so nobody shoots through walls.
+MuzzleWallBlockEnabled=true
 D3DAimLineOverlayEnabled=false
 D3DAimLineOverlayWidthPixels=2.0
 D3DAimLineOverlayOutlinePixels=1.0

@@ -252,6 +252,8 @@ void VR::UpdatePhysicalScope()
     if (!m_FirstPersonControlReady.load(std::memory_order_acquire) ||
         m_RenderPlayerIncap.load(std::memory_order_acquire) || m_RenderPlayerControlledBySI.load(std::memory_order_acquire) ||
         m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire)) return;
+    // 2.0.14 (Physical, Pavlov): no scope picture while the gun is inside a wall.
+    if (PhysicalGameplayActive() && MuzzleWallBlocksFire()) return;
     stageLog.stage = kScopeStageTracking;
     if (!HasFreshPhysicalScopeTracking()) return;
     stageLog.stage = kScopeStageNoLens;

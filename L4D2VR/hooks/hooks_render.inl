@@ -4295,6 +4295,12 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 					{
 						QAngle::VectorAngles(aimForward, aimUp, rightCtrlAngAbs);
 					}
+					else if (m_VR->TwoHandReleaseEaseBasis(rightCtrlForward, rightCtrlRight, rightCtrlUp,
+						aimForward, aimRight, aimUp))
+					{
+						// 2.0.14: the foregrip was just let go; the gun eases back.
+						QAngle::VectorAngles(aimForward, aimUp, rightCtrlAngAbs);
+					}
 
 					// Viewmodel basis from effective weapon aim + per-weapon offsets.
 					vmForward = aimForward;

@@ -3231,6 +3231,7 @@ void VR::ParseConfigFileUnlocked()
     m_AimLineConfigEnabled = m_AimLineEnabled;
     m_BlockFireOnFriendlyAimEnabled = getBool("BlockFireOnFriendlyAimEnabled", m_BlockFireOnFriendlyAimEnabled);
     m_BlockFireOnFriendlyAimRadiusMeters = std::clamp(getFloat("BlockFireOnFriendlyAimRadiusMeters", m_BlockFireOnFriendlyAimRadiusMeters), 0.0f, 0.5f);
+    m_MuzzleWallBlockEnabled = getBool("MuzzleWallBlockEnabled", true);
     m_SpeechToTextEnabled = getBool("SpeechToTextEnabled", m_SpeechToTextEnabled);
     m_SpeechToTextSendChatEnabled = getBool("SpeechToTextSendChatEnabled", m_SpeechToTextSendChatEnabled);
     m_SpeechToTextSendVoiceEnabled = getBool("SpeechToTextSendVoiceEnabled", m_SpeechToTextSendVoiceEnabled);

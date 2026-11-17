@@ -1408,6 +1408,64 @@ void VR::UpdateNonVRAimSolution(C_BasePlayer* localPlayer, bool forceFresh, bool
     m_HasNonVRAimSolution = true;
 }
 
+void VR::UpdateMuzzleWallBlock(C_BasePlayer* localPlayer)
+{
+    auto clear = [&]()
+    {
+        if (m_MuzzleInWall.exchange(false, std::memory_order_acq_rel))
+            Game::logMsg("[VR][MuzzleWall] clear");
+        m_MuzzleWallPulse.Reset();
+    };
+    if (!m_MuzzleWallBlockEnabled || !PhysicalGameplayActive() || !m_IsVREnabled || m_MouseModeEnabled ||
+        m_IsThirdPersonCamera || !localPlayer || !m_Game || !m_Game->m_EngineTrace)
+        return clear();
+    C_WeaponCSBase* const weapon = static_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon());
+    const int weaponId = weapon ? static_cast<int>(weapon->GetWeaponID()) : 0;
+    const float reachMeters = l4d2vr_pavlov_feel::MuzzleReachMeters(weaponId);
+    // A stowed gun (empty hands) is not in the hand.
+    if (reachMeters <= 0.0f || m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
+        GetMountedGunUseEntity(localPlayer) != nullptr)
+        return clear();
+    Vector forward = m_RightControllerForward;
+    if (forward.IsZero())
+        return clear();
+    VectorNormalize(forward);
+    const Vector eye = m_HmdPosAbs;
+    const Vector hand = m_RightControllerPosAbs;
+    const Vector muzzle = hand + forward * (reachMeters * m_VRScale);
+    if (!l4d2vr_interaction::Finite(eye) || !l4d2vr_interaction::Finite(hand) || !l4d2vr_interaction::Finite(muzzle))
+        return clear();
+    // World, doors, props and glass; never players or infected (a muzzle
+    // pressed into a zombie still fires). Grates (fences) let bullets
+    // through in Source, so a gun poked through a fence still fires.
+    constexpr unsigned int kWallMask = CONTENTS_SOLID | CONTENTS_MOVEABLE | CONTENTS_WINDOW;
+    CTraceFilterSkipNPCsAndPlayers filter(reinterpret_cast<IHandleEntity*>(localPlayer), 0);
+    CGameTrace toHand;
+    Ray_t rayHand;
+    rayHand.Init(eye, hand);
+    VR_SafeTraceRay(m_Game->m_EngineTrace, rayHand, kWallMask, &filter, toHand);
+    CGameTrace toMuzzle;
+    Ray_t rayMuzzle;
+    rayMuzzle.Init(hand, muzzle);
+    VR_SafeTraceRay(m_Game->m_EngineTrace, rayMuzzle, kWallMask, &filter, toMuzzle);
+    const bool blocked = l4d2vr_pavlov_feel::MuzzleInWall(toHand.fraction, toHand.startsolid,
+        toMuzzle.fraction, toMuzzle.startsolid);
+    const bool was = m_MuzzleInWall.exchange(blocked, std::memory_order_acq_rel);
+    m_MuzzleInWallWeaponId.store(weaponId, std::memory_order_release);
+    if (blocked != was)
+        Game::logMsg("[VR][MuzzleWall] %s weapon=%d (eye-hand %.2f, hand-muzzle %.2f)",
+            blocked ? "gun inside a wall: fire blocked" : "clear", weaponId, toHand.fraction, toMuzzle.fraction);
+    if (m_MuzzleWallPulse.Update(blocked, std::clamp(m_LastFrameDuration, 0.0f, 0.1f)))
+        PlayPavlovHaptic(IsGameplayHandLeftPhysical(false), l4d2vr_pavlov_feel::Effect::GenericPulse);
+}
+
+void VR::PlayMuzzleWallDryClick()
+{
+    m_MuzzleWallBlockedShots.fetch_add(1u, std::memory_order_relaxed);
+    const char* sound = l4d2vr_pavlov_feel::DryFireSound(m_MuzzleInWallWeaponId.load(std::memory_order_acquire));
+    TryPlayKillSoundSpec(std::string("game:") + sound, 1.0f, nullptr, false);
+}
+
 bool VR::UpdateFriendlyFireAimHit(C_BasePlayer* localPlayer)
 {
     m_AimLineHitsFriendly = false;

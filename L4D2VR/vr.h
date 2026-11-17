@@ -4425,6 +4425,19 @@ public:
 	// Aim-line friendly-fire guard (client-side fire suppression)
 	vr::VRActionHandle_t m_ActionFriendlyFireBlockToggle = vr::k_ulInvalidActionHandle;
 	bool m_BlockFireOnFriendlyAimEnabled = false; // toggled by SteamVR binding
+	// 2.0.14 (Physical, Pavlov SPEC 2.4): a gun whose muzzle is inside a wall
+	// (the eye -> gun hand -> muzzle line is not clear) does not fire: the
+	// trigger gives the dry click, the gun hand a slow pulse after 0.5 s and
+	// every 0.75 s, and the scope picture is off. Client-side only: the
+	// attack button is simply not sent.
+	bool m_MuzzleWallBlockEnabled = true;
+	std::atomic<bool> m_MuzzleInWall{ false };
+	std::atomic<int> m_MuzzleInWallWeaponId{ 0 };
+	l4d2vr_pavlov_feel::WallPulseTimer m_MuzzleWallPulse;
+	std::atomic<uint32_t> m_MuzzleWallBlockedShots{ 0u };
+	void UpdateMuzzleWallBlock(C_BasePlayer* localPlayer);
+	bool MuzzleWallBlocksFire() const { return m_MuzzleInWall.load(std::memory_order_acquire); }
+	void PlayMuzzleWallDryClick();
 	bool m_AimLineHitsFriendly = false;           // updated from a ray trace (aim ray)
 	// Extra radius (meters) for the friendly-fire aim guard trace.
 	// 0 = legacy thin ray; >0 uses a swept hull (fat ray) to reduce misses from spread/latency.
@@ -5507,6 +5520,18 @@ public:
 		Vector& outUp) const;
 	void ApplyPavlovTwoHandedAimSmoothing(Vector& forward, Vector& right, Vector& up);
 	void ResetPavlovTwoHandedAimSmoothing();
+	// 2.0.14 (Physical, Pavlov SPEC 2.3): after the foregrip is let go the aim
+	// eases from the last two-handed direction back to the gun hand's forward
+	// (VInterpTo speed 5, ~0.2 s) instead of snapping. The direction is kept
+	// in the gun hand's frame; the render thread applies the published one to
+	// its fresher controller pose.
+	l4d2vr_pavlov_feel::ReleaseEase m_TwoHandReleaseEase;
+	l4d2vr_pavlov_feel::V3 m_TwoHandLastAimLocal{ 1.0f, 0.0f, 0.0f };
+	bool m_TwoHandLastAimLocalValid = false;
+	std::atomic<bool> m_TwoHandEaseActive{ false };
+	std::atomic<float> m_TwoHandEaseDir[3] = { { 1.0f }, { 0.0f }, { 0.0f } };
+	bool TwoHandReleaseEaseBasis(const Vector& handForward, const Vector& handRight, const Vector& handUp,
+		Vector& outForward, Vector& outRight, Vector& outUp) const;
 	Vector GetRecommendedViewmodelAbsPos();
 	QAngle GetRecommendedViewmodelAbsAngle();
 	// Mouse-mode: compute the eye-center ray used for aiming (mouse pitch+yaw or HMD-based, optionally sensitivity-scaled).

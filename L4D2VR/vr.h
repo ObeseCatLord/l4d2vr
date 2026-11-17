@@ -18,6 +18,7 @@
 #include "vr_scope_optics.h"
 #include "vr_weapon_models.h"
 #include "vr_magazine_policy.h"
+#include "vr_reload_rules.h"
 #include "vr_mag_slap.h"
 #include "vr_reload_log.h"
 #include "vr_remote_shells.h"
@@ -2976,6 +2977,18 @@ public:
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
     // The held old magazine was pulled out by hand (not caught as it fell).
     bool m_RetainedMagazineHandPulled = false;
+    // 2.0.12: the seated magazine gripped by an empty off hand (MagazineHandPullEnabled):
+    // it follows the hand along the well and aborts when the hand leaves sideways.
+    l4d2vr_reload_rules::MagazineHandPull m_MagazineHandPull;
+    // The seated magazine's grab volume this frame, for the shared debug view
+    // (GetMagazineHandPullVolume): the touch box plus the hand reach.
+    MagazineInteractionBoxSnapshot m_MagazineHandPullVolumeBox{};
+    float m_MagazineHandPullVolumeReach = 0.0f;
+    bool m_MagazineHandPullVolumeValid = false;
+    mutable std::mutex m_MagazineHandPullVolumeMutex;
+    // Debug view (agent/s12-hands overlay): the hand-pull grab volume of the
+    // seated magazine, in the viewmodel layer; false while no gun offers it.
+    bool GetMagazineHandPullVolume(MagazineInteractionBoxSnapshot& box, float& reachUnits) const;
     float m_RetainedPullMaxDepth = -1e9f; // furthest it has been out of the well since
     // Fresh ammo seats only after leaving the well once since it was taken.
     l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;

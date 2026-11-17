@@ -115,8 +115,30 @@ static void TestLockOpenAndEasySlide()
     }
 }
 
+// 2.0.12: Pavlov VRMagazineSlot numbers per L4D2 gun (MagSlideBounds, SlideGoal, speed).
+static void TestPavlovMagazineSlots()
+{
+    using namespace l4d2vr_reload_tuning;
+    for (int id : {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 26, 32, 33, 34, 35, 36})
+    {
+        const MagSlot slot = SlotForWeapon(id);
+        const float bound = SlotLateralBoundMeters(id);
+        CHECK(bound >= 0.0999f && bound <= 0.2001f);
+        CHECK(slot.slideGoalCm >= 1.0f && slot.slideGoalCm <= 13.0f);
+        CHECK(ClampReloadSpeed(slot.reloadSpeed) == slot.reloadSpeed);
+        float box[3]{};
+        HandleBoxCm(id, box);
+        CHECK(box[0] > 0.0f && box[1] > 0.0f && box[2] > 0.0f);
+    }
+    CHECK(std::fabs(SlotLateralBoundMeters(6) - 0.15f) < 1e-6f && std::fabs(SlotLateralBoundMeters(1) - 0.10f) < 1e-6f); // SKS 15 cm, M9 10 cm
+    CHECK(SlotForWeapon(1).slideGoalCm == 3.0f && SlotForWeapon(26).slideGoalCm == 10.0f);
+    CHECK(ClampReloadSpeed(20.0f) == 10.0f && ClampReloadSpeed(1.0f) == 2.5f);
+    CHECK(kSeatFraction == 0.95f && kReleaseCompleteFraction == 0.35f);
+}
+
 int main()
 {
+    TestPavlovMagazineSlots();
     TestLockOpenAndEasySlide();
     TestMagazineHoldTilt();
     TestPavlovNumbersCarryOver();

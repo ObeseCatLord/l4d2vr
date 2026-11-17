@@ -944,6 +944,13 @@ if (MSVC)
 endif()
 add_test(NAME vr_native_wrist_hud COMMAND vr_native_wrist_hud_tests)
 
+add_executable(vr_weapon_reserve_tests vr_weapon_reserve_tests.cpp)
+target_compile_features(vr_weapon_reserve_tests PRIVATE cxx_std_17)
+if (MSVC)
+    target_compile_options(vr_weapon_reserve_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME vr_weapon_reserve COMMAND vr_weapon_reserve_tests)
+
 add_executable(vr_item_hand_tests vr_item_hand_tests.cpp)
 target_compile_features(vr_item_hand_tests PRIVATE cxx_std_17)
 if(MSVC)

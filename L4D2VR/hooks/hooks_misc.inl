@@ -19927,9 +19927,13 @@ namespace
         }
         if (!haveLeftChain || !haveRightChain)
         {
+            // 2.0.12 (E19): name the missing side; the arms keep the game's
+            // animation for this draw (seen while a throwable is deployed).
             HooksNativeViewmodelArmIkLogOnce(
-                "atomic-chain|" + lowerModel,
-                "[VR][ViewmodelArmIK] atomic pair rejected because one shoulder-elbow-hand chain is missing model=%s",
+                std::string(haveLeftChain ? "atomic-chain-right|" : "atomic-chain-left|") + lowerModel,
+                haveLeftChain
+                    ? "[VR][ViewmodelArmIK] both-arm solve skipped: the right shoulder-elbow-hand chain is missing (game animation kept for this draw) model=%s"
+                    : "[VR][ViewmodelArmIK] both-arm solve skipped: the left shoulder-elbow-hand chain is missing (game animation kept for this draw) model=%s",
                 lowerModel,
                 nullptr,
                 nullptr,
@@ -21006,7 +21010,7 @@ namespace
                         chain.upperArm,
                         chain.forearm,
                         chain.hand,
-                        haveAttachedBodySkeleton ? "attached" : "unavailable");
+                        haveAttachedBodySkeleton ? "attached" : haveFirstPersonBodyFrame ? "not attached" : "off (full body off)");
                 }
             };
         auto solveSide = [&](
@@ -21513,11 +21517,16 @@ namespace
                     armRequiredStretchScale[1]);
             }
         }
+        // 2.0.12 (E19): without the full body (FirstPersonBodyEnabled=false)
+        // there is no body skeleton by design and the shoulders come from the
+        // head/torso frame; say that instead of "unavailable".
         HooksNativeViewmodelArmIkLogOnce(
             "success|" + lowerModel,
             haveAttachedBodySkeleton
-                ? "[VR][ViewmodelArmIK] active bodySkeleton=attached manualArmOffsets=active model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)"
-                : "[VR][ViewmodelArmIK] active bodySkeleton=unavailable cameraFallback=active model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)",
+                ? "[VR][ViewmodelArmIK] active shoulders=full body skeleton manualArmOffsets=active model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)"
+                : haveFirstPersonBodyFrame
+                    ? "[VR][ViewmodelArmIK] active shoulders=head/torso frame (the full body's shoulders did not fit this arm model) model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)"
+                    : "[VR][ViewmodelArmIK] active shoulders=head/torso frame (full body off) model=%s left=(%d:%s,%d:%s,%d:%s) right=(%d:%s,%d:%s,%d:%s)",
             lowerModel,
             solvedSide[0] ? &leftChain : nullptr,
             solvedSide[1] ? &rightChain : nullptr,

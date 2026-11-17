@@ -28962,6 +28962,9 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
 
     if (!shadowDepthDraw && m_VR && pBonesToWorldFinal)
         PublishViewmodelSightBore(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
+    // 2.0.12: the control watchdog's "hands drawn" heartbeat.
+    if (!shadowDepthDraw && m_VR && HooksModelNameIsViewmodel(lowerModelName))
+        m_VR->m_ViewmodelDrawnAtMs.store(GetTickCount64(), std::memory_order_release);
 
     if (!shadowDepthDraw && m_VR && m_VR->m_MagazineDropEnabled && pBonesToWorldFinal &&
         HooksModelNameIsViewmodel(lowerModelName))

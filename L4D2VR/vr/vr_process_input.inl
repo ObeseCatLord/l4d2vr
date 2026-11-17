@@ -2037,6 +2037,9 @@ void VR::ProcessInput()
             }
             if (grab.selectSlot >= 0 && grab.selectSlot < l4d2vr_holster::kZoneCount)
             {
+                // 2.0.12 (G4): the watchdog reports a draw the game refuses.
+                NoteHolsterDrawRequest(grab.selectSlot, localPlayer && localPlayer->Weapon_GetSlot(grab.selectSlot)
+                    ? reinterpret_cast<uintptr_t>(localPlayer->Weapon_GetSlot(grab.selectSlot)) : 0u, false);
                 if (m_HolsterGrabHapticAmplitude > 0.0f)
                     TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(false), 0.03f, 120.0f, m_HolsterGrabHapticAmplitude, 2);
                 if (m_HolsterInstantDraw)

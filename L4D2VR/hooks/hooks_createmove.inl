@@ -221,6 +221,10 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		localUseButtonDownForAutoActions ||
 		m_VR->m_UseCmdOwned ||
 		IsPlayerDoingUseOrReviveAction(localPlayerForAutoActions);
+    // 2.0.12: no hands / no control watchdog (names the stuck gate, recovers).
+    if (m_VR)
+        m_VR->UpdateControlWatchdog(localPlayerForAutoActions,
+            gripSession.blocked | (IsPlayerDoingUseOrReviveAction(localPlayerForAutoActions) ? 32u : 0u));
 
 	if (m_VR && m_VR->m_TeleportVisualScoutActive)
 	{

@@ -19,6 +19,7 @@
 #include "vr_weapon_models.h"
 #include "vr_magazine_policy.h"
 #include "vr_reload_rules.h"
+#include "vr_control_watchdog.h"
 #include "vr_mag_slap.h"
 #include "vr_reload_log.h"
 #include "vr_remote_shells.h"
@@ -2989,6 +2990,17 @@ public:
     // Debug view (agent/s12-hands overlay): the hand-pull grab volume of the
     // seated magazine, in the viewmodel layer; false while no gun offers it.
     bool GetMagazineHandPullVolume(MagazineInteractionBoxSnapshot& box, float& reachUnits) const;
+    // 2.0.12: no-hands / no-control watchdog (vr_control_watchdog.h), run
+    // from CreateMove with the grip gameplay gate bits.
+    std::atomic<uint64_t> m_ViewmodelDrawnAtMs{ 0u };   // last first-person viewmodel draw
+    int m_DrawRequestSlot = -1;                          // last holster draw sent to the game
+    uint64_t m_DrawRequestAtMs = 0u;
+    uintptr_t m_DrawRequestTag = 0u;
+    bool m_DrawRequestLeft = false;
+    l4d2vr_control_watchdog::Watchdog m_ControlWatchdog;
+    unsigned m_ControlWatchdogTriedSlots = 0u;
+    void NoteHolsterDrawRequest(int slot, uintptr_t weaponTag, bool leftHand);
+    void UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits);
     float m_RetainedPullMaxDepth = -1e9f; // furthest it has been out of the well since
     // Fresh ammo seats only after leaving the well once since it was taken.
     l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;

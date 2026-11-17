@@ -11538,6 +11538,158 @@ bool VR::GetTwoHandedGripTargetPoint(Vector& point) const
     return true;
 }
 
+// 2.0.12 (s12 E4 / issue 3 / G4 and every other no-hands, no-control path):
+// the watchdog (vr_control_watchdog.h) names the stuck gate and recovers.
+void VR::NoteHolsterDrawRequest(int slot, uintptr_t weaponTag, bool leftHand)
+{
+    m_DrawRequestSlot = slot;
+    m_DrawRequestTag = weaponTag;
+    m_DrawRequestAtMs = GetTickCount64();
+    m_DrawRequestLeft = leftHand;
+}
+
+void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
+{
+    namespace wd = l4d2vr_control_watchdog;
+    if (!m_IsVREnabled || !m_Game || !m_Game->m_EngineClient) return;
+    const uint64_t now = GetTickCount64();
+    wd::Sample s{};
+    s.inGame = m_Game->m_EngineClient->IsInGame() && player != nullptr;
+    s.alive = s.inGame && (gateBits & (1u | 2u | 8u)) == 0u &&
+        m_RenderTpDead.load(std::memory_order_relaxed) == 0u && m_RenderTpObserver.load(std::memory_order_relaxed) == 0u;
+    s.firstPerson = m_RenderTpWantsThirdPerson.load(std::memory_order_relaxed) == 0u &&
+        m_RenderHasViewEntityOverride.load(std::memory_order_relaxed) == 0u;
+    s.paused = (gateBits & 64u) != 0u;
+    s.menuOpen = (gateBits & (128u | 256u | 512u)) != 0u || m_MouseModeEnabled;
+    s.incapacitated = m_RenderPlayerIncap.load(std::memory_order_relaxed) != 0u;
+    s.ledge = m_RenderPlayerLedge.load(std::memory_order_relaxed) != 0u;
+    s.controlledBySI = m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) != 0u;
+    s.mounted = (gateBits & 8192u) != 0u || m_RenderUsingMountedGun.load(std::memory_order_relaxed) != 0u;
+    s.useAction = (gateBits & 32u) != 0u || m_RenderTpSelfMedkit.load(std::memory_order_relaxed) != 0u ||
+        m_RenderBeingRevived.load(std::memory_order_relaxed) != 0u || m_RenderRevivingOther.load(std::memory_order_relaxed) != 0u;
+    C_WeaponCSBase* active = player ? reinterpret_cast<C_WeaponCSBase*>(player->GetActiveWeapon()) : nullptr;
+    const uintptr_t activeTag = reinterpret_cast<uintptr_t>(active);
+    s.hasActiveWeapon = active != nullptr;
+    s.handsStowed = m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
+        (activeTag != 0u && ChestSlingHolds(activeTag));
+    const uint64_t drawnAt = m_ViewmodelDrawnAtMs.load(std::memory_order_acquire);
+    s.msSinceViewmodelDrawn = drawnAt == 0u || now < drawnAt ? UINT64_MAX / 2u : now - drawnAt;
+    s.gateBits = gateBits;
+    s.controlReady = m_FirstPersonControlReady.load(std::memory_order_acquire);
+    s.reloadState = static_cast<int>(m_MagazineInteractionState);
+    s.reloadWaitsForServer = m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerShell ||
+        m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerMagazine ||
+        m_MagazineInteractionState == MagazineInteractionManualState::WaitingForServerPistolCycle;
+    s.drawPending = m_DrawRequestSlot >= 0 && m_DrawRequestAtMs != 0u;
+    s.msSinceDrawRequest = s.drawPending && now >= m_DrawRequestAtMs ? now - m_DrawRequestAtMs : 0u;
+    s.drawArrived = s.drawPending && m_DrawRequestTag != 0u && activeTag == m_DrawRequestTag;
+    if (s.drawArrived || (s.drawPending && s.msSinceDrawRequest > 5000u))
+        m_DrawRequestSlot = -1;
+
+    const wd::Result r = m_ControlWatchdog.Update(s, now);
+    if (s.hasActiveWeapon) m_ControlWatchdogTriedSlots = 0u;
+    if (r.cleared)
+        for (uint32_t bit = 1u; bit < wd::kAll; bit <<= 1u)
+            if ((r.cleared & bit) != 0u)
+                Game::logMsg("[VR][Watchdog] %s recovered", wd::Name(bit));
+    if (!r.recover) return;
+
+    auto weaponClass = [&](C_WeaponCSBase* weapon) -> const char*
+    {
+        return weapon ? l4d2vr_holster::WeaponClassForId(static_cast<int>(weapon->GetWeaponID())) : nullptr;
+    };
+    if ((r.recover & wd::kNoActiveWeapon) != 0u && player)
+    {
+        unsigned occupied = 0u;
+        for (int slot = 0; slot < 5; ++slot)
+            if (player->Weapon_GetSlot(slot)) occupied |= 1u << slot;
+        const int slot = wd::PickRecoverySlot(occupied, m_ControlWatchdogTriedSlots);
+        C_WeaponCSBase* const weapon = slot >= 0 ? static_cast<C_WeaponCSBase*>(player->Weapon_GetSlot(slot)) : nullptr;
+        const char* const cls = weaponClass(weapon);
+        if (slot >= 0) m_ControlWatchdogTriedSlots |= 1u << slot;
+        if (cls)
+        {
+            char command[64];
+            std::snprintf(command, sizeof(command), "use %s", cls);
+            m_Game->ClientCmd_Unrestricted(command);
+        }
+        else if (slot >= 0)
+        {
+            static const char* kSlots[] = { "slot1", "slot2", "slot3", "slot4", "slot5" };
+            m_Game->ClientCmd_Unrestricted(kSlots[slot]);
+        }
+        // Whatever the hands showed for the lost item is gone with it.
+        m_ManualInventoryEmptyHandsActive.store(false, std::memory_order_release);
+        if (IsMagazineInteractionManualActive()) CancelMagazineInteractionManual();
+        Game::logMsg("[VR][Watchdog] stuck gate: no-active-weapon for %.1f s (inventory 0x%X, gate 0x%X): deploying slot%d %s",
+            wd::kNoWeaponMs / 1000.0, occupied, gateBits, slot + 1, cls ? cls : "(none)");
+    }
+    if ((r.recover & wd::kNoViewmodel) != 0u && active)
+    {
+        // Deploy the held item again: the viewmodel (and the hands drawn from it) comes back.
+        if (const char* cls = weaponClass(active))
+        {
+            char command[64];
+            std::snprintf(command, sizeof(command), "use %s", cls);
+            m_Game->ClientCmd_Unrestricted(command);
+        }
+        Game::logMsg("[VR][Watchdog] stuck gate: no viewmodel (hands) drawn for %.1f s with weaponId=%d held "
+            "(stowed=%d controlReady=%d gate 0x%X): deployed it again",
+            static_cast<double>(s.msSinceViewmodelDrawn) / 1000.0, static_cast<int>(active->GetWeaponID()),
+            s.handsStowed ? 1 : 0, s.controlReady ? 1 : 0, gateBits);
+    }
+    if ((r.recover & wd::kInputGate) != 0u)
+    {
+        if ((gateBits & 1024u) != 0u) m_SuppressPlayerInput = false;
+        Game::logMsg("[VR][Watchdog] stuck gate: VR input gated for %.1f s by 0x%X%s%s%s",
+            wd::kInputGateMs / 1000.0, gateBits & wd::kUnexplainedGateBits,
+            (gateBits & 4u) ? " [no local player state]" : "", (gateBits & 1024u) ? " [input suppressed: cleared]" : "",
+            (gateBits & 2048u) ? " [first-person control not ready]" : "");
+    }
+    if ((r.recover & wd::kControlNotReady) != 0u)
+    {
+        // The latch waits for the render path's first-person camera report; a
+        // live, unfrozen survivor without a view entity is controllable.
+        if (s.alive && s.firstPerson && (gateBits & 32u) == 0u)
+            m_FirstPersonControlReady.store(true, std::memory_order_release);
+        Game::logMsg("[VR][Watchdog] stuck gate: first-person control not ready for %.1f s (alive=%d firstPerson=%d): %s",
+            wd::kControlNotReadyMs / 1000.0, s.alive ? 1 : 0, s.firstPerson ? 1 : 0,
+            m_FirstPersonControlReady.load(std::memory_order_acquire) ? "set ready" : "left as is");
+    }
+    if ((r.recover & wd::kReloadStuck) != 0u)
+    {
+        Game::logMsg("[VR][Watchdog] stuck gate: reload state %s unchanged (%s): session reset",
+            l4d2vr_reload_log::StateName(s.reloadState), s.reloadWaitsForServer ? "no host answer" : "two minutes");
+        CancelMagazineInteractionManual();
+        ResetMagazineInteractionSession();
+        m_MagazineInteractionSuppressLeftInputUntilRelease = false;
+        m_ControlWatchdog.RestartReloadClock(now);
+    }
+    if ((r.recover & wd::kDrawRefused) != 0u)
+    {
+        // G4: the game refused the draw (an empty gun cannot be deployed):
+        // say so, tick twice and drop the pending draw state.
+        C_WeaponCSBase* const requested = player && m_DrawRequestSlot >= 0
+            ? static_cast<C_WeaponCSBase*>(player->Weapon_GetSlot(m_DrawRequestSlot)) : nullptr;
+        int clip = -1, reserve = -1, ammoType = -1;
+        if (requested)
+        {
+            MagazineInteractionTryReadValue(requested, kClip1Offset, clip);
+            if (MagazineInteractionTryReadValue(requested, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
+                MagazineInteractionTryReadValue(player, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), reserve);
+        }
+        TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(m_DrawRequestLeft), 0.03f, 60.0f, 0.5f, 2);
+        TriggerPhysicalHandHapticPulse(IsGameplayHandLeftPhysical(m_DrawRequestLeft), 0.03f, 60.0f, 0.5f, 2);
+        Game::logMsg("[VR][Watchdog] draw refused: slot%d %s was not deployed by the game within %llu ms (clip %d reserve %d%s)",
+            m_DrawRequestSlot + 1, weaponClass(requested) ? weaponClass(requested) : "(empty slot)",
+            static_cast<unsigned long long>(wd::kDrawRefusedMs), clip, reserve,
+            clip == 0 && reserve == 0 ? ": no ammo" : "");
+        m_HolsterInstantDrawSlot.store(-1, std::memory_order_release);
+        m_HolsterInstantDrawUntilMs.store(0u, std::memory_order_release);
+        m_DrawRequestSlot = -1;
+    }
+}
+
 bool VR::GetMagazineHandPullVolume(MagazineInteractionBoxSnapshot& box, float& reachUnits) const
 {
     std::lock_guard<std::mutex> lock(m_MagazineHandPullVolumeMutex);

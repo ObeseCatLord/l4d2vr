@@ -28,6 +28,13 @@
 //   magazine pouch     off-hand upper chest (AmmoPouchTransform).
 // The Pavlov root curves (lookDownBackMeters, reachFloorBackMeters) are kept
 // in the code and set to zero here.
+//
+// 2.0.12 (review s12 issue 7): the slots have a grab-volume shape each
+// (ZoneKind) and the whole placement is a data table per layout
+// (MakeLayout: forefront, the default, and pavlov; HolsterLayout). The
+// grenade and magazine pouch sit on Pavlov's top vest-pocket row (HMD - 0.31
+// and - 0.33 m), only an EMPTY hand takes from the body (GrabInput::handEmpty)
+// and the nearest grab wins with 2 cm hysteresis (FindZone's hovered zone).
 namespace l4d2vr_holster
 {
     constexpr float kPi = 3.14159265358979323846f;

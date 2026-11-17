@@ -61,6 +61,8 @@ namespace
         { "GunBashSweepEnabled", &VR::m_GunBashSweepEnabled, false },
         { "MotionOnlyMeleeAndShove", &VR::m_MotionOnlyMeleeAndShove, false },
         { "MeleeInertiaEnabled", &VR::m_MeleeInertiaEnabled, false },
+        // No input filtering: the trigger fires like the mouse button.
+        { "BlockFireOnFriendlyAimEnabled", &VR::m_BlockFireOnFriendlyAimEnabled, false },
         // Needs the plugin.
         { "Roomscale1To1ServerMove", &VR::m_Roomscale1To1ServerMove, false },
         // The flashlight follows the gun (the game's own beam along the aim).

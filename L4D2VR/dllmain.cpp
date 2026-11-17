@@ -2279,6 +2279,17 @@ namespace
             "AutoFlashlightLateralOffset", "AutoFlashlightVerticalOffset", "AutoFlashlightSmoothingTime",
             "AutoFlashlightMinOnTime", "AutoFlashlightMinOffTime", "AutoFlashlightManualOverrideSeconds",
             "AutoFlashlightDebugLogHz", "AutoFlashlightHighConfidenceSamples", "AutoFlashlightLowConfidenceSamples",
+            // 2.0.13: cheat-like automation and information features removed.
+            "AutoRepeatSemiAutoFire",
+            "AutoRepeatSemiAutoFireHz",
+            "AutoRepeatSprayPushEnabled",
+            "AutoRepeatSprayPushDelayTicks",
+            "AutoRepeatSprayPushHoldTicks",
+            "AutoFastMelee",
+            "AutoFastMeleeUseWeaponSwitch",
+            "AutoFastMeleeUseShove",
+            "EffectiveAttackRangeAutoFireEnabled",
+            "EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds",
         };
         return keys;
     }

@@ -3268,14 +3268,6 @@ void VR::ParseConfigFileUnlocked()
     m_AimLineConfigEnabled = m_AimLineEnabled;
     m_BlockFireOnFriendlyAimEnabled = getBool("BlockFireOnFriendlyAimEnabled", m_BlockFireOnFriendlyAimEnabled);
     m_BlockFireOnFriendlyAimRadiusMeters = std::clamp(getFloat("BlockFireOnFriendlyAimRadiusMeters", m_BlockFireOnFriendlyAimRadiusMeters), 0.0f, 0.5f);
-    m_AutoRepeatSemiAutoFire = getBool("AutoRepeatSemiAutoFire", m_AutoRepeatSemiAutoFire);
-    m_AutoRepeatSemiAutoFireHz = std::max(0.0f, getFloat("AutoRepeatSemiAutoFireHz", m_AutoRepeatSemiAutoFireHz));
-    m_AutoRepeatSprayPushEnabled = getBool("AutoRepeatSprayPushEnabled", m_AutoRepeatSprayPushEnabled);
-    m_AutoRepeatSprayPushDelayTicks = std::clamp(getInt("AutoRepeatSprayPushDelayTicks", m_AutoRepeatSprayPushDelayTicks), 0, 8);
-    m_AutoRepeatSprayPushHoldTicks = std::clamp(getInt("AutoRepeatSprayPushHoldTicks", m_AutoRepeatSprayPushHoldTicks), 1, 8);
-
-    m_AutoFastMelee = getBool("AutoFastMelee", m_AutoFastMelee);
-    m_AutoFastMeleeUseWeaponSwitch = getBool("AutoFastMeleeUseWeaponSwitch", getBool("AutoFastMeleeUseShove", m_AutoFastMeleeUseWeaponSwitch));
     m_HitSoundEnabled = getBool("HitSoundEnabled", m_HitSoundEnabled);
     m_HitSoundPlaybackCooldownSeconds = std::clamp(getFloat("HitSoundPlaybackCooldownSeconds", m_HitSoundPlaybackCooldownSeconds), 0.0f, 0.25f);
     m_HitSoundSpec = getString("HitSoundSpec", m_HitSoundSpec);
@@ -3344,7 +3336,6 @@ void VR::ParseConfigFileUnlocked()
     m_AimLineColorB = aimColor[2];
     m_AimLineColorA = aimColor[3];
     m_EffectiveAttackRangeIndicatorEnabled = getBool("EffectiveAttackRangeIndicatorEnabled", m_EffectiveAttackRangeIndicatorEnabled);
-    m_EffectiveAttackRangeAutoFireEnabled = getBool("EffectiveAttackRangeAutoFireEnabled", m_EffectiveAttackRangeAutoFireEnabled);
     auto effectiveRangeColor = getColor("EffectiveAttackRangeColor",
         m_EffectiveAttackRangeColorR, m_EffectiveAttackRangeColorG, m_EffectiveAttackRangeColorB, m_AimLineColorA);
     m_EffectiveAttackRangeColorR = effectiveRangeColor[0];
@@ -3359,7 +3350,6 @@ void VR::ParseConfigFileUnlocked()
     m_EffectiveAttackRangeCacheDirectionDot = std::clamp(getFloat("EffectiveAttackRangeCacheDirectionDot", m_EffectiveAttackRangeCacheDirectionDot), 0.0f, 1.0f);
     m_EffectiveAttackRangeMeleeDistance = std::clamp(getFloat("EffectiveAttackRangeMeleeDistance", m_EffectiveAttackRangeMeleeDistance), 1.0f, 512.0f);
     m_EffectiveAttackRangeMeleeFanAngle = std::clamp(getFloat("EffectiveAttackRangeMeleeFanAngle", m_EffectiveAttackRangeMeleeFanAngle), 0.0f, 180.0f);
-    m_EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds = std::clamp(getFloat("EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds", m_EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds), 0.05f, 5.0f);
     m_EffectiveAttackRangeHitPointTolerance = std::clamp(getFloat("EffectiveAttackRangeHitPointTolerance", m_EffectiveAttackRangeHitPointTolerance), 0.0f, 64.0f);
     m_EffectiveAttackRangeHitPointSpreadScale = std::clamp(getFloat("EffectiveAttackRangeHitPointSpreadScale", m_EffectiveAttackRangeHitPointSpreadScale), 0.0f, 2.0f);
     m_EffectiveAttackRangeHitPointMaxTolerance = std::clamp(getFloat("EffectiveAttackRangeHitPointMaxTolerance", m_EffectiveAttackRangeHitPointMaxTolerance), m_EffectiveAttackRangeHitPointTolerance, 64.0f);

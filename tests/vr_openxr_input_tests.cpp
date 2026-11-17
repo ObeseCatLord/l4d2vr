@@ -100,9 +100,7 @@ int main()
             "/actions/main/in/ResetPosition", "/actions/main/in/Crouch", "/actions/main/in/WeaponGrip",
             "/actions/main/in/OffHandGrip", "/actions/main/in/MagazineRelease", "/actions/main/in/Flashlight",
             "/actions/main/in/InventoryGripLeft", "/actions/main/in/InventoryGripRight",
-            "/actions/main/in/InventoryQuickSwitch", "/actions/main/in/SpecialInfectedAutoAimToggle",
-            "/actions/main/in/SpecialInfectedDodgeToggle", "/actions/main/in/LedgeGuardToggle",
-            "/actions/main/in/EffectiveAttackRangeAutoFireToggle", "/actions/main/in/SpeechToText",
+            "/actions/main/in/InventoryQuickSwitch", "/actions/main/in/SpeechToText",
             "/actions/main/in/MenuSelect", "/actions/main/in/MenuBack", "/actions/main/in/MenuUp",
             "/actions/main/in/MenuDown", "/actions/main/in/MenuLeft", "/actions/main/in/MenuRight",
             "/actions/main/in/Spray", "/actions/main/in/Scoreboard", "/actions/main/in/ShowHUD",
@@ -116,6 +114,10 @@ int main()
             CheckS(xi::FindAction(name) != Action::Count, std::string("mod action in the table: ") + name);
         Check(xi::FindAction("/ACTIONS/MAIN/IN/primaryattack") == Action::PrimaryAttack, "names are case-insensitive");
         Check(xi::FindAction("/actions/main/in/NoSuchThing") == Action::Count, "unknown names stay unknown");
+        // 2.0.13: the automation toggles are gone.
+        for (const char* removed : { "/actions/main/in/SpecialInfectedAutoAimToggle", "/actions/main/in/SpecialInfectedDodgeToggle",
+            "/actions/main/in/LedgeGuardToggle", "/actions/main/in/EffectiveAttackRangeAutoFireToggle" })
+            CheckS(xi::FindAction(removed) == Action::Count, std::string("removed action: ") + removed);
         Check(xi::Def(Action::Walk).kind == xi::Kind::Vector2 && xi::Def(Action::Turn).kind == xi::Kind::Vector2, "sticks are vector2");
         Check(xi::Def(Action::SkeletonLeft).kind == xi::Kind::Skeleton, "skeleton actions are facade-only");
     }

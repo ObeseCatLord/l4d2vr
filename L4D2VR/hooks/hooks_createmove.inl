@@ -93,36 +93,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 	static l4d2vr_input::ReleaseInputGate s_manualThrowInputGate;
 	static bool s_vrAwareThrowableAimPrevWeaponThrowable = false;
 	static int s_vrAwareThrowableAimTicks = 0;
-	// Auto-repeat spray-push for pump/chrome shotguns and AWP/scout:
-	// detect a real shot/shell spend and queue a short IN_ATTACK2.
-	static uintptr_t s_autoRepeatSprayPushWeapon = 0;
-	static int s_autoRepeatSprayPushPrevClip1 = -1;
-	static int s_autoRepeatSprayPushDelayTicks = 0;
-	static int s_autoRepeatSprayPushHoldTicks = 0;
-	// Auto fast-melee state (hold-to-pulse + optional weapon-switch cancel).
-	static bool s_autoFastMeleeHoldPrev = false;
-	static int s_autoFastMeleeNextSwingCmd = -1;
-	static uintptr_t s_autoFastMeleeWeapon = 0;
-	static bool s_autoFastMeleeSwitchOutPending = false;
-	static bool s_autoFastMeleeSwitchBackPending = false;
-	static int s_autoFastMeleeSwitchOutCmd = -1;
-	static int s_autoFastMeleeSwitchBackCmd = -1;
-	static int s_autoFastMeleeLastIntentCmd = -1;
-	static std::chrono::steady_clock::time_point s_effectiveRangeMeleeNextCycleAt{};
-	static uintptr_t s_effectiveRangeMeleeWeapon = 0;
-	static bool s_effectiveRangeMeleeSwitchOutPending = false;
-	static bool s_effectiveRangeMeleeSwitchBackPending = false;
-	static int s_effectiveRangeMeleeSwitchOutCmd = -1;
-	static int s_effectiveRangeMeleeSwitchBackCmd = -1;
-	static int s_effectiveRangeMeleeCycleEndCmd = -1;
-	// Give effective-range auto-fire a short humanized reaction window instead of
-	// attacking on the same command that first acquires a target.
-	static bool s_effectiveRangeAutoFireDelayPending = false;
-	static std::chrono::steady_clock::time_point s_effectiveRangeAutoFireAt{};
-	static uintptr_t s_effectiveRangeAutoFireTarget = 0;
-	static uintptr_t s_effectiveRangeAutoFireWeapon = 0;
-	static uint32_t s_effectiveRangeAutoFireRandomState = 0;
-
 	static int s_lastButtons = 0;
 
 	auto updateFirstPersonBodyLocalState = [&](bool hasRealUserCmd)
@@ -171,6 +141,40 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         if (!session.liveInventory) s_pistolOwnership.Reset();
         return session;
     };
+	// 2.0.13: a gameplay mode change (Physical <-> Classic) drops every
+	// in-flight physical input state of this function.
+	static uint32_t s_gameplayModeGeneration = 0u;
+	if (m_VR)
+	{
+		const uint32_t generation = m_VR->m_GameplayModeGeneration.load(std::memory_order_acquire);
+		if (generation != s_gameplayModeGeneration)
+		{
+			s_gameplayModeGeneration = generation;
+			s_weaponGripRelease.Reset();
+			s_handThrowFsm = l4d2vr_hand_throw::ReleaseFsm{};
+			s_gripPickup.Reset(); s_holsterDrawPickup.Reset(); s_leftPistolPickup.Reset();
+			s_rightGripReservation.Reset(); s_leftGripReservation.Reset();
+			s_pendingGripAdoption = 0u;
+			s_chestSlingAdoptUntilMs = 0u;
+			s_gripDropReturn.Reset();
+			s_dualPistolTriggers.Reset();
+			s_pistolOwnership.Reset();
+			s_nonvrMeleeHoldTicks = 0;
+			s_nonvrMeleeArmed = true;
+			s_nonvrMeleeLockUntil = {};
+			s_nonvrMeleeCooldownUntil = {};
+			s_nonvrMeleePending = false;
+			s_nonvrMeleeFireAt = {};
+			s_nonvrMeleePendingHoldTicks = 0;
+			s_nonvrMeleeHasPrev = false;
+			s_manualCarryThrowWeapon = 0;
+			s_manualCarryThrowPhysicalAttackDown = false;
+			s_manualInventoryThrowPhysicalUseDown = false;
+			s_manualInventoryThrowArmed = false;
+			s_manualThrowInputGate.Reset();
+			m_VR->m_ManualThrowViewmodelInputState.store(0u, std::memory_order_release);
+		}
+	}
 	if (!cmd || !cmd->command_number)
 	{
 		const bool result = hkCreateMove.fOriginal(ecx, flInputSampleTime, cmd);
@@ -201,15 +205,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 	if (m_VR)
 		m_VR->ApplyPendingRoomscale1To1ServerVisualCorrection();
 
-	m_VR->m_EffectiveAttackRangeAutoFireActive = false;
-	auto resetEffectiveRangeAutoFireDelay = [&]()
-		{
-			s_effectiveRangeAutoFireDelayPending = false;
-			s_effectiveRangeAutoFireAt = {};
-			s_effectiveRangeAutoFireTarget = 0;
-			s_effectiveRangeAutoFireWeapon = 0;
-		};
-
 	constexpr int kAutoActionIN_USE = (1 << 5);
 	const bool localUseButtonDownForAutoActions = (cmd->buttons & kAutoActionIN_USE) != 0;
 	C_BasePlayer* localPlayerForAutoActions = nullptr;
@@ -218,10 +213,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		const int lpIdx = m_Game->m_EngineClient->GetLocalPlayer();
 		localPlayerForAutoActions = (lpIdx > 0) ? (C_BasePlayer*)m_Game->GetClientEntity(lpIdx) : nullptr;
 	}
-	const bool suppressAutoActionsForUseOrRevive =
-		localUseButtonDownForAutoActions ||
-		m_VR->m_UseCmdOwned ||
-		IsPlayerDoingUseOrReviveAction(localPlayerForAutoActions);
     // 2.0.12: no hands / no control watchdog (names the stuck gate, recovers).
     if (m_VR)
         m_VR->UpdateControlWatchdog(localPlayerForAutoActions,
@@ -264,41 +255,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		s_manualInventoryThrowPhysicalUseDown = false;
 		s_manualInventoryThrowArmed = false;
 		s_manualThrowInputGate.Reset();
-		s_autoRepeatSprayPushWeapon = 0;
-		s_autoRepeatSprayPushPrevClip1 = -1;
-		s_autoRepeatSprayPushDelayTicks = 0;
-		s_autoRepeatSprayPushHoldTicks = 0;
-		s_autoFastMeleeHoldPrev = false;
-		s_autoFastMeleeNextSwingCmd = -1;
-		s_autoFastMeleeWeapon = 0;
-		s_autoFastMeleeSwitchOutPending = false;
-		s_autoFastMeleeSwitchBackPending = false;
-		s_autoFastMeleeSwitchOutCmd = -1;
-		s_autoFastMeleeSwitchBackCmd = -1;
-		s_autoFastMeleeLastIntentCmd = -1;
-		s_effectiveRangeMeleeNextCycleAt = {};
-		s_effectiveRangeMeleeWeapon = 0;
-		s_effectiveRangeMeleeSwitchOutPending = false;
-		s_effectiveRangeMeleeSwitchBackPending = false;
-		s_effectiveRangeMeleeSwitchOutCmd = -1;
-		s_effectiveRangeMeleeSwitchBackCmd = -1;
-		s_effectiveRangeMeleeCycleEndCmd = -1;
-		resetEffectiveRangeAutoFireDelay();
-		m_VR->m_EffectiveAttackRangeAutoFirePrevAttackDown = false;
 		m_VR->m_ManualThrowViewmodelInputState.store(0u, std::memory_order_release);
 		return result;
 	}
-
-	auto resetEffectiveRangeMeleeCycle = [&]()
-		{
-			s_effectiveRangeMeleeNextCycleAt = {};
-			s_effectiveRangeMeleeWeapon = 0;
-			s_effectiveRangeMeleeSwitchOutPending = false;
-			s_effectiveRangeMeleeSwitchBackPending = false;
-			s_effectiveRangeMeleeSwitchOutCmd = -1;
-			s_effectiveRangeMeleeSwitchBackCmd = -1;
-			s_effectiveRangeMeleeCycleEndCmd = -1;
-		};
 
 	if (m_VR->m_IsVREnabled) {
 		// Detect observer -> live transition and recenter once.
@@ -333,86 +292,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 			}
 		}
 		const bool treatServerAsNonVR = m_VR->m_ForceNonVRServerMovement;
-		constexpr int kIN_JUMP = (1 << 1);
-		const bool inputJumpHeld = (cmd->buttons & kIN_JUMP) != 0;
-
-		m_VR->ApplyOptionalCreateMoveFeatures(cmd, 0, inputJumpHeld, false, 0.0f, 0.0f, false);
-
-		bool effectiveRangeAutoFireEligible = false;
-		if (m_VR->m_EffectiveAttackRangeAutoFireEnabled
-			&& m_VR->m_AimLineEffectiveAttackRangeActive
-			&& !m_VR->m_AimLineEffectiveAttackRangeTargetIsWitch
-			&& !m_VR->m_SuppressPlayerInput
-			&& !m_VR->m_AdjustingViewmodel
-			&& !m_VR->m_AdjustingScope
-			&& !suppressAutoActionsForUseOrRevive)
-		{
-			const int lpIdx = (m_Game->m_EngineClient) ? m_Game->m_EngineClient->GetLocalPlayer() : -1;
-			C_BasePlayer* lp = (lpIdx > 0) ? (C_BasePlayer*)m_Game->GetClientEntity(lpIdx) : nullptr;
-			if (lp)
-			{
-				const int lifeState = (int)ReadNetvar<uint8_t>(lp, VR::kLifeStateOffset);
-				const int observerMode = (int)ReadNetvar<int>(lp, VR::kObserverModeOffset);
-				C_WeaponCSBase* activeWeapon = reinterpret_cast<C_WeaponCSBase*>(lp->GetActiveWeapon());
-				const C_WeaponCSBase::WeaponID weaponId = activeWeapon ? activeWeapon->GetWeaponID() : C_WeaponCSBase::WeaponID::NONE;
-				const bool isHoldToUseWeaponId =
-					(weaponId == C_WeaponCSBase::WeaponID::FIRST_AID_KIT) ||
-					(weaponId == C_WeaponCSBase::WeaponID::DEFIBRILLATOR) ||
-					(weaponId == C_WeaponCSBase::WeaponID::AMMO_PACK) ||
-					(weaponId == C_WeaponCSBase::WeaponID::INCENDIARY_AMMO) ||
-					(weaponId == C_WeaponCSBase::WeaponID::FRAG_AMMO) ||
-					(weaponId == C_WeaponCSBase::WeaponID::UPGRADE_ITEM);
-				const bool canAutoFire = (lifeState == 0) && (observerMode == 0) && !isHoldToUseWeaponId;
-				if (canAutoFire)
-				{
-					effectiveRangeAutoFireEligible = true;
-					const uintptr_t targetTag = m_VR->m_AimLineEffectiveAttackRangeTarget;
-					const uintptr_t weaponTag = reinterpret_cast<uintptr_t>(activeWeapon);
-					const auto now = std::chrono::steady_clock::now();
-
-					if (!s_effectiveRangeAutoFireDelayPending
-						|| targetTag != s_effectiveRangeAutoFireTarget
-						|| weaponTag != s_effectiveRangeAutoFireWeapon)
-					{
-						if (s_effectiveRangeAutoFireRandomState == 0)
-						{
-							const uint64_t entropy = static_cast<uint64_t>(now.time_since_epoch().count());
-							s_effectiveRangeAutoFireRandomState =
-								static_cast<uint32_t>(entropy) ^
-								static_cast<uint32_t>(entropy >> 32) ^
-								(static_cast<uint32_t>(cmd->command_number) * 0x9E3779B9u);
-							if (s_effectiveRangeAutoFireRandomState == 0)
-								s_effectiveRangeAutoFireRandomState = 0xA341316Cu;
-						}
-						s_effectiveRangeAutoFireRandomState ^= s_effectiveRangeAutoFireRandomState << 13;
-						s_effectiveRangeAutoFireRandomState ^= s_effectiveRangeAutoFireRandomState >> 17;
-						s_effectiveRangeAutoFireRandomState ^= s_effectiveRangeAutoFireRandomState << 5;
-
-						constexpr int kMinReactionDelayMs = 13;
-						constexpr int kReactionDelayRangeMs = 25; // Inclusive 50..100 ms.
-						const int reactionDelayMs = kMinReactionDelayMs
-							+ static_cast<int>(s_effectiveRangeAutoFireRandomState % kReactionDelayRangeMs);
-						s_effectiveRangeAutoFireAt = now + std::chrono::milliseconds(reactionDelayMs);
-						s_effectiveRangeAutoFireTarget = targetTag;
-						s_effectiveRangeAutoFireWeapon = weaponTag;
-						s_effectiveRangeAutoFireDelayPending = true;
-					}
-
-					if (now >= s_effectiveRangeAutoFireAt)
-					{
-						constexpr int kIN_ATTACK = (1 << 0);
-						if (weaponId != C_WeaponCSBase::WeaponID::MELEE)
-						{
-							cmd->buttons &= ~kIN_ATTACK;
-							cmd->buttons |= kIN_ATTACK;
-						}
-						m_VR->m_EffectiveAttackRangeAutoFireActive = true;
-					}
-				}
-			}
-		}
-		if (!effectiveRangeAutoFireEligible)
-			resetEffectiveRangeAutoFireDelay();
 
 		// Mouse mode: consume raw mouse deltas to drive body yaw and independent aim pitch.
 		// Mouse X -> yaw (m_RotationOffset), Mouse Y -> m_MouseAimPitchOffset.
@@ -717,8 +596,9 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 
 			// Non-VR server melee feel: translate a controller swing into a normal melee attack (IN_ATTACK)
 			// This only affects local *input* / presentation. The server still does normal melee resolution.
+			// 2.0.13: never in classic (melee is the attack button there).
 			if (m_Game->m_IsMeleeWeaponActive && !m_VR->m_AdjustingViewmodel
-				&& !m_VR->m_AdjustingScope)
+				&& !m_VR->m_AdjustingScope && !m_VR->ClassicGameplayActive())
 			{
 				using clock = std::chrono::steady_clock;
 				const auto now = clock::now();
@@ -1124,53 +1004,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 
 		}
 
-		// SpecialInfectedAutoEvade: the shove must use the same server-facing viewangles as the target lock.
-		// The visual aim-line path already forces m_RightControllerForward while pre-warning is active;
-		// this block locks CUserCmd too, so +attack2 is resolved toward the same infected target.
-		if (m_VR->m_SpecialInfectedWarningActionEnabled
-			&& m_VR->m_SpecialInfectedWarningActionStep != VR::SpecialInfectedWarningActionStep::None
-			&& m_VR->m_SpecialInfectedWarningTargetActive
-			&& !m_VR->m_AdjustingViewmodel
-			&& !m_VR->m_AdjustingScope
-			&& !suppressAutoActionsForUseOrRevive)
-		{
-			Vector aimOrigin = (m_VR->GetViewOriginLeft() + m_VR->GetViewOriginRight()) * 0.5f;
-			if (aimOrigin.IsZero())
-				aimOrigin = m_VR->m_HmdPosAbs;
-
-			Vector dir = m_VR->m_SpecialInfectedWarningTarget - aimOrigin;
-			if (VectorLength(dir) > 0.001f)
-			{
-				VectorNormalize(dir);
-				QAngle lockAngles;
-				QAngle::VectorAngles(dir, lockAngles);
-				NormalizeAndClampViewAngles(lockAngles);
-
-				QAngle oldYawOnly(0.f, cmd->viewangles.y, 0.f);
-				Vector oldForward, oldRight, oldUp;
-				QAngle::AngleVectors(oldYawOnly, &oldForward, &oldRight, &oldUp);
-				Vector worldMove = oldForward * cmd->forwardmove + oldRight * cmd->sidemove;
-
-				cmd->viewangles = lockAngles;
-
-				QAngle newYawOnly(0.f, cmd->viewangles.y, 0.f);
-				Vector newForward, newRight, newUp;
-				QAngle::AngleVectors(newYawOnly, &newForward, &newRight, &newUp);
-				cmd->forwardmove = DotProduct(worldMove, newForward);
-				cmd->sidemove = DotProduct(worldMove, newRight);
-
-				constexpr int kIN_ATTACK = (1 << 0);
-				constexpr int kIN_ATTACK2 = (1 << 11);
-				cmd->buttons &= ~kIN_ATTACK;
-				cmd->buttons |= kIN_ATTACK2;
-			}
-		}
-
-		m_VR->ApplyOptionalCreateMoveFeatures(cmd, 1, inputJumpHeld, hadWalkAxis, walkNx, walkNy, suppressScopeWalk);
-	}
-	else
-	{
-		resetEffectiveRangeAutoFireDelay();
 	}
 
 	// Motion melee on VR-aware servers: a detected swing presses the stock
@@ -1271,491 +1104,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		m_Game->m_EngineClient->SetViewAngles(listenerAngles);
 	}
 
-	// Auto-repeat for semi-auto / single-shot guns:
-	// Many L4D2 weapons require a fresh IN_ATTACK edge per shot (press/release).
-	// When enabled, we convert a held IN_ATTACK into short pulses for non-full-auto guns.
-	if ((m_VR->m_AutoRepeatSemiAutoFire || m_VR->m_EffectiveAttackRangeAutoFireActive) && m_Game && m_Game->m_EngineClient)
-	{
-		const int lpIdx2 = m_Game->m_EngineClient->GetLocalPlayer();
-		C_BasePlayer* lp2 = (lpIdx2 > 0) ? (C_BasePlayer*)m_Game->GetClientEntity(lpIdx2) : nullptr;
-		C_BaseCombatWeapon* wpn = lp2 ? (C_BaseCombatWeapon*)lp2->GetActiveWeapon() : nullptr;
-		C_WeaponCSBase* wpnCS = reinterpret_cast<C_WeaponCSBase*>(wpn);
-		const C_WeaponCSBase::WeaponID weaponId = wpnCS ? wpnCS->GetWeaponID() : C_WeaponCSBase::WeaponID::NONE;
-		const char* wpnName = (wpn != nullptr) ? wpn->GetName() : nullptr;
-		const char* wpnNet = (wpn != nullptr) ? m_Game->GetNetworkClassName((uintptr_t*)wpn) : nullptr;
-		// Mounted guns (minigun / .50 cal etc.) require a continuous IN_ATTACK hold.
-		// While mounted, GetActiveWeapon() can still report the carried weapon, so our
-		// semi-auto pulse heuristic would incorrectly pulse IN_ATTACK and "stutter" fire.
-		const bool usingMountedWeapon = lp2 ? (
-			ReadNetvar<bool>(lp2, VR::kUsingMountedGunOffset) ||
-			ReadNetvar<bool>(lp2, VR::kUsingMountedWeaponOffset)
-			) : false;
-		auto startsWith = [](const char* s, const char* prefix) -> bool {
-			if (!s || !prefix) return false;
-			while (*prefix)
-			{
-				if (*s++ != *prefix++) return false;
-			}
-			return true;
-			};
-		auto contains = [](const char* s, const char* sub) -> bool {
-			if (!s || !sub || !*sub) return false;
-			return std::strstr(s, sub) != nullptr;
-			};
-		// If we can't identify the active weapon, be conservative: do NOT pulse.
-		// (Some non-gun items can fail the network-name heuristic; pulsing breaks their hold/release behavior.)
-		const bool unknownWeapon = (!wpnName && !wpnNet);
-		// Heuristic: treat common full-auto weapons as full-auto and do NOT pulse them.
-		// Everything else that uses IN_ATTACK will either be unaffected, or benefit from pulsing.
-		const bool isFullAuto =
-			startsWith(wpnNet, "CWeaponSMG") ||
-			startsWith(wpnNet, "CWeaponRifle") ||
-			startsWith(wpnNet, "CWeaponAutoshotgun") ||
-			startsWith(wpnNet, "CWeaponShotgun_SPAS") ||
-			startsWith(wpnNet, "CWeaponM60") ||
-			startsWith(wpnNet, "CWeaponRifle_M60") ||
-			contains(wpnNet, "Minigun");
-		const bool isMeleeWeapon = (weaponId == C_WeaponCSBase::WeaponID::MELEE);
-		const bool isAutoRepeatSprayPushWeapon =
-			(weaponId == C_WeaponCSBase::WeaponID::PUMPSHOTGUN) ||
-			(weaponId == C_WeaponCSBase::WeaponID::SHOTGUN_CHROME) ||
-			(weaponId == C_WeaponCSBase::WeaponID::AWP) ||
-			(weaponId == C_WeaponCSBase::WeaponID::SCOUT) ||
-			startsWith(wpnNet, "CWeaponPumpShotgun") ||
-			startsWith(wpnNet, "CWeaponShotgun_Chrome") ||
-			startsWith(wpnNet, "CWeaponSniperAWP") ||
-			startsWith(wpnNet, "CWeaponSniperScout") ||
-			(wpnName && (
-				contains(wpnName, "weapon_pumpshotgun") ||
-				contains(wpnName, "weapon_shotgun_chrome") ||
-				contains(wpnName, "weapon_awp") ||
-				contains(wpnName, "weapon_scout")));
-
-		const bool holdingAttack = (cmd->buttons & (1 << 0)) != 0; // IN_ATTACK
-
-		// If the player is currently performing a "use action" (healing, giving ammo/upgrade pack,
-		// reviving, etc.), Source expects IN_ATTACK to be held continuously.
-		// Pulsing IN_ATTACK will interrupt the action.
-		const bool doingUseAction = lp2 ? (ReadNetvar<int>(lp2, 0x1ba8) != 0) : false; // m_iCurrentUseAction
-
-		// Items that require a continuous hold on IN_ATTACK (healing / ammo packs / upgrade packs).
-		// If we pulse IN_ATTACK here, these actions get interrupted and become unusable.
-		const bool isHoldToUseWeaponId =
-			(weaponId == C_WeaponCSBase::WeaponID::FIRST_AID_KIT) ||
-			(weaponId == C_WeaponCSBase::WeaponID::DEFIBRILLATOR) ||
-			(weaponId == C_WeaponCSBase::WeaponID::AMMO_PACK) ||
-			(weaponId == C_WeaponCSBase::WeaponID::INCENDIARY_AMMO) ||
-			(weaponId == C_WeaponCSBase::WeaponID::FRAG_AMMO) ||
-			(weaponId == C_WeaponCSBase::WeaponID::UPGRADE_ITEM);
-		const bool isHoldToUseItem =
-			isHoldToUseWeaponId ||
-			// First-aid kit
-			contains(wpnName, "first_aid") ||
-			contains(wpnName, "firstaid") ||
-			contains(wpnName, "aid_kit") ||
-			contains(wpnName, "aidkit") ||
-			contains(wpnNet, "FirstAid") ||
-			contains(wpnNet, "FirstAidKit") ||
-			contains(wpnNet, "WeaponFirstAidKit") ||
-			contains(wpnNet, "AidKit") ||
-			// Defib
-			contains(wpnName, "defib") ||
-			contains(wpnName, "defibrillator") ||
-			contains(wpnNet, "Defibrillator") ||
-			contains(wpnNet, "WeaponDefibrillator") ||
-			// Ammo/upgrade packs
-			contains(wpnName, "ammo_pack") ||
-			contains(wpnName, "ammopack") ||
-			contains(wpnName, "upgrade_pack") ||
-			contains(wpnName, "upgradepack") ||
-			contains(wpnName, "incendiary_ammo") ||
-			contains(wpnName, "frag_ammo") ||
-			contains(wpnNet, "AmmoPack") ||
-			contains(wpnNet, "DT_AmmoPack") ||
-			contains(wpnNet, "UpgradePack") ||
-			contains(wpnNet, "ItemBaseUpgradePack") ||
-			contains(wpnNet, "UpgradePackExplosive") ||
-			contains(wpnNet, "UpgradePackIncendiary");
-		// Items that are *held* for a moment and released/thrown (or have their own continuous logic).
-		// Pulsing IN_ATTACK here feels bad and can cancel/bug the action (chainsaw, throwables).
-		const bool isChainsaw =
-			(wpnName && (contains(wpnName, "chainsaw") || contains(wpnName, "weapon_chainsaw"))) ||
-			contains(wpnNet, "Chainsaw") ||
-			contains(wpnNet, "WeaponChainsaw") ||
-			startsWith(wpnNet, "CChainsaw");
-		const bool effectiveRangeContinuousAttack =
-			m_VR->m_EffectiveAttackRangeAutoFireActive && (isMeleeWeapon || isChainsaw);
-
-		const bool isThrowable =
-			(wpnName && (
-				// Be loose here: engine strings vary across builds/mods ("weapon_molotov" vs "molotov").
-				contains(wpnName, "molotov") ||
-				(contains(wpnName, "pipe") && contains(wpnName, "bomb")) ||
-				contains(wpnName, "vomit") ||
-				(contains(wpnName, "grenade") && !contains(wpnName, "grenade_launcher"))
-				)) ||
-			contains(wpnNet, "Molotov") ||
-			contains(wpnNet, "PipeBomb") ||
-			contains(wpnNet, "VomitJar") ||
-			contains(wpnNet, "BaseCSGrenade") ||
-			(contains(wpnNet, "Grenade") && !contains(wpnNet, "GrenadeLauncher"));
-
-		// Carryable props use a press-to-drop action. They must never pass through
-		// semi-auto pulse generation because that would fabricate a release while
-		// the physical VR trigger is still held.
-		const bool isManualCarryThrowable =
-			m_VR->m_ManualThrowEnabled &&
-			IsVRManualCarryThrowWeapon(reinterpret_cast<C_WeaponCSBase*>(wpn), wpnName, wpnNet);
-
-		// Only pulse when holding attack and weapon is NOT full-auto, and NOT a hold-to-use item.
-		// NOT a hold-to-use item, and NOT during a continuous use action.
-		if (holdingAttack && !unknownWeapon && !isFullAuto && !isHoldToUseItem && !isChainsaw && !isThrowable && !isManualCarryThrowable && !doingUseAction && !usingMountedWeapon && !effectiveRangeContinuousAttack && (!isMeleeWeapon || !m_VR->m_AutoFastMelee))
-		{
-			using namespace std::chrono;
-			const int kIN_ATTACK = (1 << 0);
-			const int kIN_ATTACK2 = (1 << 11);
-			const float hz = (m_VR->m_AutoRepeatSemiAutoFireHz > 0.0f)
-				? m_VR->m_AutoRepeatSemiAutoFireHz
-				: (m_VR->m_EffectiveAttackRangeAutoFireActive ? 12.0f : 0.0f);
-			const auto now = steady_clock::now();
-			const uintptr_t wpnTag = reinterpret_cast<uintptr_t>(wpn);
-
-			// Track active weapon + clip for spray-push-capable weapons.
-			if (wpnTag != s_autoRepeatSprayPushWeapon)
-			{
-				s_autoRepeatSprayPushWeapon = wpnTag;
-				s_autoRepeatSprayPushPrevClip1 = (wpn != nullptr) ? ReadNetvar<int>(wpn, VR::kClip1Offset) : -1;
-				s_autoRepeatSprayPushDelayTicks = 0;
-				s_autoRepeatSprayPushHoldTicks = 0;
-			}
-			else if (isAutoRepeatSprayPushWeapon && wpn != nullptr)
-			{
-				const int clip1 = ReadNetvar<int>(wpn, VR::kClip1Offset);
-				const bool shellSpent = (clip1 >= 0) && (s_autoRepeatSprayPushPrevClip1 >= 0) && (clip1 < s_autoRepeatSprayPushPrevClip1);
-				s_autoRepeatSprayPushPrevClip1 = clip1;
-				if (shellSpent && m_VR->m_AutoRepeatSprayPushEnabled)
-				{
-					// Queue shove cancel right after a real shell-spend event.
-					s_autoRepeatSprayPushDelayTicks = std::max(0, m_VR->m_AutoRepeatSprayPushDelayTicks);
-					s_autoRepeatSprayPushHoldTicks = std::max(s_autoRepeatSprayPushHoldTicks, std::max(1, m_VR->m_AutoRepeatSprayPushHoldTicks));
-				}
-			}
-
-			if (!m_VR->m_AutoRepeatHoldPrev)
-			{
-				// First tick of hold: fire immediately.
-				m_VR->m_AutoRepeatNextPulse = now;
-			}
-
-			bool pulseThisTick = (hz > 0.0f) && (now >= m_VR->m_AutoRepeatNextPulse);
-			if (pulseThisTick)
-			{
-				cmd->buttons |= kIN_ATTACK;
-				// Single-tick pulse; next tick will be cleared (unless next period elapsed).
-				const float clampedHz = std::max(1.0f, std::min(50.0f, hz));
-				m_VR->m_AutoRepeatNextPulse = now + duration_cast<steady_clock::duration>(duration<float>(1.0f / clampedHz));
-			}
-			else
-			{
-				cmd->buttons &= ~kIN_ATTACK;
-			}
-
-			// Spray-push (fire -> short shove) when auto-repeat is driving semi-auto input.
-			if (isAutoRepeatSprayPushWeapon && m_VR->m_AutoRepeatSprayPushEnabled)
-			{
-				if (s_autoRepeatSprayPushDelayTicks > 0)
-				{
-					--s_autoRepeatSprayPushDelayTicks;
-				}
-				if (s_autoRepeatSprayPushDelayTicks <= 0 && s_autoRepeatSprayPushHoldTicks > 0)
-				{
-					cmd->buttons |= kIN_ATTACK2;
-					--s_autoRepeatSprayPushHoldTicks;
-				}
-			}
-			else
-			{
-				s_autoRepeatSprayPushDelayTicks = 0;
-				s_autoRepeatSprayPushHoldTicks = 0;
-			}
-
-			m_VR->m_AutoRepeatHoldPrev = true;
-		}
-		else
-		{
-			m_VR->m_AutoRepeatHoldPrev = false;
-			s_autoRepeatSprayPushDelayTicks = 0;
-			s_autoRepeatSprayPushHoldTicks = 0;
-			s_autoRepeatSprayPushWeapon = 0;
-			s_autoRepeatSprayPushPrevClip1 = -1;
-		}
-	}
-	else
-	{
-		m_VR->m_AutoRepeatHoldPrev = false;
-		s_autoRepeatSprayPushDelayTicks = 0;
-		s_autoRepeatSprayPushHoldTicks = 0;
-		s_autoRepeatSprayPushWeapon = 0;
-		s_autoRepeatSprayPushPrevClip1 = -1;
-	}
-
-	// Auto fast-melee: fixed cadence weapon-switch cancel.
-	// Sequence: +attack ; wait1(1) ; slot1 ; wait2(1) ; slot2 ; wait3(15).
-	if (m_VR->m_AutoFastMelee && m_Game && m_Game->m_EngineClient)
-	{
-		const int kIN_ATTACK = (1 << 0);
-		constexpr int kWaitOutTicks = 1;
-		constexpr int kWaitBackTicks = 1;
-		constexpr int kWaitPostTicks = 15;
-		constexpr int kIntentGraceTicks = 24;
-
-		const int lpIdx2 = m_Game->m_EngineClient->GetLocalPlayer();
-		C_BasePlayer* lp2 = (lpIdx2 > 0) ? (C_BasePlayer*)m_Game->GetClientEntity(lpIdx2) : nullptr;
-		C_BaseCombatWeapon* wpn = lp2 ? (C_BaseCombatWeapon*)lp2->GetActiveWeapon() : nullptr;
-		C_WeaponCSBase* wpnCS = reinterpret_cast<C_WeaponCSBase*>(wpn);
-		const bool isMeleeWeapon = (wpnCS != nullptr) && (wpnCS->GetWeaponID() == C_WeaponCSBase::WeaponID::MELEE);
-		const bool cmdAttackDown = (cmd->buttons & kIN_ATTACK) != 0;
-		const bool vrAttackDown = m_VR->m_PrimaryAttackDown || m_VR->m_PrimaryAttackCmdOwned;
-		const bool mouseAttackDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-		const bool attackIntentDown = cmdAttackDown || vrAttackDown || mouseAttackDown;
-		const bool doingUseAction = lp2 ? (ReadNetvar<int>(lp2, 0x1ba8) != 0) : false; // m_iCurrentUseAction
-		const bool canSwitchCancel = m_VR->m_AutoFastMeleeUseWeaponSwitch;
-		const int cmdNum = cmd->command_number;
-
-		if (attackIntentDown)
-		{
-			s_autoFastMeleeLastIntentCmd = cmdNum;
-		}
-
-		const bool hasPendingSwitchNow = s_autoFastMeleeSwitchOutPending || s_autoFastMeleeSwitchBackPending;
-		const bool inActiveCycleNow =
-			hasPendingSwitchNow ||
-			((s_autoFastMeleeWeapon != 0) && (s_autoFastMeleeNextSwingCmd > cmdNum));
-		const bool recentIntent =
-			(s_autoFastMeleeLastIntentCmd > 0) &&
-			((cmdNum - s_autoFastMeleeLastIntentCmd) <= kIntentGraceTicks);
-		const bool effectiveAttackIntentDown = attackIntentDown || (inActiveCycleNow && recentIntent);
-
-		// Keep this outside "isMeleeWeapon" so slot1 -> slot2 can finish even while temporarily on slot1.
-		if (s_autoFastMeleeSwitchOutPending && cmdNum >= s_autoFastMeleeSwitchOutCmd)
-		{
-			m_Game->ClientCmd_Unrestricted("slot1");
-			s_autoFastMeleeSwitchOutPending = false;
-			s_autoFastMeleeSwitchOutCmd = -1;
-		}
-		if (s_autoFastMeleeSwitchBackPending && cmdNum >= s_autoFastMeleeSwitchBackCmd)
-		{
-			m_Game->ClientCmd_Unrestricted("slot2");
-			s_autoFastMeleeSwitchBackPending = false;
-			s_autoFastMeleeSwitchBackCmd = -1;
-		}
-		const bool hasPendingSwitch = s_autoFastMeleeSwitchOutPending || s_autoFastMeleeSwitchBackPending;
-
-		if (effectiveAttackIntentDown && !doingUseAction)
-		{
-			if (isMeleeWeapon)
-			{
-				const uintptr_t wpnTag = reinterpret_cast<uintptr_t>(wpn);
-				if (wpnTag != s_autoFastMeleeWeapon)
-				{
-					s_autoFastMeleeWeapon = wpnTag;
-					s_autoFastMeleeSwitchOutPending = false;
-					s_autoFastMeleeSwitchBackPending = false;
-					s_autoFastMeleeSwitchOutCmd = -1;
-					s_autoFastMeleeSwitchBackCmd = -1;
-				}
-
-				if (!s_autoFastMeleeHoldPrev || s_autoFastMeleeNextSwingCmd <= 0)
-				{
-					// First hold tick: start immediately.
-					s_autoFastMeleeNextSwingCmd = cmdNum;
-				}
-
-				const bool swingThisTick = (cmdNum >= s_autoFastMeleeNextSwingCmd);
-				if (swingThisTick)
-				{
-					cmd->buttons |= kIN_ATTACK;
-					const int cycleTicks = std::max(1, kWaitOutTicks + kWaitBackTicks + kWaitPostTicks + 1);
-					s_autoFastMeleeNextSwingCmd = cmdNum + cycleTicks;
-
-					if (canSwitchCancel)
-					{
-						s_autoFastMeleeSwitchOutCmd = cmdNum + kWaitOutTicks;
-						s_autoFastMeleeSwitchBackCmd = s_autoFastMeleeSwitchOutCmd + kWaitBackTicks;
-						s_autoFastMeleeSwitchOutPending = true;
-						s_autoFastMeleeSwitchBackPending = true;
-					}
-					else
-					{
-						s_autoFastMeleeSwitchOutPending = false;
-						s_autoFastMeleeSwitchBackPending = false;
-						s_autoFastMeleeSwitchOutCmd = -1;
-						s_autoFastMeleeSwitchBackCmd = -1;
-					}
-				}
-				else
-				{
-					cmd->buttons &= ~kIN_ATTACK;
-				}
-
-				s_autoFastMeleeHoldPrev = true;
-			}
-			else if (hasPendingSwitch)
-			{
-				// While waiting for slot2 return, suppress held attack to avoid firing slot1 weapon.
-				cmd->buttons &= ~kIN_ATTACK;
-				s_autoFastMeleeHoldPrev = true;
-			}
-			else
-			{
-				// During slot-switch settle frames, active weapon can briefly report non-melee.
-				// Keep cadence timing alive while waiting for the scheduled next swing.
-				const bool waitingNextSwing = (s_autoFastMeleeWeapon != 0) && (s_autoFastMeleeNextSwingCmd > cmdNum);
-				if (waitingNextSwing)
-				{
-					cmd->buttons &= ~kIN_ATTACK;
-					s_autoFastMeleeHoldPrev = true;
-				}
-				else
-				{
-					s_autoFastMeleeHoldPrev = false;
-					s_autoFastMeleeNextSwingCmd = -1;
-					s_autoFastMeleeWeapon = 0;
-				}
-			}
-		}
-		else
-		{
-			// Stop scheduling new swings when attack is released, but let an already queued slot2 return finish.
-			s_autoFastMeleeHoldPrev = false;
-			s_autoFastMeleeNextSwingCmd = -1;
-			s_autoFastMeleeWeapon = 0;
-			s_autoFastMeleeLastIntentCmd = -1;
-			if (hasPendingSwitch)
-			{
-				cmd->buttons &= ~kIN_ATTACK;
-			}
-			else
-			{
-				s_autoFastMeleeSwitchOutPending = false;
-				s_autoFastMeleeSwitchBackPending = false;
-				s_autoFastMeleeSwitchOutCmd = -1;
-				s_autoFastMeleeSwitchBackCmd = -1;
-			}
-		}
-	}
-	else
-	{
-		s_autoFastMeleeHoldPrev = false;
-		s_autoFastMeleeSwitchOutPending = false;
-		s_autoFastMeleeSwitchBackPending = false;
-		s_autoFastMeleeSwitchOutCmd = -1;
-		s_autoFastMeleeSwitchBackCmd = -1;
-		s_autoFastMeleeNextSwingCmd = -1;
-		s_autoFastMeleeWeapon = 0;
-		s_autoFastMeleeLastIntentCmd = -1;
-	}
-
-	// Effective-range melee auto-fire: start one dedicated fast-melee cycle per interval,
-	// isolated from the manual AutoFastMelee hold state machine.
-	if (m_Game && m_Game->m_EngineClient)
-	{
-		const int kIN_ATTACK = (1 << 0);
-		constexpr int kWaitOutTicks = 1;
-		constexpr int kWaitBackTicks = 1;
-		constexpr int kWaitPostTicks = 15;
-
-		const int lpIdx2 = m_Game->m_EngineClient->GetLocalPlayer();
-		C_BasePlayer* lp2 = (lpIdx2 > 0) ? (C_BasePlayer*)m_Game->GetClientEntity(lpIdx2) : nullptr;
-		C_BaseCombatWeapon* wpn = lp2 ? (C_BaseCombatWeapon*)lp2->GetActiveWeapon() : nullptr;
-		C_WeaponCSBase* wpnCS = reinterpret_cast<C_WeaponCSBase*>(wpn);
-		const bool isMeleeWeapon = (wpnCS != nullptr) && (wpnCS->GetWeaponID() == C_WeaponCSBase::WeaponID::MELEE);
-		const bool autoFireMeleeActive = m_VR->m_EffectiveAttackRangeAutoFireActive && isMeleeWeapon;
-		const bool cmdAttackDown = (cmd->buttons & kIN_ATTACK) != 0;
-		const bool vrAttackDown = m_VR->m_PrimaryAttackDown || m_VR->m_PrimaryAttackCmdOwned;
-		const bool mouseAttackDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-		const bool manualAttackDown = cmdAttackDown || vrAttackDown || mouseAttackDown;
-		const bool doingUseAction = lp2 ? (ReadNetvar<int>(lp2, 0x1ba8) != 0) : false; // m_iCurrentUseAction
-		const bool canSwitchCancel = m_VR->m_AutoFastMeleeUseWeaponSwitch;
-		const int cmdNum = cmd->command_number;
-		const auto now = std::chrono::steady_clock::now();
-
-		if (s_effectiveRangeMeleeSwitchOutPending && cmdNum >= s_effectiveRangeMeleeSwitchOutCmd)
-		{
-			m_Game->ClientCmd_Unrestricted("slot1");
-			s_effectiveRangeMeleeSwitchOutPending = false;
-			s_effectiveRangeMeleeSwitchOutCmd = -1;
-		}
-		if (s_effectiveRangeMeleeSwitchBackPending && cmdNum >= s_effectiveRangeMeleeSwitchBackCmd)
-		{
-			m_Game->ClientCmd_Unrestricted("slot2");
-			s_effectiveRangeMeleeSwitchBackPending = false;
-			s_effectiveRangeMeleeSwitchBackCmd = -1;
-		}
-
-		const bool hasPendingSwitch = s_effectiveRangeMeleeSwitchOutPending || s_effectiveRangeMeleeSwitchBackPending;
-		const bool waitingCycleEnd =
-			(s_effectiveRangeMeleeWeapon != 0) &&
-			(s_effectiveRangeMeleeCycleEndCmd > cmdNum);
-		const bool cycleInProgress = hasPendingSwitch || waitingCycleEnd;
-
-		if (autoFireMeleeActive && !doingUseAction && !manualAttackDown)
-		{
-			const uintptr_t wpnTag = reinterpret_cast<uintptr_t>(wpn);
-			if (!cycleInProgress && wpnTag != s_effectiveRangeMeleeWeapon)
-			{
-				resetEffectiveRangeMeleeCycle();
-				s_effectiveRangeMeleeWeapon = wpnTag;
-			}
-
-			if (s_effectiveRangeMeleeNextCycleAt.time_since_epoch().count() == 0)
-				s_effectiveRangeMeleeNextCycleAt = now;
-
-			if (!cycleInProgress && now >= s_effectiveRangeMeleeNextCycleAt)
-			{
-				cmd->buttons |= kIN_ATTACK;
-
-				const auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-					std::chrono::duration<float>(std::clamp(m_VR->m_EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds, 0.05f, 5.0f)));
-				s_effectiveRangeMeleeNextCycleAt = now + interval;
-				s_effectiveRangeMeleeCycleEndCmd =
-					cmdNum + std::max(1, kWaitOutTicks + kWaitBackTicks + kWaitPostTicks + 1);
-
-				if (canSwitchCancel)
-				{
-					s_effectiveRangeMeleeSwitchOutCmd = cmdNum + kWaitOutTicks;
-					s_effectiveRangeMeleeSwitchBackCmd = s_effectiveRangeMeleeSwitchOutCmd + kWaitBackTicks;
-					s_effectiveRangeMeleeSwitchOutPending = true;
-					s_effectiveRangeMeleeSwitchBackPending = true;
-				}
-				else
-				{
-					s_effectiveRangeMeleeSwitchOutPending = false;
-					s_effectiveRangeMeleeSwitchBackPending = false;
-					s_effectiveRangeMeleeSwitchOutCmd = -1;
-					s_effectiveRangeMeleeSwitchBackCmd = -1;
-				}
-			}
-			else if (cycleInProgress)
-			{
-				cmd->buttons &= ~kIN_ATTACK;
-			}
-		}
-		else if (cycleInProgress)
-		{
-			cmd->buttons &= ~kIN_ATTACK;
-		}
-		else
-		{
-			resetEffectiveRangeMeleeCycle();
-		}
-	}
-	else
-	{
-		resetEffectiveRangeMeleeCycle();
-	}
-
-
 	// Aim-line friendly-fire guard:
 	// Compute teammate hit at input-tick rate (CreateMove) and latch suppression until attack is released.
 	C_BasePlayer* ffLocalPlayer = nullptr;
@@ -1804,24 +1152,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		if ((cmd->buttons & kMagazineInteractionInAttack) != 0 && (s_lastButtons & kMagazineInteractionInAttack) == 0)
 			m_VR->PlayMagazineInteractionBlockedFireEmptySound();
 		cmd->buttons &= ~(kMagazineInteractionInAttack | kMagazineInteractionInReload);
-	}
-
-	{
-		constexpr int kIN_ATTACK = (1 << 0);
-		const bool autoFireAttackDown = m_VR->m_EffectiveAttackRangeAutoFireActive && ((cmd->buttons & kIN_ATTACK) != 0);
-		if (autoFireAttackDown && !m_VR->m_EffectiveAttackRangeAutoFirePrevAttackDown && m_Game && m_Game->m_EngineClient)
-		{
-			const int lpIdx = m_Game->m_EngineClient->GetLocalPlayer();
-			C_BasePlayer* lp = (lpIdx > 0) ? (C_BasePlayer*)m_Game->GetClientEntity(lpIdx) : nullptr;
-			C_WeaponCSBase* activeWeapon = lp ? (C_WeaponCSBase*)lp->GetActiveWeapon() : nullptr;
-			if (activeWeapon)
-			{
-				const C_WeaponCSBase::WeaponID weaponId = activeWeapon->GetWeaponID();
-				if (weaponId == C_WeaponCSBase::WeaponID::CHAINSAW)
-					m_VR->TriggerWeaponFireHaptics((int)weaponId, false);
-			}
-		}
-		m_VR->m_EffectiveAttackRangeAutoFirePrevAttackDown = autoFireAttackDown;
 	}
 
 	if (m_VR)

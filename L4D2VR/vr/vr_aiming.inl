@@ -3677,8 +3677,7 @@ bool VR::ShouldShowAimLine(C_WeaponCSBase* weapon) const
             || m_D3DAimLineOverlayEnabled
             || m_CrosshairEnabled
             || m_BlockFireOnFriendlyAimEnabled
-            || m_EffectiveAttackRangeIndicatorEnabled
-            || m_EffectiveAttackRangeAutoFireEnabled;
+            || m_EffectiveAttackRangeIndicatorEnabled;
     default:
         return false;
     }

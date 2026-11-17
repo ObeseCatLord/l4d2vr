@@ -1317,9 +1317,6 @@ public:
 		std::string source;
 	};
 	bool m_EffectiveAttackRangeIndicatorEnabled = true;
-	bool m_EffectiveAttackRangeAutoFireEnabled = false;
-	bool m_EffectiveAttackRangeAutoFireActive = false;
-	bool m_EffectiveAttackRangeAutoFirePrevAttackDown = false;
 	bool m_AimLineEffectiveAttackRangeActive = false;
 	std::chrono::steady_clock::time_point m_AimLineEffectiveAttackRangeHoldUntil{};
 	bool m_AimLineEffectiveAttackRangeCacheValid = false;
@@ -1346,7 +1343,6 @@ public:
 	float m_EffectiveAttackRangeCacheDirectionDot = 0.9990f;
 	float m_EffectiveAttackRangeMeleeDistance = 70.0f;
 	float m_EffectiveAttackRangeMeleeFanAngle = 90.0f;
-	float m_EffectiveAttackRangeMeleeAutoFastMeleeIntervalSeconds = 0.60f;
 	float m_EffectiveAttackRangeHitPointTolerance = 8.0f;
 	float m_EffectiveAttackRangeHitPointSpreadScale = 0.50f;
 	float m_EffectiveAttackRangeHitPointMaxTolerance = 24.0f;
@@ -2395,10 +2391,6 @@ public:
 	vr::VRActionHandle_t m_ActionInventoryGripLeft = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionInventoryGripRight = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionInventoryQuickSwitch = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpecialInfectedAutoAimToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionSpecialInfectedDodgeToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionLedgeGuardToggle = vr::k_ulInvalidActionHandle;
-	vr::VRActionHandle_t m_ActionEffectiveAttackRangeAutoFireToggle = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionSpeechToText = vr::k_ulInvalidActionHandle;
 	vr::VRActionHandle_t m_ActionVoicePushToTalk = vr::k_ulInvalidActionHandle;   // Opus voice push-to-talk button
 	vr::VRActionHandle_t m_ActionActivateVR = vr::k_ulInvalidActionHandle;
@@ -5033,29 +5025,6 @@ public:
 	std::chrono::steady_clock::time_point m_LastFriendlyFireGuardLogTime{};
 	// Latch suppression while attack is held (prevents flicker causing intermittent firing).
 	bool m_FriendlyFireGuardLatched = false;
-
-	// Auto-repeat semi-auto / single-shot guns while holding IN_ATTACK (client-side input pulse).
-	// Config: AutoRepeatSemiAutoFire (true/false)
-	//         AutoRepeatSemiAutoFireHz (float, pulses per second; 0 disables)
-	bool m_AutoRepeatSemiAutoFire = false;
-	float m_AutoRepeatSemiAutoFireHz = 12.0f;
-	bool m_AutoRepeatHoldPrev = false;
-	std::chrono::steady_clock::time_point m_AutoRepeatNextPulse{};
-	// Pump/chrome shotgun + AWP/scout spray-push while auto-repeat is active.
-	// Config:
-	//   AutoRepeatSprayPushEnabled
-	//   AutoRepeatSprayPushDelayTicks
-	//   AutoRepeatSprayPushHoldTicks
-	bool m_AutoRepeatSprayPushEnabled = false;
-	int m_AutoRepeatSprayPushDelayTicks = 0;
-	int m_AutoRepeatSprayPushHoldTicks = 1;
-
-	// Auto fast-melee (client-side hold-to-pulse + optional weapon-switch cancel).
-	// Config:
-	//   AutoFastMelee
-	//   AutoFastMeleeUseWeaponSwitch
-	bool m_AutoFastMelee = false;
-	bool m_AutoFastMeleeUseWeaponSwitch = true;
 
 	// Auto ResetPosition after a level finishes loading.
 	// Config: AutoResetPositionAfterLoadSeconds (0 disables)

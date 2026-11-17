@@ -775,13 +775,6 @@ MouseModeScopeOverlayOffset=0,-0.02,-0.3
 MouseModeScopeOverlayAngleOffset=0,0,0
 MouseModeScopeToggleKey=key:q
 
-AutoRepeatSemiAutoFire=false
-AutoRepeatSemiAutoFireHz=12.0
-AutoRepeatSprayPushEnabled=false
-AutoRepeatSprayPushDelayTicks=0
-AutoRepeatSprayPushHoldTicks=1
-AutoFastMelee=false
-AutoFastMeleeUseWeaponSwitch=true
 SpecialInfectedDodgeEnabled=false
 SpecialInfectedDodgeDistance=260
 LazyScopeRearMirrorRTT=true

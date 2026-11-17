@@ -1318,26 +1318,6 @@ void VR::ProcessInput()
     bool flashlightJustPressed = false;
     bool flashlightDataValid = getActionState(&m_ActionFlashlight, flashlightActionData, flashlightButtonDown, flashlightJustPressed);
 
-    vr::InputDigitalActionData_t autoAimToggleActionData{};
-    [[maybe_unused]] bool autoAimToggleDown = false;
-    bool autoAimToggleJustPressed = false;
-    [[maybe_unused]] bool autoAimToggleDataValid = getActionState(&m_ActionSpecialInfectedAutoAimToggle, autoAimToggleActionData, autoAimToggleDown, autoAimToggleJustPressed);
-
-    vr::InputDigitalActionData_t specialInfectedDodgeToggleActionData{};
-    [[maybe_unused]] bool specialInfectedDodgeToggleDown = false;
-    bool specialInfectedDodgeToggleJustPressed = false;
-    [[maybe_unused]] bool specialInfectedDodgeToggleDataValid = getActionState(&m_ActionSpecialInfectedDodgeToggle, specialInfectedDodgeToggleActionData, specialInfectedDodgeToggleDown, specialInfectedDodgeToggleJustPressed);
-
-    vr::InputDigitalActionData_t ledgeGuardToggleActionData{};
-    [[maybe_unused]] bool ledgeGuardToggleDown = false;
-    bool ledgeGuardToggleJustPressed = false;
-    [[maybe_unused]] bool ledgeGuardToggleDataValid = getActionState(&m_ActionLedgeGuardToggle, ledgeGuardToggleActionData, ledgeGuardToggleDown, ledgeGuardToggleJustPressed);
-
-    vr::InputDigitalActionData_t effectiveRangeAutoFireToggleActionData{};
-    [[maybe_unused]] bool effectiveRangeAutoFireToggleDown = false;
-    bool effectiveRangeAutoFireToggleJustPressed = false;
-    [[maybe_unused]] bool effectiveRangeAutoFireToggleDataValid = getActionState(&m_ActionEffectiveAttackRangeAutoFireToggle, effectiveRangeAutoFireToggleActionData, effectiveRangeAutoFireToggleDown, effectiveRangeAutoFireToggleJustPressed);
-
     vr::InputDigitalActionData_t nonVrServerMovementToggleActionData{};
     [[maybe_unused]] bool nonVrServerMovementToggleDown = false;
     bool nonVrServerMovementToggleJustPressed = false;
@@ -2311,59 +2291,6 @@ void VR::ProcessInput()
             m_Game->ClientCmd_Unrestricted("spec_mode");
     }
 
-    if (!m_SpecialInfectedPreWarningAutoAimConfigEnabled)
-    {
-        m_SpecialInfectedPreWarningAutoAimEnabled = false;
-        m_SpecialInfectedPreWarningTargetEntityIndex = -1;
-        m_SpecialInfectedPreWarningTargetIsPlayer = false;
-        m_SpecialInfectedPreWarningActive = false;
-        m_SpecialInfectedPreWarningInRange = false;
-        m_SpecialInfectedPreWarningTargetDistanceSq = std::numeric_limits<float>::max();
-        m_SpecialInfectedAutoAimDirection = {};
-        m_SpecialInfectedAutoAimCooldownEnd = {};
-    }
-    else if (autoAimToggleJustPressed)
-    {
-        m_SpecialInfectedPreWarningAutoAimEnabled = !m_SpecialInfectedPreWarningAutoAimEnabled;
-        m_SpecialInfectedPreWarningTargetEntityIndex = -1;
-        m_SpecialInfectedPreWarningTargetIsPlayer = false;
-        m_SpecialInfectedPreWarningActive = false;
-        m_SpecialInfectedPreWarningInRange = false;
-        m_SpecialInfectedPreWarningTargetDistanceSq = std::numeric_limits<float>::max();
-        m_SpecialInfectedAutoAimDirection = {};
-        m_SpecialInfectedAutoAimCooldownEnd = {};
-    }
-
-    if (specialInfectedDodgeToggleJustPressed)
-    {
-        m_SpecialInfectedDodgeActive = !m_SpecialInfectedDodgeActive;
-        if (!m_SpecialInfectedDodgeActive)
-        {
-            std::lock_guard<std::mutex> lock(m_SpecialInfectedDodgeMutex);
-            m_SpecialInfectedDodgeThreats.clear();
-            m_LastSpecialInfectedDodgeScanTime = {};
-        }
-    }
-
-    if (m_SpecialInfectedDodgeActive && m_SpecialInfectedDodgeDistance <= 0.0f)
-    {
-        m_SpecialInfectedDodgeActive = false;
-        std::lock_guard<std::mutex> lock(m_SpecialInfectedDodgeMutex);
-        m_SpecialInfectedDodgeThreats.clear();
-        m_LastSpecialInfectedDodgeScanTime = {};
-    }
-
-    if (ledgeGuardToggleJustPressed)
-    {
-        m_LedgeGuardEnabled = !m_LedgeGuardEnabled;
-    }
-
-    if (effectiveRangeAutoFireToggleJustPressed)
-    {
-        m_EffectiveAttackRangeAutoFireEnabled = !m_EffectiveAttackRangeAutoFireEnabled;
-        m_EffectiveAttackRangeAutoFireActive = false;
-    }
-
     if (nonVrServerMovementToggleJustPressed)
     {
         m_NonVRServerMovementAngleOverride = !m_NonVRServerMovementAngleOverride;
@@ -2374,42 +2301,6 @@ void VR::ProcessInput()
         ToggleScope();
     }
 
-    bool effectiveRangeAutoFireOwnsPrimary = false;
-    if (m_EffectiveAttackRangeAutoFireEnabled
-        && m_AimLineEffectiveAttackRangeActive
-        && !m_AimLineEffectiveAttackRangeTargetIsWitch
-        && !m_SuppressPlayerInput
-        && !m_AdjustingViewmodel
-        && !m_AdjustingScope
-        && !isObserverOrIdle
-        && localPlayer)
-    {
-        const unsigned char* base = reinterpret_cast<const unsigned char*>(localPlayer);
-        const unsigned char lifeState = *reinterpret_cast<const unsigned char*>(base + kLifeStateOffset);
-        const int obsMode = *reinterpret_cast<const int*>(base + kObserverModeOffset);
-        const int currentUseAction = *reinterpret_cast<const int*>(base + 0x1ba8); // m_iCurrentUseAction
-        const int useActionOwner = *reinterpret_cast<const int*>(base + 0x1ba4);  // m_useActionOwner
-        const int useActionTarget = *reinterpret_cast<const int*>(base + 0x1ba0); // m_useActionTarget
-        const int reviveOwner = *reinterpret_cast<const int*>(base + 0x1f88);     // m_reviveOwner
-        const int reviveTarget = *reinterpret_cast<const int*>(base + 0x1f8c);    // m_reviveTarget
-        const auto handleValid = [](int h) { return h != 0 && h != -1; };
-        const bool useOrReviveActive =
-            wantUse ||
-            useButtonDown ||
-            m_UseCmdOwned ||
-            currentUseAction != 0 ||
-            handleValid(useActionOwner) ||
-            handleValid(useActionTarget) ||
-            handleValid(reviveOwner) ||
-            handleValid(reviveTarget);
-        effectiveRangeAutoFireOwnsPrimary = (lifeState == 0) && (obsMode == 0) && !useOrReviveActive;
-    }
-
-    if (effectiveRangeAutoFireOwnsPrimary)
-    {
-        primaryAttackDown = false;
-        primaryAttackJustPressed = false;
-    }
     const bool magazineInteractionBlocksFire = nativeDualReloadPulse || IsMagazineInteractionBlockingFire();
     const bool usingMountedWeaponForPrimary = vrAwareServerSupportPath && localPlayer && IsUsingMountedGun(localPlayer);
     // (The right trigger of the free hand in a dual reload works the magazines and slides: no click.)
@@ -2434,14 +2325,6 @@ void VR::ProcessInput()
     if (isObserverOrIdle)
     {
         // Don't hold +attack while spectating.
-        if (m_PrimaryAttackCmdOwned)
-        {
-            m_Game->ClientCmd_Unrestricted("-attack");
-            m_PrimaryAttackCmdOwned = false;
-        }
-    }
-    else if (effectiveRangeAutoFireOwnsPrimary)
-    {
         if (m_PrimaryAttackCmdOwned)
         {
             m_Game->ClientCmd_Unrestricted("-attack");

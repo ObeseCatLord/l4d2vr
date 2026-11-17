@@ -291,45 +291,6 @@ void VR::ProcessInput()
     {
     }
 
-    if (m_TeleportVisualScoutActive)
-    {
-        ReleaseCustomActionInputs();
-        // Detached scout view is observation-only. Release any held gameplay command
-        // immediately. Teleport remains available so the camera can be repositioned
-        // repeatedly without returning to the authoritative body. A fresh Use press
-        // is the explicit return-to-body command.
-        auto releaseOwnedCommand = [&](bool& owned, const char* releaseCommand)
-            {
-                if (!owned)
-                    return;
-                m_Game->ClientCmd_Unrestricted(releaseCommand);
-                owned = false;
-            };
-        releaseOwnedCommand(m_PrimaryAttackCmdOwned, "-attack");
-        releaseOwnedCommand(m_SecondaryAttackCmdOwned, "-attack2");
-        releaseOwnedCommand(m_JumpCmdOwned, "-jump");
-        releaseOwnedCommand(m_UseCmdOwned, "-use");
-        releaseOwnedCommand(m_ReloadCmdOwned, "-reload");
-        releaseOwnedCommand(m_DuckCmdOwned, "-duck");
-        m_PrimaryAttackDown = false;
-        m_PushingThumbstick = false;
-        m_LocomotionActive = false;
-
-        const bool scoutUseDown = PressedDigitalAction(m_ActionUse);
-        if (!scoutUseDown)
-        {
-            m_TeleportVisualScoutUseExitArmed = true;
-        }
-        else if (m_TeleportVisualScoutUseExitArmed)
-        {
-            ExitTeleportVisualScout();
-            return;
-        }
-
-        UpdateTeleportTargeting();
-        return;
-    }
-
     // TODO: Instead of ClientCmding, override Usercmd in CreateMove
 #if 0
     if (GetAnalogActionData(m_ActionWalk, analogActionData))

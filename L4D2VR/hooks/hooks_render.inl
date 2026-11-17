@@ -4790,7 +4790,6 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			firstPersonBodyQueuedPlayerEligible);
 	const bool firstPersonBodyActualFirstPerson =
 		firstPersonBodyPlayerEligible &&
-		!m_VR->m_TeleportVisualScoutActive.load(std::memory_order_acquire) &&
 		!renderThirdPerson;
 	g_FirstPersonBodyActualFirstPerson.store(
 		firstPersonBodyActualFirstPerson,
@@ -4805,11 +4804,10 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 		if (nowMs - s_LastCameraDiagMs >= 5000u)
 		{
 			s_LastCameraDiagMs = nowMs;
-			Game::logMsg("[VR][SelfTest] camera: thirdPerson=%d queueMode=%d playerValid=%d life=%d dead=%d observer=%d viewEntity=%d cooldown=%d queuedValid=%d queuedEligible=%d scout=%d",
+			Game::logMsg("[VR][SelfTest] camera: thirdPerson=%d queueMode=%d playerValid=%d life=%d dead=%d observer=%d viewEntity=%d cooldown=%d queuedValid=%d queuedEligible=%d",
 				renderThirdPerson ? 1 : 0, queueMode, localPlayerValid ? 1 : 0, tpStateDbg.lifeState, tpStateDbg.dead ? 1 : 0,
 				tpStateDbg.observerMode, hasViewEntityOverride ? 1 : 0, inMapLoadCooldown ? 1 : 0,
-				firstPersonBodyQueuedPlayerSnapshotValid ? 1 : 0, firstPersonBodyQueuedPlayerEligible ? 1 : 0,
-				m_VR->m_TeleportVisualScoutActive.load(std::memory_order_acquire) ? 1 : 0);
+				firstPersonBodyQueuedPlayerSnapshotValid ? 1 : 0, firstPersonBodyQueuedPlayerEligible ? 1 : 0);
 		}
 	}
 

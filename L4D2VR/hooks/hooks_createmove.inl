@@ -218,47 +218,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         m_VR->UpdateControlWatchdog(localPlayerForAutoActions,
             gripSession.blocked | (IsPlayerDoingUseOrReviveAction(localPlayerForAutoActions) ? 32u : 0u));
 
-	if (m_VR && m_VR->m_TeleportVisualScoutActive)
-	{
-		// Detached scout view is local-only. Return before VR aim, melee helpers,
-		// auto-fire and roomscale code can mutate the authoritative body command.
-		// Keep command timing intact, but freeze body orientation and strip actions.
-		if (m_VR->m_TeleportVisualScoutBodyViewAnglesValid)
-			cmd->viewangles = m_VR->m_TeleportVisualScoutBodyViewAngles;
-		cmd->forwardmove = 0.0f;
-		cmd->sidemove = 0.0f;
-		cmd->upmove = 0.0f;
-		cmd->buttons = 0;
-		cmd->impulse = 0;
-		cmd->weaponselect = 0;
-		cmd->weaponsubtype = 0;
-		cmd->mousedx = 0;
-		cmd->mousedy = 0;
-		m_VR->m_PushingThumbstick = false;
-		m_VR->m_LocomotionActive = false;
-
-		// Drop transient attack helpers so returning to the body cannot replay a
-		// queued melee swing, auto-repeat pulse or effective-range cycle.
-		s_weaponGripRelease.Reset();
-		s_nonvrMeleeHoldTicks = 0;
-		s_nonvrMeleeArmed = true;
-		s_nonvrMeleeLockUntil = {};
-		s_nonvrMeleeCooldownUntil = {};
-		s_nonvrMeleePending = false;
-		s_nonvrMeleeFireAt = {};
-		s_nonvrMeleePendingHoldTicks = 0;
-		s_nonvrMeleeHasPrev = false;
-		s_tpMeleePrevAttackDown = false;
-		s_tpMeleeLockUntil = {};
-		s_manualCarryThrowWeapon = 0;
-		s_manualCarryThrowPhysicalAttackDown = false;
-		s_manualInventoryThrowPhysicalUseDown = false;
-		s_manualInventoryThrowArmed = false;
-		s_manualThrowInputGate.Reset();
-		m_VR->m_ManualThrowViewmodelInputState.store(0u, std::memory_order_release);
-		return result;
-	}
-
 	if (m_VR->m_IsVREnabled) {
 		// Detect observer -> live transition and recenter once.
 	   // In L4D2, the local player entity persists while dead and enters observer modes.
@@ -1226,7 +1185,6 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		}
 
 		m_VR->ApplyRoomscale1To1Move(cmd, flInputSampleTime, controlLocomotionActive);
-		m_VR->ApplyMovementLedgeGuard(cmd, m_VR->m_ScopeFovAdjustSuppressWalk || m_VR->m_TeleportTargetingActive);
 
 		// Keep the two input contracts independent:
 		//   * carried props: hold the trigger and release to throw (Use stays native);

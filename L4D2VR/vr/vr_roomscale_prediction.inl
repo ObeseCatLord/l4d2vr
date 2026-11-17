@@ -366,10 +366,9 @@ namespace
             return;
 
         const bool valid = vr->m_TeleportTargetValid;
-        const bool visualScoutOnly = valid && vr->m_TeleportTargetVisualScoutOnly;
-        const int r = valid ? (visualScoutOnly ? 48 : 32) : 255;
-        const int g = valid ? (visualScoutOnly ? 180 : 220) : 64;
-        const int b = valid ? (visualScoutOnly ? 255 : 120) : 48;
+        const int r = valid ? 32 : 255;
+        const int g = valid ? 220 : 64;
+        const int b = valid ? 120 : 48;
         const float duration = (std::max)(0.035f, vr->m_LastFrameDuration * 2.0f);
 
         for (int i = 1; i < vr->m_TeleportArcPointCount; ++i)
@@ -441,13 +440,9 @@ void VR::BeginTeleportTargeting()
     if (!m_IsVREnabled)
         return;
 
-    // While scouting, Teleport starts another detached-camera relocation. Use is
-    // the only normal return-to-body command, so scouting can be chained indefinitely.
-
     m_TeleportTargetingActive = true;
     m_TeleportCommitPending = false;
     m_TeleportTargetValid = false;
-    m_TeleportTargetVisualScoutOnly = false;
     m_TeleportArcPointCount = 0;
     m_TeleportFacingYawOffset = 0.0f;
     m_TeleportFacingTurnPressed = false;
@@ -475,7 +470,6 @@ void VR::CancelTeleportTargeting()
     m_TeleportTargetingActive = false;
     m_TeleportCommitPending = false;
     m_TeleportTargetValid = false;
-    m_TeleportTargetVisualScoutOnly = false;
     m_TeleportArcPointCount = 0;
     m_TeleportFacingYawOffset = 0.0f;
     m_TeleportFacingTurnPressed = false;
@@ -532,123 +526,6 @@ bool VR::ShouldSuppressTeleportViewmodelRender() const
     return static_cast<int32_t>(until - now) > 0;
 }
 
-void VR::ClearTeleportVisualScout()
-{
-    m_TeleportVisualScoutActive = false;
-    m_TeleportVisualScoutUseExitArmed = false;
-    m_TeleportVisualScoutCameraAnchor = {};
-    m_TeleportVisualScoutReturnRotationOffset = 0.0f;
-    m_TeleportVisualScoutBodyViewAngles = {};
-    m_TeleportVisualScoutBodyViewAnglesValid = false;
-}
-
-void VR::EnterTeleportVisualScout(const Vector& targetWorld)
-{
-    if (!IsFiniteTeleportVector(targetWorld) || !m_Game || !m_Game->m_EngineClient)
-        return;
-
-    const int localIndex = m_Game->m_EngineClient->GetLocalPlayer();
-    C_BasePlayer* localPlayer = (localIndex > 0)
-        ? reinterpret_cast<C_BasePlayer*>(m_Game->GetClientEntity(localIndex))
-        : nullptr;
-    if (!localPlayer)
-        return;
-
-    // Visual scouting targets the rendered HMD observation point directly. Unlike a
-    // real teleport landing target, it is not a player-origin / feet position.
-    if (!IsFiniteTeleportVector(m_HmdPosAbs) || !IsFiniteTeleportVector(m_HmdPosLocalInWorld))
-        return;
-
-    const Vector scoutDelta = targetWorld - m_HmdPosAbs;
-    const float scoutDistance = scoutDelta.Length();
-    if (!std::isfinite(scoutDistance) || scoutDistance <= 0.01f)
-        return;
-
-    const bool relocatingExistingScout = m_TeleportVisualScoutActive;
-    if (!relocatingExistingScout)
-    {
-        m_TeleportVisualScoutReturnRotationOffset = m_RotationOffset;
-        m_TeleportVisualScoutBodyViewAngles = {};
-        m_TeleportVisualScoutBodyViewAnglesValid = false;
-        if (m_Game->m_EngineClient)
-        {
-            QAngle bodyAngles{};
-            m_Game->m_EngineClient->GetViewAngles(bodyAngles);
-            if (std::isfinite(bodyAngles.x) && std::isfinite(bodyAngles.y) && std::isfinite(bodyAngles.z))
-            {
-                m_TeleportVisualScoutBodyViewAngles = bodyAngles;
-                m_TeleportVisualScoutBodyViewAnglesValid = true;
-            }
-        }
-
-        // If Use was held as a playerclip-bypass modifier when scouting began, require
-        // it to be released once before it can act as the return-to-body command.
-        m_TeleportVisualScoutUseExitArmed = !PressedDigitalAction(m_ActionUse);
-    }
-    // Anchor the selected world point to the rendered HMD itself. Do not carry a
-    // stale pre-scout roomscale offset into the detached camera basis.
-    m_TeleportVisualScoutCameraAnchor =
-        targetWorld + Vector(0.0f, 0.0f, 64.0f) - m_HmdPosLocalInWorld;
-    m_TeleportPendingCameraPlanarRecenterTarget = {};
-    m_TeleportPendingCameraPlanarRecenterValid = false;
-    m_TeleportCameraClipSuppressFrames = 0;
-    m_TeleportVisualScoutActive = true;
-    SuppressTeleportViewmodelForMs(TELEPORT_VIEWMODEL_SUPPRESS_MS);
-
-    // A scout camera is intentionally detached from the server origin. Clear all
-    // server-move and delayed engine-origin compensation state so neither path can
-    // pull the camera back or apply the offset twice.
-    ClearTeleportServerTarget();
-    ClearRoomscale1To1ServerMoveDelta();
-    m_TeleportPendingEngineAnchorWorldDelta = {};
-    m_TeleportEngineAnchorCompensationFrames = 0;
-    m_AutoResetPositionPending = false;
-    m_ResetPositionAfterObserverTargetSwitchPending = false;
-    m_ResetPositionAfterMountedGunExitPending = false;
-    m_Roomscale1To1PrevValid = false;
-    m_Roomscale1To1LastEngineEyeValid = false;
-    m_Roomscale1To1PendingVisualWorldDelta = {};
-    m_Roomscale1To1PendingVisualWorldDeltaValid = false;
-}
-
-void VR::ExitTeleportVisualScout()
-{
-    if (!m_TeleportVisualScoutActive)
-        return;
-
-    const float returnRotationOffset = m_TeleportVisualScoutReturnRotationOffset;
-    ClearTeleportVisualScout();
-    m_TeleportPendingCameraPlanarRecenterTarget = {};
-    m_TeleportPendingCameraPlanarRecenterValid = false;
-    m_TeleportCameraClipSuppressFrames = 0;
-    SuppressTeleportViewmodelForMs(TELEPORT_VIEWMODEL_SUPPRESS_MS);
-
-    // Recenter directly on the current authoritative body origin. Do not route this
-    // through ResetPosition(): the detached scout Z offset must not leak into HeightOffset.
-    if (!m_SetupOrigin.IsZero() && IsFiniteTeleportVector(m_SetupOrigin) && IsFiniteTeleportVector(m_HmdPosLocalInWorld))
-    {
-        m_CameraAnchor = m_SetupOrigin + Vector(0.0f, 0.0f, 64.0f) - m_HmdPosLocalInWorld;
-        m_HeightOffset = m_CameraAnchor.z - m_SetupOrigin.z;
-        m_HmdPosAbs = m_CameraAnchor - Vector(0.0f, 0.0f, 64.0f) + m_HmdPosLocalInWorld;
-        m_HmdPosAbsPrev = m_HmdPosAbs;
-        m_SetupOriginToHMD = m_HmdPosAbs - m_SetupOrigin;
-    }
-
-    m_RotationOffset = returnRotationOffset;
-    m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
-    m_TeleportPendingEngineAnchorWorldDelta = {};
-    m_TeleportEngineAnchorCompensationFrames = 0;
-    m_AutoResetPositionPending = false;
-    m_ResetPositionAfterObserverTargetSwitchPending = false;
-    m_ResetPositionAfterMountedGunExitPending = false;
-    m_Roomscale1To1PrevValid = false;
-    m_Roomscale1To1LastEngineEyeValid = false;
-    m_Roomscale1To1PendingVisualWorldDelta = {};
-    m_Roomscale1To1PendingVisualWorldDeltaValid = false;
-    ClearRoomscale1To1ServerMoveDelta();
-    CancelTeleportTargeting();
-}
-
 void VR::QueueTeleportVisualWorldDelta(const Vector& worldDelta, const Vector& landingTarget)
 {
     if (!IsFiniteTeleportVector(worldDelta) || !IsFiniteTeleportVector(landingTarget))
@@ -688,7 +565,6 @@ void VR::ApplyPendingTeleportVisualWorldDelta()
         return;
 
     SuppressTeleportViewmodelForMs(TELEPORT_VIEWMODEL_SUPPRESS_MS);
-    ClearTeleportVisualScout();
     m_CameraAnchor += worldDelta;
     m_HmdPosAbs += worldDelta;
     m_HmdPosAbsPrev += worldDelta;
@@ -762,7 +638,6 @@ void VR::UpdateTeleportTargeting()
         return;
 
     m_TeleportTargetValid = false;
-    m_TeleportTargetVisualScoutOnly = false;
     m_TeleportArcPointCount = 0;
     CancelRoomscale1To1ServerMoveDelta();
     m_Roomscale1To1PrevValid = false;
@@ -842,31 +717,6 @@ void VR::UpdateTeleportTargeting()
     m_TeleportArcPointCount = 1;
     m_TeleportMarkerWorld = current;
 
-    const bool canUseServerMove = ShouldUseTeleportServerMove();
-    const bool visualScoutOnly =
-        m_TeleportVisualScoutActive ||
-        (!canUseServerMove && m_TeleportVisualScoutOnNonVRServerEnabled);
-    if (visualScoutOnly)
-    {
-        // Camera-only scouting is intentionally collision-free. It is a probe view, not
-        // authoritative locomotion: walls, ceilings, low spaces and missing floor support
-        // must not block the preview. Keep a straight controller ray so the destination is
-        // deterministic even when the target is inside geometry or behind multiple walls.
-        if (localPlayer && canCommit &&
-            IsFiniteTeleportVector(current) && IsFiniteTeleportVector(direction) && !direction.IsZero())
-        {
-            const Vector scoutTarget = current + (direction * teleportMaxDistanceUnits);
-            if (IsFiniteTeleportVector(scoutTarget))
-            {
-                m_TeleportArcPoints[m_TeleportArcPointCount++] = scoutTarget;
-                m_TeleportTargetWorld = scoutTarget;
-                m_TeleportMarkerWorld = scoutTarget;
-                m_TeleportTargetValid = true;
-                m_TeleportTargetVisualScoutOnly = true;
-            }
-        }
-    }
-    else
     {
         Vector velocity = direction * (teleportArcSpeedMetersPerSecond * scale);
         const Vector gravity(0.0f, 0.0f, -kTeleportArcGravityMetersPerSecondSq * scale);
@@ -963,7 +813,6 @@ void VR::UpdateTeleportTargeting()
             m_TeleportTargetWorld = landingPoint;
             m_TeleportMarkerWorld = landingPoint;
             m_TeleportTargetValid = canCommit;
-            m_TeleportTargetVisualScoutOnly = false;
         }
     }
 
@@ -973,10 +822,7 @@ void VR::UpdateTeleportTargeting()
     {
         if (m_TeleportTargetValid)
         {
-            if (m_TeleportTargetVisualScoutOnly)
-                EnterTeleportVisualScout(m_TeleportTargetWorld);
-            else
-                QueueTeleportServerTarget(m_TeleportTargetWorld);
+            QueueTeleportServerTarget(m_TeleportTargetWorld);
 
             m_RotationOffset -= m_TeleportFacingYawOffset;
             m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
@@ -998,7 +844,7 @@ void VR::ApplyRoomscale1To1Move(CUserCmd* cmd, float inputSampleTime, bool contr
     m_Roomscale1To1PendingVisualWorldDelta = {};
     m_Roomscale1To1PendingVisualWorldDeltaValid = false;
 
-    if (!cmd || !m_Roomscale1To1Movement || m_TeleportTargetingActive || m_TeleportVisualScoutActive)
+    if (!cmd || !m_Roomscale1To1Movement || m_TeleportTargetingActive)
     {
         m_Roomscale1To1PrevValid = false;
         CancelRoomscale1To1ServerMoveDelta();

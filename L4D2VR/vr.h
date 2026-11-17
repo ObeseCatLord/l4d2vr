@@ -2251,39 +2251,6 @@ public:
 
 	bool m_PressedTurn = false;
 	bool m_PushingThumbstick = false;
-	bool m_AutoBunnyHop = false;
-	bool m_AutoAirStrafe = false;
-	bool m_AutoAirStrafeLandingSpeedPreserve = true;
-	float m_AutoAirStrafeMaxGainPerHop = 0.0f;
-	float m_AutoAirStrafeTargetSpeed = 450.0f;
-	float m_AutoAirStrafeSpeedProjection = 0.0f;
-	float m_AutoAirStrafeMaxTurnBrakeProjection = 2.0f;
-	float m_AutoAirStrafeTurnResponsiveness = 0.25f;
-	bool m_AutoAirStrafeFlip = false;
-	bool m_AutoAirStrafeDebugLog = false;
-	float m_AutoAirStrafeDebugLogHz = 4.0f;
-	bool m_AutoAirStrafeDebugWasAirborne = false;
-	float m_AutoAirStrafeDebugAirStartSpeed = 0.0f;
-	float m_AutoAirStrafeDebugAirPeakSpeed = 0.0f;
-	float m_AutoAirStrafeDebugLastSpeed = 0.0f;
-	int m_AutoAirStrafeDebugAirTicks = 0;
-	int m_AutoAirStrafeDebugActiveTicks = 0;
-	std::chrono::steady_clock::time_point m_AutoAirStrafeDebugLastLog{};
-	bool m_AutoAirStrafeDebugHavePrevSpeed = false;
-	int m_AutoAirStrafeDebugPrevCmd = 0;
-	float m_AutoAirStrafeDebugPrevSpeed = 0.0f;
-	float m_AutoAirStrafeDebugPrevVx = 0.0f;
-	float m_AutoAirStrafeDebugPrevVy = 0.0f;
-	float m_AutoAirStrafeDebugPrevYaw = 0.0f;
-	bool m_AutoAirStrafeDebugPrevGround = false;
-	bool m_LedgeGuardEnabled = true;
-	float m_LedgeGuardProbeDistance = 36.0f;
-	float m_LedgeGuardProbeHeight = 18.0f;
-	float m_LedgeGuardDropDistance = 96.0f;
-	float m_LedgeGuardMinMoveSpeed = 1.0f;
-	bool m_LedgeGuardDebugLog = false;
-	float m_LedgeGuardDebugLogHz = 2.0f;
-	std::chrono::steady_clock::time_point m_LedgeGuardDebugLastLog{};
 	// Any locomotion (keyboard WASD, thumbstick, etc.) detected in the current CreateMove.
 	// Used to avoid conflicts with 1:1 roomscale movement/camera decoupling.
 	bool m_LocomotionActive = false;
@@ -4359,13 +4326,10 @@ public:
 	// ordinary CUserCmd movement when validation rejects the destination.
 	static constexpr int TELEPORT_ARC_SEGMENTS = 96;
 	static constexpr uint32_t TELEPORT_VIEWMODEL_SUPPRESS_MS = 75u;
-	// Config: TeleportMaxDistanceMeters. Shared by real teleport and camera-only scouting.
-	// Keep preview, client validation and server validation on the same runtime value.
+	// Config: TeleportMaxDistanceMeters. Keep preview, client validation and
+	// server validation on the same runtime value. (2.0.13: the camera-only
+	// scout mode is gone.)
 	float m_TeleportMaxDistanceMeters = 20.0f;
-	// Config: TeleportVisualScoutOnNonVRServerEnabled. Disabled by default.
-	// Only when enabled may a server without the VR SetOrigin path fall back to
-	// the detached camera-only scout mode. Real teleport behavior is unchanged.
-	bool m_TeleportVisualScoutOnNonVRServerEnabled = false;
 	std::array<Vector, TELEPORT_ARC_SEGMENTS + 1> m_TeleportArcPoints{};
 	int m_TeleportArcPointCount = 0;
 	bool m_TeleportTargetingActive = false;
@@ -4373,7 +4337,6 @@ public:
 	bool m_TeleportTargetValid = false;
 	// True when the server-side SetOrigin path is unavailable. This preview uses
 	// a collision-free controller ray; releasing teleport enters a camera-only scout view.
-	bool m_TeleportTargetVisualScoutOnly = false;
 	Vector m_TeleportTargetWorld = {};
 	Vector m_TeleportMarkerWorld = {};
 	float m_TeleportFacingYawOffset = 0.0f;
@@ -4399,12 +4362,6 @@ public:
 	// Remote-server fallback: the rendered camera may scout without moving the
 	// authoritative player entity. Teleport may be used repeatedly while detached;
 	// a fresh Use press exits scouting and returns to the real body position.
-	std::atomic<bool> m_TeleportVisualScoutActive{ false };
-	bool m_TeleportVisualScoutUseExitArmed = false;
-	Vector m_TeleportVisualScoutCameraAnchor = {};
-	float m_TeleportVisualScoutReturnRotationOffset = 0.0f;
-	QAngle m_TeleportVisualScoutBodyViewAngles = {};
-	bool m_TeleportVisualScoutBodyViewAnglesValid = false;
 
 	// Debug logging for 1:1 roomscale cmd movement.
 	bool m_Roomscale1To1DebugLog = false;
@@ -5996,7 +5953,6 @@ public:
 	void UpdateSpecialInfectedWarningState();
 	void UpdateSpecialInfectedPreWarningState();
 	Vector GetAimRenderCameraDelta() const;
-	bool ApplyMovementLedgeGuard(CUserCmd* cmd, bool suppressScopeWalk);
 	void ApplyRoomscale1To1Move(CUserCmd* cmd, float inputSampleTime, bool controlLocomotionActive);
 	bool ShouldUseRoomscale1To1ServerMove() const;
 	void QueueRoomscale1To1ServerMoveDelta(const Vector& worldDelta, const Vector& visualWorldDelta);
@@ -6019,9 +5975,6 @@ public:
 	void ConsumeTeleportEngineAnchorCompensation(Vector& engineOriginDelta);
 	void SuppressTeleportViewmodelForMs(uint32_t durationMs);
 	bool ShouldSuppressTeleportViewmodelRender() const;
-	void EnterTeleportVisualScout(const Vector& targetWorld);
-	void ExitTeleportVisualScout();
-	void ClearTeleportVisualScout();
 	void OnPredictionRunCommand(CUserCmd* cmd);
 	void OnPrimaryAttackServerDecision(CUserCmd* cmd, bool fromSecondaryPrediction);
 	void StartSpecialInfectedWarningAction();

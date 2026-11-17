@@ -818,7 +818,6 @@ void VR::UpdateTracking()
         m_ResetPositionAfterMountedGunExitPending = false;
         CancelTeleportTargeting();
         ClearTeleportServerTarget();
-        ClearTeleportVisualScout();
         m_HadLocalPlayerPrev = false;
         m_ResetPositionStableFrames.store(0u, std::memory_order_release);
         m_ResetPositionStableEyeZValid = false;
@@ -1020,30 +1019,6 @@ void VR::UpdateTracking()
         m_ResetPositionAfterMountedGunExitPending = true;
     m_UsingMountedGunPrev = usingMountedGunNow;
 
-    // The scout camera is temporary and camera-only. If the real body enters any
-    // state that needs immediate feedback or authoritative camera placement, return
-    // before rendering another detached frame.
-    if (m_TeleportVisualScoutActive)
-    {
-        const bool incapacitated = (*reinterpret_cast<const unsigned char*>(base + kIsIncapacitatedOffset) != 0);
-        const bool hangingFromLedge = (*reinterpret_cast<const unsigned char*>(base + kIsHangingFromLedgeOffset) != 0);
-        const int tongueOwner = *reinterpret_cast<const int*>(base + kTongueOwnerOffset);
-        const bool hangingFromTongue = (*reinterpret_cast<const unsigned char*>(base + 0x1F84) != 0);
-        const int carryAttacker = *reinterpret_cast<const int*>(base + kCarryAttackerOffset);
-        const int pummelAttacker = *reinterpret_cast<const int*>(base + kPummelAttackerOffset);
-        const int pounceAttacker = *reinterpret_cast<const int*>(base + kPounceAttackerOffset);
-        const int jockeyAttacker = *reinterpret_cast<const int*>(base + kJockeyAttackerOffset);
-        const bool controlledBySpecialInfected =
-            hangingFromTongue || handleValid(tongueOwner) || handleValid(carryAttacker) ||
-            handleValid(pummelAttacker) || handleValid(pounceAttacker) || handleValid(jockeyAttacker);
-
-        if (isObserver || obsMode != 0 || incapacitated || hangingFromLedge ||
-            controlledBySpecialInfected || usingMountedGunNow)
-        {
-            ExitTeleportVisualScout();
-        }
-    }
-
     m_Game->m_IsMeleeWeaponActive = viewPlayer->IsMeleeWeaponActive();
 
     // Scope weapon classification (non-firearm can still use scope when front-view 3P forces it).
@@ -1080,7 +1055,6 @@ void VR::UpdateTracking()
                 !isObserver &&
                 obsMode == 0 &&
                 !usingMountedGunNow &&
-                !m_TeleportVisualScoutActive &&
                 localPlayer->m_hGroundEntity != -1 &&
                 m_StairStepCameraSmoothMs > 0 &&
                 std::isfinite(eyeOrigin.z);
@@ -1503,25 +1477,15 @@ void VR::UpdateTracking()
             m_RoomscaleActive = false;
     }
 
-    if (m_TeleportVisualScoutActive)
-    {
-        // Keep the detached scout camera fixed at the chosen world-space anchor.
-        // HMD room motion still applies through m_HmdPosLocalInWorld below.
-        m_RoomscaleActive = true;
-        m_CameraAnchor = m_TeleportVisualScoutCameraAnchor;
-    }
-    else
-    {
-        if (!m_RoomscaleActive)
-            m_CameraAnchor += m_SetupOrigin - m_SetupOriginPrev;
+    if (!m_RoomscaleActive)
+        m_CameraAnchor += m_SetupOrigin - m_SetupOriginPrev;
 
-        m_CameraAnchor.z = m_SetupOrigin.z + m_HeightOffset;
-    }
+    m_CameraAnchor.z = m_SetupOrigin.z + m_HeightOffset;
 
     // A real teleport is queued before this frame's local HMD pose is refreshed. Apply
     // its final XY recenter here so the camera lands exactly on the accepted body origin
     // instead of inheriting a stale forward/sideways roomscale offset.
-    if (!m_TeleportVisualScoutActive && m_TeleportPendingCameraPlanarRecenterValid)
+    if (m_TeleportPendingCameraPlanarRecenterValid)
     {
         if (IsFiniteTeleportVector(m_TeleportPendingCameraPlanarRecenterTarget) &&
             IsFiniteTeleportVector(m_HmdPosLocalInWorld))
@@ -1539,7 +1503,7 @@ void VR::UpdateTracking()
 
     m_HmdPosAbs = m_CameraAnchor - Vector(0, 0, 64) + m_HmdPosLocalInWorld;
 
-    if (!m_TeleportVisualScoutActive && !suppressTeleportCameraClip)
+    if (!suppressTeleportCameraClip)
     {
         // Check if camera is clipping inside wall. A detached scout camera deliberately
         // crosses the space between the body and target, so this correction must not run
@@ -1596,7 +1560,6 @@ void VR::UpdateTracking()
         const bool resetStateCandidate =
             (liveLocalPlayer || stableInEyeObserver) &&
             resetVerticalMovementSafe &&
-            !m_TeleportVisualScoutActive &&
             !IsThirdPersonMapLoadCooldownActive();
 
         uint32_t stableFrames = 0u;
@@ -1626,7 +1589,6 @@ void VR::UpdateTracking()
 
     m_SetupOriginToHMD = m_HmdPosAbs - m_SetupOrigin;
     if (m_AutoRecenterSmooth &&
-        !m_TeleportVisualScoutActive &&
         !suppressTeleportCameraClip &&
         !m_IsThirdPersonCamera &&
         !want1to1DecoupledCamera &&
@@ -1660,7 +1622,7 @@ void VR::UpdateTracking()
     const float hardRecenterDistance = std::max(m_AutoRecenterSoftStartDistance + 1.0f, m_AutoRecenterHardDistance);
     Vector hardRecenterDrift = m_SetupOriginToHMD;
     hardRecenterDrift.z = 0.0f;
-    if (!m_TeleportVisualScoutActive && !suppressTeleportCameraClip && VectorLength(hardRecenterDrift) > hardRecenterDistance)
+    if (!suppressTeleportCameraClip && VectorLength(hardRecenterDrift) > hardRecenterDistance)
         ResetPosition();
     // Observer in-eye: when switching spectated target, re-align anchors once.
     if (m_ResetPositionAfterObserverTargetSwitchPending)
@@ -2656,7 +2618,6 @@ void VR::UpdateTracking()
         lifeState == 0 &&
         obsMode == 0 &&
         !m_RoomscaleActive &&
-        !m_TeleportVisualScoutActive &&
         !m_TeleportPendingCameraPlanarRecenterValid &&
         !m_IsThirdPersonCamera &&
         m_ThirdPersonHoldFrames <= 0 &&

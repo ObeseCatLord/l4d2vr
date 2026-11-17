@@ -179,13 +179,6 @@ bool VR::CanApplyResetPositionNow() const
 
 void VR::ResetPosition()
 {
-    if (m_TeleportVisualScoutActive)
-    {
-        // A detached scout camera must not be pulled back by manual or automatic
-        // VR recenter paths. Use is the explicit return-to-body action.
-        return;
-    }
-
     if (!CanApplyResetPositionNow())
     {
         m_ResetPositionDeferredPending.store(1u, std::memory_order_release);
@@ -204,7 +197,6 @@ void VR::ResetPosition()
     ClearRoomscale1To1ServerMoveDelta();
     CancelTeleportTargeting();
     ClearTeleportServerTarget();
-    ClearTeleportVisualScout();
     m_Roomscale1To1StandingHmdZValid = false;
     m_Roomscale1To1PhysicalCrouchActive = false;
 }
@@ -3204,23 +3196,6 @@ void VR::ParseConfigFileUnlocked()
     else
         headSmoothingValue = controllerSmoothingValue; // Match controller smoothing by default
     m_HeadSmoothing = std::clamp(headSmoothingValue, 0.0f, 0.99f);
-    m_AutoBunnyHop = getBool("AutoBunnyHop", m_AutoBunnyHop);
-    m_AutoAirStrafe = getBool("AutoAirStrafe", m_AutoAirStrafe);
-    m_AutoAirStrafeLandingSpeedPreserve = getBool("AutoAirStrafeLandingSpeedPreserve", m_AutoAirStrafeLandingSpeedPreserve);
-    m_AutoAirStrafeMaxGainPerHop = std::clamp(getFloat("AutoAirStrafeMaxGainPerHop", m_AutoAirStrafeMaxGainPerHop), 0.0f, 100.0f);
-    m_AutoAirStrafeTargetSpeed = std::clamp(getFloat("AutoAirStrafeTargetSpeed", m_AutoAirStrafeTargetSpeed), 0.0f, 2000.0f);
-    m_AutoAirStrafeSpeedProjection = std::clamp(getFloat("AutoAirStrafeSpeedProjection", m_AutoAirStrafeSpeedProjection), 0.0f, 29.0f);
-    m_AutoAirStrafeMaxTurnBrakeProjection = std::clamp(getFloat("AutoAirStrafeMaxTurnBrakeProjection", m_AutoAirStrafeMaxTurnBrakeProjection), 0.0f, 30.0f);
-    m_AutoAirStrafeTurnResponsiveness = std::clamp(getFloat("AutoAirStrafeTurnResponsiveness", m_AutoAirStrafeTurnResponsiveness), 0.0f, 1.0f);
-    m_AutoAirStrafeDebugLog = getBool("AutoAirStrafeDebugLog", m_AutoAirStrafeDebugLog);
-    m_AutoAirStrafeDebugLogHz = std::clamp(getFloat("AutoAirStrafeDebugLogHz", m_AutoAirStrafeDebugLogHz), 0.0f, 60.0f);
-    m_LedgeGuardEnabled = getBool("LedgeGuardEnabled", m_LedgeGuardEnabled);
-    m_LedgeGuardProbeDistance = std::clamp(getFloat("LedgeGuardProbeDistance", m_LedgeGuardProbeDistance), 8.0f, 128.0f);
-    m_LedgeGuardProbeHeight = std::clamp(getFloat("LedgeGuardProbeHeight", m_LedgeGuardProbeHeight), 4.0f, 64.0f);
-    m_LedgeGuardDropDistance = std::clamp(getFloat("LedgeGuardDropDistance", m_LedgeGuardDropDistance), 24.0f, 256.0f);
-    m_LedgeGuardMinMoveSpeed = std::clamp(getFloat("LedgeGuardMinMoveSpeed", m_LedgeGuardMinMoveSpeed), 0.0f, 450.0f);
-    m_LedgeGuardDebugLog = getBool("LedgeGuardDebugLog", m_LedgeGuardDebugLog);
-    m_LedgeGuardDebugLogHz = std::clamp(getFloat("LedgeGuardDebugLogHz", m_LedgeGuardDebugLogHz), 0.0f, 60.0f);
     m_MotionGesturesEnabled = getBool("MotionGesturesEnabled", m_MotionGesturesEnabled);
     m_MotionGestureSwingEnabled = getBool("MotionGestureSwingEnabled", m_MotionGestureSwingEnabled);
     m_MotionGesturePushEnabled = getBool("MotionGesturePushEnabled", m_MotionGesturePushEnabled);
@@ -3922,7 +3897,6 @@ void VR::ParseConfigFileUnlocked()
     m_Roomscale1To1Movement = getBool("Roomscale1To1Movement", m_Roomscale1To1Movement);
     m_Roomscale1To1MaxStepMeters = getFloat("Roomscale1To1MaxStepMeters", m_Roomscale1To1MaxStepMeters);
     m_TeleportMaxDistanceMeters = std::clamp(getFloat("TeleportMaxDistanceMeters", m_TeleportMaxDistanceMeters), 0.25f, 50.0f);
-    m_TeleportVisualScoutOnNonVRServerEnabled = getBool("TeleportVisualScoutOnNonVRServerEnabled", m_TeleportVisualScoutOnNonVRServerEnabled);
     m_Roomscale1To1DebugLog = getBool("Roomscale1To1DebugLog", m_Roomscale1To1DebugLog);
     m_Roomscale1To1DebugLogHz = getFloat("Roomscale1To1DebugLogHz", m_Roomscale1To1DebugLogHz);
 

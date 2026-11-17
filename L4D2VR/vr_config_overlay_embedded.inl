@@ -270,7 +270,7 @@ namespace
         { "VrHandsTwoHandedAimMountFriendly", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\xAE\x9E\xE4\xBD\x93\xE6\x9E\xAA\xE6\x89\x98\xE6\xA8\xA1\xE5\xBC\x8F", 0.0f, 0.0f, "false" },
         { "VrHandsVirtualStockEnabled", CfgOptionType::Bool, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE8\x99\x9A\xE6\x8B\x9F\xE6\x9E\xAA\xE6\x89\x98", 0.0f, 0.0f, "false" },
         { "VrHandsTwoHandedAimStrength", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\x8C\xE6\x89\x8B\xE7\x9E\x84\xE5\x87\x86\xE5\xBC\xBA\xE5\xBA\xA6", 0.0f, 1.0f, "1.0" },
-        { "VrHandsTwoHandedAimSmoothingSeconds", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\x8C\xE6\x89\x8B\xE7\x9E\x84\xE5\x87\x86\xE5\xB9\xB3\xE6\xBB\x91", 0.0f, 0.25f, "0.025" },
+        { "VrHandsTwoHandedAimSmoothingSeconds", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x8F\x8C\xE6\x89\x8B\xE7\x9E\x84\xE5\x87\x86\xE5\xB9\xB3\xE6\xBB\x91", 0.0f, 0.25f, "0" },
         { "VrHandsTwoHandedAimOffhandOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE5\x89\xAF\xE6\x89\x8B\xE6\x8F\xA1\xE7\x82\xB9\xE5\x81\x8F\xE7\xA7\xBB", -0.2f, 0.2f, "0.12,0.0,0.0" },
         { "VrHandsVirtualStockStrength", CfgOptionType::Float, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE8\x99\x9A\xE6\x8B\x9F\xE6\x9E\xAA\xE6\x89\x98\xE5\xBC\xBA\xE5\xBA\xA6", 0.0f, 1.0f, "0.65" },
         { "VrHandsVirtualStockOffsetMeters", CfgOptionType::Vec3, "\xE6\x89\x8B\xE9\x83\xA8 / VR \xE5\x8F\x8C\xE6\x89\x8B", "\xE8\x99\x9A\xE6\x8B\x9F\xE6\x9E\xAA\xE6\x89\x98\xE5\x81\x8F\xE7\xA7\xBB", -0.75f, 0.75f, "-0.28,0.16,-0.12" },
@@ -388,7 +388,7 @@ namespace
         { "GunBashSweepEnabled", CfgOptionType::Bool, "Weapons / Melee", "Gun bash by swinging", 0.0f, 0.0f, "true" },
         { "ConsumableGesturesEnabled", CfgOptionType::Bool, "Hands / Items", "Pills and adrenaline gestures", 0.0f, 0.0f, "true" },
         { "ConsumableGiveEnabled", CfgOptionType::Bool, "Hands / Items", "Hand pills/adrenaline to teammates", 0.0f, 0.0f, "true" },
-        { "VrHandsTwoHandedStabilizerEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Two-hand aim stabilizer", 0.0f, 0.0f, "true" },
+        { "VrHandsTwoHandedStabilizerEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Two-hand aim stabilizer", 0.0f, 0.0f, "false" },
         { "VrHandsTwoHandedAimShortGunsRearHandOnly", CfgOptionType::Bool, "Hands / VR Hands", "Short guns aim from the trigger hand", 0.0f, 0.0f, "true" },
         { "HandPosesEnabled", CfgOptionType::Bool, "Hands / VR Hands", "Pavlov hand poses", 0.0f, 0.0f, "true" },
         { "HandPoseBlendSeconds", CfgOptionType::Float, "Hands / VR Hands", "Hand pose blend time", 0.0f, 1.0f, "0.2" },
@@ -453,7 +453,7 @@ namespace
         { "ScopeOverlayIdleAlpha", CfgOptionType::Float, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE9\x97\xB2\xE7\xBD\xAE\xE9\x80\x8F\xE6\x98\x8E\xE5\xBA\xA6", 0.0f, 1.0f, "0.5" },
         { "ScopeCameraOffset", CfgOptionType::Vec3, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\x9B\xB8\xE6\x9C\xBA\xE5\x81\x8F\xE7\xA7\xBB (x,y,z)", -180.0f, 180.0f, "12,0,3" },
         { "ScopeCameraAngleOffset", CfgOptionType::Vec3, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\x9B\xB8\xE6\x9C\xBA\xE8\xA7\x92\xE5\xBA\xA6\xE5\x81\x8F\xE7\xA7\xBB (\xE4\xBF\xAF\xE4\xBB\xB0,\xE5\x81\x8F\xE8\x88\xAA,\xE7\xBF\xBB\xE6\xBB\x9A)", -180.0f, 180.0f, "0,0,0" },
-        { "ScopeStabilizationEnabled", CfgOptionType::Bool, "\xE5\x85\x89\xE5\xAD\xA6", "\xE5\x90\xAF\xE7\x94\xA8\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\xA8\xB3\xE5\xAE\x9A", 0.0f, 0.0f, "true" },
+        { "ScopeStabilizationEnabled", CfgOptionType::Bool, "\xE5\x85\x89\xE5\xAD\xA6", "\xE5\x90\xAF\xE7\x94\xA8\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\xA8\xB3\xE5\xAE\x9A", 0.0f, 0.0f, "false" },
         { "ScopeStabilizationMinCutoff", CfgOptionType::Float, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\xA8\xB3\xE5\xAE\x9A\xE6\x9C\x80\xE5\xB0\x8F\xE6\x88\xAA\xE6\xAD\xA2\xE9\xA2\x91\xE7\x8E\x87", 0.05f, 10.0f, "0.5" },
         { "ScopeStabilizationBeta", CfgOptionType::Float, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\xA8\xB3\xE5\xAE\x9A Beta", 0.0f, 5.0f, "0.5" },
         { "ScopeStabilizationDCutoff", CfgOptionType::Float, "\xE5\x85\x89\xE5\xAD\xA6", "\xE7\x9E\x84\xE5\x87\x86\xE9\x95\x9C\xE7\xA8\xB3\xE5\xAE\x9A\xE5\xAF\xBC\xE6\x95\xB0\xE6\x88\xAA\xE6\xAD\xA2\xE9\xA2\x91\xE7\x8E\x87", 0.05f, 10.0f, "1.0" },
@@ -1214,7 +1214,7 @@ namespace
         { "GunBashSweepEnabled", "Weapons / Melee", "Sweep Bash", "Any fast swing of the gun in front of you shoves: sideways, a chop or a butt stroke (measured at the muzzle).", "Off: only pushing the gun forward bashes." },
         { "ConsumableGiveEnabled", "Hands / Items", "Give To Teammates", "Hold pills or adrenaline against a teammate's chest for a moment to hand them over.", "Works on every server." },
         { "VrHandsTwoHandedAimShortGunsRearHandOnly", "Hands / VR Hands", "Short Guns: Trigger Hand Aims", "Pistols, the magnum and the SMGs (Uzi, silenced SMG, MP5) aim from the trigger hand only; your other hand on them steadies the recoil but does not turn the gun. Rifles, shotguns and the rest keep two-handed aim.", "Off: the support hand steers short guns too." },
-        { "VrHandsTwoHandedStabilizerEnabled", "Hands / VR Hands", "Two-hand Stabilizer", "Adaptive smoothing of two-handed aim, like Half-Life 2 VR: steady while holding still, responsive while moving.", "Replaces Two-hand Aim Smoothing while on." },
+        { "VrHandsTwoHandedStabilizerEnabled", "Hands / VR Hands", "Two-hand Stabilizer", "Adaptive smoothing of two-handed aim, like Half-Life 2 VR: steady while holding still, responsive while moving.", "Replaces Two-hand Aim Smoothing while on. Off by default (Pavlov VR has no aim filter); Classic mode always turns it on." },
         { "HandPosesEnabled", "Hands / VR Hands", "Pavlov Hand Poses", "The survivor's hands hold things like Pavlov VR: each gun's magazine, shell, slide, charging handle, pump or bolt gets its Pavlov grip, the trigger finger curls with the pull and straightens along the frame after two seconds off the trigger, and a free hand rests, points and makes a fist with your fingers.", "Off: the older finger curls only." },
         { "HandPoseBlendSeconds", "Hands / VR Hands", "Hand Pose Blend Time", "How quickly the fingers close on an item (Pavlov's grab blend; 60% of it on a slide, bolt or pump).", "0.2 s by default; 0 snaps." },
         { "HandPoseTriggerFingerScale", "Hands / VR Hands", "Trigger Finger Movement", "How far the gun hand's index finger curls with the pull and straightens off the trigger.", "1 by default; 0 keeps the game's animation." },
@@ -2201,7 +2201,7 @@ namespace
             if (CfgStartsWith(key, "ScopeStabilization") &&
                 std::strcmp(key, "ScopeStabilizationEnabled") != 0)
             {
-                return CfgIsEnabled(s, "ScopeStabilizationEnabled", true);
+                return CfgIsEnabled(s, "ScopeStabilizationEnabled", false);
             }
         }
 

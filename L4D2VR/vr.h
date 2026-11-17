@@ -1973,6 +1973,10 @@ public:
 	// degrees) in the hand: the game's own hold leans it in toward the body.
 	QAngle m_ThrowableHoldAngleOffset = { 0.0f, 0.0f, 20.0f };
 	int m_ManualThrowVelocityWindowMs = 80;
+	// 2.0.14 (Physical): Pavlov's throw velocity, a ~33 ms exponential filter
+	// (VInterpTo 30) of a point 2 cm behind the controller, instead of the
+	// window peak (ManualThrowVelocityWindowMs).
+	bool m_ManualThrowPavlovSmoothing = true;
 	// Physics throw assistance (GrenadeThrowAssist, GrenadeThrowAssistStrength;
 	// vr_hand_throw.h AssistThrow): in GrenadeThrowMode=physics a release is
 	// bent toward the arc landing where the hand points, when already heading there.
@@ -2782,9 +2786,10 @@ public:
 	// Short guns (pistols, magnum, SMGs; vr_two_hand_aim.h): the support hand
 	// steadies the gun (recoil) but only the trigger hand aims it.
 	bool m_VrHandsTwoHandedAimShortGunsRearHandOnly = true;
-	float m_VrHandsTwoHandedAimSmoothingSeconds = 0.025f;
+	// 2.0.14: off by default (Pavlov has no aim filter); Classic turns the stabiliser on.
+	float m_VrHandsTwoHandedAimSmoothingSeconds = 0.0f;
 	// Half-Life 2 VR style two-hand stabilizer (One Euro filter on the aim direction).
-	bool m_VrHandsTwoHandedStabilizerEnabled = true;
+	bool m_VrHandsTwoHandedStabilizerEnabled = false;
 	float m_VrHandsTwoHandedStabilizerMinCutoffHz = 1.2f;
 	float m_VrHandsTwoHandedStabilizerBeta = 1.5f;
 	l4d2vr_filter::OneEuroDirection m_VrHandsTwoHandedAimFilter;
@@ -5182,7 +5187,14 @@ public:
 	float m_ScopeOverlayIdleAlpha = 0.5f;
 	// Scope stabilization (visual only): smooth the scope RTT camera pose when scoped-in.
 	// This reduces high-magnification jitter without changing shooting / aim direction.
-	bool  m_ScopeStabilizationEnabled = true;
+	bool  m_ScopeStabilizationEnabled = false;   // 2.0.14: off (Pavlov); Classic keeps it on
+	// 2.0.14 (Physical, Pavlov Sight_Base ActivateDist / ActivateDistLine): the
+	// scope picture only while an eye is this close to the scope and this close
+	// to its axis (0 = off). The per-optic FOV (ScopePavlovOpticFov) is the
+	// zoom of a scope whose magnification was never adjusted.
+	float m_ScopeActivateDistanceMeters = 0.40f;
+	float m_ScopeActivateAxisMeters = 0.05f;
+	bool m_ScopePavlovOpticFov = true;
 	float m_ScopeStabilizationMinCutoff = 0.5f;  // Hz (lower = smoother, more latency)
 	float m_ScopeStabilizationBeta = 0.5f;      // responsiveness to fast motion
 	float m_ScopeStabilizationDCutoff = 1.0f;    // Hz (derivative low-pass cutoff)

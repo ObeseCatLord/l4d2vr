@@ -70,6 +70,10 @@ namespace
         { "Roomscale1To1ServerMove", &VR::m_Roomscale1To1ServerMove, false },
         // The flashlight follows the gun (the game's own beam along the aim).
         { "FlashlightFollowHmd", &VR::m_FlashlightFollowHmd, false },
+        // 2.0.14: Physical aims with no filter (Pavlov); Classic keeps the
+        // two-hand stabiliser and the scope stabilisation it always had.
+        { "VrHandsTwoHandedStabilizerEnabled", &VR::m_VrHandsTwoHandedStabilizerEnabled, true },
+        { "ScopeStabilizationEnabled", &VR::m_ScopeStabilizationEnabled, true },
     };
     constexpr std::size_t kClassicBoolOverrideCount = sizeof(kClassicBoolOverrides) / sizeof(kClassicBoolOverrides[0]);
     // The parsed (physical) values while classic is applied.

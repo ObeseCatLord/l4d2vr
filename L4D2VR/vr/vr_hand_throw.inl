@@ -30,8 +30,19 @@ void VR::UpdateHandThrowTracking()
         m_HandThrowTracker[1].Reset();
         return;
     }
-    m_HandThrowTracker[0].Add(now, l4d2vr_hand_throw::V3(left.x, left.y, left.z));
-    m_HandThrowTracker[1].Add(now, l4d2vr_hand_throw::V3(right.x, right.y, right.z));
+    // 2.0.14: Pavlov's throw point, 2 cm behind the controller (the wrist's
+    // flick counts like Pavlov's ThrowOffset).
+    auto point = [&](const Vector& position, const QAngle& angles) -> l4d2vr_hand_throw::V3
+    {
+        const l4d2vr_hand_throw::V3 p(position.x, position.y, position.z);
+        if (!m_ManualThrowPavlovSmoothing)
+            return p;
+        Vector forward{};
+        QAngle::AngleVectors(angles, &forward, nullptr, nullptr);
+        return l4d2vr_hand_throw::ThrowPoint(p, l4d2vr_hand_throw::V3(forward.x, forward.y, forward.z));
+    };
+    m_HandThrowTracker[0].Add(now, point(left, m_LeftControllerPose.TrackedDeviceAng));
+    m_HandThrowTracker[1].Add(now, point(right, m_RightControllerPose.TrackedDeviceAng));
 }
 
 bool VR::HandThrowServerReady() const
@@ -55,10 +66,15 @@ bool VR::EstimateHandThrowVelocity(bool leftHand, Vector& worldRelative) const
     l4d2vr_hand_throw::V3 tracking{};
     {
         std::lock_guard<std::mutex> lock(m_HandThrowMutex);
-        // The hand's peak over the release window (Pavlov), not the window's
+        // 2.0.14 (Physical): Pavlov's smoothed hand velocity (~33 ms).
+        // Otherwise the hand's peak over the release window, not the window's
         // average: the trigger goes up while the hand already slows down.
-        if (!m_HandThrowTracker[leftHand ? 0 : 1].EstimateRelease(HandThrowNowSeconds(),
-            static_cast<float>(m_ManualThrowVelocityWindowMs) / 1000.0f, tracking))
+        const l4d2vr_hand_throw::VelocityTracker& tracker = m_HandThrowTracker[leftHand ? 0 : 1];
+        const bool pavlov = m_ManualThrowPavlovSmoothing && PhysicalGameplayActive();
+        if (pavlov ? !tracker.EstimateSmoothed(HandThrowNowSeconds(),
+                l4d2vr_hand_throw::VelocityTracker::kPavlovSmoothingSpeed, tracking)
+            : !tracker.EstimateRelease(HandThrowNowSeconds(),
+                static_cast<float>(m_ManualThrowVelocityWindowMs) / 1000.0f, tracking))
             return false;
     }
     const l4d2vr_hand_throw::V3 world = l4d2vr_hand_throw::TrackingToWorld(tracking, m_RotationOffset, m_VRScale);

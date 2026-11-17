@@ -201,8 +201,10 @@ VrHandsTwoHandedAimMountFriendly=false
 VrHandsVirtualStockEnabled=false
 VrHandsTwoHandedAimStrength=1.0
 VrHandsTwoHandedAimShortGunsRearHandOnly=true
-VrHandsTwoHandedAimSmoothingSeconds=0.025
-VrHandsTwoHandedStabilizerEnabled=true
+// 2.0.14: two-handed aim follows the hands with no filter (as in Pavlov VR). Classic mode turns the
+// stabiliser on; set it true here for Physical mode too.
+VrHandsTwoHandedAimSmoothingSeconds=0
+VrHandsTwoHandedStabilizerEnabled=false
 VrHandsTwoHandedStabilizerMinCutoffHz=1.2
 VrHandsTwoHandedStabilizerBeta=1.5
 // Survivor hand finger poses from Pavlov VR: a hand holding a magazine, a shell, a slide, a charging
@@ -525,6 +527,13 @@ ScopeOutsideEyeboxBrightness=0.35
 // Lens for a replacement scope model: <model>:x,y,z,r;... (bone 3 bind space, model units). Replacement
 // models of the stock optics (a skin) use the stock lens without an entry.
 ScopeLensOverrides=
+// 2.0.14 (Physical mode, Pavlov VR): the scope picture shows while an eye is within ScopeActivateDistanceMeters
+// of the scope and ScopeActivateAxisMeters of its axis (0 = no limit; the eyebox above still shades it), and an
+// unadjusted scope has its optic's own zoom: 8x (AWP, Scout, military sniper) 5.3-5.6 deg, 4x (hunting rifle,
+// SG552) 11.25 deg.
+ScopeActivateDistanceMeters=0.40
+ScopeActivateAxisMeters=0.05
+ScopePavlovOpticFov=true
 PhysicalShoveEnabled=true
 # Any fast swing of the gun in front of the body bashes (sideways, chops, butt strokes; measured at the muzzle).
 # Set to false and only pushing the gun forward bashes.
@@ -664,6 +673,10 @@ ManualThrowPinRequired=true
 ManualThrowHandVelocityScale=2.5
 ThrowableHoldAngleOffsetDeg=0,0,20
 ManualThrowVelocityWindowMs=80
+// 2.0.14 (Physical mode): the release velocity is Pavlov VR's: the hand's motion smoothed over about 33 ms
+// (a point 2 cm behind the controller), so a throw follows the flick with less lag. false = the hand's peak
+// over ManualThrowVelocityWindowMs.
+ManualThrowPavlovSmoothing=true
 // Physics throw assistance (GrenadeThrowMode=physics only): gently steers a hand throw onto the spot
 // your hand points at, but only when the throw is already heading there (within about 25 degrees,
 // a similar arc and speed). Strength 0 keeps your throw as it is, 1 lands it on the spot.
@@ -739,7 +752,8 @@ ScopeLookThroughDistanceMeters=0.5
 ScopeLookThroughAngleDeg=60
 ScopeOverlayAlwaysVisible=false
 ScopeOverlayIdleAlpha=0.5
-ScopeStabilizationEnabled=true
+// 2.0.14: the scope picture moves with the gun and its recoil (Pavlov VR); Classic mode keeps it stabilised.
+ScopeStabilizationEnabled=false
 ScopeStabilizationMinCutoff=0.5
 ScopeStabilizationBeta=0.5
 ScopeStabilizationDCutoff=1.0

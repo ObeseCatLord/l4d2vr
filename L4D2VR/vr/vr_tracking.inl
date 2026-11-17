@@ -2147,6 +2147,12 @@ void VR::UpdateTracking()
                 const float inFrontDot = DotProduct(m_HmdForward, toScope);
                 const float alignDot = DotProduct(m_HmdForward, scopeForward);
                 m_ScopeActive = (inFrontDot > 0.2f) && (alignDot >= minDot);
+                // 2.0.14 (Physical, Pavlov Sight_Base): and the eye close to the
+                // scope's line.
+                if (m_ScopeActive && PhysicalGameplayActive() &&
+                    (m_ScopeActivateDistanceMeters > 0.0f || m_ScopeActivateAxisMeters > 0.0f))
+                    m_ScopeActive = l4d2vr_optics::PavlovActivation(m_HmdPosAbs, scopePosRaw, scopeForward, m_VRScale,
+                        m_ScopeActivateDistanceMeters, m_ScopeActivateAxisMeters);
             }
             else
             {

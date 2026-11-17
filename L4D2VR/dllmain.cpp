@@ -3611,6 +3611,12 @@ namespace
         { "2026-11-17_scope_vignette_softer", "ScopeVignetteExponent", "0.6", false, "0.25" },
         { "2026-11-17_scope_parallax_lower", "ScopeParallaxStrength", "0.6", false, "1.0" },
         { "2026-11-17_scope_look_through_angle", "ScopeLookThroughAngleDeg", "60", false, "35" },
+        // 2.0.14 (Pavlov handling): no two-hand aim filter and no scope
+        // stabilisation by default (Classic mode still turns both on). Only
+        // the old shipped values change.
+        { "2026-11-18_pavlov_two_hand_stabilizer_off", "VrHandsTwoHandedStabilizerEnabled", "false", false, "true" },
+        { "2026-11-18_pavlov_two_hand_smoothing_off", "VrHandsTwoHandedAimSmoothingSeconds", "0", false, "0.025" },
+        { "2026-11-18_pavlov_scope_stabilization_off", "ScopeStabilizationEnabled", "false", false, "true" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

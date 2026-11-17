@@ -612,6 +612,16 @@ void VR::RefreshActiveScopeAdjustment(C_BasePlayer* localPlayer)
 
     ScopeAdjustment& adjustment = EnsureScopeAdjustment(adjustKey);
     m_ScopeFov = std::clamp(adjustment.fov, m_ScopeFovMin, m_ScopeFovMax);
+    // 2.0.14 (Physical, Pavlov): a scope whose zoom was never adjusted has its
+    // optic's own FOV (8x 5.3-5.6 deg, 4x 11.25 deg); adjusting it saves the
+    // player's zoom as before.
+    if (m_ScopePavlovOpticFov && PhysicalGameplayActive() &&
+        std::fabs(adjustment.fov - m_DefaultScopeAdjust.fov) < 0.01f)
+    {
+        const float opticFov = l4d2vr_optics::PavlovOpticFov(activeWeaponId);
+        if (opticFov > 0.0f)
+            m_ScopeFov = std::clamp(opticFov, std::min(m_ScopeFovMin, m_ScopeFovMax), std::max(m_ScopeFovMin, m_ScopeFovMax));
+    }
     m_ScopeOverlayWidthMeters = std::clamp(adjustment.widthMeters, m_ScopeSizeMin, m_ScopeSizeMax);
     m_ScopeOverlayXOffset = adjustment.overlayOffset.x;
     m_ScopeOverlayYOffset = adjustment.overlayOffset.y;
@@ -2067,7 +2077,7 @@ void VR::ParseConfigFileUnlocked()
     m_VrHandsTwoHandedAimStrength = std::clamp(getFloat("VrHandsTwoHandedAimStrength", m_VrHandsTwoHandedAimStrength), 0.0f, 1.0f);
     m_VrHandsTwoHandedAimShortGunsRearHandOnly = getBool("VrHandsTwoHandedAimShortGunsRearHandOnly", m_VrHandsTwoHandedAimShortGunsRearHandOnly);
     m_VrHandsTwoHandedAimSmoothingSeconds = std::clamp(getFloat("VrHandsTwoHandedAimSmoothingSeconds", m_VrHandsTwoHandedAimSmoothingSeconds), 0.0f, 0.25f);
-    m_VrHandsTwoHandedStabilizerEnabled = getBool("VrHandsTwoHandedStabilizerEnabled", true);
+    m_VrHandsTwoHandedStabilizerEnabled = getBool("VrHandsTwoHandedStabilizerEnabled", false);
     m_VrHandsTwoHandedStabilizerMinCutoffHz = std::clamp(getFloat("VrHandsTwoHandedStabilizerMinCutoffHz", 1.2f), 0.2f, 10.0f);
     m_VrHandsTwoHandedStabilizerBeta = std::clamp(getFloat("VrHandsTwoHandedStabilizerBeta", 1.5f), 0.0f, 10.0f);
     // Pavlov hand poses for the survivor hands (vr/vr_hand_poses.inl).
@@ -3532,6 +3542,7 @@ void VR::ParseConfigFileUnlocked()
     }
     m_ManualThrowHandVelocityScale = std::clamp(getFloat("ManualThrowHandVelocityScale", m_ManualThrowHandVelocityScale), 0.0f, 10.0f);
     m_ManualThrowVelocityWindowMs = std::clamp(getInt("ManualThrowVelocityWindowMs", m_ManualThrowVelocityWindowMs), 20, 250);
+    m_ManualThrowPavlovSmoothing = getBool("ManualThrowPavlovSmoothing", m_ManualThrowPavlovSmoothing);
     m_GrenadeThrowAssist = getBool("GrenadeThrowAssist", true);
     m_GrenadeThrowAssistStrength = std::clamp(getFloat("GrenadeThrowAssistStrength", 0.5f), 0.0f, 1.0f);
     {
@@ -3787,6 +3798,9 @@ void VR::ParseConfigFileUnlocked()
 
     // Scope stabilization (visual only)
     m_ScopeStabilizationEnabled = getBool("ScopeStabilizationEnabled", m_ScopeStabilizationEnabled);
+    m_ScopeActivateDistanceMeters = std::clamp(getFloat("ScopeActivateDistanceMeters", m_ScopeActivateDistanceMeters), 0.0f, 2.0f);
+    m_ScopeActivateAxisMeters = std::clamp(getFloat("ScopeActivateAxisMeters", m_ScopeActivateAxisMeters), 0.0f, 0.5f);
+    m_ScopePavlovOpticFov = getBool("ScopePavlovOpticFov", m_ScopePavlovOpticFov);
     m_ScopeStabilizationMinCutoff = std::clamp(getFloat("ScopeStabilizationMinCutoff", m_ScopeStabilizationMinCutoff), 0.05f, 30.0f);
     m_ScopeStabilizationBeta = std::clamp(getFloat("ScopeStabilizationBeta", m_ScopeStabilizationBeta), 0.0f, 5.0f);
     m_ScopeStabilizationDCutoff = std::clamp(getFloat("ScopeStabilizationDCutoff", m_ScopeStabilizationDCutoff), 0.05f, 30.0f);

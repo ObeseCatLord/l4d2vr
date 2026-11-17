@@ -277,6 +277,15 @@ void VR::UpdatePhysicalScope()
     auto eye = left.alpha >= right.alpha ? left : right;
     if (eye.alpha <= 0.0f && !eye.behind) eye = left.behind ? left : right;
     stageLog.stage = kScopeStageNotLooking;
+    // 2.0.14 (Physical, Pavlov Sight_Base): the picture only while an eye is
+    // within ScopeActivateDistanceMeters of the scope and ScopeActivateAxisMeters
+    // of its line. The eyebox and parallax above still shape it.
+    if (PhysicalGameplayActive() && (m_ScopeActivateDistanceMeters > 0.0f || m_ScopeActivateAxisMeters > 0.0f) &&
+        !l4d2vr_optics::PavlovActivation(GetViewOriginLeft(), lens.sceneCenter, lens.sceneForward, m_VRScale,
+            m_ScopeActivateDistanceMeters, m_ScopeActivateAxisMeters) &&
+        !l4d2vr_optics::PavlovActivation(GetViewOriginRight(), lens.sceneCenter, lens.sceneForward, m_VRScale,
+            m_ScopeActivateDistanceMeters, m_ScopeActivateAxisMeters))
+        return;
     // 2.0.12 (s12 issue 18b): outside the eye box the lens is dimmed, not
     // black: the scope camera keeps rendering at 10 Hz while an eye is behind
     // the lens at all (full rate inside the eye box).

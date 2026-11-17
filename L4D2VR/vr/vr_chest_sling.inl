@@ -76,6 +76,8 @@ bool VR::ChestSlingCatchRelease(uintptr_t weaponTag, int weaponId)
             inBack ? "on the back" : "not caught (stays in the hand)");
         if (!inBack)
             return false;
+        if (m_HolsterLayout.pavlovHips && PhysicalGameplayActive())
+            PlayPavlovHaptic(IsGameplayHandLeftPhysical(false), l4d2vr_pavlov_feel::Effect::AmmoGrab);   // 2.0.14 Pavlov put
         StowActiveWeapon(weaponTag, 0, "let go of the long gun: on the back");
         return true;
     }
@@ -95,12 +97,23 @@ bool VR::HolsterCatchRelease(uintptr_t weaponTag, int weaponId)
         return false;
     l4d2vr_holster::BodyFrame frame{};
     float handToHolster = -1.0f;
+    bool sidearmOffHip = m_HolsterLayout.secondaryOffHip;
     if (GetHolsterBodyFrame(frame))
     {
-        Vector top{}, bottom{};
-        l4d2vr_holster::HipSegment(frame, m_HolsterLayout, l4d2vr_holster::Zone::Secondary, top, bottom);
-        handToHolster = l4d2vr_holster::DistanceToSegment(m_RightControllerPosAbs, top, bottom) /
-            (std::max)(1.0f, m_VRScale);
+        if (m_HolsterLayout.pavlovHips)
+        {
+            // 2.0.14 (pavlov layout, Physical): Pavlov's hip capsules, either
+            // hip (the nearer one) takes the sidearm.
+            handToHolster = l4d2vr_holster::SidearmHipDistanceMeters(frame, m_HolsterLayout, m_RightControllerPosAbs,
+                sidearmOffHip);
+        }
+        else
+        {
+            Vector top{}, bottom{};
+            l4d2vr_holster::HipSegment(frame, m_HolsterLayout, l4d2vr_holster::Zone::Secondary, top, bottom);
+            handToHolster = l4d2vr_holster::DistanceToSegment(m_RightControllerPosAbs, top, bottom) /
+                (std::max)(1.0f, m_VRScale);
+        }
     }
     l4d2vr_chest_sling::ReleaseInput in{};
     in.enabled = m_HolsterEmptyHands && m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled &&
@@ -127,8 +140,16 @@ bool VR::HolsterCatchRelease(uintptr_t weaponTag, int weaponId)
         action == l4d2vr_chest_sling::ReleaseAction::Sling ? "holstered" : "not caught (stays in the hand)");
     if (action != l4d2vr_chest_sling::ReleaseAction::Sling)
         return false;
+    if (m_HolsterLayout.pavlovHips && sidearmOffHip != m_HolsterLayout.secondaryOffHip)
+    {
+        m_PavlovSidearmOffHip = sidearmOffHip;
+        m_HolsterLayout.secondaryOffHip = sidearmOffHip;
+    }
+    if (m_HolsterLayout.pavlovHips && PhysicalGameplayActive())
+        PlayPavlovHaptic(IsGameplayHandLeftPhysical(false), l4d2vr_pavlov_feel::Effect::AmmoGrab);   // 2.0.14 Pavlov put
     StowActiveWeapon(weaponTag, l4d2vr_holster::SlotIndex(l4d2vr_holster::Zone::Secondary),
-        "let go of the sidearm: back in the hip holster");
+        m_HolsterLayout.pavlovHips && m_HolsterLayout.secondaryOffHip
+            ? "let go of the sidearm: in the off-hand hip holster" : "let go of the sidearm: back in the hip holster");
     return true;
 }
 

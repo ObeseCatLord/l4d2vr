@@ -6,6 +6,11 @@ mix.min_interval=0.005
 # Weapon / melee
 # ----------------------------
 weapon.enabled=1
+# 2.0.14 (Physical mode): shots play Pavlov VR's shot curves at full strength (26-40 ms with a tail; shotguns
+# rumble, bolt-action rifles thump) on the gun hand and, while the support hand holds the foregrip, on that hand
+# too, at most once per half the fire interval. The weapon.* lines below then only set the frequency.
+# 0 = the single pulses below (Classic mode always uses them).
+weapon.pavlov_envelopes=1
 weapon.default=0.018,130,0.32
 
 weapon.pistol=0.018,165,0.33

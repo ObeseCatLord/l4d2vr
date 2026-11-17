@@ -4860,6 +4860,7 @@ void VR::ParseHapticsConfigFile()
         };
 
     m_WeaponHapticsEnabled = getBool("weapon.enabled", m_WeaponHapticsEnabled);
+    m_PavlovFireHapticsEnabled = getBool("weapon.pavlov_envelopes", true);
     m_HapticMixMinIntervalSeconds = std::max(0.0f, getFloat("mix.min_interval", m_HapticMixMinIntervalSeconds));
     m_DefaultWeaponHapticsProfile = parseProfile("weapon.default", m_DefaultWeaponHapticsProfile);
     m_MeleeSwingHapticsProfile = parseProfile("melee.swing", m_MeleeSwingHapticsProfile);

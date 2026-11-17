@@ -131,10 +131,51 @@ static void TestPavlovMagazineSlots()
         CHECK(box[0] > 0.0f && box[1] > 0.0f && box[2] > 0.0f);
     }
     CHECK(std::fabs(SlotLateralBoundMeters(6) - 0.15f) < 1e-6f && std::fabs(SlotLateralBoundMeters(1) - 0.10f) < 1e-6f); // SKS 15 cm, M9 10 cm
-    CHECK(SlotForWeapon(1).slideGoalCm == 3.0f && SlotForWeapon(26).slideGoalCm == 10.0f);
+    // 2.0.14: the AK-47 seats at Gun_AK47's 1 cm (the AK base's 10 cm was used).
+    CHECK(SlotForWeapon(1).slideGoalCm == 3.0f && SlotForWeapon(26).slideGoalCm == 1.0f);
     CHECK(ClampReloadSpeed(20.0f) == 10.0f && ClampReloadSpeed(1.0f) == 2.5f);
     CHECK(std::fabs(kSeatFraction - 0.95f) < 1e-6f);
     CHECK(std::fabs(kReleaseCompleteFraction - 0.35f) < 1e-6f);
+}
+
+// 2.0.14: the SCAR has the M16's handle (the gun its recoil uses), HK guns
+// lock open on an empty rack, and every handle has Pavlov's haptic ramp.
+static void TestPavlovPolish2014()
+{
+    Tuning scar{}, m16{};
+    CHECK(ForWeapon(9, scar) && ForWeapon(5, m16));
+    CHECK(Near(scar.pullMeters, m16.pullMeters) && Near(scar.returnMeters, m16.returnMeters));
+    CHECK(Near(SlotForWeapon(9).slideGoalCm, SlotForWeapon(5).slideGoalCm));
+    CHECK(LocksOpenWhenEmpty(9) && LocksOpenWhenEmpty(5));
+
+    CHECK(LocksOpenOnManualRack(33) && LocksOpenOnManualRack(10));
+    for (int id : {1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 26, 32, 34, 35, 36, 37, 0})
+        CHECK(!LocksOpenOnManualRack(id));
+    for (int id = 0; id < 64; ++id)
+        CHECK(!(LocksOpenOnManualRack(id) && LocksOpenWhenEmpty(id)));
+
+    // Pistols ramp 0.5 -> 1.0, rifles 0.05 -> 0.7, the M60 0.1 -> 1.0.
+    CHECK(Near(HandleHapticForWeapon(1).minAmp, 0.5f) && Near(HandleHapticForWeapon(1).maxAmp, 1.0f));
+    CHECK(Near(HandleHapticForWeapon(26).minAmp, 0.05f) && Near(HandleHapticForWeapon(26).maxAmp, 0.7f));
+    CHECK(Near(HandleHapticForWeapon(37).minAmp, 0.1f) && Near(HandleHapticForWeapon(37).rangeCm, 50.0f));
+    // Bolt actions and pumps use their own event buffers.
+    for (int id : {35, 36, 3, 8})
+        CHECK(!HandleHapticForWeapon(id).enabled);
+    CHECK(IsBoltAction(35) && IsBoltAction(36) && !IsBoltAction(6));
+    // Every gun with a racked handle: the range is the one ForWeapon cocks from.
+    for (int id : {1, 2, 4, 5, 6, 7, 9, 10, 11, 26, 32, 33, 34})
+    {
+        Tuning t{};
+        CHECK(ForWeapon(id, t));
+        CHECK(HandleHapticForWeapon(id).enabled);
+        const float cock = CockInput(id);
+        CHECK(cock > 0.05f && cock <= 1.0001f);
+    }
+    // M9: 2 cm of hand travel is input 0.1 (the grab sound), the cock at 0.38.
+    CHECK(Near(HandleInput(1, 0.02f), 0.1f));
+    CHECK(Near(CockInput(1), 0.38f));
+    CHECK(Near(CockInput(5), 1.0f));       // M16 cocks at full travel
+    CHECK(HandleInput(1, -0.01f) == 0.0f);
 }
 
 int main()
@@ -146,6 +187,7 @@ int main()
     TestClampsKeepRatios();
     TestEveryEntryIsUsable();
     TestMagazineSlapGuns();
+    TestPavlovPolish2014();
     if (g_failures)
     {
         std::printf("%d failure(s)\n", g_failures);

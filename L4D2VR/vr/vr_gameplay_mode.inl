@@ -70,6 +70,10 @@ namespace
         { "Roomscale1To1ServerMove", &VR::m_Roomscale1To1ServerMove, false },
         // The flashlight follows the gun (the game's own beam along the aim).
         { "FlashlightFollowHmd", &VR::m_FlashlightFollowHmd, false },
+        // 2.0.14: Physical aims with no filter (Pavlov); Classic keeps the
+        // two-hand stabiliser and the scope stabilisation it always had.
+        { "VrHandsTwoHandedStabilizerEnabled", &VR::m_VrHandsTwoHandedStabilizerEnabled, true },
+        { "ScopeStabilizationEnabled", &VR::m_ScopeStabilizationEnabled, true },
     };
     constexpr std::size_t kClassicBoolOverrideCount = sizeof(kClassicBoolOverrides) / sizeof(kClassicBoolOverrides[0]);
     // The parsed (physical) values while classic is applied.
@@ -190,6 +194,13 @@ void VR::UpdateGameplayMode(bool inGame)
     // Idempotent: also applies the overlay at start-up (the first resolved
     // mode equals the initial PendingClassic) and after a config reload.
     ApplyGameplayModeOverrides(classic);
+    // 2.0.14: Pavlov's hips (capsule reach, both hips as pouches, the sidearm
+    // on either hip, Pavlov's slot poses) are Physical-only: Classic keeps the
+    // 2.0.13 pavlov layout. Re-applied every frame (a config parse rebuilds
+    // the layout).
+    m_HolsterLayout.pavlovHips = m_HolsterLayout.layoutKind == l4d2vr_holster::LayoutKind::Pavlov &&
+        r.effective == Effective::Physical;
+    m_HolsterLayout.secondaryOffHip = m_HolsterLayout.pavlovHips && m_PavlovSidearmOffHip;
     if (changed)
     {
         m_GameplayModeEffective.store(static_cast<uint8_t>(r.effective), std::memory_order_release);

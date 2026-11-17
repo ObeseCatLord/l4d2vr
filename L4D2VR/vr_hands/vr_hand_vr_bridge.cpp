@@ -877,6 +877,12 @@ namespace
         // it on top of the grenade holster.
         const Vector pouchLocal = vr->m_HolsterLayout.magPouch;
         point = l4d2vr_holster::RootToWorld(frame, pouchLocal);
+        // 2.0.14 (pavlov layout, Physical): both hips are pouches; the spare is
+        // at the hip the support hand reaches (UpdateMagazineInteraction).
+        if (vr->m_HolsterLayout.pavlovHips && vr->m_PavlovHipPouchValid.load(std::memory_order_acquire))
+            point = Vector(vr->m_PavlovHipPouchPos[0].load(std::memory_order_relaxed),
+                vr->m_PavlovHipPouchPos[1].load(std::memory_order_relaxed),
+                vr->m_PavlovHipPouchPos[2].load(std::memory_order_relaxed));
         forward = frame.forward;
         right = VrHandMath::Normalize(Vector(frame.forward.y, -frame.forward.x, 0.0f));
         return l4d2vr_interaction::Finite(point) && right.Length() > 0.5f;
@@ -892,7 +898,7 @@ namespace
         Vector point{}, forward{}, right{};
         const float range = std::max(0.0f, vr->m_MagazineInteractionFreshMagazineGrabRangeMeters);
         return MagazineInteractionResolvePavlovPouch(vr, point, forward, right)
-            ? std::min(range + kPavlovHandRadiusMeters, vr->m_HolsterLayout.magPouchReachMeters) : range;
+            ? std::min(range + kPavlovHandRadiusMeters, l4d2vr_holster::PouchReachMeters(vr->m_HolsterLayout)) : range;
     }
 
     bool MagazineInteractionBuildFreshMagazinePickupBox(
@@ -2835,8 +2841,9 @@ namespace
         {
             return slide("smg_silenced", "smg");
         }
+        // 2.0.14: the game ships mp5_slideback.wav only (no slideforward).
         if (lowerModel.find("mp5") != std::string::npos)
-            return slide("mp5navy", "mp5", false);
+            return forward ? "weapons/smg/gunother/smg_slideforward_1.wav" : slide("mp5navy", "mp5", false);
         if (lowerModel.find("smg") != std::string::npos ||
             lowerModel.find("uzi") != std::string::npos)
         {
@@ -2849,14 +2856,16 @@ namespace
         }
         if (lowerModel.find("sniper_military") != std::string::npos)
             return slide("sniper_military", "sniper_military");
+        // 2.0.14: the AWP and Scout bolts are awp_bolt / awp_bolt_forward (there is
+        // no *_boltback / *_boltforward), the M60's slides are not numbered.
         if (lowerModel.find("awp") != std::string::npos)
-            return bolt("awp", "awp");
+            return forward ? "weapons/awp/gunother/awp_bolt_forward.wav" : "weapons/awp/gunother/awp_bolt.wav";
         if (lowerModel.find("scout") != std::string::npos)
-            return bolt("scout", "scout");
+            return forward ? "weapons/scout/gunother/scout_bolt_forward.wav" : "weapons/scout/gunother/scout_bolt.wav";
         if (lowerModel.find("m60") != std::string::npos ||
             lowerModel.find("machinegun_m60") != std::string::npos)
         {
-            return slide("machinegun_m60", "rifle");
+            return slide("machinegun_m60", "rifle", false);
         }
         if (lowerModel.find("shotgun_chrome") != std::string::npos ||
             lowerModel.find("pumpshotgun") != std::string::npos ||
@@ -4966,7 +4975,10 @@ void VR::UpdateBodyInventoryPose()
         // (speed 20, no dead band); stick/snap turns move it immediately.
         m_BodyInventoryYaw = l4d2vr_holster::FollowBodyYaw(m_BodyInventoryYaw, m_BodyInventoryPoseValid,
             m_BodyInventoryHeadYaw = l4d2vr_holster::HeadYawDegrees(m_HmdForward, m_BodyInventoryYaw),
-            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt, m_HolsterYawFollowSpeed);
+            m_BodyInventoryPoseValid ? turnDelta : 0.0f, updateDt,
+            // 2.0.14: 0 = the layout's default (pavlov: Pavlov's RInterpTo 20) in Physical mode.
+            PhysicalGameplayActive() ? l4d2vr_holster::EffectiveYawFollowSpeed(m_HolsterLayout, m_HolsterYawFollowSpeed)
+                                     : std::max(0.0f, m_HolsterYawFollowSpeed));
     }
     else
     {
@@ -5661,8 +5673,15 @@ bool VR::GetMagazineInteractionDetachedMagazineWorld(VrHandMatrix4& outWorld) co
 
 bool VR::ShouldMoveMagazineInteractionBolt() const
 {
+    // 2.0.14: a slide or bolt locked open is drawn back while it waits (for
+    // the fresh magazine on HK guns, then for the take-and-let-go or the
+    // magazine / bolt release button).
+    const bool lockedOpenWaiting = m_MagazineInteractionBoltLockedOpen &&
+        (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab ||
+            m_MagazineInteractionState == MagazineInteractionManualState::WaitingForFreshMagazine ||
+            m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine);
     return (m_MagazineInteractionState == MagazineInteractionManualState::HoldingBolt ||
-        m_MagazineInteractionState == MagazineInteractionManualState::AutoBolting ||
+        m_MagazineInteractionState == MagazineInteractionManualState::AutoBolting || lockedOpenWaiting ||
         (m_ManualPumpEnabled &&
             MagazineInteractionWeaponUsesSinglePumpSound(static_cast<C_WeaponCSBase::WeaponID>(m_MagazineInteractionWeaponId)) &&
             (m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab ||
@@ -5737,6 +5756,14 @@ void VR::ResetMagazineInteractionSession()
 void VR::CancelMagazineInteractionManual()
 {
     m_MagazineButtonGripSources.Reset();
+    // 2.0.14: no handle is held or locked open once the reload is over.
+    m_HandleTravelTicker.Release();
+    m_HandleSoundTracker.Ungrab();
+    m_MagazineSlideCue.Reset();
+    m_MagazineInteractionBoltLockedOpen = false;
+    m_HkRackBeforeMagazine = false;
+    m_HkBoltLockedOpen = false;
+    m_HkBoltLockedWeapon = 0u;
     m_MagazineInteractionTransactionGripHeld = false;
     m_ShellRetryContact.Reset();
     m_ManualPumpBlockingFire.store(false, std::memory_order_release);
@@ -6481,6 +6508,31 @@ bool VR::UpdateMagazineInteraction(
         triggerMagazineInteractionHapticForHand(false, durationSeconds, frequency, amplitude, priority);
     };
 
+    // 2.0.14 Pavlov effects (vr_pavlov_feel.h) on the support hand (magazine,
+    // handle, foregrip) and on the gun hand, and the game's own sounds.
+    const bool pavlovSupportPhysicalLeft = magazineInteractionPhysicalLeftHand;
+    const bool pavlovGunPhysicalLeft = IsGameplayHandLeftPhysical(!MagazineReloadSupportIsLeft());
+    auto playPavlovSupport = [&](l4d2vr_pavlov_feel::Effect effect)
+    {
+        PlayPavlovHaptic(pavlovSupportPhysicalLeft, effect);
+    };
+    auto playPavlovGun = [&](l4d2vr_pavlov_feel::Effect effect)
+    {
+        PlayPavlovHaptic(pavlovGunPhysicalLeft, effect);
+    };
+    auto playGameSound = [&](const char* path, float volume)
+    {
+        if (path && *path)
+            TryPlayKillSoundSpec(std::string("game:") + path, volume, nullptr, false);
+    };
+    // Magazine (or shell) seated: Pavlov's Generic pulse on the magazine hand
+    // and the contact double tick on the gun hand.
+    auto playMagazineSeatedHaptics = [&]()
+    {
+        playPavlovSupport(l4d2vr_pavlov_feel::Effect::GenericPulse);
+        playPavlovGun(l4d2vr_pavlov_feel::Effect::GenericTick);
+    };
+
     auto leftControllerPosRelativeToWeapon = [&]() -> Vector
     {
         Vector local{};
@@ -7032,14 +7084,22 @@ bool VR::UpdateMagazineInteraction(
         // Pavlov bLockBolt: a gun that ran dry waits with its slide or bolt
         // locked open. Taking it and letting go chambers the round (a full
         // rack still works); the handle is drawn back while it waits.
+        // 2.0.14 Pavlov bBoltLockManual: an HK handle racked and locked with
+        // the magazine out waits the same way.
+        const bool hkLocked = m_HkBoltLockedOpen && !m_HkRackBeforeMagazine &&
+            m_HkBoltLockedWeapon == reinterpret_cast<uintptr_t>(activeWeapon) &&
+            l4d2vr_reload_tuning::LocksOpenOnManualRack(static_cast<int>(weaponId));
+        m_MagazineInteractionBoltLockedOpen = false;
         if (!m_MagazineInteractionShotgunShellMode && m_ReloadPavlovTuning &&
-            l4d2vr_reload_tuning::LocksOpenWhenEmpty(static_cast<int>(weaponId)))
+            (l4d2vr_reload_tuning::LocksOpenWhenEmpty(static_cast<int>(weaponId)) || hkLocked))
         {
             setBoltPullDistance(requiredPull);
             m_MagazineInteractionBoltReachedRear = true;
-            LogMagazineInteractionEvent("slide/bolt locked open on the empty gun weaponId=%d: take it and let go",
-                static_cast<int>(weaponId));
+            m_MagazineInteractionBoltLockedOpen = true;
+            LogMagazineInteractionEvent("slide/bolt locked open on the empty gun weaponId=%d%s: take it and let go, or press the magazine release",
+                static_cast<int>(weaponId), hkLocked ? " (HK lock)" : "");
         }
+        m_HkBoltLockedOpen = false;
         m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
         LogMagazineInteractionEvent("bolt stage armed weaponId=%d pull=%.3f m return=%.3f m backendPending=%d reason=%s",
             static_cast<int>(weaponId), requiredPull / std::max(0.001f, m_VRScale),
@@ -7092,6 +7152,18 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionBoltGrabStartLeftControllerPosAbs = handLocal;
         m_MagazineInteractionBoltGrabStartPullDistance = m_MagazineInteractionBoltPullDistance;
         m_MagazineInteractionBoltGrabbedAt = now;
+        {
+            // 2.0.14 Pavlov handle: the first travel tick on the grab; a slide
+            // locked open is taken at its cock point (no open/lock sound).
+            const float grabInput = l4d2vr_reload_tuning::HandleInput(activeWeaponIdInt,
+                m_MagazineInteractionBoltPullDistance / std::max(0.001f, m_VRScale));
+            m_HandleTravelTicker.Grab(grabInput);
+            m_HandleSoundTracker.Grab(grabInput, l4d2vr_reload_tuning::HandleInput(activeWeaponIdInt,
+                m_MagazineInteractionBoltMaxPullDistance / std::max(0.001f, m_VRScale)));
+            // Bolt-action rifles: the bolt lifts (AWP_BoltHaptic).
+            if (l4d2vr_reload_tuning::IsBoltAction(activeWeaponIdInt))
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::BoltTick);
+        }
         // A pump is taken where it was left, with its cock latch.
         if (MagazineInteractionManualPumpWeapon(this))
             m_ManualPumpStroke.Grab(m_MagazineInteractionBoltPullDistance, m_MagazineInteractionBoltReachedRear, handLocal.x);
@@ -7160,6 +7232,7 @@ bool VR::UpdateMagazineInteraction(
                 m_MagazineInteractionBoltContactActive = false;
                 m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
                 MagazineInteractionPlayBoltSound(this, true);
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::PumpReleased);
                 Game::logMsg("[VR][ManualPump] empty stroke completed; load shells before chambering weaponId=%d clip=%d",
                     activeWeaponIdInt, activeClip);
                 return;
@@ -7171,9 +7244,19 @@ bool VR::UpdateMagazineInteraction(
         m_PhysicalReloadChambers.Complete(reinterpret_cast<uintptr_t>(m_MagazineInteractionWeapon));
         m_PhysicalReloadObservedEmpty = false;
         m_MagazineInteractionChamberEmpty = false;
+        m_MagazineInteractionBoltLockedOpen = false;
+        m_HkBoltLockedOpen = false;
+        m_HandleTravelTicker.Release();
+        m_HandleSoundTracker.Ungrab();
         setBoltPullDistance(0.0f);
         MagazineInteractionPlayBoltSound(this, true);
         triggerMagazineInteractionWeaponHandHaptic(0.030f, 95.0f, 0.45f, 2);
+        // 2.0.14 Pavlov: the pump slams home (ShotgunPumpReleased), a bolt
+        // goes forward and down (AWP_BoltHaptic).
+        if (manualPump)
+            playPavlovSupport(l4d2vr_pavlov_feel::Effect::PumpReleased);
+        else if (l4d2vr_reload_tuning::IsBoltAction(m_MagazineInteractionWeaponId))
+            playPavlovSupport(l4d2vr_pavlov_feel::Effect::BoltTick);
         if (m_MagazineInteractionBoltStageBeforeBackendReloadComplete)
         {
             m_MagazineInteractionState = MagazineInteractionManualState::WaitingForBackendReload;
@@ -7527,7 +7610,9 @@ bool VR::UpdateMagazineInteraction(
     // detachable-magazine gun (the release button keeps working).
     const bool handPullAllowed = !releaseButtonRequired || m_MagazineHandPullEnabled || (foregripSplit && slapGun);
     if (releaseButtonRequired && m_MagazineReleaseJustPressed &&
-        MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId))
+        MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId) &&
+        !(m_MagazineInteractionBoltLockedOpen &&
+            m_MagazineInteractionState == MagazineInteractionManualState::WaitingForBoltGrab))
     {
         m_VrHandsTwoHandedGripActive = false;
         m_VrHandsTwoHandedGripWeaponId = 0;
@@ -7850,6 +7935,7 @@ bool VR::UpdateMagazineInteraction(
             {
                 m_VrHandsTwoHandedGripActive = false;
                 m_VrHandsTwoHandedGripWeaponId = 0;
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::GenericTick);   // 2.0.14: auto-ungrip tick
                 LogMagazineInteractionEvent("two-hand grip released: support hand %.2f m from the foregrip",
                     targetDistance / std::max(0.001f, m_VRScale));
             }
@@ -7865,7 +7951,7 @@ bool VR::UpdateMagazineInteraction(
             m_VrHandsTwoHandedGripWeaponId = 0;
             if (!foregripSplit && leftGripDown && !allowGameplayInputOnTwoHandedGripRelease)
                 m_MagazineInteractionSuppressLeftInputUntilRelease = true;
-            triggerMagazineInteractionHaptic(0.018f, 85.0f, 0.28f, 2);
+            playPavlovSupport(l4d2vr_pavlov_feel::Effect::GenericTick);   // 2.0.14: the same tick on release
             if (m_VrHandsDebugLog)
             {
                 Game::logMsg(
@@ -7900,7 +7986,11 @@ bool VR::UpdateMagazineInteraction(
                 }
                 if (!foregripSplit && leftGripDown && !m_VrHandsTwoHandedGripHeldMode)
                     m_MagazineInteractionSuppressLeftInputUntilRelease = true;
-                triggerMagazineInteractionHaptic(0.020f, 95.0f, 0.32f, 2);
+                // 2.0.14 Pavlov: the contact double tick on the support hand and
+                // the grab foley (TwoHandGripSound).
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::GenericTick);
+                playGameSound(l4d2vr_pavlov_feel::ForegripGrabSound(activeWeaponIdInt),
+                    l4d2vr_pavlov_feel::ForegripGrabVolume(activeWeaponIdInt));
                 if (m_VrHandsDebugLog)
                 {
                     Game::logMsg(
@@ -8607,7 +8697,7 @@ bool VR::UpdateMagazineInteraction(
             m_MagazineSeats.Seat(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle, activeWeaponIdInt);
             m_MagazineInteractionRetainedMagazineHeld = false;
             MagazineInteractionPlayClipInSound(this);
-            triggerMagazineInteractionBothHandsHaptic(0.026f, 105.0f, 0.42f, 2);
+            playMagazineSeatedHaptics();   // 2.0.14 Pavlov seat (was one 26 ms pulse on both hands)
             if (quickReloadShouldAutoBolt())
             {
                 if (!beginQuickReloadAutoBoltAnimation("remote-magazine-confirmed"))
@@ -8727,7 +8817,7 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionStartClip = activeClip;
         m_MagazineInteractionReloadTriggered = false;
         ApplyMagazineInteractionShotgunClientReloadAbort(activeWeapon, activeWeaponIdInt, "remote-shell-confirmed");
-        triggerMagazineInteractionBothHandsHaptic(0.026f, 105.0f, 0.42f, 2);
+        playMagazineSeatedHaptics();   // 2.0.14 Pavlov seat
         MagazineInteractionPlayClipInSound(this);
         Game::logMsg("[VR][RemoteShell][client] confirmed seq=%u clip=%d reserve=%d", reply.request.sequence, reply.clip, reply.reserve);
         // s12 issue 2a: the input that carried this shell must be let go
@@ -9111,6 +9201,29 @@ bool VR::UpdateMagazineInteraction(
     };
     auto updateFreshAmmoPouch = [&](bool allowTake) -> bool
     {
+        // 2.0.14 (pavlov layout, Physical): Pavlov's hips are both pouches for
+        // the gun in this hand's other hand: the one the support hand reaches,
+        // except the hip where the sidearm hangs.
+        if (m_HolsterLayout.pavlovHips)
+        {
+            l4d2vr_holster::BodyFrame pouchFrame{};
+            Vector pouchPoint{};
+            float pouchDistance = 0.0f;
+            const bool pouchValid = GetHolsterBodyFrame(pouchFrame) &&
+                l4d2vr_holster::PavlovHipPouch(pouchFrame, m_HolsterLayout, supportPosition,
+                    m_PavlovSidearmOnBody.load(std::memory_order_acquire), pouchPoint, pouchDistance);
+            if (pouchValid)
+            {
+                m_PavlovHipPouchPos[0].store(pouchPoint.x, std::memory_order_relaxed);
+                m_PavlovHipPouchPos[1].store(pouchPoint.y, std::memory_order_relaxed);
+                m_PavlovHipPouchPos[2].store(pouchPoint.z, std::memory_order_relaxed);
+            }
+            m_PavlovHipPouchValid.store(pouchValid, std::memory_order_release);
+        }
+        else
+        {
+            m_PavlovHipPouchValid.store(false, std::memory_order_release);
+        }
         const int maxClip = MagazineInteractionDefaultMaxClip(activeWeaponId, m_MagazineInteractionMagazineModelName);
         int pouchReserve = 0;
         bool pouchInfinite = false;
@@ -9181,8 +9294,11 @@ bool VR::UpdateMagazineInteraction(
                 boltDistance = MagazineInteractionNearestLeftHandProbeDistanceSourceUnits(
                     boltBox, supportPosition, supportAngles, m_VRScale, this);
         }
-        const bool atPouch = l4d2vr_magazine::MayTakeFreshAmmo(freshGrabDistance, freshGrabRange, boltDistance, boltRange,
-            m_VRScale);
+        // 2.0.14 (pavlov hips): a holstered item nearer to the hand than the
+        // hip pouch (a vest pocket, the sidearm) takes the squeeze instead.
+        const bool holsterNearer = m_HolsterLayout.pavlovHips && m_HolsterHoverZone[0] != l4d2vr_holster::Zone::None;
+        const bool atPouch = !holsterNearer &&
+            l4d2vr_magazine::MayTakeFreshAmmo(freshGrabDistance, freshGrabRange, boltDistance, boltRange, m_VRScale);
         const bool quickFreshAutoGrab = m_MagazineInteractionQuickReloadMode && atPouch;
         if (!quickFreshAutoGrab && !(leftGripJustPressed && atPouch))
         {
@@ -9266,6 +9382,7 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionFreshGrabbedAt = now;
         m_PouchLastTakeAt = now;
         m_FreshAmmoReleasedAt = {};
+        playPavlovSupport(l4d2vr_pavlov_feel::Effect::AmmoGrab);   // 2.0.14 Pavlov AmmoGrab_Haptic
         m_FreshAmmoInsertGate.Reset();
         if (m_MagazineInteractionShotgunShellMode) m_ShellRetryContact.Reset();
         m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
@@ -9334,9 +9451,22 @@ bool VR::UpdateMagazineInteraction(
         const bool manualPump = m_ManualPumpEnabled && MagazineInteractionWeaponUsesSinglePumpSound(activeWeaponId);
         // A slide or bolt locked open (bLockBolt) stays back until it is taken.
         const bool lockedOpen = !manualPump && !m_MagazineInteractionShotgunShellMode && m_ReloadPavlovTuning &&
-            m_MagazineInteractionBoltReachedRear && l4d2vr_reload_tuning::LocksOpenWhenEmpty(static_cast<int>(activeWeaponId));
+            m_MagazineInteractionBoltReachedRear && m_MagazineInteractionBoltLockedOpen;
         if (!manualPump)
             setBoltPullDistance(lockedOpen ? m_MagazineInteractionBoltMaxPullDistance : 0.0f);
+        // 2.0.14 Pavlov MagBoltRelease: with the fresh magazine seated, the
+        // magazine release button releases the locked slide or bolt.
+        if (lockedOpen && l4d2vr_pavlov_feel::MagBoltRelease(m_MagazineReleaseJustPressed, true, true,
+                std::max(activeClip, 1), MagazineInteractionWeaponUsesDetachableMagazine(activeWeaponId)) ==
+            l4d2vr_pavlov_feel::MagButtonAction::ReleaseBolt)
+        {
+            LogMagazineInteractionEvent("slide/bolt released by the magazine release button weaponId=%d",
+                activeWeaponIdInt);
+            completeBoltStage("bolt-release-button", false);
+            return m_MagazineInteractionBoltStageBeforeBackendReloadComplete
+                ? reloadCommandPending()
+                : false;
+        }
 
         if (m_MagazineInteractionBoltGrabRequiresGripRelease)
         {
@@ -9433,7 +9563,12 @@ bool VR::UpdateMagazineInteraction(
             !MagazineInteractionMatrixLooksRenderable(m_MagazineInteractionBoltRestWorld))
         {
             Game::logMsg("[VR][MagazineInteraction] bolt hold lost rest pose; canceling bolt hold");
-            m_MagazineInteractionState = MagazineInteractionManualState::WaitingForBoltGrab;
+            m_HandleTravelTicker.Release();
+            m_HandleSoundTracker.Ungrab();
+            m_MagazineInteractionState = m_HkRackBeforeMagazine
+                ? MagazineInteractionManualState::WaitingForFreshMagazine
+                : MagazineInteractionManualState::WaitingForBoltGrab;
+            m_HkRackBeforeMagazine = false;
             m_MagazineInteractionLeftHandHolding = false;
             m_MagazineInteractionBoltGrabRequiresGripRelease =
                 leftGripDown && !m_MagazineInteractionShotgunShellMode;
@@ -9453,6 +9588,40 @@ bool VR::UpdateMagazineInteraction(
 
         if (!leftGripDown && !(holdingManualPump && pumpForegripHeld()))
         {
+            if (m_HkRackBeforeMagazine)
+            {
+                // 2.0.14 Pavlov bBoltLockManual: racked with the magazine out
+                // and let go past the cock point, the handle locks open; let go
+                // before it, it runs home. The fresh magazine is next either way.
+                m_HkRackBeforeMagazine = false;
+                m_HandleTravelTicker.Release();
+                const bool ungrabSound = m_HandleSoundTracker.Ungrab();
+                m_MagazineInteractionState = MagazineInteractionManualState::WaitingForFreshMagazine;
+                m_MagazineInteractionLeftHandHolding = false;
+                m_MagazineInteractionBoltContactActive = false;
+                m_MagazineInteractionBoltGrabbedAt = {};
+                m_MagazineInteractionLeftHandPoseActive.store(0, std::memory_order_relaxed);
+                if (l4d2vr_pavlov_feel::HkRackRelease(m_MagazineInteractionBoltReachedRear, false) ==
+                    l4d2vr_pavlov_feel::HkRackResult::LockedOpen)
+                {
+                    m_HkBoltLockedOpen = true;
+                    m_HkBoltLockedWeapon = reinterpret_cast<uintptr_t>(activeWeapon);
+                    m_MagazineInteractionBoltLockedOpen = true;
+                    setBoltPullDistance(requiredPull);
+                    playGameSound(l4d2vr_pavlov_feel::HandleLockSound(activeWeaponIdInt), 0.8f);
+                    playPavlovSupport(l4d2vr_pavlov_feel::Effect::GenericTick);
+                    LogMagazineInteractionEvent("HK handle locked open with the magazine out weaponId=%d", activeWeaponIdInt);
+                }
+                else
+                {
+                    m_MagazineInteractionBoltReachedRear = false;
+                    m_MagazineInteractionBoltLockedOpen = false;
+                    setBoltPullDistance(0.0f);
+                    if (ungrabSound)
+                        MagazineInteractionPlayBoltSound(this, true);
+                }
+                return reloadCommandPending();
+            }
             if (holdingManualPump)
             {
                 // A pump has no return spring. Keep its position and rear latch
@@ -9471,6 +9640,11 @@ bool VR::UpdateMagazineInteraction(
             }
             else
             {
+                // 2.0.14 Pavlov UngrabSound: let go past 0.25 of its travel,
+                // the handle is heard running home.
+                m_HandleTravelTicker.Release();
+                if (m_HandleSoundTracker.Ungrab())
+                    MagazineInteractionPlayBoltSound(this, true);
                 setBoltPullDistance(0.0f);
                 m_MagazineInteractionState = MagazineInteractionManualState::WaitingForBoltGrab;
                 m_MagazineInteractionLeftHandHolding = false;
@@ -9524,7 +9698,8 @@ bool VR::UpdateMagazineInteraction(
             {
                 m_MagazineInteractionBoltReachedRear = true;
                 MagazineInteractionPlayBoltSound(this, false);
-                triggerMagazineInteractionHaptic(0.024f, 110.0f, 0.38f, 2);
+                // 2.0.14 Pavlov ShotgunPumpPulled: 0.59, 0.25, then the 1.0 click.
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::PumpPulled);
                 LogMagazineInteractionEvent("pump cocked pull=%.3f m (cock %.3f m of %.3f m travel)",
                     m_ManualPumpStroke.Peak() / std::max(0.001f, m_VRScale),
                     pumpThresholds.cock / std::max(0.001f, m_VRScale),
@@ -9567,12 +9742,42 @@ bool VR::UpdateMagazineInteraction(
         setBoltPullDistance(desiredPull);
         m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
 
+        // 2.0.14 Pavlov handle (SPEC 4.1): a 10 ms tick every 0.01 of handle
+        // input, stronger toward the rear; the open sound once the input
+        // passes 0.1, a click at the cock point.
+        const l4d2vr_reload_tuning::HandleHaptic handleHaptic =
+            l4d2vr_reload_tuning::HandleHapticForWeapon(activeWeaponIdInt);
+        const bool pavlovHandle = handleHaptic.enabled || l4d2vr_reload_tuning::IsBoltAction(activeWeaponIdInt);
+        if (pavlovHandle)
+        {
+            const float scale = std::max(0.001f, m_VRScale);
+            const float input = l4d2vr_reload_tuning::HandleInput(activeWeaponIdInt,
+                m_MagazineInteractionBoltPullDistance / scale);
+            float tickAmplitude = 0.0f;
+            if (handleHaptic.enabled &&
+                m_HandleTravelTicker.Update(input, handleHaptic.minAmp, handleHaptic.maxAmp, tickAmplitude))
+                triggerMagazineInteractionHaptic(l4d2vr_pavlov_feel::kHandlePulseSeconds, 0.0f, tickAmplitude, 2);
+            const l4d2vr_pavlov_feel::HandleSoundEvents handleSounds = m_HandleSoundTracker.Update(input,
+                l4d2vr_reload_tuning::HandleInput(activeWeaponIdInt, requiredPull / scale));
+            if (handleSounds.grab)
+                MagazineInteractionPlayBoltSound(this, false);
+            if (handleSounds.lock)
+                playGameSound(l4d2vr_pavlov_feel::HandleLockSound(activeWeaponIdInt), 0.8f);
+        }
+
         if (!m_MagazineInteractionBoltReachedRear &&
             m_MagazineInteractionBoltPullDistance >= requiredPull)
         {
             m_MagazineInteractionBoltReachedRear = true;
-            MagazineInteractionPlayBoltSound(this, false);
-            triggerMagazineInteractionHaptic(0.024f, 110.0f, 0.38f, 2);
+            if (!pavlovHandle)
+            {
+                MagazineInteractionPlayBoltSound(this, false);
+                triggerMagazineInteractionHaptic(0.024f, 110.0f, 0.38f, 2);
+            }
+            else if (l4d2vr_reload_tuning::IsBoltAction(activeWeaponIdInt))
+            {
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::BoltTick);   // the bolt is back
+            }
             LogMagazineInteractionEvent("bolt rear threshold reached pull=%.3f m required=%.3f m",
                 m_MagazineInteractionBoltPullDistance / std::max(0.001f, m_VRScale),
                 requiredPull / std::max(0.001f, m_VRScale));
@@ -9583,6 +9788,17 @@ bool VR::UpdateMagazineInteraction(
                 handPullDistance);
         }
 
+        if (m_HkRackBeforeMagazine)
+        {
+            // Pushed home by hand with no magazine: nothing to chamber.
+            if (l4d2vr_physical::PumpCycles::StrokeComplete(
+                m_MagazineInteractionBoltReachedRear, m_MagazineInteractionBoltPullDistance, returnDistance))
+            {
+                m_MagazineInteractionBoltReachedRear = false;
+                MagazineInteractionPlayBoltSound(this, true);
+            }
+            return reloadCommandPending();
+        }
         if (l4d2vr_physical::PumpCycles::StrokeComplete(
             m_MagazineInteractionBoltReachedRear, m_MagazineInteractionBoltPullDistance, returnDistance))
         {
@@ -9604,6 +9820,28 @@ bool VR::UpdateMagazineInteraction(
         if (!leftGripDown) m_ShellFinishRequiresRelease = false;
         if (updateFreshAmmoPouch(true))
             return reloadCommandPending();
+        // 2.0.14 Pavlov bBoltLockManual (MP5, military sniper): with the
+        // magazine out and the chamber empty, the handle can be racked and
+        // locked open before the fresh magazine goes in.
+        if (m_HkBoltLockedOpen)
+            refreshBoltFromPublishedViewmodelBox();
+        else if (!m_MagazineInteractionShotgunShellMode && m_ReloadPavlovTuning && m_MagazineInteractionChamberEmpty &&
+            l4d2vr_reload_tuning::LocksOpenOnManualRack(activeWeaponIdInt) && leftGripJustPressed)
+        {
+            MagazineInteractionBoxSnapshot hkBoltBox{};
+            if (getFreshBoltBoxForActiveViewmodel(hkBoltBox))
+            {
+                const float grabDistance = MagazineInteractionNearestLeftHandProbeDistanceSourceUnits(
+                    hkBoltBox, supportPosition, supportAngles, m_VRScale, this);
+                const float grabRange = std::max(0.0f, MagazineInteractionResolveBoltGrabPaddingMeters(this)) * m_VRScale;
+                if (grabDistance <= grabRange && beginBoltStage(activeWeaponId, "hk-rack-magazine-out"))
+                {
+                    m_HkRackBeforeMagazine = true;
+                    beginBoltHoldFromCurrentLeftHand(grabDistance, grabRange);
+                    return reloadCommandPending();
+                }
+            }
+        }
         const uint64_t msSinceShellConfirm = m_ShellConfirmedAt.time_since_epoch().count() != 0
             ? static_cast<uint64_t>(std::max(0.0f, std::chrono::duration<float>(now - m_ShellConfirmedAt).count()) * 1000.0f)
             : UINT64_MAX;
@@ -9636,6 +9874,8 @@ bool VR::UpdateMagazineInteraction(
 
     if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine)
     {
+        if (m_HkBoltLockedOpen)
+            refreshBoltFromPublishedViewmodelBox();
         const float freshGrabAgeSeconds =
             (m_MagazineInteractionFreshGrabbedAt.time_since_epoch().count() != 0)
             ? std::chrono::duration<float>(now - m_MagazineInteractionFreshGrabbedAt).count()
@@ -9691,6 +9931,22 @@ bool VR::UpdateMagazineInteraction(
         m_MagazineInteractionLeftHandPoseActive.store(1, std::memory_order_relaxed);
         updateFreshDetachedMagazineFromLeftHand();
         const bool fitsSocket = detachedMagazineFitsSocket();
+        // 2.0.14 Pavlov MagSlide: the magazine hand feels the magazine enter the
+        // well's capture bounds and again half way in (detachable magazines).
+        if (!m_MagazineInteractionShotgunShellMode && m_MagazineInteractionFitValid &&
+            MagazineInteractionMatrixLooksRenderable(m_MagazineInteractionFitSocketWorld) &&
+            MagazineInteractionMatrixLooksRenderable(m_MagazineInteractionDetachedMagazineWorld))
+        {
+            const Vector heldCenter = MagazineInteractionMatrixPointWorld(m_MagazineInteractionDetachedMagazineWorld,
+                MagazineInteractionBoxCenterLocal(m_MagazineInteractionSocketBox));
+            const Vector wellCenter = MagazineInteractionMatrixPointWorld(m_MagazineInteractionFitSocketWorld,
+                MagazineInteractionBoxCenterLocal(m_MagazineInteractionFitSocketBox));
+            const l4d2vr_pavlov_feel::MagazineSlideEvents slide = m_MagazineSlideCue.Update(
+                (heldCenter - wellCenter).Length() / std::max(0.001f, m_VRScale),
+                l4d2vr_reload_tuning::SlotLateralBoundMeters(activeWeaponIdInt));
+            if ((slide.start || slide.half) && !fitsSocket)
+                playPavlovSupport(l4d2vr_pavlov_feel::Effect::MagSlide);
+        }
         // Taken with the hand already at the gun, fresh ammo seats only after
         // it has been outside the well or port once (updated every frame).
         const bool freshGateOpen = m_MagazineInteractionRetainedMagazineHeld || m_FreshAmmoInsertGate.Update(fitsSocket);
@@ -9757,7 +10013,7 @@ bool VR::UpdateMagazineInteraction(
             if (choreographedNativeReload)
             {
                 m_MagazineInteractionFreshMagazineContactActive = false;
-                triggerMagazineInteractionBothHandsHaptic(0.026f, 105.0f, 0.42f, 2);
+                playMagazineSeatedHaptics();   // 2.0.14 Pavlov seat
                 MagazineInteractionPlayClipInSound(this);
                 m_MagazineSeats.Seat(reinterpret_cast<uintptr_t>(activeWeapon), activeWeaponHandle, activeWeaponIdInt);
                 // The stock reload is the refill: it runs only once the fresh

@@ -201,8 +201,10 @@ VrHandsTwoHandedAimMountFriendly=false
 VrHandsVirtualStockEnabled=false
 VrHandsTwoHandedAimStrength=1.0
 VrHandsTwoHandedAimShortGunsRearHandOnly=true
-VrHandsTwoHandedAimSmoothingSeconds=0.025
-VrHandsTwoHandedStabilizerEnabled=true
+// 2.0.14: two-handed aim follows the hands with no filter (as in Pavlov VR). Classic mode turns the
+// stabiliser on; set it true here for Physical mode too.
+VrHandsTwoHandedAimSmoothingSeconds=0
+VrHandsTwoHandedStabilizerEnabled=false
 VrHandsTwoHandedStabilizerMinCutoffHz=1.2
 VrHandsTwoHandedStabilizerBeta=1.5
 // Survivor hand finger poses from Pavlov VR: a hand holding a magazine, a shell, a slide, a charging
@@ -421,6 +423,9 @@ VanillaLaserPlacement=true
 MeleeAimLineEnabled=false
 BlockFireOnFriendlyAimEnabled=false
 BlockFireOnFriendlyAimRadiusMeters=0.1
+// 2.0.14 (Physical mode, as in Pavlov VR): a gun whose muzzle is inside a wall does not fire (the trigger
+// clicks dry, the gun hand pulses every 0.75 s, the scope picture is off), so nobody shoots through walls.
+MuzzleWallBlockEnabled=true
 D3DAimLineOverlayEnabled=false
 D3DAimLineOverlayWidthPixels=2.0
 D3DAimLineOverlayOutlinePixels=1.0
@@ -522,6 +527,13 @@ ScopeOutsideEyeboxBrightness=0.35
 // Lens for a replacement scope model: <model>:x,y,z,r;... (bone 3 bind space, model units). Replacement
 // models of the stock optics (a skin) use the stock lens without an entry.
 ScopeLensOverrides=
+// 2.0.14 (Physical mode, Pavlov VR): the scope picture shows while an eye is within ScopeActivateDistanceMeters
+// of the scope and ScopeActivateAxisMeters of its axis (0 = no limit; the eyebox above still shades it), and an
+// unadjusted scope has its optic's own zoom: 8x (AWP, Scout, military sniper) 5.3-5.6 deg, 4x (hunting rifle,
+// SG552) 11.25 deg.
+ScopeActivateDistanceMeters=0.40
+ScopeActivateAxisMeters=0.05
+ScopePavlovOpticFov=true
 PhysicalShoveEnabled=true
 # Any fast swing of the gun in front of the body bashes (sideways, chops, butt strokes; measured at the muzzle).
 # Set to false and only pushing the gun forward bashes.
@@ -557,7 +569,11 @@ HolsterPavlovLayoutEnabled=true
 // Where the holsters sit on your body: forefront (rifle on a chest sling, pistol on the dominant hip, grenade and
 // magazines on the upper chest at Pavlov's top pocket row, kits on the back, pills on the other hip) or pavlov
 // (Pavlov VR: rifle on your back over the shoulder, pistol on the hip, grenade/kit/pills in vest pockets 31-54 cm
-// below your eyes, magazines on the other hip). HolsterYawFollowSpeed=20 adds Pavlov's slight turn lag.
+// below your eyes, magazines on the other hip). 2.0.14, pavlov in Physical mode: Pavlov's hip volumes (about 31 cm
+// reach around each hip), both hips are magazine pouches for the gun in your other hand (a hip with the
+// pistol on it is a draw), the pistol goes on whichever hip you put it, the pistol hangs muzzle forward-down
+// and the rifle diagonally on the back, the rig follows your head's turn with Pavlov's slight lag, and a
+// put-away over another holster clicks and keeps the item in your hand.
 HolsterLayout=forefront
 // Only an empty hand takes things from your body (Pavlov and Forefront): squeezing at a holster while the hand
 // holds something does nothing (except putting that item away at its own holster). The other, empty hand may draw.
@@ -590,7 +606,8 @@ VrOptionsMenuHoldSeconds=0.8
 # Holsters are placed like Forefront's equipment (60 cm straight below the head: rifle sling across
 # the chest, pistol/melee on the dominant hip, grenade on the upper chest, pills on the other hip,
 # magazines on the off-hand upper chest; medkit/defib stays on the back). Their facing follows your
-# head yaw: 0 = every frame (Forefront), higher = smoothed at this speed (Pavlov: 20).
+# head yaw: 0 = the layout's default (forefront: every frame; pavlov in Physical mode: Pavlov's 20),
+# a value above 0 smooths it at that speed, and -1 is every frame for either layout.
 HolsterYawFollowSpeed=0
 HolsterHeightScale=1.0
 HolsterHoverHapticAmplitude=0.4
@@ -661,6 +678,10 @@ ManualThrowPinRequired=true
 ManualThrowHandVelocityScale=2.5
 ThrowableHoldAngleOffsetDeg=0,0,20
 ManualThrowVelocityWindowMs=80
+// 2.0.14 (Physical mode): the release velocity is Pavlov VR's: the hand's motion smoothed over about 33 ms
+// (a point 2 cm behind the controller), so a throw follows the flick with less lag. false = the hand's peak
+// over ManualThrowVelocityWindowMs.
+ManualThrowPavlovSmoothing=true
 // Physics throw assistance (GrenadeThrowMode=physics only): gently steers a hand throw onto the spot
 // your hand points at, but only when the throw is already heading there (within about 25 degrees,
 // a similar arc and speed). Strength 0 keeps your throw as it is, 1 lands it on the spot.
@@ -736,7 +757,8 @@ ScopeLookThroughDistanceMeters=0.5
 ScopeLookThroughAngleDeg=60
 ScopeOverlayAlwaysVisible=false
 ScopeOverlayIdleAlpha=0.5
-ScopeStabilizationEnabled=true
+// 2.0.14: the scope picture moves with the gun and its recoil (Pavlov VR); Classic mode keeps it stabilised.
+ScopeStabilizationEnabled=false
 ScopeStabilizationMinCutoff=0.5
 ScopeStabilizationBeta=0.5
 ScopeStabilizationDCutoff=1.0

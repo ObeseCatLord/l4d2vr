@@ -63,6 +63,7 @@
 #include "vr_chest_sling.h"
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
+#include "vr_pavlov_feel.h"
 #include "vr_grab_volumes.h"
 #include "vr_debug_volumes.h"
 #include "vr_overlay_pointer.h"
@@ -1796,7 +1797,21 @@ public:
     l4d2vr_holster::Zone m_HolsterHoverZone[2] = { l4d2vr_holster::Zone::None, l4d2vr_holster::Zone::None }; // [0] free, [1] item hand (nearest-wins hysteresis)
     bool m_HolsterItemsVisible = true;
     bool m_HolsterInstantDraw = true;
-    float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the head yaw every frame (Forefront)
+    float m_HolsterYawFollowSpeed = 0.0f;   // 0 = the layout's default (forefront: head yaw every frame; pavlov 20), -1 = instant
+    // 2.0.14 (pavlov layout, Physical): the slot2 item sits on the off-hand hip
+    // (put away there); the slot2 item hangs on the body (its hip is no
+    // pouch); the hip pouch point nearest the support hand this frame.
+    bool m_PavlovSidearmOffHip = false;
+    std::atomic<bool> m_PavlovSidearmOnBody{ false };
+    std::atomic<bool> m_PavlovHipPouchValid{ false };
+    std::atomic<float> m_PavlovHipPouchPos[3] = { { 0.0f }, { 0.0f }, { 0.0f } };
+    // A squeeze of the owning hand over another holster with its item kept
+    // (Pavlov PutFailure): a click and the AmmoGrab pattern.
+    std::atomic<bool> m_HolsterHandOverWrongZone{ false };
+    void PlayHolsterFailureFeedback();
+    // Pavlov AmmoGrab on a holster take or put with the pavlov layout in
+    // Physical mode, else the given pulse.
+    void HolsterTakePutHaptic(bool physicalLeft, float durationSeconds, float frequency, float amplitude);
     float m_HolsterHeightScale = 1.0f;
     float m_HolsterHighlightBrightness = 1.6f;
     float m_HolsterHoverHapticAmplitude = 0.4f;
@@ -1972,6 +1987,10 @@ public:
 	// degrees) in the hand: the game's own hold leans it in toward the body.
 	QAngle m_ThrowableHoldAngleOffset = { 0.0f, 0.0f, 20.0f };
 	int m_ManualThrowVelocityWindowMs = 80;
+	// 2.0.14 (Physical): Pavlov's throw velocity, a ~33 ms exponential filter
+	// (VInterpTo 30) of a point 2 cm behind the controller, instead of the
+	// window peak (ManualThrowVelocityWindowMs).
+	bool m_ManualThrowPavlovSmoothing = true;
 	// Physics throw assistance (GrenadeThrowAssist, GrenadeThrowAssistStrength;
 	// vr_hand_throw.h AssistThrow): in GrenadeThrowMode=physics a release is
 	// bent toward the arc landing where the hand points, when already heading there.
@@ -2391,6 +2410,23 @@ public:
 	HapticMixState m_LeftHapticMix{};
 	HapticMixState m_RightHapticMix{};
 	float m_HapticMixMinIntervalSeconds = 0.005f;
+	// 2.0.14 Pavlov haptic envelopes (vr_pavlov_feel.h), Physical mode:
+	// [physical hand 0 left / 1 right][channel 0 shots / 1 handling]. Polled
+	// by FlushHapticMixer every frame. weapon.pavlov_envelopes in
+	// haptics_config.txt (default on) gives shots Pavlov's shot curves.
+	bool m_PavlovFireHapticsEnabled = true;
+	std::mutex m_HapticEnvelopeMutex;
+	l4d2vr_pavlov_feel::EnvelopePlayer m_HapticEnvelopes[2][2];
+	float m_HapticEnvelopeFrequency[2][2] = { { 0.0f, 0.0f }, { 0.0f, 0.0f } };
+	double m_LastShotHapticStart[2] = { 0.0, 0.0 };
+	bool m_LastShotHapticValid[2] = { false, false };
+	std::chrono::steady_clock::time_point m_HapticEnvelopeClockBase = std::chrono::steady_clock::now();
+	std::atomic<uint32_t> m_PavlovHapticEffectCount{ 0u };
+	double HapticEnvelopeNow() const;
+	// Physical mode only (no-op in classic): plays a Pavlov effect on a physical hand.
+	void PlayPavlovHaptic(bool physicalLeftHand, l4d2vr_pavlov_feel::Effect effect, float scale = 1.0f,
+		int channel = 1, float frequency = 0.0f);
+	void PumpHapticEnvelopes();
 
 	TrackedDevicePoseData m_HmdPose;
 	TrackedDevicePoseData m_LeftControllerPose;
@@ -2764,9 +2800,10 @@ public:
 	// Short guns (pistols, magnum, SMGs; vr_two_hand_aim.h): the support hand
 	// steadies the gun (recoil) but only the trigger hand aims it.
 	bool m_VrHandsTwoHandedAimShortGunsRearHandOnly = true;
-	float m_VrHandsTwoHandedAimSmoothingSeconds = 0.025f;
+	// 2.0.14: off by default (Pavlov has no aim filter); Classic turns the stabiliser on.
+	float m_VrHandsTwoHandedAimSmoothingSeconds = 0.0f;
 	// Half-Life 2 VR style two-hand stabilizer (One Euro filter on the aim direction).
-	bool m_VrHandsTwoHandedStabilizerEnabled = true;
+	bool m_VrHandsTwoHandedStabilizerEnabled = false;
 	float m_VrHandsTwoHandedStabilizerMinCutoffHz = 1.2f;
 	float m_VrHandsTwoHandedStabilizerBeta = 1.5f;
 	l4d2vr_filter::OneEuroDirection m_VrHandsTwoHandedAimFilter;
@@ -3198,6 +3235,17 @@ public:
 	float m_MagazineInteractionBoltMaxPullDistance = 0.0f;
 	bool m_MagazineInteractionBoltGrabRequiresGripRelease = false;
 	bool m_MagazineInteractionBoltReachedRear = false;
+	// 2.0.14 Pavlov handle feel (vr_pavlov_feel.h): travel ticks, handle
+	// sounds, the magazine slide cues, a slide/bolt locked open (drawn back
+	// while it waits, released by the magazine/bolt release button) and the
+	// HK lock-open (MP5, military sniper racked with the magazine out).
+	l4d2vr_pavlov_feel::HandleTravelTicker m_HandleTravelTicker;
+	l4d2vr_pavlov_feel::HandleSoundTracker m_HandleSoundTracker;
+	l4d2vr_pavlov_feel::MagazineSlideCue m_MagazineSlideCue;
+	bool m_MagazineInteractionBoltLockedOpen = false;
+	bool m_HkRackBeforeMagazine = false;
+	bool m_HkBoltLockedOpen = false;
+	uintptr_t m_HkBoltLockedWeapon = 0u;
 	bool m_MagazineInteractionBoltPullAxisSignLocked = false;
 	bool m_MagazineInteractionBoltStageBeforeBackendReloadComplete = false;
 	bool m_MagazineInteractionBoltCompletedBeforeBackendReload = false;
@@ -4396,6 +4444,19 @@ public:
 	// Aim-line friendly-fire guard (client-side fire suppression)
 	vr::VRActionHandle_t m_ActionFriendlyFireBlockToggle = vr::k_ulInvalidActionHandle;
 	bool m_BlockFireOnFriendlyAimEnabled = false; // toggled by SteamVR binding
+	// 2.0.14 (Physical, Pavlov SPEC 2.4): a gun whose muzzle is inside a wall
+	// (the eye -> gun hand -> muzzle line is not clear) does not fire: the
+	// trigger gives the dry click, the gun hand a slow pulse after 0.5 s and
+	// every 0.75 s, and the scope picture is off. Client-side only: the
+	// attack button is simply not sent.
+	bool m_MuzzleWallBlockEnabled = true;
+	std::atomic<bool> m_MuzzleInWall{ false };
+	std::atomic<int> m_MuzzleInWallWeaponId{ 0 };
+	l4d2vr_pavlov_feel::WallPulseTimer m_MuzzleWallPulse;
+	std::atomic<uint32_t> m_MuzzleWallBlockedShots{ 0u };
+	void UpdateMuzzleWallBlock(C_BasePlayer* localPlayer);
+	bool MuzzleWallBlocksFire() const { return m_MuzzleInWall.load(std::memory_order_acquire); }
+	void PlayMuzzleWallDryClick();
 	bool m_AimLineHitsFriendly = false;           // updated from a ray trace (aim ray)
 	// Extra radius (meters) for the friendly-fire aim guard trace.
 	// 0 = legacy thin ray; >0 uses a swept hull (fat ray) to reduce misses from spread/latency.
@@ -5140,7 +5201,14 @@ public:
 	float m_ScopeOverlayIdleAlpha = 0.5f;
 	// Scope stabilization (visual only): smooth the scope RTT camera pose when scoped-in.
 	// This reduces high-magnification jitter without changing shooting / aim direction.
-	bool  m_ScopeStabilizationEnabled = true;
+	bool  m_ScopeStabilizationEnabled = false;   // 2.0.14: off (Pavlov); Classic keeps it on
+	// 2.0.14 (Physical, Pavlov Sight_Base ActivateDist / ActivateDistLine): the
+	// scope picture only while an eye is this close to the scope and this close
+	// to its axis (0 = off). The per-optic FOV (ScopePavlovOpticFov) is the
+	// zoom of a scope whose magnification was never adjusted.
+	float m_ScopeActivateDistanceMeters = 0.40f;
+	float m_ScopeActivateAxisMeters = 0.05f;
+	bool m_ScopePavlovOpticFov = true;
 	float m_ScopeStabilizationMinCutoff = 0.5f;  // Hz (lower = smoother, more latency)
 	float m_ScopeStabilizationBeta = 0.5f;      // responsiveness to fast motion
 	float m_ScopeStabilizationDCutoff = 1.0f;    // Hz (derivative low-pass cutoff)
@@ -5478,6 +5546,18 @@ public:
 		Vector& outUp) const;
 	void ApplyPavlovTwoHandedAimSmoothing(Vector& forward, Vector& right, Vector& up);
 	void ResetPavlovTwoHandedAimSmoothing();
+	// 2.0.14 (Physical, Pavlov SPEC 2.3): after the foregrip is let go the aim
+	// eases from the last two-handed direction back to the gun hand's forward
+	// (VInterpTo speed 5, ~0.2 s) instead of snapping. The direction is kept
+	// in the gun hand's frame; the render thread applies the published one to
+	// its fresher controller pose.
+	l4d2vr_pavlov_feel::ReleaseEase m_TwoHandReleaseEase;
+	l4d2vr_pavlov_feel::V3 m_TwoHandLastAimLocal{ 1.0f, 0.0f, 0.0f };
+	bool m_TwoHandLastAimLocalValid = false;
+	std::atomic<bool> m_TwoHandEaseActive{ false };
+	std::atomic<float> m_TwoHandEaseDir[3] = { { 1.0f }, { 0.0f }, { 0.0f } };
+	bool TwoHandReleaseEaseBasis(const Vector& handForward, const Vector& handRight, const Vector& handUp,
+		Vector& outForward, Vector& outRight, Vector& outUp) const;
 	Vector GetRecommendedViewmodelAbsPos();
 	QAngle GetRecommendedViewmodelAbsAngle();
 	// Mouse-mode: compute the eye-center ray used for aiming (mouse pitch+yaw or HMD-based, optionally sensitivity-scaled).

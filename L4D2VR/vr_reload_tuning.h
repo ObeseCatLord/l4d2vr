@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <initializer_list>
 
 // Per-weapon physical reload tuning taken from Pavlov VR (read from its
@@ -78,7 +79,9 @@ namespace l4d2vr_reload_tuning
         case 33: h = { 20.0f, 0.38f, 0.11f,  2.0f, 5.0f }; break; // mp5           <- MP5
         case 5:  h = {  7.0f, 1.00f, 0.70f,  2.0f, 6.0f }; break; // m16           <- M16
         case 26: h = { 25.0f, 0.38f, 0.11f,  1.0f, 8.0f }; break; // ak47          <- AK47
-        case 9:  h = { 10.0f, 0.80f, 0.55f,  2.0f, 6.0f }; break; // scar          <- SCAR
+        // 2.0.14: the SCAR takes the M16's numbers, the gun its recoil uses
+        // (vr_recoil_data.h); it had the SCAR20's 10 cm handle.
+        case 9:  h = {  7.0f, 1.00f, 0.70f,  2.0f, 6.0f }; break; // scar          <- M16
         case 34: h = {  8.0f, 0.80f, 0.30f,  2.0f, 6.0f }; break; // sg552         <- Galil
         case 6:  h = { 10.0f, 1.00f, 0.50f,  1.0f, 7.0f }; break; // hunting rifle <- SKS (easy slide)
         case 10: h = { 30.0f, 0.38f, 0.11f,  2.0f, 7.0f }; break; // military      <- AutoSniper
@@ -105,13 +108,90 @@ namespace l4d2vr_reload_tuning
         case 1:  // pistol        <- M9
         case 32: // magnum        <- Desert Eagle
         case 5:  // m16           <- M16
-        case 9:  // scar          <- M16 / SCAR20
+        case 9:  // scar          <- M16
         case 6:  // hunting rifle <- SKS
             return true;
         default:
             return false;
         }
     }
+
+    // 2.0.14 Pavlov bBoltLockManual ("HK" guns: MP5, AutoSniper): racking
+    // the handle with no rounds in the magazine and letting go locks it open;
+    // a fresh magazine and a take-and-let-go (or the magazine / bolt release
+    // button) closes it. The uzi takes the MP5's handle numbers but is an
+    // open-bolt Uzi in Pavlov, so it does not lock.
+    inline bool LocksOpenOnManualRack(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 33: // mp5      <- MP5
+        case 10: // military <- AutoSniper
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // 2.0.14 Pavlov handle travel haptics (VRHandleComponent, SPEC 4.1): a
+    // 10 ms pulse every 0.01 of handle input (hand travel / LinearRange) at
+    // Min + (Max - Min) x input. rangeCm is the handle's LinearRange, the same
+    // one ForWeapon cocks from. Bolt-action rifles and the pump have their
+    // own event pulses instead (enabled = false).
+    struct HandleHaptic
+    {
+        float rangeCm;
+        float minAmp;
+        float maxAmp;
+        bool enabled;
+    };
+
+    inline HandleHaptic HandleHapticForWeapon(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 1:  return { 20.0f, 0.5f, 1.0f, true };   // pistol        <- M9
+        case 32: return { 25.0f, 0.5f, 1.0f, true };   // magnum        <- Desert Eagle
+        case 2:  return { 20.0f, 0.05f, 0.7f, true };  // uzi           <- MP5 handle (ForWeapon)
+        case 7:  return { 5.0f, 0.05f, 0.7f, true };   // mac10         <- Kriss Vector
+        case 33: return { 20.0f, 0.05f, 0.7f, true };  // mp5           <- MP5
+        case 5:  return { 7.0f, 0.05f, 0.7f, true };   // m16           <- M16
+        case 9:  return { 7.0f, 0.05f, 0.7f, true };   // scar          <- M16
+        case 26: return { 25.0f, 0.05f, 0.7f, true };  // ak47          <- AK47
+        case 34: return { 8.0f, 0.05f, 0.7f, true };   // sg552         <- Galil
+        case 6:  return { 10.0f, 0.05f, 0.7f, true };  // hunting rifle <- SKS
+        case 10: return { 30.0f, 0.05f, 0.7f, true };  // military      <- AutoSniper
+        case 4:
+        case 11: return { 30.0f, 0.05f, 0.7f, true };  // auto / spas   <- AutoShotgun
+        case 37: return { 50.0f, 0.1f, 1.0f, true };   // m60           <- LMGA
+        case 35: return { 12.0f, 0.0f, 0.0f, false };  // awp           <- AWP (bolt buffer)
+        case 36: return { 12.0f, 0.0f, 0.0f, false };  // scout         <- Kar98 (bolt buffer)
+        case 3:
+        case 8:  return { 17.0f, 0.0f, 0.0f, false };  // pump / chrome <- Shotgun (pump buffers)
+        default: return { 5.0f, 0.2f, 0.8f, false };   // VRHandleComponent defaults, off
+        }
+    }
+
+    // Pavlov handle input for a hand travel (metres): travel / LinearRange.
+    inline float HandleInput(int weaponId, float handTravelMeters)
+    {
+        const HandleHaptic h = HandleHapticForWeapon(weaponId);
+        if (!(h.rangeCm > 0.0f) || !std::isfinite(handTravelMeters))
+            return 0.0f;
+        return (std::max)(0.0f, handTravelMeters * 100.0f / h.rangeCm);
+    }
+
+    // The cock point as handle input (the clamped pull / LinearRange).
+    inline float CockInput(int weaponId)
+    {
+        Tuning t{};
+        if (!ForWeapon(weaponId, t))
+            return 0.0f;
+        return HandleInput(weaponId, t.pullMeters);
+    }
+
+    // Bolt-action rifles (AWP_BoltHaptic on their bolt events).
+    inline bool IsBoltAction(int weaponId) { return weaponId == 35 || weaponId == 36; }
 
     // Pavlov magazine slap (bAllowMagSlap): striking the seated magazine with a
     // fresh one at this speed, along its axis within this dot, knocks it out; the
@@ -174,8 +254,10 @@ namespace l4d2vr_reload_tuning
         case 7:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // mac10         <- Kriss Vector
         case 33: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // mp5           <- MP5
         case 5:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // m16           <- M16
-        case 26: return { { 10.0f, 10.0f, 10.0f }, 10.0f, 10.0f }; // ak47         <- AK
-        case 9:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // scar          <- SCAR20
+        // 2.0.14: Gun_AK47 overrides the AK base's 10 cm SlideGoalThreshold to
+        // 1 cm (ForWeapon(26) already seats at 1 cm): rocked in, it is home.
+        case 26: return { { 10.0f, 10.0f, 10.0f }, 1.0f, 10.0f };  // ak47         <- AK47
+        case 9:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // scar          <- M16 (2.0.14)
         case 34: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // sg552         <- Galil
         case 6:  return { { 15.0f, 15.0f, 15.0f }, 4.0f, 5.5f };  // hunting rifle <- SKS
         case 10: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // military      <- AutoSniper

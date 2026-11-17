@@ -508,11 +508,48 @@ static void Assist()
     Require(ComposeVelocity(hand, V3(100.0f, 0.0f, 0.0f), 2.5f, 1400.0f).x == 500.0f, "and the server composes it back");
 }
 
+// 2.0.14: Pavlov's smoothed throw velocity (VInterpTo 30, ~33 ms).
+static void PavlovSmoothing()
+{
+    VelocityTracker tr;
+    V3 v{};
+    Require(!tr.EstimateSmoothed(0.0, 30.0f, v), "smoothed: no samples");
+    double t = 0.0;
+    for (int i = 0; i < 45; ++i, t += 1.0 / 90.0)
+        tr.Add(t, V3(4.0f * static_cast<float>(t), 0.0f, 1.0f * static_cast<float>(t)));
+    const double now = t - 1.0 / 90.0;
+    Require(tr.EstimateSmoothed(now, 30.0f, v) && Near(v.x, 4.0f, 0.05f) && Near(v.z, 1.0f, 0.02f),
+        "smoothed: a steady hand converges");
+    // A flick that stops 50 ms before the release has mostly decayed (~33 ms
+    // time constant), but a release at the peak keeps most of it.
+    VelocityTracker flick;
+    double tf = 0.0;
+    float x = 0.0f;
+    for (int i = 0; i < 40; ++i, tf += 1.0 / 90.0)
+    {
+        const float speed = i < 30 ? 8.0f : 0.0f;
+        x += speed / 90.0f;
+        flick.Add(tf, V3(x, 0.0f, 0.0f));
+    }
+    V3 atPeak{}, late{};
+    Require(flick.EstimateSmoothed(29.0 / 90.0, 30.0f, atPeak) && atPeak.x > 7.5f, "smoothed: release at the peak");
+    Require(flick.EstimateSmoothed(34.0 / 90.0, 30.0f, late) && late.x < 1.5f, "smoothed: a stopped hand lets go slowly");
+    // One frame of jitter is damped (alpha = 30/90 = 1/3 per frame).
+    VelocityTracker jitter;
+    for (int i = 0; i < 20; ++i)
+        jitter.Add(i / 90.0, V3(i == 19 ? 0.02f : 0.0f, 0.0f, 0.0f));
+    Require(jitter.EstimateSmoothed(19.0 / 90.0, 30.0f, v) && Near(v.x, 0.6f, 0.05f), "smoothed: a jitter frame is a third");
+    const V3 p = ThrowPoint(V3(1.0f, 2.0f, 3.0f), V3(2.0f, 0.0f, 0.0f));
+    Require(Near(p.x, 0.98f, 1e-5f) && Near(p.y, 2.0f, 1e-6f), "throw point 2 cm behind");
+    Require(Near(ThrowPoint(V3(1.0f, 0.0f, 0.0f), V3(0.0f, 0.0f, 0.0f)).x, 1.0f, 1e-6f), "no forward: the origin");
+}
+
 int main()
 {
     WireRoundTrip();
     Compose();
     Tracker();
+    PavlovSmoothing();
     RecordedThrows();
     Fsm();
     Assist();

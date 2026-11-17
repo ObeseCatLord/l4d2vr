@@ -354,6 +354,39 @@ namespace l4d2vr_hand_throw
             return out.Finite();
         }
 
+        // 2.0.14 Pavlov ThrowVelocity (SPEC 2.6): the per-frame finite
+        // difference of the hand point, smoothed with VInterpTo at `speed`
+        // (Pavlov 30: an exponential filter with a ~33 ms time constant), up to
+        // `now`. Follows the flick closely without the window's lag; a hand
+        // that stops before the release gives a slow throw.
+        static constexpr float kPavlovSmoothingSpeed = 30.0f;
+        bool EstimateSmoothed(double now, float speed, V3& out) const
+        {
+            out = {};
+            speed = std::isfinite(speed) && speed > 0.0f ? speed : kPavlovSmoothingSpeed;
+            int last = m_Count - 1;
+            while (last >= 0 && At(last).t > now + 0.001)
+                --last;
+            if (last < 1)
+                return false;
+            V3 smooth{};
+            bool any = false;
+            for (int i = 1; i <= last; ++i)
+            {
+                const Sample& a = At(i - 1);
+                const Sample& b = At(i);
+                const double dt = b.t - a.t;
+                if (!(dt > 1.0e-5))
+                    continue;
+                const V3 v = (b.p - a.p) * static_cast<float>(1.0 / dt);
+                const float alpha = std::clamp(static_cast<float>(dt) * speed, 0.0f, 1.0f);
+                smooth = smooth + (v - smooth) * alpha;
+                any = true;
+            }
+            out = smooth;
+            return any && out.Finite();
+        }
+
     private:
         struct Sample { double t = 0.0; V3 p{}; };
 
@@ -392,6 +425,17 @@ namespace l4d2vr_hand_throw
         int m_Count = 0;
         int m_Head = 0;
     };
+
+    // Pavlov ThrowOffset: the hand point 2 cm behind the controller origin
+    // along its forward axis (tracking space, metres).
+    constexpr float kPavlovThrowOffsetMeters = 0.02f;
+    inline V3 ThrowPoint(const V3& controller, const V3& controllerForward)
+    {
+        const float l = controllerForward.Length();
+        if (!std::isfinite(l) || l < 1.0e-4f)
+            return controller;
+        return controller - controllerForward * (kPavlovThrowOffsetMeters / l);
+    }
 
     // Tracking-space velocity (m/s) to world axes (units/s): the stick-turn
     // yaw rotates the play space, the VR scale converts metres to units.

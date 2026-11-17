@@ -1408,6 +1408,64 @@ void VR::UpdateNonVRAimSolution(C_BasePlayer* localPlayer, bool forceFresh, bool
     m_HasNonVRAimSolution = true;
 }
 
+void VR::UpdateMuzzleWallBlock(C_BasePlayer* localPlayer)
+{
+    auto clear = [&]()
+    {
+        if (m_MuzzleInWall.exchange(false, std::memory_order_acq_rel))
+            Game::logMsg("[VR][MuzzleWall] clear");
+        m_MuzzleWallPulse.Reset();
+    };
+    if (!m_MuzzleWallBlockEnabled || !PhysicalGameplayActive() || !m_IsVREnabled || m_MouseModeEnabled ||
+        m_IsThirdPersonCamera || !localPlayer || !m_Game || !m_Game->m_EngineTrace)
+        return clear();
+    C_WeaponCSBase* const weapon = static_cast<C_WeaponCSBase*>(localPlayer->GetActiveWeapon());
+    const int weaponId = weapon ? static_cast<int>(weapon->GetWeaponID()) : 0;
+    const float reachMeters = l4d2vr_pavlov_feel::MuzzleReachMeters(weaponId);
+    // A stowed gun (empty hands) is not in the hand.
+    if (reachMeters <= 0.0f || m_ManualInventoryEmptyHandsActive.load(std::memory_order_acquire) ||
+        GetMountedGunUseEntity(localPlayer) != nullptr)
+        return clear();
+    Vector forward = m_RightControllerForward;
+    if (forward.IsZero())
+        return clear();
+    VectorNormalize(forward);
+    const Vector eye = m_HmdPosAbs;
+    const Vector hand = m_RightControllerPosAbs;
+    const Vector muzzle = hand + forward * (reachMeters * m_VRScale);
+    if (!l4d2vr_interaction::Finite(eye) || !l4d2vr_interaction::Finite(hand) || !l4d2vr_interaction::Finite(muzzle))
+        return clear();
+    // World, doors, props and glass; never players or infected (a muzzle
+    // pressed into a zombie still fires). Grates (fences) let bullets
+    // through in Source, so a gun poked through a fence still fires.
+    constexpr unsigned int kWallMask = CONTENTS_SOLID | CONTENTS_MOVEABLE | CONTENTS_WINDOW;
+    CTraceFilterSkipNPCsAndPlayers filter(reinterpret_cast<IHandleEntity*>(localPlayer), 0);
+    CGameTrace toHand;
+    Ray_t rayHand;
+    rayHand.Init(eye, hand);
+    VR_SafeTraceRay(m_Game->m_EngineTrace, rayHand, kWallMask, &filter, toHand);
+    CGameTrace toMuzzle;
+    Ray_t rayMuzzle;
+    rayMuzzle.Init(hand, muzzle);
+    VR_SafeTraceRay(m_Game->m_EngineTrace, rayMuzzle, kWallMask, &filter, toMuzzle);
+    const bool blocked = l4d2vr_pavlov_feel::MuzzleInWall(toHand.fraction, toHand.startsolid,
+        toMuzzle.fraction, toMuzzle.startsolid);
+    const bool was = m_MuzzleInWall.exchange(blocked, std::memory_order_acq_rel);
+    m_MuzzleInWallWeaponId.store(weaponId, std::memory_order_release);
+    if (blocked != was)
+        Game::logMsg("[VR][MuzzleWall] %s weapon=%d (eye-hand %.2f, hand-muzzle %.2f)",
+            blocked ? "gun inside a wall: fire blocked" : "clear", weaponId, toHand.fraction, toMuzzle.fraction);
+    if (m_MuzzleWallPulse.Update(blocked, std::clamp(m_LastFrameDuration, 0.0f, 0.1f)))
+        PlayPavlovHaptic(IsGameplayHandLeftPhysical(false), l4d2vr_pavlov_feel::Effect::GenericPulse);
+}
+
+void VR::PlayMuzzleWallDryClick()
+{
+    m_MuzzleWallBlockedShots.fetch_add(1u, std::memory_order_relaxed);
+    const char* sound = l4d2vr_pavlov_feel::DryFireSound(m_MuzzleInWallWeaponId.load(std::memory_order_acquire));
+    TryPlayKillSoundSpec(std::string("game:") + sound, 1.0f, nullptr, false);
+}
+
 bool VR::UpdateFriendlyFireAimHit(C_BasePlayer* localPlayer)
 {
     m_AimLineHitsFriendly = false;
@@ -4594,10 +4652,55 @@ void VR::TriggerPhysicalHandHapticPulse(bool leftHand, float durationSeconds, fl
     mix.durationSeconds = std::max(mix.durationSeconds, safeDuration * 0.6f);
 }
 
+double VR::HapticEnvelopeNow() const
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_HapticEnvelopeClockBase).count();
+}
+
+void VR::PlayPavlovHaptic(bool physicalLeftHand, l4d2vr_pavlov_feel::Effect effect, float scale, int channel, float frequency)
+{
+    if (!m_IsVREnabled || !PhysicalGameplayActive() || effect == l4d2vr_pavlov_feel::Effect::None)
+        return;
+    const int hand = physicalLeftHand ? 0 : 1;
+    const int ch = channel == 0 ? 0 : 1;
+    {
+        std::lock_guard<std::mutex> lock(m_HapticEnvelopeMutex);
+        m_HapticEnvelopes[hand][ch].Start(effect, scale, HapticEnvelopeNow());
+        m_HapticEnvelopeFrequency[hand][ch] = std::clamp(frequency, 0.0f, 320.0f);
+    }
+    m_PavlovHapticEffectCount.fetch_add(1u, std::memory_order_relaxed);
+    if (m_VrHandsDebugLog)
+        Game::logMsg("[VR][Haptics] %s hand: Pavlov %s x%.2f", physicalLeftHand ? "left" : "right",
+            l4d2vr_pavlov_feel::EffectName(effect), scale);
+}
+
+// Every frame before the mixer flush: each running envelope adds the pulse
+// due now (a short tick that fell between two frames is still sent).
+void VR::PumpHapticEnvelopes()
+{
+    struct Due { bool left; float duration; float frequency; float amplitude; };
+    Due due[4]{};
+    int count = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_HapticEnvelopeMutex);
+        const double now = HapticEnvelopeNow();
+        for (int hand = 0; hand < 2; ++hand)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                l4d2vr_pavlov_feel::Pulse pulse{};
+                if (m_HapticEnvelopes[hand][ch].Poll(now, pulse))
+                    due[count++] = { hand == 0, pulse.durationSeconds, m_HapticEnvelopeFrequency[hand][ch], pulse.amplitude };
+            }
+    }
+    for (int i = 0; i < count; ++i)
+        TriggerPhysicalHandHapticPulse(due[i].left, due[i].duration, due[i].frequency, due[i].amplitude, 2);
+}
+
 void VR::FlushHapticMixer()
 {
     if (!m_IsVREnabled || !m_System)
         return;
+    PumpHapticEnvelopes();
 
     const auto now = std::chrono::steady_clock::now();
     const float minInterval = std::max(0.0f, m_HapticMixMinIntervalSeconds);
@@ -4675,6 +4778,27 @@ void VR::TriggerWeaponFireHaptics(int weaponId, bool leftHand)
 
     const WeaponHapticsProfile profile = GetWeaponHapticsProfile(weaponId);
     const bool physicalLeftHand = IsGameplayHandLeftPhysical(leftHand);
+    // 2.0.14 (Physical mode): Pavlov's shot curve at full strength on the gun
+    // hand and, while the support hand holds the foregrip, the same curve at
+    // full strength on it too; at most once per half the fire interval. The
+    // weapon.* profile keeps its frequency.
+    const l4d2vr_pavlov_feel::Effect shotEffect = l4d2vr_pavlov_feel::ShotEffectForWeapon(weaponId);
+    if (m_PavlovFireHapticsEnabled && PhysicalGameplayActive() && shotEffect != l4d2vr_pavlov_feel::Effect::None)
+    {
+        const int hand = physicalLeftHand ? 0 : 1;
+        {
+            std::lock_guard<std::mutex> lock(m_HapticEnvelopeMutex);
+            const double now = HapticEnvelopeNow();
+            if (!l4d2vr_pavlov_feel::ShotHapticDue(now, m_LastShotHapticStart[hand], m_LastShotHapticValid[hand], weaponId))
+                return;
+            m_LastShotHapticStart[hand] = now;
+            m_LastShotHapticValid[hand] = true;
+        }
+        PlayPavlovHaptic(physicalLeftHand, shotEffect, 1.0f, 0, profile.frequency);
+        if (IsVrHandsTwoHandedGripPoseActive())
+            PlayPavlovHaptic(!physicalLeftHand, shotEffect, 1.0f, 0, profile.frequency);
+        return;
+    }
     TriggerPhysicalHandHapticPulse(physicalLeftHand, profile.durationSeconds, profile.frequency, profile.amplitude);
     if (IsVrHandsTwoHandedGripPoseActive())
     {

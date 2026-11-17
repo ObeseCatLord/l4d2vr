@@ -159,6 +159,46 @@ namespace l4d2vr_optics
         sample.alpha = std::clamp((kEyeboxFadeFactor * eyeboxDeg - offAxisDeg) / fade, 0.0f, 1.0f);
         return sample;
     }
+    // 2.0.14 (Physical, Pavlov AttachmentSight / Sight_Base): the scope picture
+    // is active only while the eye is within maxDistanceMeters of the lens and
+    // within maxAxisMeters of the scope's line (point-to-line distance), with
+    // the eye behind the lens. A limit <= 0 is off.
+    inline bool PavlovActivation(const Vector& eye, const Vector& lens, Vector axis, float unitsPerMeter,
+        float maxDistanceMeters, float maxAxisMeters)
+    {
+        if (!Finite(eye) || !Finite(lens) || !Normalize(axis) || !std::isfinite(unitsPerMeter) ||
+            !(unitsPerMeter > 0.0f))
+            return false;
+        const Vector delta = lens - eye;
+        const float along = DotProduct(delta, axis);
+        if (!std::isfinite(along) || along <= 0.0f)
+            return false;
+        if (std::isfinite(maxDistanceMeters) && maxDistanceMeters > 0.0f &&
+            std::sqrt(DotProduct(delta, delta)) > maxDistanceMeters * unitsPerMeter)
+            return false;
+        const Vector lateral = delta - axis * along;
+        if (std::isfinite(maxAxisMeters) && maxAxisMeters > 0.0f &&
+            std::sqrt((std::max)(0.0f, DotProduct(lateral, lateral))) > maxAxisMeters * unitsPerMeter)
+            return false;
+        return true;
+    }
+    // 2.0.14: Pavlov's fixed scope FOV per optic (SceneCapture FOVAngle):
+    // Sight_ScopeX8 5.625 deg (AWP, SCAR20 class: the military sniper),
+    // Sight_Scope_Kar98 5.332 (Scout), Sight_ACOG 11.25 (SKS: the hunting
+    // rifle; the SG552's 4x). 0 for guns without a scope. Used as the scope's
+    // control FOV (ScopeMagnificationFovRange) when it was never adjusted.
+    inline float PavlovOpticFov(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 35: return 5.625f;  // awp      <- AWP (X8)
+        case 10: return 5.625f;  // military <- SCAR20 / AutoSniper class (X8)
+        case 36: return 5.332f;  // scout    <- Kar98 scope
+        case 6: return 11.25f;   // hunting  <- SKS (ACOG)
+        case 34: return 11.25f;  // sg552    <- 4x (ACOG)
+        default: return 0.0f;
+        }
+    }
     // How bright the lens picture is drawn: the eyebox alpha, never below the
     // dimmed "outside the eye box" level while the eye is behind the lens.
     inline float LensBrightness(const EyeSample& sample, float outsideBrightness)

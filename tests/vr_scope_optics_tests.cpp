@@ -10,6 +10,7 @@
 #pragma warning(pop)
 #endif
 #include "../L4D2VR/vr_scope_optics.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -165,5 +166,23 @@ int main()
     CHECK(RebaseVector(axis,previous,current,rebased));
     CHECK((rebased-Vector(0,1,0)).Length() < 0.001f);
     CHECK(!RebasePoint(invalidEye,previous,current,rebased));
+    // 2.0.14 Pavlov activation: within 40 cm of the lens and 5 cm of its axis, eye behind it.
+    {
+        const float upm = 40.0f;   // units per metre
+        const Vector pavlovLens(100.0f, 0.0f, 0.0f), pavlovAxis(1.0f, 0.0f, 0.0f);
+        CHECK(PavlovActivation(Vector(100.0f - 0.10f * upm, 0.0f, 0.0f), pavlovLens, pavlovAxis, upm, 0.40f, 0.05f));
+        CHECK(PavlovActivation(Vector(100.0f - 0.10f * upm, 0.04f * upm, 0.0f), pavlovLens, pavlovAxis, upm, 0.40f, 0.05f));
+        CHECK(!PavlovActivation(Vector(100.0f - 0.10f * upm, 0.06f * upm, 0.0f), pavlovLens, pavlovAxis, upm, 0.40f, 0.05f));
+        CHECK(!PavlovActivation(Vector(100.0f - 0.45f * upm, 0.0f, 0.0f), pavlovLens, pavlovAxis, upm, 0.40f, 0.05f));
+        CHECK(!PavlovActivation(Vector(100.0f + 0.10f * upm, 0.0f, 0.0f), pavlovLens, pavlovAxis, upm, 0.40f, 0.05f)); // in front of the scope
+        CHECK(PavlovActivation(Vector(100.0f - 0.45f * upm, 0.3f * upm, 0.0f), pavlovLens, pavlovAxis, upm, 0.0f, 0.0f)); // limits off
+        CHECK(!PavlovActivation(Vector(0.0f, 0.0f, 0.0f), pavlovLens, Vector(0.0f, 0.0f, 0.0f), upm, 0.4f, 0.05f));
+        for (int id = 0; id < 50; ++id)
+            CHECK((PavlovOpticFov(id) > 0.0f) == HasOptic(id));
+        CHECK(std::fabs(PavlovOpticFov(35) - 5.625f) < 1e-4f && std::fabs(PavlovOpticFov(36) - 5.332f) < 1e-4f);
+        CHECK(std::fabs(PavlovOpticFov(6) - 11.25f) < 1e-4f);
+        // As the control FOV with the shipped range (3..20) and base 2: 8x optics ~7x, the ACOG ~3.6x.
+        CHECK(Magnification(PavlovOpticFov(35), 20.0f, 2.0f) > 6.5f && Magnification(PavlovOpticFov(6), 20.0f, 2.0f) < 4.0f);
+    }
     std::puts("Physical optic magnification, eye relief and model identity checks passed");
 }

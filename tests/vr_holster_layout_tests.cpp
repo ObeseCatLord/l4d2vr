@@ -231,6 +231,95 @@ static void TestReplayS12Presses()
     CHECK(newSlot3 * 2 <= oldSlot3);    // the comfort move alone halves them; the rule removes the rest
 }
 
+// 2.0.14: the pavlov layout's hips are Pavlov's capsules (r 0.20 m against the
+// 11.5 cm hand sphere), both hips are pouches for the gun in the other hand
+// (the sidearm's hip is a draw), the sidearm may sit on either hip, the body
+// yaw follows at 20, Pavlov's slot orientations. Forefront is unchanged.
+static void TestPavlovHips2014()
+{
+    const Layout ff = MakeLayout(LayoutKind::Forefront);
+    const Layout pv0 = MakeLayout(LayoutKind::Pavlov);
+    CHECK(!ff.pavlovHips && std::fabs(ff.hipReachMeters - 0.17f) < 1e-6f && ff.defaultYawFollowSpeed == 0.0f);
+    CHECK(pv0.pavlovHips && std::fabs(HipCapsuleReachMeters(pv0) - 0.315f) < 1e-5f);
+    CHECK(std::fabs(ZoneReachMeters(pv0, Zone::Secondary) - 0.315f) < 1e-5f);
+    CHECK(std::fabs(ZoneReachMeters(ff, Zone::Secondary) - 0.17f) < 1e-6f);
+    // Yaw follow: 0 = the layout's default, > 0 as set, < 0 instant.
+    CHECK(EffectiveYawFollowSpeed(ff, 0.0f) == 0.0f && EffectiveYawFollowSpeed(pv0, 0.0f) == 20.0f);
+    CHECK(EffectiveYawFollowSpeed(pv0, 7.0f) == 7.0f && EffectiveYawFollowSpeed(pv0, -1.0f) == 0.0f);
+
+    for (int handed = 0; handed < 2; ++handed)
+    {
+        Layout pv = MakeLayout(LayoutKind::Pavlov);
+        const BodyFrame f = Frame(pv, handed == 1);
+        // The dominant hip volume centre, HMD (-0.225, 0.352, -0.69).
+        const Vector domHip = ToWorld(f, Vector(-0.225f, 0.352f, -0.69f));
+        const Vector offHip = ToWorld(f, Vector(-0.225f, -0.352f, -0.69f));
+        // Reach ~31.5 cm from the capsule's axis (was 17 cm to the item).
+        CHECK(FindZone(f, pv, ToWorld(f, Vector(-0.225f + 0.30f, 0.352f, -0.69f)), 0x1Fu) == Zone::Secondary);
+        CHECK(FindZone(f, pv, ToWorld(f, Vector(-0.225f + 0.33f, 0.352f, -0.69f)), 0x1Fu) != Zone::Secondary);
+        CHECK(FindZone(f, pv, domHip, 0x1Fu) == Zone::Secondary);
+        // The off hip is a pouch, not a holster; the dominant hip with the
+        // sidearm hanging there is a draw (holster wins), without it a pouch.
+        CHECK(FindZone(f, pv, offHip, 0x1Fu) == Zone::None);
+        Vector point{};
+        float distance = 0.0f;
+        bool offSide = false;
+        CHECK(PavlovHipPouch(f, pv, offHip, true, point, distance, &offSide) && offSide && distance < 0.01f);
+        CHECK(PavlovHipPouch(f, pv, domHip, true, point, distance, &offSide) && offSide && distance > 0.5f);
+        CHECK(PavlovHipPouch(f, pv, domHip, false, point, distance, &offSide) && !offSide && distance < 0.01f);
+        CHECK(MagazinePouchScoreMeters(f, pv, offHip, true) < 0.0f);
+        CHECK(MagazinePouchScoreMeters(f, pv, domHip, true) > 0.0f);
+        // The pouch point stays on the hip's axis (the spare shows at the hip).
+        CHECK(PavlovHipPouch(f, pv, ToWorld(f, Vector(0.0f, -0.30f, -1.40f)), true, point, distance, &offSide));
+        CHECK(offSide && point.z >= offHip.z - 0.25f * kS && point.z <= offHip.z + 0.25f * kS);
+
+        // Either hip takes the sidearm: the nearer one.
+        bool side = false;
+        CHECK(SidearmHipDistanceMeters(f, pv, offHip, side) < 0.01f && side);
+        CHECK(SidearmHipDistanceMeters(f, pv, domHip, side) < 0.01f && !side);
+        pv.secondaryOffHip = true;
+        CHECK(FindZone(f, pv, offHip, 0x1Fu) == Zone::Secondary);
+        CHECK(FindZone(f, pv, domHip, 0x1Fu) == Zone::None);           // now the pouch
+        const Vector c = ZoneCenterWorld(f, pv, Zone::Secondary);
+        CHECK(DotProduct(c - f.root, f.dominant) < -0.2f * kS);        // on the off-hand side
+        // Pavlov's pistol: grip up, muzzle forward and down ~67 deg.
+        const ItemPose pistol = BuildItemPose(f, pv, Zone::Secondary, ItemShape::Pistol);
+        CHECK(pistol.valid);
+        CHECK(std::fabs(DotProduct(pistol.axisZ, Vector(0.0f, 0.0f, 1.0f)) - -0.918f) < 0.01f);
+        CHECK(std::fabs(DotProduct(pistol.axisZ, f.forward) - 0.396f) < 0.01f);
+        Vector cr{};
+        CrossProduct(pistol.axisX, pistol.axisY, cr);
+        CHECK(DotProduct(cr, pistol.axisZ) > 0.99f);
+        // The rifle on the back: 33 deg off vertical, over the dominant shoulder.
+        const ItemPose rifle = BuildItemPose(f, pv, Zone::Primary, ItemShape::LongGun);
+        CHECK(rifle.valid);
+        const float tilt = std::acos(DotProduct(rifle.axisZ, Vector(0.0f, 0.0f, 1.0f))) * 57.29578f;
+        CHECK(std::fabs(tilt - 33.0f) < 1.0f && DotProduct(rifle.axisZ, f.dominant) > 0.5f);
+    }
+    // Classic mode turns Pavlov's hips off: the 2.0.13 pavlov layout (17 cm to
+    // the hanging item, the one pouch sphere, the pistol straight down).
+    {
+        Layout classic = MakeLayout(LayoutKind::Pavlov);
+        classic.pavlovHips = false;
+        classic.secondaryOffHip = true;   // ignored
+        const BodyFrame f = Frame(classic);
+        CHECK(std::fabs(ZoneReachMeters(classic, Zone::Secondary) - 0.17f) < 1e-6f);
+        CHECK(std::fabs(PouchReachMeters(classic) - classic.magPouchReachMeters) < 1e-6f);
+        CHECK(FindZone(f, classic, ToWorld(f, Vector(-0.225f + 0.30f, 0.352f, -0.69f)), 0x1Fu) == Zone::None);
+        CHECK(SocketOf(classic, Zone::Secondary).y > 0.0f);
+        const ItemPose p = BuildItemPose(f, classic, Zone::Secondary, ItemShape::Pistol);
+        CHECK(p.valid && DotProduct(p.axisZ, Vector(0.0f, 0.0f, 1.0f)) < -0.99f);
+        CHECK(std::fabs(PouchReachMeters(MakeLayout(LayoutKind::Pavlov)) - 0.315f) < 1e-5f);
+    }
+    // Forefront's pistol still hangs straight down.
+    const BodyFrame ffFrame = Frame(ff);
+    const ItemPose ffPistol = BuildItemPose(ffFrame, ff, Zone::Secondary, ItemShape::Pistol);
+    CHECK(ffPistol.valid && DotProduct(ffPistol.axisZ, Vector(0.0f, 0.0f, 1.0f)) < -0.99f);
+    Layout ffOff = ff;
+    ffOff.secondaryOffHip = true;   // ignored without Pavlov's hips
+    CHECK(std::fabs(SocketOf(ffOff, Zone::Secondary).y - ff.socket[1].y) < 1e-6f);
+}
+
 int main()
 {
     TestLayoutTables();
@@ -238,6 +327,7 @@ int main()
     TestGrenadeHeightAndEmptyHand();
     TestNearestWithHysteresis();
     TestReplayS12Presses();
+    TestPavlovHips2014();
     if (g_failures)
     {
         std::printf("%d failure(s)\n", g_failures);

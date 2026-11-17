@@ -412,6 +412,20 @@ bool VR::ResolvePavlovTwoHandedAimBasis(
         outUp);
 }
 
+bool VR::TwoHandReleaseEaseBasis(const Vector& handForward, const Vector& handRight, const Vector& handUp,
+    Vector& outForward, Vector& outRight, Vector& outUp) const
+{
+    if (!m_TwoHandEaseActive.load(std::memory_order_acquire))
+        return false;
+    const float x = m_TwoHandEaseDir[0].load(std::memory_order_relaxed);
+    const float y = m_TwoHandEaseDir[1].load(std::memory_order_relaxed);
+    const float z = m_TwoHandEaseDir[2].load(std::memory_order_relaxed);
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+        return false;
+    const Vector forward = handForward * x + handRight * y + handUp * z;
+    return VrHandsAimBuildBasis(forward, handUp, handRight, outForward, outRight, outUp);
+}
+
 void VR::ApplyPavlovTwoHandedAimSmoothing(Vector& forward, Vector& right, Vector& up)
 {
     if (m_VrHandsTwoHandedStabilizerEnabled)
@@ -1885,6 +1899,9 @@ void VR::UpdateTracking()
     Vector pavlovAimForward{};
     Vector pavlovAimRight{};
     Vector pavlovAimUp{};
+    const Vector handAimForward = m_RightControllerForward;
+    const Vector handAimRight = m_RightControllerRight;
+    const Vector handAimUp = m_RightControllerUp;
     if (ResolvePavlovTwoHandedAimBasis(
             m_LeftControllerPosAbs,
             m_RightControllerPosAbs,
@@ -1908,17 +1925,59 @@ void VR::UpdateTracking()
         m_RightControllerForwardUnforced = m_RightControllerForward;
         if (!m_RightControllerForwardUnforced.IsZero())
             m_LastUnforcedAimDirection = m_RightControllerForwardUnforced;
+        // 2.0.14: remember the two-handed direction in the gun hand's frame
+        // for the ease back when the foregrip is let go.
+        m_TwoHandReleaseEase.Cancel();
+        m_TwoHandEaseActive.store(false, std::memory_order_release);
+        m_TwoHandLastAimLocal = { DotProduct(pavlovAimForward, handAimForward), DotProduct(pavlovAimForward, handAimRight),
+            DotProduct(pavlovAimForward, handAimUp) };
+        m_TwoHandLastAimLocalValid = std::isfinite(m_TwoHandLastAimLocal.x) && std::isfinite(m_TwoHandLastAimLocal.y) &&
+            std::isfinite(m_TwoHandLastAimLocal.z);
     }
     else
     {
         m_VrHandsTwoHandedAimApplied = false;
         ResetPavlovTwoHandedAimSmoothing();
+        // 2.0.14 (Physical, Pavlov): the foregrip was let go (or auto-released
+        // at 30 cm): ease from the last two-handed direction back to the gun
+        // hand's own forward at VInterp speed 5 instead of snapping.
+        const bool easeAllowed = PhysicalGameplayActive() && !m_MouseModeEnabled;
+        if (easeAllowed && m_TwoHandLastAimLocalValid)
+            m_TwoHandReleaseEase.Begin(m_TwoHandLastAimLocal);
+        m_TwoHandLastAimLocalValid = false;
+        if (!easeAllowed)
+            m_TwoHandReleaseEase.Cancel();
+        if (m_TwoHandReleaseEase.Active())
+        {
+            const l4d2vr_pavlov_feel::V3 local = m_TwoHandReleaseEase.Step(std::clamp(m_LastFrameDuration, 0.0f, 0.1f));
+            m_TwoHandEaseDir[0].store(local.x, std::memory_order_relaxed);
+            m_TwoHandEaseDir[1].store(local.y, std::memory_order_relaxed);
+            m_TwoHandEaseDir[2].store(local.z, std::memory_order_relaxed);
+            m_TwoHandEaseActive.store(m_TwoHandReleaseEase.Active(), std::memory_order_release);
+            Vector easedForward{}, easedRight{}, easedUp{};
+            if (m_TwoHandReleaseEase.Active() &&
+                TwoHandReleaseEaseBasis(handAimForward, handAimRight, handAimUp, easedForward, easedRight, easedUp))
+            {
+                m_RightControllerForward = easedForward;
+                m_RightControllerRight = easedRight;
+                m_RightControllerUp = easedUp;
+                m_RightControllerForwardUnforced = m_RightControllerForward;
+                if (!m_RightControllerForwardUnforced.IsZero())
+                    m_LastUnforcedAimDirection = m_RightControllerForwardUnforced;
+            }
+        }
+        else
+        {
+            m_TwoHandEaseActive.store(false, std::memory_order_release);
+        }
     }
 
     // Pavlov recoil: kick the gun (aim basis and grip position) relative to
     // the hand, after the two-handed aim line, before the scope, aim line and
     // viewmodel read the basis.
     UpdateWeaponRecoil(localPlayer);
+    // 2.0.14 (Physical): is the gun's muzzle inside a wall? (CreateMove holds fire.)
+    UpdateMuzzleWallBlock(localPlayer);
 
     // Update scope camera pose + look-through activation
     const bool forceScopeForThirdPersonFrontView = m_ThirdPersonFrontViewEnabled && m_IsThirdPersonCamera;
@@ -2088,6 +2147,12 @@ void VR::UpdateTracking()
                 const float inFrontDot = DotProduct(m_HmdForward, toScope);
                 const float alignDot = DotProduct(m_HmdForward, scopeForward);
                 m_ScopeActive = (inFrontDot > 0.2f) && (alignDot >= minDot);
+                // 2.0.14 (Physical, Pavlov Sight_Base): and the eye close to the
+                // scope's line.
+                if (m_ScopeActive && PhysicalGameplayActive() &&
+                    (m_ScopeActivateDistanceMeters > 0.0f || m_ScopeActivateAxisMeters > 0.0f))
+                    m_ScopeActive = l4d2vr_optics::PavlovActivation(m_HmdPosAbs, scopePosRaw, scopeForward, m_VRScale,
+                        m_ScopeActivateDistanceMeters, m_ScopeActivateAxisMeters);
             }
             else
             {

@@ -31,6 +31,11 @@ EXEMPT = {
 # key -> list of (old shipped values) that a migration must replace.
 # Fork releases 1.2.2 .. 2.0.4 and the upstream builds players update from.
 KNOWN_SHIPPED_CHANGES = {
+    # 2.0.14: Pavlov handling - no two-hand aim filter and no scope stabilisation
+    # by default (Classic mode turns both on through its overlay).
+    'VrHandsTwoHandedStabilizerEnabled': ['true'],
+    'VrHandsTwoHandedAimSmoothingSeconds': ['0.025'],
+    'ScopeStabilizationEnabled': ['true'],
     # 2.0.11: open mic follows the game's microphone sensitivity (2.0.5-2.0.10 shipped 0.55).
     'OpusVoiceVadSensitivity': ['0.55'],
     # 2.0.10: Opus voice follows the game's voice setting (2.0.5-2.0.9 shipped ptt).

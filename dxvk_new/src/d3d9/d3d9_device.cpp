@@ -1799,11 +1799,6 @@ namespace dxvk {
                     texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9ScopeSurface);
                     vrDescResult = g_D3DVR9->GetVRDesc(g_Game->m_VR->m_D9ScopeSurface, &texDesc);
                 }
-                else if (texID == VR::Texture_RearMirror) {
-                    textureTarget = &g_Game->m_VR->m_VKRearMirror;
-                    texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9RearMirrorSurface);
-                    vrDescResult = g_D3DVR9->GetVRDesc(g_Game->m_VR->m_D9RearMirrorSurface, &texDesc);
-                }
                 else if (texID == VR::Texture_DesktopMirror) {
                     texture.ref()->GetSurfaceLevel(0, &g_Game->m_VR->m_D9DesktopMirrorSurface);
                 }

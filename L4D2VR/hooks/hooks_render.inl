@@ -5,7 +5,6 @@ namespace
 		Outside = 0,
 		MainEye,
 		Scope,
-		RearMirror,
 	};
 
 	struct HooksNekoPostProbeThreadState
@@ -29,7 +28,6 @@ namespace
 		{
 		case HooksNekoPostPass::MainEye: return "main-eye";
 		case HooksNekoPostPass::Scope: return "scope";
-		case HooksNekoPostPass::RearMirror: return "rear-mirror";
 		default: return "outside";
 		}
 	}
@@ -679,9 +677,6 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 				break;
 			case HooksNekoPostPass::Scope:
 				targetSurface = Hooks::m_VR->m_D9ScopeSurface;
-				break;
-			case HooksNekoPostPass::RearMirror:
-				targetSurface = Hooks::m_VR->m_D9RearMirrorSurface;
 				break;
 			default:
 				break;
@@ -2623,7 +2618,7 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 	if (!m_VR->m_CreatedVRTextures.load(std::memory_order_acquire))
 		m_VR->CreateVRTextures();
 
-	// Scope / rear-mirror RTTs may be created lazily (see LazyScopeRearMirrorRTT).
+	// The scope RTT may be created lazily (only when ScopeEnabled).
 	// Ensure they're available before any offscreen passes try to render into them.
 	m_VR->EnsureOpticsRTTTextures();
 
@@ -2850,7 +2845,6 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 				texture == m_VR->m_RightEyeSubmitTexture ||
 				texture == m_VR->m_HUDTexture ||
 				texture == m_VR->m_ScopeTexture ||
-				texture == m_VR->m_RearMirrorTexture ||
 				texture == m_VR->m_DesktopMirrorTexture ||
 				texture == m_VR->m_BlankTexture;
 		};
@@ -5820,68 +5814,6 @@ void __fastcall Hooks::dRenderView(void* ecx, void* edx, CViewSetup& setup, CVie
 			physicalScopeMode ? &physicalScope : nullptr);
 		m_VR->m_ScopeRenderingPass = false;
 		scopeLensPostProcessPending = true;
-	}
-
-	// ----------------------------
-	// Rear mirror RTT pass: render from HMD with 180 yaw into vrRearMirror RTT
-	// ----------------------------
-	if (m_VR->m_CreatedVRTextures.load(std::memory_order_acquire) && m_VR->ShouldRenderRearMirror() && m_VR->m_RearMirrorTexture && m_VR->ShouldUpdateRearMirrorRTT())
-	{
-		CViewSetup mirrorView = setup;
-		mirrorView.x = 0;
-		mirrorView.y = 0;
-		mirrorView.m_nUnscaledX = 0;
-		mirrorView.m_nUnscaledY = 0;
-		mirrorView.width = m_VR->m_RearMirrorRTTSize;
-		mirrorView.m_nUnscaledWidth = m_VR->m_RearMirrorRTTSize;
-		mirrorView.height = m_VR->m_RearMirrorRTTSize;
-		mirrorView.m_nUnscaledHeight = m_VR->m_RearMirrorRTTSize;
-		mirrorView.fov = m_VR->m_RearMirrorFov;
-		mirrorView.m_flAspectRatio = 1.0f;
-		mirrorView.fovViewmodel = mirrorView.fov;
-		mirrorView.zNear = m_VR->m_RearMirrorZNear;
-		mirrorView.zNearViewmodel = 99999.0f;
-
-		QAngle mirrorAngles = m_VR->GetRearMirrorCameraAbsAngle();
-		mirrorView.origin = m_VR->GetRearMirrorCameraAbsPos();
-		mirrorView.angles.x = mirrorAngles.x;
-		mirrorView.angles.y = mirrorAngles.y;
-		mirrorView.angles.z = mirrorAngles.z;
-
-		CViewSetup hudMirror = hudViewSetup;
-		hudMirror.origin = mirrorView.origin;
-		hudMirror.angles = mirrorView.angles;
-
-		// Mark mirror RTT pass so DrawModelExecute can tag special-infected arrows seen in this pass.
-		m_VR->m_RearMirrorRenderingPass = true;
-		m_VR->m_RearMirrorSawSpecialThisPass = false;
-
-		renderToTexture_SetRT(m_VR->m_RearMirrorTexture,
-			m_VR->m_RearMirrorRTTSize, m_VR->m_RearMirrorRTTSize,
-			mirrorAngles, mirrorView, hudMirror, HooksNekoPostPass::RearMirror);
-
-		m_VR->m_RearMirrorRenderingPass = false;
-		const auto rmNow = std::chrono::steady_clock::now();
-		if (m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-		{
-			if (m_VR->m_RearMirrorSawSpecialThisPass)
-			{
-				m_VR->m_LastRearMirrorSpecialSeenTime = rmNow;
-				m_VR->m_RearMirrorSpecialEnlargeActive = true;
-			}
-
-			if (m_VR->m_RearMirrorSpecialEnlargeActive)
-			{
-				const float elapsed = std::chrono::duration<float>(rmNow - m_VR->m_LastRearMirrorSpecialSeenTime).count();
-				if (elapsed > m_VR->m_RearMirrorSpecialEnlargeHoldSeconds)
-					m_VR->m_RearMirrorSpecialEnlargeActive = false;
-			}
-		}
-		else
-		{
-			// Disabled
-			m_VR->m_RearMirrorSpecialEnlargeActive = false;
-		}
 	}
 
 	if (scopeLensPostProcessPending)

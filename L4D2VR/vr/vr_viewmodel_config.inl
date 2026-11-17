@@ -3591,7 +3591,6 @@ void VR::ParseConfigFileUnlocked()
     // Debug / memory
     const bool prevVASLog = m_DebugVASLog;
     m_DebugVASLog = getBool("DebugVASLog", m_DebugVASLog);
-    m_LazyScopeRearMirrorRTT = getBool("LazyScopeRearMirrorRTT", m_LazyScopeRearMirrorRTT);
     if (!prevVASLog && m_DebugVASLog)
         LogVAS("DebugVASLog enabled");
     const bool prevAutoMatQueueMode = m_AutoMatQueueMode;
@@ -3819,48 +3818,6 @@ void VR::ParseConfigFileUnlocked()
         m_ScopeStabilizationInit = false;
         m_ScopeStabilizationLastTime = {};
     }
-
-    // Rear mirror
-    m_RearMirrorEnabled = getBool("RearMirrorEnabled", m_RearMirrorEnabled);
-    m_DesktopRearMirrorWindowEnabled = getBool("DesktopRearMirrorWindowEnabled", m_DesktopRearMirrorWindowEnabled);
-    m_RearMirrorShowOnlyOnSpecialWarning = getBool("RearMirrorShowOnlyOnSpecialWarning", m_RearMirrorShowOnlyOnSpecialWarning);
-    m_RearMirrorSpecialShowHoldSeconds = std::max(0.0f, getFloat("RearMirrorSpecialShowHoldSeconds", m_RearMirrorSpecialShowHoldSeconds));
-    m_RearMirrorRTTSize = std::clamp(getInt("RearMirrorRTTSize", m_RearMirrorRTTSize), 128, 4096);
-    m_RearMirrorRTTMaxHz = std::clamp(getFloat("RearMirrorRTTMaxHz", m_RearMirrorRTTMaxHz), 0.0f, 240.0f);
-    m_RearMirrorFov = std::clamp(getFloat("RearMirrorFov", m_RearMirrorFov), 1.0f, 179.0f);
-    m_RearMirrorZNear = std::clamp(getFloat("RearMirrorZNear", m_RearMirrorZNear), 0.1f, 64.0f);
-
-    m_RearMirrorCameraOffset = getVector3("RearMirrorCameraOffset", m_RearMirrorCameraOffset);
-    {
-        Vector tmp = getVector3(
-            "RearMirrorCameraAngleOffset",
-            Vector{ m_RearMirrorCameraAngleOffset.x, m_RearMirrorCameraAngleOffset.y, m_RearMirrorCameraAngleOffset.z });
-        m_RearMirrorCameraAngleOffset = QAngle{ tmp.x, tmp.y, tmp.z };
-    }
-
-    m_RearMirrorOverlayWidthMeters = std::max(0.01f, getFloat("RearMirrorOverlayWidthMeters", m_RearMirrorOverlayWidthMeters));
-    m_RearMirrorOverlayXOffset = getFloat("RearMirrorOverlayXOffset", m_RearMirrorOverlayXOffset);
-    m_RearMirrorOverlayYOffset = getFloat("RearMirrorOverlayYOffset", m_RearMirrorOverlayYOffset);
-    m_RearMirrorOverlayZOffset = getFloat("RearMirrorOverlayZOffset", m_RearMirrorOverlayZOffset);
-    {
-        Vector tmp = getVector3(
-            "RearMirrorOverlayAngleOffset",
-            Vector{ m_RearMirrorOverlayAngleOffset.x, m_RearMirrorOverlayAngleOffset.y, m_RearMirrorOverlayAngleOffset.z });
-        m_RearMirrorOverlayAngleOffset = QAngle{ tmp.x, tmp.y, tmp.z };
-    }
-    m_RearMirrorAlpha = std::clamp(getFloat("RearMirrorAlpha", m_RearMirrorAlpha), 0.0f, 1.0f);
-    m_RearMirrorFlipHorizontal = getBool("RearMirrorFlipHorizontal", m_RearMirrorFlipHorizontal);
-
-    // Hide the rear mirror when the aim line/ray intersects it (prevents blocking your view while aiming).
-    m_RearMirrorHideWhenAimLineHits = getBool("RearMirrorHideWhenAimLineHits", m_RearMirrorHideWhenAimLineHits);
-    m_RearMirrorAimLineHideHoldSeconds = std::clamp(getFloat("RearMirrorAimLineHideHoldSeconds", m_RearMirrorAimLineHideHoldSeconds), 0.0f, 1.0f);
-    if (!m_RearMirrorHideWhenAimLineHits)
-        m_RearMirrorAimLineHideUntil = {};
-
-    // Rear mirror hint: enlarge overlay when special-infected arrows are visible in the mirror render pass
-    m_RearMirrorSpecialWarningDistance = std::max(0.0f, getFloat("RearMirrorSpecialWarningDistance", m_RearMirrorSpecialWarningDistance));
-    if (m_RearMirrorSpecialWarningDistance <= 0.0f)
-        m_RearMirrorSpecialEnlargeActive = false;
 
     // Auto reset tracking origin after a level loads (0 disables)
     m_AutoResetPositionAfterLoadSeconds = std::clamp(

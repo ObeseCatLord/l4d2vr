@@ -2274,21 +2274,6 @@ void VR::UpdateTracking()
 
     QAngle::VectorAngles(m_RightControllerForward, m_RightControllerUp, m_RightControllerAngAbs);
 
-    if (m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled)
-    {
-        m_RearMirrorCameraPosAbs =
-            m_HmdPosAbs
-            + m_HmdForward * m_RearMirrorCameraOffset.x
-            + m_HmdRight * m_RearMirrorCameraOffset.y
-            + m_HmdUp * m_RearMirrorCameraOffset.z;
-
-        QAngle mirrorAng = m_HmdAngAbs;
-        mirrorAng.y += 180.0f;
-        mirrorAng += m_RearMirrorCameraAngleOffset;
-        NormalizeAndClampViewAngles(mirrorAng);
-        m_RearMirrorCameraAngAbs = mirrorAng;
-    }
-
     // Non-VR servers only understand cmd->viewangles. When ForceNonVRServerMovement is enabled,
     // solve an eye-based aim hit point so rendered aim line and real hit point stay consistent.
     UpdateNonVRAimSolution(localPlayer);

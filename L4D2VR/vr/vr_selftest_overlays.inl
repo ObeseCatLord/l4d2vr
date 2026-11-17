@@ -105,7 +105,7 @@ void VR::SelfTestLogOverlays(const char* label)
     struct Named { std::string name; vr::VROverlayHandle_t handle; };
     std::vector<Named> list = {
         { "MenuOverlay", m_MainMenuHandle }, { "HUDOverlayTop", m_HUDTopHandle }, { "ScopeOverlay", m_ScopeHandle },
-        { "RearMirrorOverlay", m_RearMirrorHandle }, { "LeftWristHUD", m_LeftWristHudHandle }, { "RightAmmoHUD", m_RightAmmoHudHandle },
+        { "LeftWristHUD", m_LeftWristHudHandle }, { "RightAmmoHUD", m_RightAmmoHudHandle },
         { "SpecialInfectedIntentSenseHUD", m_SpecialInfectedIntentSenseHudHandle },
         { "MenuPointerDot", m_MenuPointerDotHandle }, { "MenuPointerBeam", m_MenuPointerBeamHandle } };
     for (size_t i = 0; i < m_HUDBottomHandles.size(); ++i)

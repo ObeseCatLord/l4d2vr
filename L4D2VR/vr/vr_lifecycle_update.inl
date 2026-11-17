@@ -920,8 +920,6 @@ namespace
             static_cast<int>(vr->m_ScopeRTTSize), static_cast<int>(vr->m_ScopeRTTSize), 255);
         vr->m_QueuedScopeLensPostProcessPending.store(0, std::memory_order_release);
         vr->m_ScopeLensOverlayReady.store(0, std::memory_order_release);
-        ClearRenderTargetColorForMenuTransition(vr, ctx, vr->m_RearMirrorTexture,
-            static_cast<int>(vr->m_RearMirrorRTTSize), static_cast<int>(vr->m_RearMirrorRTTSize), 255);
         ClearRenderTargetColorForMenuTransition(vr, ctx, vr->m_BlankTexture, 0, 0, 255);
 
         ctx->SetRenderTarget(oldRT);
@@ -2271,8 +2269,6 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     m_QueuedScopeLensPostProcessPending.store(0, std::memory_order_release);
     m_ScopeLensOverlayReady.store(0, std::memory_order_release);
     SafeReleaseD3D(m_D9ScopeSurface);
-    SafeReleaseD3D(m_D9RearMirrorSurface);
-    SafeReleaseD3D(m_D9DesktopCompanionRearMirrorReadback);
     SafeReleaseD3D(m_D9DesktopMirrorSurface);
     SafeReleaseD3D(m_D9BlankSurface);
 
@@ -2284,7 +2280,6 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     SafeReleaseSourceTexture(m_NekoPostSmallInputTexture);
     SafeReleaseSourceTexture(m_HUDTexture);
     SafeReleaseSourceTexture(m_ScopeTexture);
-    SafeReleaseSourceTexture(m_RearMirrorTexture);
     SafeReleaseSourceTexture(m_DesktopMirrorTexture);
     SafeReleaseSourceTexture(m_BlankTexture);
 
@@ -2293,7 +2288,6 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
     std::memset(&m_VKHUD, 0, sizeof(m_VKHUD));
     std::memset(&m_VKScope, 0, sizeof(m_VKScope));
     std::memset(&m_VKScopeLens, 0, sizeof(m_VKScopeLens));
-    std::memset(&m_VKRearMirror, 0, sizeof(m_VKRearMirror));
     std::memset(&m_VKBlankTexture, 0, sizeof(m_VKBlankTexture));
     std::memset(&m_VKBackBuffer, 0, sizeof(m_VKBackBuffer));
 }
@@ -2540,10 +2534,9 @@ void VR::CreateVRTextures()
             hudMapW, hudMapH, hudActualW, hudActualH, static_cast<int>(backBufferFormat));
     }
 
-    // Optional RTTs: scope + rear-mirror can be extremely expensive in 32-bit VAS
-    // when their sizes are set high. Only pre-create them if requested.
-    const bool wantScope = (!m_LazyScopeRearMirrorRTT) || m_ScopeEnabled;
-    const bool wantRearMirror = (!m_LazyScopeRearMirrorRTT) || m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled;
+    // Optional RTT: the scope can be extremely expensive in 32-bit VAS when its
+    // size is set high. Only pre-create it if requested.
+    const bool wantScope = m_ScopeEnabled;
 
     if (wantScope)
     {
@@ -2559,19 +2552,6 @@ void VR::CreateVRTextures()
             TEXTUREFLAGS_NOMIP);
     }
 
-    if (wantRearMirror)
-    {
-        // Square RTT for off-hand rear mirror
-        m_CreatingTextureID = Texture_RearMirror;
-        m_RearMirrorTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx(
-            "vrRearMirror",
-            static_cast<int>(m_RearMirrorRTTSize),
-            static_cast<int>(m_RearMirrorRTTSize),
-            RT_SIZE_NO_CHANGE,
-            m_Game->m_MaterialSystem->GetBackBufferFormat(),
-            MATERIAL_RT_DEPTH_SEPARATE,
-            TEXTUREFLAGS_NOMIP);
-    }
 
     m_CreatingTextureID = Texture_Blank;
     m_BlankTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx("blankTexture", 512, 512, RT_SIZE_NO_CHANGE, m_Game->m_MaterialSystem->GetBackBufferFormat(), MATERIAL_RT_DEPTH_SHARED, TEXTUREFLAGS_NOMIP);
@@ -2610,8 +2590,7 @@ void VR::EnsureOpticsRTTTextures()
         return;
 
     const bool needScope = (m_ScopeEnabled && !m_ScopeTexture);
-    const bool needRearMirror = ((m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled) && !m_RearMirrorTexture);
-    if (!needScope && !needRearMirror)
+    if (!needScope)
         return;
 
     LogVAS("before EnsureOpticsRTTTextures");
@@ -2633,18 +2612,6 @@ void VR::EnsureOpticsRTTTextures()
             TEXTUREFLAGS_NOMIP);
     }
 
-    if (needRearMirror)
-    {
-        m_CreatingTextureID = Texture_RearMirror;
-        m_RearMirrorTexture = m_Game->m_MaterialSystem->CreateNamedRenderTargetTextureEx(
-            "vrRearMirror",
-            static_cast<int>(m_RearMirrorRTTSize),
-            static_cast<int>(m_RearMirrorRTTSize),
-            RT_SIZE_NO_CHANGE,
-            m_Game->m_MaterialSystem->GetBackBufferFormat(),
-            MATERIAL_RT_DEPTH_SEPARATE,
-            TEXTUREFLAGS_NOMIP);
-    }
 
     m_CreatingTextureID = Texture_None;
     m_Game->m_MaterialSystem->EndRenderTargetAllocation();
@@ -3627,8 +3594,6 @@ void VR::SubmitVRTextures()
         for (vr::VROverlayHandle_t& overlay : m_HUDBottomHandles)
             l4d2vr_backend::Overlay()->HideOverlay(overlay);
         l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
-        l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
-        UpdateDesktopRearMirrorWindow(false);
         l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
         m_CompositorNeedsHandoff = false;
@@ -4498,14 +4463,6 @@ void VR::SubmitVRTextures()
 
             return stageOverlayTextureBind(overlay, &m_VKScopeLens.m_VRTexture, m_D9ScopeLensSurface, true);
         };
-    auto applyRearMirrorTexture = [&](vr::VROverlayHandle_t overlay)
-        {
-            vr::VRTextureBounds_t bounds{ 0.0f, 0.0f, 1.0f, 1.0f };
-            if (m_RearMirrorFlipHorizontal)
-                std::swap(bounds.uMin, bounds.uMax);
-            l4d2vr_backend::Overlay()->SetOverlayTextureBounds(overlay, &bounds);
-            stageOverlayTextureBind(overlay, &m_VKRearMirror.m_VRTexture, m_D9RearMirrorSurface);
-        };
 
     if (!renderedNewFrame)
     {
@@ -4547,8 +4504,6 @@ void VR::SubmitVRTextures()
         l4d2vr_backend::Overlay()->ShowOverlay(m_MainMenuHandle);
         hideHudOverlays();
         l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
-        l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
-        UpdateDesktopRearMirrorWindow(false);
         l4d2vr_backend::Overlay()->HideOverlay(m_LeftWristHudHandle);
         l4d2vr_backend::Overlay()->HideOverlay(m_RightAmmoHudHandle);
 
@@ -4631,189 +4586,6 @@ void VR::SubmitVRTextures()
         l4d2vr_backend::Overlay()->HideOverlay(m_ScopeHandle);
     }
 
-    if (m_RearMirrorTexture && (m_RearMirrorEnabled || m_DesktopRearMirrorWindowEnabled))
-    {
-        if (m_RearMirrorEnabled)
-        {
-            applyRearMirrorTexture(m_RearMirrorHandle);
-            l4d2vr_backend::Overlay()->SetOverlayAlpha(m_RearMirrorHandle, std::clamp(m_RearMirrorAlpha, 0.0f, 1.0f));
-
-            // Body-anchored rear mirror: update absolute transform every frame.
-            UpdateRearMirrorOverlayTransform();
-        }
-
-        // Keep the "special warning" enlarge hint bounded even if the mirror RTT pass
-        // is temporarily not running (e.g., pop-up mode).
-        if (m_RearMirrorSpecialWarningDistance > 0.0f && m_RearMirrorSpecialEnlargeActive)
-        {
-            if (m_LastRearMirrorSpecialSeenTime.time_since_epoch().count() == 0)
-            {
-                m_RearMirrorSpecialEnlargeActive = false;
-            }
-            else
-            {
-                const auto now = std::chrono::steady_clock::now();
-                const float elapsed = std::chrono::duration<float>(now - m_LastRearMirrorSpecialSeenTime).count();
-                if (elapsed > m_RearMirrorSpecialEnlargeHoldSeconds)
-                    m_RearMirrorSpecialEnlargeActive = false;
-            }
-        }
-
-        const auto shouldHideRearMirrorDueToAimLine = [&]() -> bool
-            {
-                if (!m_RearMirrorHideWhenAimLineHits)
-                    return false;
-
-                const auto now = std::chrono::steady_clock::now();
-                if (now < m_RearMirrorAimLineHideUntil)
-                    return true;
-
-                // Build an aim ray consistent with UpdateAimingLaser(), even if the aim line isn't rendered this frame.
-                Vector dir = m_RightControllerForward;
-                if (m_IsThirdPersonCamera && !m_RightControllerForwardUnforced.IsZero())
-                    dir = m_RightControllerForwardUnforced;
-                if (dir.IsZero())
-                    dir = m_LastAimDirection;
-                if (dir.IsZero())
-                    return false;
-                VectorNormalize(dir);
-
-                Vector rayStart = m_RightControllerPosAbs;
-                // Keep non-3P codepath identical to legacy behavior; only use the new render-center delta in 3P.
-                Vector camDelta = GetAimRenderCameraDelta();
-                if (m_IsThirdPersonCamera && camDelta.LengthSqr() > (5.0f * 5.0f))
-                    rayStart += camDelta;
-
-                rayStart = rayStart + dir * 2.0f;
-                Vector rayEnd = rayStart + dir * 8192.0f;
-
-                // Mirror quad in world space (Source units), matching UpdateRearMirrorOverlayTransform().
-                Vector fwd = m_HmdForward;
-                fwd.z = 0.0f;
-                if (VectorNormalize(fwd) == 0.0f)
-                    fwd = { 1.0f, 0.0f, 0.0f };
-
-                const Vector up = { 0.0f, 0.0f, 1.0f };
-                Vector right = CrossProduct(fwd, up);
-                if (VectorNormalize(right) == 0.0f)
-                    right = { 0.0f, -1.0f, 0.0f };
-
-                const Vector back = { -fwd.x, -fwd.y, -fwd.z };
-
-                const Vector bodyOrigin =
-                    m_HmdPosAbs
-                    + (fwd * (m_InventoryBodyOriginOffset.x * m_VRScale))
-                    + (right * (m_InventoryBodyOriginOffset.y * m_VRScale))
-                    + (up * (m_InventoryBodyOriginOffset.z * m_VRScale));
-
-                const Vector mirrorCenter =
-                    bodyOrigin
-                    + (fwd * (m_RearMirrorOverlayXOffset * m_VRScale))
-                    + (right * (m_RearMirrorOverlayYOffset * m_VRScale))
-                    + (up * (m_RearMirrorOverlayZOffset * m_VRScale));
-
-                const float deg2rad = 3.14159265358979323846f / 180.0f;
-                const float pitch = m_RearMirrorOverlayAngleOffset.x * deg2rad;
-                const float yaw = m_RearMirrorOverlayAngleOffset.y * deg2rad;
-                const float roll = m_RearMirrorOverlayAngleOffset.z * deg2rad;
-
-                const float cp = cosf(pitch), sp = sinf(pitch);
-                const float cy = cosf(yaw), sy = sinf(yaw);
-                const float cr = cosf(roll), sr = sinf(roll);
-
-                const float Rx[3][3] = {
-                    {1.0f, 0.0f, 0.0f},
-                    {0.0f, cp,   -sp},
-                    {0.0f, sp,   cp}
-                };
-                const float Ry[3][3] = {
-                    {cy,   0.0f, sy},
-                    {0.0f, 1.0f, 0.0f},
-                    {-sy,  0.0f, cy}
-                };
-                const float Rz[3][3] = {
-                    {cr,   -sr,  0.0f},
-                    {sr,   cr,   0.0f},
-                    {0.0f, 0.0f, 1.0f}
-                };
-
-                auto mul33 = [](const float a[3][3], const float b[3][3], float out[3][3])
-                    {
-                        for (int r = 0; r < 3; ++r)
-                            for (int c = 0; c < 3; ++c)
-                                out[r][c] = a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c];
-                    };
-
-                float RyRx[3][3];
-                float Roff[3][3];
-                mul33(Ry, Rx, RyRx);
-                mul33(Rz, RyRx, Roff);
-
-                // Parent yaw-only basis (columns: right, up, back)
-                const float B[3][3] = {
-                    { right.x, up.x, back.x },
-                    { right.y, up.y, back.y },
-                    { right.z, up.z, back.z }
-                };
-
-                float Rworld[3][3];
-                mul33(B, Roff, Rworld);
-
-                Vector axisX = { Rworld[0][0], Rworld[1][0], Rworld[2][0] };
-                Vector axisY = { Rworld[0][1], Rworld[1][1], Rworld[2][1] };
-                Vector axisZ = { Rworld[0][2], Rworld[1][2], Rworld[2][2] };
-                if (axisX.IsZero() || axisY.IsZero() || axisZ.IsZero())
-                    return false;
-                VectorNormalize(axisX);
-                VectorNormalize(axisY);
-                VectorNormalize(axisZ);
-
-                float mirrorWidthMeters = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
-                if (m_RearMirrorSpecialWarningDistance > 0.0f && m_RearMirrorSpecialEnlargeActive)
-                    mirrorWidthMeters *= 2.0f;
-
-                const float halfExtent = 0.5f * mirrorWidthMeters * m_VRScale;
-                const float pad = 0.01f * m_VRScale; // ~1cm padding to reduce flicker on edges
-                const float halfX = halfExtent + pad;
-                const float halfY = halfExtent + pad;
-
-                const Vector seg = rayEnd - rayStart;
-                const float denom = DotProduct(seg, axisZ);
-                if (fabsf(denom) < 1e-6f)
-                    return false;
-
-                const float t = DotProduct(mirrorCenter - rayStart, axisZ) / denom;
-                if (t < 0.0f || t > 1.0f)
-                    return false;
-
-                const Vector hit = rayStart + seg * t;
-                const Vector d = hit - mirrorCenter;
-                const float lx = DotProduct(d, axisX);
-                const float ly = DotProduct(d, axisY);
-
-                if (fabsf(lx) <= halfX && fabsf(ly) <= halfY)
-                {
-                    m_RearMirrorAimLineHideUntil = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                        std::chrono::duration<float>(m_RearMirrorAimLineHideHoldSeconds));
-                    return true;
-                }
-
-                return false;
-            };
-
-        const bool rearMirrorContentVisible = ShouldRenderRearMirror();
-        const bool showVrRearMirror = m_RearMirrorEnabled && rearMirrorContentVisible && !shouldHideRearMirrorDueToAimLine();
-        if (showVrRearMirror)
-            l4d2vr_backend::Overlay()->ShowOverlay(m_RearMirrorHandle);
-        else
-            l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
-        UpdateDesktopRearMirrorWindow(m_DesktopRearMirrorWindowEnabled && rearMirrorContentVisible);
-    }
-    else
-    {
-        l4d2vr_backend::Overlay()->HideOverlay(m_RearMirrorHandle);
-        UpdateDesktopRearMirrorWindow(false);
-    }
 
     // Upload and bind dynamic intent/hand HUD textures on every fresh frame.
     const auto handHudStart = profilePresentSpikeSubmit
@@ -4890,111 +4662,6 @@ void VR::GetPoseData(vr::TrackedDevicePose_t& poseRaw, TrackedDevicePoseData& po
         poseOut.TrackedDeviceAng = ang;
         poseOut.TrackedDeviceAngVel = angvel;
     }
-}
-
-void VR::UpdateRearMirrorOverlayTransform()
-{
-    if (!m_RearMirrorEnabled || m_RearMirrorHandle == vr::k_ulOverlayHandleInvalid)
-        return;
-
-    // We place the rear mirror in tracking space (meters), anchored to the same "body origin"
-    // used by the inventory system: InventoryBodyOriginOffset is (forward,right,up) in body space.
-    const vr::TrackedDevicePose_t hmdPose = m_Poses[vr::k_unTrackedDeviceIndex_Hmd];
-    if (!hmdPose.bPoseIsValid)
-        return;
-
-    const vr::HmdMatrix34_t hmdMat = hmdPose.mDeviceToAbsoluteTracking;
-    const Vector hmdPos = { hmdMat.m[0][3], hmdMat.m[1][3], hmdMat.m[2][3] };
-
-    const Vector up = { 0.0f, 1.0f, 0.0f }; // OpenVR tracking space: +Y is up
-
-    // Yaw-only forward (flattened to the floor plane).
-    Vector fwd = { -hmdMat.m[0][2], 0.0f, -hmdMat.m[2][2] };
-    if (VectorNormalize(fwd) == 0.0f)
-        fwd = { 0.0f, 0.0f, -1.0f };
-
-    Vector right = CrossProduct(fwd, up);
-    if (VectorNormalize(right) == 0.0f)
-        right = { 1.0f, 0.0f, 0.0f };
-
-    // "Back" axis for a right-handed basis (OpenVR commonly treats +Z as "back").
-    const Vector back = { -fwd.x, -fwd.y, -fwd.z };
-
-    // Body origin in tracking space (meters)
-    const Vector bodyOrigin =
-        hmdPos
-        + (fwd * m_InventoryBodyOriginOffset.x)
-        + (right * m_InventoryBodyOriginOffset.y)
-        + (up * m_InventoryBodyOriginOffset.z);
-
-    // Rear mirror overlay position relative to that body origin (meters)
-    const Vector mirrorPos =
-        bodyOrigin
-        + (fwd * m_RearMirrorOverlayXOffset)
-        + (right * m_RearMirrorOverlayYOffset)
-        + (up * m_RearMirrorOverlayZOffset);
-
-    // Build a yaw-only parent rotation from (right, up, back) and then apply the user angle offset.
-    const float deg2rad = 3.14159265358979323846f / 180.0f;
-
-    const float pitch = m_RearMirrorOverlayAngleOffset.x * deg2rad;
-    const float yaw = m_RearMirrorOverlayAngleOffset.y * deg2rad;
-    const float roll = m_RearMirrorOverlayAngleOffset.z * deg2rad;
-
-    const float cp = cosf(pitch), sp = sinf(pitch);
-    const float cy = cosf(yaw), sy = sinf(yaw);
-    const float cr = cosf(roll), sr = sinf(roll);
-
-    const float Rx[3][3] = {
-        {1.0f, 0.0f, 0.0f},
-        {0.0f, cp,   -sp},
-        {0.0f, sp,   cp}
-    };
-    const float Ry[3][3] = {
-        {cy,   0.0f, sy},
-        {0.0f, 1.0f, 0.0f},
-        {-sy,  0.0f, cy}
-    };
-    const float Rz[3][3] = {
-        {cr,   -sr,  0.0f},
-        {sr,   cr,   0.0f},
-        {0.0f, 0.0f, 1.0f}
-    };
-
-    auto mul33 = [](const float a[3][3], const float b[3][3], float out[3][3])
-        {
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 3; ++c)
-                    out[r][c] = a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c];
-        };
-
-    float RyRx[3][3];
-    float Roff[3][3];
-    mul33(Ry, Rx, RyRx);
-    mul33(Rz, RyRx, Roff);
-
-    // Parent yaw-only basis (columns: right, up, back)
-    const float B[3][3] = {
-        { right.x, up.x, back.x },
-        { right.y, up.y, back.y },
-        { right.z, up.z, back.z }
-    };
-
-    float Rworld[3][3];
-    mul33(B, Roff, Rworld);
-
-    vr::HmdMatrix34_t mirrorAbs = {
-        Rworld[0][0], Rworld[0][1], Rworld[0][2], mirrorPos.x,
-        Rworld[1][0], Rworld[1][1], Rworld[1][2], mirrorPos.y,
-        Rworld[2][0], Rworld[2][1], Rworld[2][2], mirrorPos.z
-    };
-
-    const vr::ETrackingUniverseOrigin trackingOrigin = l4d2vr_backend::Compositor()->GetTrackingSpace();
-    L4D2VRSetOverlayTransformAbsolute(m_RearMirrorHandle, trackingOrigin, &mirrorAbs, __LINE__);
-    float mirrorWidth = (std::max)(0.01f, m_RearMirrorOverlayWidthMeters);
-    if (m_RearMirrorSpecialWarningDistance > 0.0f && m_RearMirrorSpecialEnlargeActive)
-        mirrorWidth *= 2.0f;
-    l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_RearMirrorHandle, mirrorWidth);
 }
 
 void VR::UpdateScopeOverlayTransform()
@@ -5142,44 +4809,6 @@ void VR::UpdateScopeOverlayTransform()
     l4d2vr_backend::Overlay()->SetOverlayWidthInMeters(m_ScopeHandle, scopeWidth);
 }
 
-bool VR::ShouldRenderRearMirror() const
-{
-    if (!m_RearMirrorEnabled && !m_DesktopRearMirrorWindowEnabled)
-        return false;
-
-    // Default behavior: always render/show when enabled.
-    if (!m_RearMirrorShowOnlyOnSpecialWarning)
-        return true;
-
-    // Pop-up mode: only render/show for a short time after a special-infected warning.
-    if (m_RearMirrorSpecialShowHoldSeconds <= 0.0f)
-        return false;
-
-    const auto now = std::chrono::steady_clock::now();
-
-    bool alertActive = false;
-    if (m_LastRearMirrorAlertTime.time_since_epoch().count() != 0)
-    {
-        const float elapsed = std::chrono::duration<float>(now - m_LastRearMirrorAlertTime).count();
-        alertActive = (elapsed <= m_RearMirrorSpecialShowHoldSeconds);
-    }
-
-    // Also keep it visible if the mirror pass recently saw special-infected arrows (enlarge hint).
-    bool hintActive = false;
-    if (m_LastRearMirrorSpecialSeenTime.time_since_epoch().count() != 0)
-    {
-        const float elapsed = std::chrono::duration<float>(now - m_LastRearMirrorSpecialSeenTime).count();
-        hintActive = (elapsed <= m_RearMirrorSpecialEnlargeHoldSeconds);
-    }
-
-    return alertActive || hintActive;
-}
-
-void VR::NotifyRearMirrorSpecialWarning()
-{
-    m_LastRearMirrorAlertTime = std::chrono::steady_clock::now();
-}
-
 bool VR::QueuePhysicalScopeImage(IMatRenderContext* context, const PhysicalScopeRenderSnapshot& snapshot, uint32_t renderEpoch)
 {
     void* contextVtable = nullptr;
@@ -5214,11 +4843,6 @@ bool VR::ShouldUpdateScopeRTT()
     effectiveMaxHz = std::clamp(effectiveMaxHz, 1.0f, 240.0f);
 
     return !ShouldThrottle(m_LastScopeRTTRenderTime, effectiveMaxHz);
-}
-bool VR::ShouldUpdateRearMirrorRTT()
-{
-    // The rear mirror is a full extra scene render. Throttling this can significantly reduce CPU spikes.
-    return !ShouldThrottle(m_LastRearMirrorRTTRenderTime, m_RearMirrorRTTMaxHz);
 }
 void VR::RepositionOverlays()
 {
@@ -5456,9 +5080,4 @@ void VR::RepositionOverlays()
         }
     }
 
-    // Rear mirror overlay is now body-anchored (InventoryBodyOriginOffset); keep it updated per-frame.
-    if (m_RearMirrorEnabled)
-    {
-        UpdateRearMirrorOverlayTransform();
-    }
 }

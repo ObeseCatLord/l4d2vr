@@ -758,8 +758,6 @@ MouseModeScopeOverlayOffset=0,-0.02,-0.3
 MouseModeScopeOverlayAngleOffset=0,0,0
 MouseModeScopeToggleKey=key:q
 
-LazyScopeRearMirrorRTT=true
-DesktopRearMirrorWindowEnabled=false
 DebugVASLog=false
 
 HitSoundEnabled=false

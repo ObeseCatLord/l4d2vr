@@ -422,7 +422,7 @@ file(READ "${pose_render_source}" pose_render_text)
 extract_mirrored_analog_fixture("${mirrored_analog_header_text}"
     "struct TrackedDevicePoseData" "struct VRMeleeTrackingSnapshot" pose_data_type)
 extract_mirrored_analog_fixture("${pose_data_text}"
-    "void VR::GetPoseData(" "void VR::UpdateRearMirrorOverlayTransform()" pose_data_function)
+    "void VR::GetPoseData(" "void VR::UpdateScopeOverlayTransform()" pose_data_function)
 string(REGEX MATCH "if \\(([^\r\n]+)\\)[\r\n \t]*\\{[\r\n \t]*TrackedDevicePoseData hmdPose\\{\\};"
     queued_pose_match "${pose_render_text}")
 set(queued_pose_condition "${CMAKE_MATCH_1}")

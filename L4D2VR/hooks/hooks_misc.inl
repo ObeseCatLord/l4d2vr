@@ -27999,7 +27999,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         // Native viewmodel color draw inside a VR eye view: the outer
         // DrawModelExecute wrapper submits the holsters once this draw ends.
         if (teleportSuppressibleViewmodel && !shadowDepthDraw &&
-            !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
+            !m_VR->m_ScopeRenderingPass &&
             !t_HolsterViewmodelStageSubmitting)
             t_HolsterViewmodelStageDrawSeen = true;
         if (teleportSuppressibleViewmodel && m_VR->ShouldSuppressTeleportViewmodelRender())
@@ -28565,7 +28565,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     MaybeCaptureViewmodelMuzzleSmokePose(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
     // The meleelag self-test measures the melee weapon as it is drawn: its root
     // bone after every viewmodel bone hook above.
-    if (m_VR && m_VR->m_IsVREnabled && !m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass &&
+    if (m_VR && m_VR->m_IsVREnabled && !m_VR->m_ScopeRenderingPass &&
         l4d2vr_selftest::Get().active.load(std::memory_order_acquire))
     {
         const std::string& lowerDrawn = lowerModelName;
@@ -28582,7 +28582,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     // not the CBaseViewModel the class test above knows, so the held gun is
     // recognised by its v_ model as well (never a holstered copy of it).
     // Before 2.0.4 the lens was never captured: no scope ever rendered.
-    if (!m_VR->m_ScopeRenderingPass && !m_VR->m_RearMirrorRenderingPass && pBonesToWorldFinal)
+    if (!m_VR->m_ScopeRenderingPass && pBonesToWorldFinal)
     {
         const std::string& lowerScopeModel = lowerModelName;
         if ((drawEntityIsViewmodelClass || HooksModelNameIsViewmodel(lowerScopeModel)) &&

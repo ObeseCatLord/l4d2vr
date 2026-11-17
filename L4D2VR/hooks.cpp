@@ -619,7 +619,6 @@ namespace
             ((vr && !vr->m_IsVREnabled) ? 4u : 0u) |
             ((vr && vr->m_IsThirdPersonCamera) ? 8u : 0u) |
             ((vr && vr->m_ScopeRenderingPass) ? 16u : 0u) |
-            ((vr && vr->m_RearMirrorRenderingPass) ? 32u : 0u) |
             ((!Hooks::m_Game || !Hooks::m_Game->m_MaterialSystem || !Hooks::m_Game->m_ModelRender) ? 64u : 0u);
         if (gateBits != 0u)
         {

@@ -456,7 +456,6 @@ public:
 	// Gun-mounted scope overlay (render-to-texture lens)
 	vr::VROverlayHandle_t m_ScopeHandle = vr::k_ulOverlayHandleInvalid;
 	// Rear mirror overlay (off-hand)
-	vr::VROverlayHandle_t m_RearMirrorHandle = vr::k_ulOverlayHandleInvalid;
 	// Hand HUD overlays (raw, controller-anchored)
 	vr::VROverlayHandle_t m_LeftWristHudHandle = vr::k_ulOverlayHandleInvalid;
 	vr::VROverlayHandle_t m_RightAmmoHudHandle = vr::k_ulOverlayHandleInvalid;
@@ -2061,7 +2060,6 @@ public:
 		Texture_NekoPostSmallInput,
 		Texture_HUD,
 		Texture_Scope,
-		Texture_RearMirror,
 		Texture_DesktopMirror,
 		Texture_Blank
 	};
@@ -2074,7 +2072,6 @@ public:
 	ITexture* m_NekoPostSmallInputTexture = nullptr;
 	ITexture* m_HUDTexture = nullptr;
 	ITexture* m_ScopeTexture = nullptr;
-	ITexture* m_RearMirrorTexture = nullptr;
 	ITexture* m_DesktopMirrorTexture = nullptr;
 	ITexture* m_BlankTexture = nullptr;
 
@@ -2099,7 +2096,6 @@ public:
 	uint32_t m_D9ScopeLensScratchW = 0;
 	uint32_t m_D9ScopeLensScratchH = 0;
 	uint32_t m_D9ScopeLensScratchFormat = 0;
-	IDirect3DSurface9* m_D9RearMirrorSurface = nullptr;
 	IDirect3DSurface9* m_D9DesktopMirrorSurface = nullptr;
 	IDirect3DSurface9* m_D9BlankSurface = nullptr;
 
@@ -2109,16 +2105,12 @@ public:
 	SharedTextureHolder m_VKHUD;
 	SharedTextureHolder m_VKScope;
 	SharedTextureHolder m_VKScopeLens;
-	SharedTextureHolder m_VKRearMirror;
 	SharedTextureHolder m_VKBlankTexture;
 	bool m_BackBufferTextureValid = false;
 
 	// Protects VR texture lifecycle and SteamVR texture submissions when render/update threads overlap.
 	mutable TextureStateMutex m_TextureMutex;
 
-	// If enabled, scope / rear-mirror render-target textures are created only when the feature is enabled.
-	// This can save large chunks of 32-bit VAS when ScopeRTTSize/RearMirrorRTTSize are high.
-	bool m_LazyScopeRearMirrorRTT = true;
 	// Debug: log Virtual Address Space (VAS) stats at key allocation points.
 	bool m_DebugVASLog = false;
 
@@ -3526,23 +3518,6 @@ public:
 	int m_LastSpecialInfectedIntentSenseHudRevisionDrawn = 0;
 	std::chrono::steady_clock::time_point m_LastSpecialInfectedIntentSenseHudUploadTime{};
 
-	// Standalone desktop companion windows. They mirror selected plugin HUD surfaces to
-	// normal desktop windows instead of drawing them into the game backbuffer.
-	HWND m_DesktopRearMirrorWindow = nullptr;
-	HWND m_DesktopIntentSenseHudWindow = nullptr;
-	IDirect3DSurface9* m_D9DesktopCompanionRearMirrorReadback = nullptr;
-	std::mutex m_DesktopCompanionHudMutex{};
-	std::vector<uint8_t> m_DesktopCompanionRearMirrorBgra{};
-	std::vector<uint8_t> m_DesktopCompanionIntentHudBgra{};
-	int m_DesktopCompanionRearMirrorW = 0;
-	int m_DesktopCompanionRearMirrorH = 0;
-	int m_DesktopCompanionIntentHudW = 0;
-	int m_DesktopCompanionIntentHudH = 0;
-	bool m_DesktopRearMirrorWindowEnabled = false;
-	bool m_DesktopIntentSenseHudWindowEnabled = false;
-	bool m_DesktopRearMirrorWindowShown = false;
-	bool m_DesktopIntentSenseHudWindowShown = false;
-	std::chrono::steady_clock::time_point m_LastDesktopCompanionRearMirrorCopyTime{};
 
 	std::vector<uint8_t> m_RightAmmoHudBgCache{};
 	int m_RightAmmoHudBgCacheW = 0;
@@ -5344,59 +5319,7 @@ public:
 	void   ToggleMouseModeScope();
 	void   UpdateScopeAimLineState();
 
-	// ----------------------------
-	// Rear mirror (off-hand)
-	// ----------------------------
-	bool  m_RearMirrorEnabled = false;
-	// If enabled, the rear mirror overlay/RTT stays hidden most of the time,
-	// and only pops up briefly when a special infected is detected behind you.
-	bool  m_RearMirrorShowOnlyOnSpecialWarning = false;
-	// Seconds to keep the mirror visible after a special infected warning.
-	float m_RearMirrorSpecialShowHoldSeconds = 0.50f;
-	std::chrono::steady_clock::time_point m_LastRearMirrorAlertTime{};
-	int   m_RearMirrorRTTSize = 512;
-	float m_RearMirrorRTTMaxHz = 45.0f;
-	std::chrono::steady_clock::time_point m_LastRearMirrorRTTRenderTime{};
-	float m_RearMirrorFov = 85.0f;
-	float m_RearMirrorZNear = 6.0f;
-
-	Vector m_RearMirrorCameraOffset = { 0.0f, 0.0f, 0.0f };
-	QAngle m_RearMirrorCameraAngleOffset = { 0.0f, 0.0f, 0.0f };
-
-	float  m_RearMirrorOverlayWidthMeters = 0.10f;
-	float  m_RearMirrorOverlayXOffset = -0.01f;
-	float  m_RearMirrorOverlayYOffset = 0.02f;
-	float  m_RearMirrorOverlayZOffset = 0.08f;
-	QAngle m_RearMirrorOverlayAngleOffset = { 0.0f, 180.0f, 0.0f };
-	float  m_RearMirrorAlpha = 1.0f;
-
-	// If true, mirror the rear-mirror texture horizontally (left/right).
-	bool  m_RearMirrorFlipHorizontal = false;
-
-	// When the aim line/ray intersects the rear-mirror overlay in view, hide the mirror to avoid blocking aim.
-	bool  m_RearMirrorHideWhenAimLineHits = true;
-	float m_RearMirrorAimLineHideHoldSeconds = 0.08f;
-	std::chrono::steady_clock::time_point m_RearMirrorAimLineHideUntil{};
-
-	// Rear mirror hint: when special-infected arrows are visible in the mirror pass,
-	// temporarily enlarge the rear-mirror overlay (2x width).
-	// Distance is in Source units (same as SpecialInfected* distances). <= 0 disables this hint.
-	float  m_RearMirrorSpecialWarningDistance = 180.0f;
-	float  m_RearMirrorSpecialEnlargeHoldSeconds = 0.35f;
 	bool   m_ScopeRenderingPass = false;
-	bool   m_RearMirrorRenderingPass = false;
-	bool   m_RearMirrorSawSpecialThisPass = false;	// set from DrawModelExecute during mirror RTT pass
-	bool   m_RearMirrorSpecialEnlargeActive = false;
-	std::chrono::steady_clock::time_point m_LastRearMirrorSpecialSeenTime{};
-
-	Vector m_RearMirrorCameraPosAbs = { 0.0f, 0.0f, 0.0f };
-	QAngle m_RearMirrorCameraAngAbs = { 0.0f, 0.0f, 0.0f };
-
-	Vector GetRearMirrorCameraAbsPos() const { return m_RearMirrorCameraPosAbs; }
-	QAngle GetRearMirrorCameraAbsAngle() const { return m_RearMirrorCameraAngAbs; }
-	bool   ShouldRenderRearMirror() const;
-	bool   ShouldUpdateRearMirrorRTT();
-	void   NotifyRearMirrorSpecialWarning();
 
 	VR();
 	VR(Game* game);
@@ -5597,7 +5520,6 @@ public:
 	void MarkQueuedHudFresh(uint64_t holdMs = 300);
 	void ClearQueuedHudFresh();
 	bool IsQueuedHudFresh() const;
-	void UpdateRearMirrorOverlayTransform();
 	void UpdateScopeOverlayTransform();
 	void UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBinds = nullptr);
 	void DestroyHandHudWorldQuadTextures();
@@ -5871,11 +5793,6 @@ public:
 	void ClearQueuedProjectedItemLabelEye(int eyeIndex);
 	void ClearQueuedProjectedItemLabels();
 	void DrawQueuedProjectedItemLabelsToSurface(IDirect3DDevice9* device, int eyeIndex, IDirect3DSurface9* target, bool manageScene = true);
-	void PumpDesktopCompanionWindows();
-	void UpdateDesktopRearMirrorWindow(bool visible);
-	void UpdateDesktopIntentSenseHudWindow(const uint8_t* rgba, int width, int height, bool visible);
-	void DestroyDesktopCompanionWindows();
-	static LRESULT CALLBACK DesktopCompanionWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	void TrimExpiredKillIndicators(std::chrono::steady_clock::time_point now, bool clearAll = false);
 	void MaybeTrimExpiredKillIndicators(std::chrono::steady_clock::time_point now, bool force = false);
 	void MaybeLogKillIndicatorStats(std::chrono::steady_clock::time_point now);

@@ -168,6 +168,10 @@ CHANGES = [
     "2.0.11: installer 1.1.4: \"Write to Steam\" keeps your own launch options exactly as written ($VAR, ~, gamemoderun, extra commands); Steam files with unusual characters no longer stop it, and installed files are readable by other users and server processes.",
     "2.0.11: installer 1.1.4: Install / Update repairs missing or damaged mod files instead of saying \"already up to date\" (new Repair checkbox), never replaces a newer install with the older bundled l4d2vr.zip when offline, and keeps your edited haptics_config.txt / local_client_convars.nut (the new default is saved next to it as .new).",
     "2.0.11: installer 1.1.4: downloads are https-only and must have a published SHA-256 (or --allow-unverified) and resume after a dropped connection; Restore/Uninstall in the window wait for the game to be closed.",
+    "2.0.12: voice chat no longer goes silent for the rest of a session: the server no longer relies on the game's voice mask alone (it could stay empty and silently block every player); it applies its own team rule, keeps real mutes, and logs why a player cannot be heard.",
+    "2.0.12: voice chat no longer cuts out every few seconds: with a 2.0.12 server or host, voice travels in the fast unreliable stream, several frames per message, with a deeper jitter buffer that plays a backlog slightly faster instead of throwing it away; no more \"Cbuf_AddTextWithMarkers: buffer overflow\" in the console. Older servers and clients keep working as before.",
+    "2.0.12: Valve Index: a thumb resting on the right trackpad no longer triggers push-to-talk (a firm press is needed now; the left trackpad's scoreboard too), and in the game's open mic the voice button no longer stops the game's own microphone.",
+    "2.0.12: open mic keeps soft word endings while you talk over game noise, and the console message about open mic no longer runs a bogus command (\"Unknown command: your\").",
 ]
 
 

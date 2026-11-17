@@ -11741,8 +11741,10 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
     // 2.0.12 (user): a long gun with no rounds left at all (clip 0, reserve 0)
     // switches to the secondary (pistol/melee) once, 0.4 s after it ran dry, so
     // the player is never left holding a gun the game will not let them use.
+    // 2.0.13: classic sends no automatic weapon switches (the game's own
+    // out-of-ammo behaviour applies).
     if (player && active && s.alive && !s.incapacitated && !s.ledge && !s.controlledBySI && !s.mounted && !s.useAction &&
-        reinterpret_cast<uintptr_t>(player->Weapon_GetSlot(0)) == activeTag)
+        !ClassicGameplayActive() && reinterpret_cast<uintptr_t>(player->Weapon_GetSlot(0)) == activeTag)
     {
         int clip = -1, reserve = -1, ammoType = -1;
         MagazineInteractionTryReadValue(active, kClip1Offset, clip);
@@ -11781,6 +11783,9 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
             if ((r.cleared & bit) != 0u)
                 Game::logMsg("[VR][Watchdog] %s recovered", wd::Name(bit));
     if (!r.recover) return;
+    // 2.0.13: the recoveries below deploy weapons by command; classic never
+    // automates inputs (and has no stowed or held-item states to get stuck in).
+    if (ClassicGameplayActive()) return;
 
     auto weaponClass = [&](C_WeaponCSBase* weapon) -> const char*
     {
@@ -11875,7 +11880,7 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
             static_cast<unsigned long long>(wd::kDrawRefusedMs), clip, reserve,
             clip == 0 && reserve == 0 ? ": no ammo" : "");
         // An empty long gun cannot be deployed: give the player the secondary instead.
-        if (clip == 0 && reserve == 0 && m_DrawRequestSlot == 0 && player)
+        if (clip == 0 && reserve == 0 && m_DrawRequestSlot == 0 && player && !ClassicGameplayActive())
         {
             C_WeaponCSBase* const secondary = static_cast<C_WeaponCSBase*>(player->Weapon_GetSlot(1));
             const char* const cls = weaponClass(secondary);

@@ -112,6 +112,12 @@ void VR::ResetPhysicalStateForClassic()
 {
     CancelMagazineInteractionManual();
     ResetMagazineInteractionSession();
+    // Server transactions in flight are dropped (their replies are ignored);
+    // the protocols themselves stay offered for a return to physical.
+    CancelRemoteMagazineRequest();
+    CancelRemoteShellRequest();
+    m_ManualPumpBlockingFire.store(false, std::memory_order_release);
+    m_PhysicalReloadOwnsStockInput.store(false, std::memory_order_release);
     UpdateDualPistolReload(nullptr, false, DualReloadButtons{});
     m_DualPistolsActive.store(false, std::memory_order_release);
     m_LeftHandPistolActive.store(false, std::memory_order_release);

@@ -1879,42 +1879,8 @@ void VR::UpdateTracking()
     if (!m_RightControllerForwardUnforced.IsZero())
         m_LastUnforcedAimDirection = m_RightControllerForwardUnforced;
 
-    const bool shouldForceEvadeAim =
-        m_SpecialInfectedWarningActionEnabled &&
-        m_SpecialInfectedWarningActionStep != SpecialInfectedWarningActionStep::None &&
-        m_SpecialInfectedWarningTargetActive;
-    const bool shouldForceAim = m_SpecialInfectedPreWarningActive || shouldForceEvadeAim;
-    const Vector forcedTarget = shouldForceEvadeAim
-        ? m_SpecialInfectedWarningTarget
-        : m_SpecialInfectedPreWarningTarget;
-
-    if (shouldForceAim)
-    {
-        Vector toTarget = forcedTarget - m_RightControllerPosAbs;
-        if (!toTarget.IsZero())
-        {
-            VectorNormalize(toTarget);
-            const float lerpFactor = m_SpecialInfectedDebug
-                ? std::max(0.0f, m_SpecialInfectedAutoAimLerp)
-                : std::clamp(m_SpecialInfectedAutoAimLerp, 0.0f, 1.0f);
-            if (m_SpecialInfectedAutoAimDirection.IsZero())
-                m_SpecialInfectedAutoAimDirection = toTarget;
-            else
-                m_SpecialInfectedAutoAimDirection += (toTarget - m_SpecialInfectedAutoAimDirection) * lerpFactor;
-
-            if (!m_SpecialInfectedAutoAimDirection.IsZero())
-            {
-                VectorNormalize(m_SpecialInfectedAutoAimDirection);
-                QAngle forcedAngles;
-                QAngle::VectorAngles(m_SpecialInfectedAutoAimDirection, m_HmdUp, forcedAngles);
-                QAngle::AngleVectors(forcedAngles, &m_RightControllerForward, &m_RightControllerRight, &m_RightControllerUp);
-            }
-        }
-    }
-    else
-    {
-        m_SpecialInfectedAutoAimDirection = m_RightControllerForward;
-    }
+    // 2.0.13: the special-infected aim assist (pre-warning / evade aim lock) is removed:
+    // the aim is always where the controller points.
 
     Vector pavlovAimForward{};
     Vector pavlovAimRight{};

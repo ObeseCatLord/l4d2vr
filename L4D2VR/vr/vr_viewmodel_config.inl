@@ -1,22 +1,10 @@
 void VR::GetAimLineColor(int& r, int& g, int& b, int& a) const
 {
-    if (m_SpecialInfectedBlindSpotWarningActive)
-    {
-        r = m_AimLineWarningColorR;
-        g = m_AimLineWarningColorG;
-        b = m_AimLineWarningColorB;
-    }
-    else if (m_EffectiveAttackRangeIndicatorEnabled && m_AimLineEffectiveAttackRangeActive)
+    if (m_EffectiveAttackRangeIndicatorEnabled && m_AimLineEffectiveAttackRangeActive)
     {
         r = m_EffectiveAttackRangeColorR;
         g = m_EffectiveAttackRangeColorG;
         b = m_EffectiveAttackRangeColorB;
-    }
-    else if (m_SpecialInfectedPreWarningActive)
-    {
-        r = m_AimLineWarningColorR;
-        g = m_AimLineWarningColorG;
-        b = m_AimLineWarningColorB;
     }
     else
     {
@@ -3944,44 +3932,6 @@ void VR::ParseConfigFileUnlocked()
     m_NonVRMeleeAngVelThreshold = std::max(0.0f, getFloat("NonVRMeleeAngVelThreshold", m_NonVRMeleeAngVelThreshold));
     m_NonVRMeleeSwingDirBlend = std::clamp(getFloat("NonVRMeleeSwingDirBlend", m_NonVRMeleeSwingDirBlend), 0.0f, 1.0f);
     m_RequireSecondaryAttackForItemSwitch = getBool("RequireSecondaryAttackForItemSwitch", m_RequireSecondaryAttackForItemSwitch);
-    m_SpecialInfectedWarningActionEnabled = getBool("SpecialInfectedAutoEvade", m_SpecialInfectedWarningActionEnabled);
-    m_SpecialInfectedAutoEvadeIgnoreBehind = getBool("SpecialInfectedAutoEvadeIgnoreBehind", m_SpecialInfectedAutoEvadeIgnoreBehind);
-    m_SpecialInfectedDodgeActive = getBool("SpecialInfectedDodgeEnabled", m_SpecialInfectedDodgeActive);
-    m_SpecialInfectedDodgeDistance = std::max(0.0f, getFloat("SpecialInfectedDodgeDistance", m_SpecialInfectedDodgeDistance));
-    if (!m_SpecialInfectedDodgeActive || m_SpecialInfectedDodgeDistance <= 0.0f)
-    {
-        if (m_SpecialInfectedDodgeDistance <= 0.0f)
-            m_SpecialInfectedDodgeActive = false;
-        std::lock_guard<std::mutex> lock(m_SpecialInfectedDodgeMutex);
-        m_SpecialInfectedDodgeThreats.clear();
-        m_LastSpecialInfectedDodgeScanTime = {};
-    }
-    m_SpecialInfectedArrowEnabled = getBool("SpecialInfectedArrowEnabled", m_SpecialInfectedArrowEnabled);
-    m_SpecialInfectedDebug = getBool("SpecialInfectedDebug", m_SpecialInfectedDebug);
-    m_SpecialInfectedArrowDebugLog = getBool("SpecialInfectedArrowDebugLog", m_SpecialInfectedArrowDebugLog);
-    m_SpecialInfectedArrowDebugLogHz = std::clamp(getFloat("SpecialInfectedArrowDebugLogHz", m_SpecialInfectedArrowDebugLogHz), 0.0f, 20.0f);
-    m_ItemModelLabelEnabled = getBool("ItemModelLabelEnabled", m_ItemModelLabelEnabled);
-    m_ItemModelLabelShowWeapons = getBool("ItemModelLabelShowWeapons", m_ItemModelLabelShowWeapons);
-    m_ItemModelLabelShowThrowables = getBool("ItemModelLabelShowThrowables", m_ItemModelLabelShowThrowables);
-    m_ItemModelLabelShowMedical = getBool("ItemModelLabelShowMedical", m_ItemModelLabelShowMedical);
-    m_ItemModelLabelDebugLog = getBool("ItemModelLabelDebugLog", m_ItemModelLabelDebugLog);
-    m_ItemModelLabelBlacklist.clear();
-    for (std::string token : getStringList("ItemModelLabelBlacklist"))
-    {
-        std::transform(token.begin(), token.end(), token.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (!token.empty())
-            m_ItemModelLabelBlacklist.insert(token);
-    }
-    // Drop stale projected labels when config is reloaded so newly blacklisted text disappears immediately.
-    m_ProjectedItemLabels.clear();
-    m_LastItemModelLabelTime.clear();
-    ClearQueuedProjectedItemLabels();
-    m_ItemModelLabelMaxHz = std::max(0.0f, getFloat("ItemModelLabelMaxHz", m_ItemModelLabelMaxHz));
-    m_ItemModelLabelScanHz = std::clamp(getFloat("ItemModelLabelScanHz", m_ItemModelLabelScanHz), 1.0f, 60.0f);
-    m_ItemModelLabelTextScale = std::clamp(getFloat("ItemModelLabelTextScale", m_ItemModelLabelTextScale), 0.25f, 4.0f);
-    m_ItemModelLabelMaxDistance = std::max(0.0f, getFloat("ItemModelLabelMaxDistance", m_ItemModelLabelMaxDistance));
-    m_ItemModelLabelMaxVisiblePerEye = std::clamp(getInt("ItemModelLabelMaxVisiblePerEye", m_ItemModelLabelMaxVisiblePerEye), 1, 64);
     m_DesktopMirrorEnabled = getBool("DesktopMirrorEnabled", m_DesktopMirrorEnabled);
     {
         std::string eye = getString("DesktopMirrorEye", m_DesktopMirrorEye == 0 ? "left" : "right");
@@ -4017,130 +3967,6 @@ void VR::ParseConfigFileUnlocked()
         // m_TextureMutex (a render functor may hold it).
         m_DesktopMirrorTextureResetRequested.store(true, std::memory_order_release);
     }
-    m_ItemModelLabelPlayerSuppressRadius = std::max(0.0f, getFloat("ItemModelLabelPlayerSuppressRadius", m_ItemModelLabelPlayerSuppressRadius));
-    m_ItemModelLabelPlayerSuppressMinZ = getFloat("ItemModelLabelPlayerSuppressMinZ", m_ItemModelLabelPlayerSuppressMinZ);
-    m_ItemModelLabelPlayerSuppressMaxZ = getFloat("ItemModelLabelPlayerSuppressMaxZ", m_ItemModelLabelPlayerSuppressMaxZ);
-    if (m_ItemModelLabelPlayerSuppressMinZ > m_ItemModelLabelPlayerSuppressMaxZ)
-        std::swap(m_ItemModelLabelPlayerSuppressMinZ, m_ItemModelLabelPlayerSuppressMaxZ);
-    m_SpecialInfectedArrowSize = std::max(0.0f, getFloat("SpecialInfectedArrowSize", m_SpecialInfectedArrowSize));
-    m_SpecialInfectedArrowHeight = std::max(0.0f, getFloat("SpecialInfectedArrowHeight", m_SpecialInfectedArrowHeight));
-    m_SpecialInfectedArrowThickness = std::max(0.0f, getFloat("SpecialInfectedArrowThickness", m_SpecialInfectedArrowThickness));
-    m_SpecialInfectedBlindSpotDistance = std::max(0.0f, getFloat("SpecialInfectedBlindSpotDistance", m_SpecialInfectedBlindSpotDistance));
-    m_SpecialInfectedIntentSenseEnabled = getBool("SpecialInfectedIntentSenseEnabled", m_SpecialInfectedIntentSenseEnabled);
-    m_SpecialInfectedIntentSenseHudEnabled = getBool("SpecialInfectedIntentSenseHudEnabled", m_SpecialInfectedIntentSenseHudEnabled);
-    m_DesktopIntentSenseHudWindowEnabled = getBool("DesktopIntentSenseHudWindowEnabled", m_DesktopIntentSenseHudWindowEnabled);
-    m_SpecialInfectedIntentSenseHapticsEnabled = getBool("SpecialInfectedIntentSenseHapticsEnabled", m_SpecialInfectedIntentSenseHapticsEnabled);
-    m_SpecialInfectedIntentSenseUseLookFallback = getBool("SpecialInfectedIntentSenseUseLookFallback", m_SpecialInfectedIntentSenseUseLookFallback);
-    m_SpecialInfectedIntentSenseWarnFront = getBool("SpecialInfectedIntentSenseWarnFront", m_SpecialInfectedIntentSenseWarnFront);
-    m_SpecialInfectedIntentSenseDistance = std::max(0.0f, getFloat("SpecialInfectedIntentSenseDistance", m_SpecialInfectedIntentSenseDistance));
-    m_SpecialInfectedIntentSenseLookDot = std::clamp(getFloat("SpecialInfectedIntentSenseLookDot", m_SpecialInfectedIntentSenseLookDot), 0.0f, 1.0f);
-    m_SpecialInfectedIntentSenseCooldownSeconds = std::max(0.0f, getFloat("SpecialInfectedIntentSenseCooldownSeconds", m_SpecialInfectedIntentSenseCooldownSeconds));
-    m_SpecialInfectedIntentSenseHudWidthMeters = std::clamp(getFloat("SpecialInfectedIntentSenseHudWidthMeters", m_SpecialInfectedIntentSenseHudWidthMeters), 0.10f, 1.50f);
-    m_SpecialInfectedIntentSenseHudMarginXMeters = std::clamp(getFloat("SpecialInfectedIntentSenseHudMarginXMeters", m_SpecialInfectedIntentSenseHudMarginXMeters), -1.0f, 1.0f);
-    m_SpecialInfectedIntentSenseHudMarginYMeters = std::clamp(getFloat("SpecialInfectedIntentSenseHudMarginYMeters", m_SpecialInfectedIntentSenseHudMarginYMeters), -1.0f, 1.0f);
-    m_SpecialInfectedIntentSenseHudMaxLines = std::clamp(getInt("SpecialInfectedIntentSenseHudMaxLines", m_SpecialInfectedIntentSenseHudMaxLines), 1, 8);
-    m_SpecialInfectedIntentSenseHapticDuration = std::clamp(getFloat("SpecialInfectedIntentSenseHapticDuration", m_SpecialInfectedIntentSenseHapticDuration), 0.0f, 0.5f);
-    m_SpecialInfectedIntentSenseHapticFrequency = std::clamp(getFloat("SpecialInfectedIntentSenseHapticFrequency", m_SpecialInfectedIntentSenseHapticFrequency), 0.0f, 320.0f);
-    m_SpecialInfectedIntentSenseHapticAmplitude = std::clamp(getFloat("SpecialInfectedIntentSenseHapticAmplitude", m_SpecialInfectedIntentSenseHapticAmplitude), 0.0f, 1.0f);
-    m_SpecialInfectedPreWarningAutoAimConfigEnabled = getBool("SpecialInfectedPreWarningAutoAimEnabled", m_SpecialInfectedPreWarningAutoAimConfigEnabled);
-    m_SpecialInfectedPreWarningEvadeDistance = std::max(0.0f, getFloat("SpecialInfectedPreWarningEvadeDistance", m_SpecialInfectedPreWarningEvadeDistance));
-    m_SpecialInfectedPreWarningEvadeCooldown = std::max(0.0f, getFloat("SpecialInfectedPreWarningEvadeCooldown", m_SpecialInfectedPreWarningEvadeCooldown));
-    if (!m_SpecialInfectedPreWarningAutoAimConfigEnabled)
-        m_SpecialInfectedPreWarningAutoAimEnabled = false;
-    m_SpecialInfectedPreWarningDistance = std::max(0.0f, getFloat("SpecialInfectedPreWarningDistance", m_SpecialInfectedPreWarningDistance));
-    m_SpecialInfectedPreWarningTargetUpdateInterval = std::max(0.0f, getFloat("SpecialInfectedPreWarningTargetUpdateInterval", m_SpecialInfectedPreWarningTargetUpdateInterval));
-    m_SpecialInfectedOverlayMaxHz = std::max(0.0f, getFloat("SpecialInfectedOverlayMaxHz", m_SpecialInfectedOverlayMaxHz));
-    m_SpecialInfectedTraceMaxHz = std::max(0.0f, getFloat("SpecialInfectedTraceMaxHz", m_SpecialInfectedTraceMaxHz));
-    const float preWarningAimAngle = getFloat("SpecialInfectedPreWarningAimAngle", m_SpecialInfectedPreWarningAimAngle);
-    m_SpecialInfectedPreWarningAimAngle = m_SpecialInfectedDebug
-        ? std::max(0.0f, preWarningAimAngle)
-        : std::clamp(preWarningAimAngle, 0.0f, 10.0f);
-
-    const float aimSnapDistance = getFloat("SpecialInfectedPreWarningAimSnapDistance", m_SpecialInfectedPreWarningAimSnapDistance);
-    m_SpecialInfectedPreWarningAimSnapDistance = m_SpecialInfectedDebug
-        ? std::max(0.0f, aimSnapDistance)
-        : std::clamp(aimSnapDistance, 0.0f, 30.0f);
-
-    const float releaseDistance = getFloat("SpecialInfectedPreWarningAimReleaseDistance", m_SpecialInfectedPreWarningAimReleaseDistance);
-    m_SpecialInfectedPreWarningAimReleaseDistance = m_SpecialInfectedDebug
-        ? std::max(m_SpecialInfectedPreWarningAimSnapDistance, std::max(0.0f, releaseDistance))
-        : std::clamp(std::max(m_SpecialInfectedPreWarningAimSnapDistance, std::max(0.0f, releaseDistance)), 0.0f, 40.0f);
-
-    const float autoAimLerp = getFloat("SpecialInfectedAutoAimLerp", m_SpecialInfectedAutoAimLerp);
-    m_SpecialInfectedAutoAimLerp = m_SpecialInfectedDebug
-        ? std::max(0.0f, autoAimLerp)
-        : std::clamp(autoAimLerp, 0.0f, 0.3f);
-
-    const float autoAimCooldown = getFloat("SpecialInfectedAutoAimCooldown", m_SpecialInfectedAutoAimCooldown);
-    m_SpecialInfectedAutoAimCooldown = m_SpecialInfectedDebug
-        ? std::max(0.0f, autoAimCooldown)
-        : std::max(0.5f, autoAimCooldown);
-    m_SpecialInfectedWarningSecondaryHoldDuration = std::max(0.0f, getFloat("SpecialInfectedWarningSecondaryHoldDuration", m_SpecialInfectedWarningSecondaryHoldDuration));
-    m_SpecialInfectedWarningPostAttackDelay = std::max(0.0f, getFloat("SpecialInfectedWarningPostAttackDelay", m_SpecialInfectedWarningPostAttackDelay));
-    m_SpecialInfectedWarningJumpHoldDuration = std::max(0.0f, getFloat("SpecialInfectedWarningJumpHoldDuration", m_SpecialInfectedWarningJumpHoldDuration));
-    auto specialInfectedArrowColor = getColor("SpecialInfectedArrowColor", m_SpecialInfectedArrowDefaultColor.r, m_SpecialInfectedArrowDefaultColor.g, m_SpecialInfectedArrowDefaultColor.b, 255);
-    const bool hasGlobalArrowColor = userConfig.find("SpecialInfectedArrowColor") != userConfig.end();
-    m_SpecialInfectedArrowDefaultColor.r = specialInfectedArrowColor[0];
-    m_SpecialInfectedArrowDefaultColor.g = specialInfectedArrowColor[1];
-    m_SpecialInfectedArrowDefaultColor.b = specialInfectedArrowColor[2];
-
-    if (hasGlobalArrowColor)
-    {
-        for (auto& color : m_SpecialInfectedArrowColors)
-        {
-            color.r = m_SpecialInfectedArrowDefaultColor.r;
-            color.g = m_SpecialInfectedArrowDefaultColor.g;
-            color.b = m_SpecialInfectedArrowDefaultColor.b;
-        }
-    }
-
-    static const std::array<std::pair<SpecialInfectedType, const char*>, 8> arrowColorConfigKeys =
-    {
-        std::make_pair(SpecialInfectedType::Boomer, "Boomer"),
-        std::make_pair(SpecialInfectedType::Smoker, "Smoker"),
-        std::make_pair(SpecialInfectedType::Hunter, "Hunter"),
-        std::make_pair(SpecialInfectedType::Spitter, "Spitter"),
-        std::make_pair(SpecialInfectedType::Jockey, "Jockey"),
-        std::make_pair(SpecialInfectedType::Charger, "Charger"),
-        std::make_pair(SpecialInfectedType::Tank, "Tank"),
-        std::make_pair(SpecialInfectedType::Witch, "Witch")
-    };
-
-    for (const auto& [type, suffix] : arrowColorConfigKeys)
-    {
-        const size_t typeIndex = static_cast<size_t>(type);
-        if (typeIndex >= m_SpecialInfectedArrowColors.size())
-            continue;
-
-        std::string key = std::string("SpecialInfectedArrowColor") + suffix;
-        auto color = getColor(key.c_str(), m_SpecialInfectedArrowColors[typeIndex].r, m_SpecialInfectedArrowColors[typeIndex].g, m_SpecialInfectedArrowColors[typeIndex].b, 255);
-        m_SpecialInfectedArrowColors[typeIndex].r = color[0];
-        m_SpecialInfectedArrowColors[typeIndex].g = color[1];
-        m_SpecialInfectedArrowColors[typeIndex].b = color[2];
-    }
-
-    static const std::array<std::pair<SpecialInfectedType, const char*>, 8> preWarningOffsetConfigKeys =
-    {
-        std::make_pair(SpecialInfectedType::Boomer, "Boomer"),
-        std::make_pair(SpecialInfectedType::Smoker, "Smoker"),
-        std::make_pair(SpecialInfectedType::Hunter, "Hunter"),
-        std::make_pair(SpecialInfectedType::Spitter, "Spitter"),
-        std::make_pair(SpecialInfectedType::Jockey, "Jockey"),
-        std::make_pair(SpecialInfectedType::Charger, "Charger"),
-        std::make_pair(SpecialInfectedType::Tank, "Tank"),
-        std::make_pair(SpecialInfectedType::Witch, "Witch")
-    };
-
-    for (const auto& [type, suffix] : preWarningOffsetConfigKeys)
-    {
-        const size_t typeIndex = static_cast<size_t>(type);
-        if (typeIndex >= m_SpecialInfectedPreWarningAimOffsets.size())
-            continue;
-
-        std::string key = std::string("SpecialInfectedPreWarningAimOffset") + suffix;
-        m_SpecialInfectedPreWarningAimOffsets[typeIndex] = getVector3(key.c_str(), m_SpecialInfectedPreWarningAimOffsets[typeIndex]);
-    }
-
     // Client shadow manager / flashlight shadow controls discovered from client.dll.
     m_ShadowTweaksEnabled = getBool("ShadowTweaksEnabled", m_ShadowTweaksEnabled);
     m_ShadowCvarShadows = std::clamp(getInt("r_shadows", m_ShadowCvarShadows), 0, 1);

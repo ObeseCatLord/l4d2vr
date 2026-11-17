@@ -27899,15 +27899,6 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
                     modelName.c_str(), pCustomBoneToWorld ? 1 : 0, s_Entered, static_cast<unsigned>(info.flags));
             }
         }
-        // In desktop-mirror overlay hide mode, special-infected arrows are cached
-        // from the RenderView hook at a fixed stereo-pass point. Never scan from
-        // DrawModelExecute in that mode: under mat_queue_mode 2 this hook can run
-        // once per model and would multiply client-entity-list scan requests.
-        const bool desktopMirrorOverlayHideActiveEarly =
-            m_VR->m_DesktopMirrorHidePluginOverlays && m_VR->m_DesktopMirrorEnabled;
-        if (!desktopMirrorOverlayHideActiveEarly)
-            m_VR->ScanSpecialInfectedEntitiesFromClientList();
-
         const C_BaseEntity* entity = nullptr;
         if (m_Game->m_ClientEntityList && info.entity_index > 0 && info.entity_index <= 2048)
         {
@@ -28030,18 +28021,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             return;
         }
 
-        const bool suppressDesktopMirrorPluginOverlays =
-            m_VR->m_DesktopMirrorCleanRenderingPass && m_VR->m_DesktopMirrorHidePluginOverlays;
-        const bool desktopMirrorOverlayHideActive =
-            m_VR->m_DesktopMirrorHidePluginOverlays && m_VR->m_DesktopMirrorEnabled;
-        const bool singlePassDesktopMirrorPluginOverlays = false;
         const int queueMode = (m_Game != nullptr) ? m_Game->GetMatQueueMode() : 0;
-        if (queueMode == 0 &&
-            !suppressDesktopMirrorPluginOverlays &&
-            (info.entity_index == -1 || (info.entity_index > 0 && info.entity_index <= 2048)))
-        {
-            m_VR->DrawItemModelLabel(info.entity_index, modelName, info.origin, entity, className);
-        }
         // Scope RTT pass: optionally hide the local player model so scoped view isn't blocked by your own head/body.
         if (m_VR->m_ScopeRenderingPass && m_VR->m_ScopeHideLocalPlayerModelInScope && isPlayerClass && m_Game->m_EngineClient)
         {
@@ -28469,157 +28449,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             pDrawInfo,
             pBonesToWorldFinal);
 
-        const VR::SpecialInfectedType entityInfectedType =
-            entity ? m_VR->GetSpecialInfectedType(entity) : VR::SpecialInfectedType::None;
-        const VR::SpecialInfectedType modelInfectedType = m_VR->GetSpecialInfectedTypeFromModel(modelName);
-        const bool useWitchModelFallback =
-            modelInfectedType == VR::SpecialInfectedType::Witch &&
-            entityInfectedType == VR::SpecialInfectedType::None;
-
-        if (!suppressDesktopMirrorPluginOverlays && !desktopMirrorOverlayHideActive && useWitchModelFallback)
-        {
-            if (m_VR->m_SpecialInfectedArrowDebugLog && m_VR->m_SpecialInfectedArrowDebugLogHz > 0.0f)
-            {
-                static std::unordered_map<int, std::chrono::steady_clock::time_point> s_lastWitchModelDebugLog;
-                const int debugKey = info.entity_index > 0 ? info.entity_index : -1;
-                bool doDebugLog = true;
-                auto& last = s_lastWitchModelDebugLog[debugKey];
-                const auto now = std::chrono::steady_clock::now();
-                if (last.time_since_epoch().count() != 0)
-                {
-                    const float minInterval = 1.0f / std::max(1.0f, m_VR->m_SpecialInfectedArrowDebugLogHz);
-                    const float elapsed = std::chrono::duration<float>(now - last).count();
-                    if (elapsed >= 0.0f && elapsed < minInterval)
-                        doDebugLog = false;
-                }
-                if (doDebugLog)
-                {
-                    last = now;
-                    Game::logMsg(
-                        "[VR][SIArrow][model] idx=%d class=%s model=\"%s\" type=%d origin=(%.1f %.1f %.1f)",
-                        info.entity_index,
-                        (className && *className) ? className : "<null>",
-                        modelName.c_str(),
-                        static_cast<int>(modelInfectedType),
-                        info.origin.x,
-                        info.origin.y,
-                        info.origin.z);
-                }
-            }
-
-            m_VR->RefreshSpecialInfectedPreWarning(info.origin, modelInfectedType, info.entity_index, false);
-
-            bool doOverlay = true;
-            if (!singlePassDesktopMirrorPluginOverlays && info.entity_index > 0 && m_VR->m_SpecialInfectedOverlayMaxHz > 0.0f)
-            {
-                auto& last = m_VR->m_LastSpecialInfectedOverlayTime[info.entity_index];
-                const auto now = std::chrono::steady_clock::now();
-                if (last.time_since_epoch().count() != 0)
-                {
-                    const float minInterval = 1.0f / std::max(1.0f, m_VR->m_SpecialInfectedOverlayMaxHz);
-                    const float elapsed = std::chrono::duration<float>(now - last).count();
-                    if (elapsed >= 0.0f && elapsed < minInterval)
-                        doOverlay = false;
-                }
-                if (doOverlay)
-                    last = now;
-            }
-
-            if (doOverlay)
-            {
-                if (m_VR->m_RearMirrorEnabled && m_VR->m_RearMirrorShowOnlyOnSpecialWarning
-                    && m_VR->m_RearMirrorSpecialShowHoldSeconds > 0.0f && m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-                {
-                    Vector to = info.origin - m_VR->m_HmdPosAbs;
-                    to.z = 0.0f;
-                    const float maxD = m_VR->m_RearMirrorSpecialWarningDistance;
-                    if (!to.IsZero() && to.LengthSqr() <= (maxD * maxD))
-                    {
-                        Vector fwd = m_VR->m_HmdForward;
-                        fwd.z = 0.0f;
-                        if (VectorNormalize(fwd) == 0.0f)
-                            fwd = { 1.0f, 0.0f, 0.0f };
-                        VectorNormalize(to);
-                        if (DotProduct(to, fwd) < 0.0f)
-                            m_VR->NotifyRearMirrorSpecialWarning();
-                        m_VR->m_RearMirrorSawSpecialThisPass = true;
-                    }
-                }
-
-                m_VR->DrawSpecialInfectedArrow(info.origin, modelInfectedType);
-            }
-        }
-
-        if (!suppressDesktopMirrorPluginOverlays && !desktopMirrorOverlayHideActive && entity && entityInfectedType != VR::SpecialInfectedType::None)
-        {
-            if (m_VR->IsEntityAlive(entity))
-            {
-                // 1) 高优先级：自瞄/目标刷新不要被 Overlay 节流影响（否则锁定会飘）
-                // RefreshSpecialInfectedPreWarning 内部会用到 Trace 缓存（TraceMaxHz），所以这里高频调用不会把 CPU 打爆。
-                m_VR->RefreshSpecialInfectedPreWarning(info.origin, entityInfectedType, info.entity_index, isPlayerClass);
-
-                // Rear mirror pop-up: if enabled, show the mirror briefly when a special infected is behind you
-                // within the configured warning distance. This detection runs on the main render pass so the
-                // mirror can wake up without relying on the mirror RTT pass.
-                if (m_VR->m_RearMirrorEnabled && m_VR->m_RearMirrorShowOnlyOnSpecialWarning
-                    && m_VR->m_RearMirrorSpecialShowHoldSeconds > 0.0f && m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-                {
-                    Vector to = info.origin - m_VR->m_HmdPosAbs;
-                    to.z = 0.0f;
-                    const float maxD = m_VR->m_RearMirrorSpecialWarningDistance;
-                    if (!to.IsZero() && to.LengthSqr() <= (maxD * maxD))
-                    {
-                        Vector fwd = m_VR->m_HmdForward;
-                        fwd.z = 0.0f;
-                        if (VectorNormalize(fwd) == 0.0f)
-                            fwd = { 1.0f, 0.0f, 0.0f };
-                        VectorNormalize(to);
-                        // Behind = more likely you want the rear mirror.
-                        if (DotProduct(to, fwd) < 0.0f)
-                            m_VR->NotifyRearMirrorSpecialWarning();
-                    }
-                }
-
-                // 2) 低优先级：视觉 Overlay（箭头/盲区提示）继续按实体节流，避免 dDrawModelExecute 多次调用导致尖峰
-                bool doOverlay = true;
-                if (!singlePassDesktopMirrorPluginOverlays && info.entity_index > 0 && m_VR->m_SpecialInfectedOverlayMaxHz > 0.0f)
-                {
-                    auto& last = m_VR->m_LastSpecialInfectedOverlayTime[info.entity_index];
-                    const auto now = std::chrono::steady_clock::now();
-                    if (last.time_since_epoch().count() != 0)
-                    {
-                        const float minInterval = 1.0f / std::max(1.0f, m_VR->m_SpecialInfectedOverlayMaxHz);
-                        const float elapsed = std::chrono::duration<float>(now - last).count();
-                        if (elapsed < minInterval)
-                            doOverlay = false;
-                    }
-                    if (doOverlay)
-                        last = now;
-                }
-
-                if (doOverlay)
-                {
-                    // Rear-mirror hint: if this special-infected arrow is being rendered during the rear-mirror RTT pass
-                    // and within the configured distance, enlarge the mirror overlay.
-                    if (m_VR->m_RearMirrorRenderingPass && m_VR->m_RearMirrorSpecialWarningDistance > 0.0f)
-                    {
-                        Vector to = info.origin - m_VR->m_HmdPosAbs;
-                        to.z = 0.0f;
-                        const float maxD = m_VR->m_RearMirrorSpecialWarningDistance;
-                        if (!to.IsZero() && to.LengthSqr() <= (maxD * maxD))
-                            m_VR->m_RearMirrorSawSpecialThisPass = true;
-                    }
-                    if (entityInfectedType != VR::SpecialInfectedType::Tank
-                        && entityInfectedType != VR::SpecialInfectedType::Witch
-                        && entityInfectedType != VR::SpecialInfectedType::Charger)
-                    {
-                        m_VR->RefreshSpecialInfectedBlindSpotWarning(info.origin);
-                    }
-                    m_VR->DrawSpecialInfectedArrow(info.origin, entityInfectedType);
-                }
-            }
-        }
-
+        // 2.0.13: special-infected arrows, warnings and the rear-mirror
+        // special-infected pop-up are removed (they showed what the game does not).
         {
             MagazineInteractionRenderSnapshotScope detachedMagazineSnapshot(queueMode != 0);
             drawMagazineInteractionDetachedMagazine = BuildMagazineInteractionDetachedMagazineBones(

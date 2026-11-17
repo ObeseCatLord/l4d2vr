@@ -129,7 +129,6 @@ void VR::ProcessInput()
     m_PrevFrameTime = currentTime;
     m_LastFrameDuration = std::clamp(deltaTime * 0.001f, 0.0f, 0.25f);
 
-    UpdateSpecialInfectedWarningAction();
 
     if (m_SuppressPlayerInput || !IsInputActionFrameAvailable())
     {

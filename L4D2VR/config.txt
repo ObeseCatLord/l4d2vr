@@ -758,11 +758,8 @@ MouseModeScopeOverlayOffset=0,-0.02,-0.3
 MouseModeScopeOverlayAngleOffset=0,0,0
 MouseModeScopeToggleKey=key:q
 
-SpecialInfectedDodgeEnabled=false
-SpecialInfectedDodgeDistance=260
 LazyScopeRearMirrorRTT=true
 DesktopRearMirrorWindowEnabled=false
-DesktopIntentSenseHudWindowEnabled=false
 DebugVASLog=false
 
 HitSoundEnabled=false

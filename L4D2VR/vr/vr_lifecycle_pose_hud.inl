@@ -2008,24 +2008,23 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             L4D2VRSetOverlayCurvature(ov, m_SpecialInfectedIntentSenseHudHandle, 0.0f);
             return true;
         };
-    const bool wantsIntentSenseHudOutput =
-        (m_SpecialInfectedIntentSenseEnabled && m_SpecialInfectedIntentSenseHudEnabled) ||
-        m_DesktopIntentSenseHudWindowEnabled;
-
-    if (wantsIntentSenseHudOutput &&
-        m_Game && m_Game->m_ClientEntityList)
-    {
-        ScanSpecialInfectedEntitiesFromClientList();
-    }
-
+    // 2.0.13: the special-infected "intent sense" panel is gone (it showed
+    // threats the game does not show). Its overlay now carries short L4D2VR
+    // notices: the gameplay mode (Physical / Classic) for a few seconds after
+    // joining a server or when it changes.
     {
         std::vector<SpecialInfectedIntentSenseHudLine> intentLines;
         int intentRevision = 0;
-        if (wantsIntentSenseHudOutput)
         {
-            std::lock_guard<std::mutex> lock(m_SpecialInfectedIntentSenseHudMutex);
-            intentLines = m_SpecialInfectedIntentSenseHudLines;
-            intentRevision = m_SpecialInfectedIntentSenseHudRevision;
+            std::string notice;
+            if (GetGameplayModeNotice(notice))
+            {
+                SpecialInfectedIntentSenseHudLine line;
+                line.text = notice;
+                line.color = { 255, 226, 150 };
+                intentLines.push_back(line);
+                intentRevision = static_cast<int>(std::hash<std::string>{}(notice) & 0x7fffffff);
+            }
         }
 
         const bool wantIntentHud = !intentLines.empty() && ensureIntentSenseHudOverlay();
@@ -2058,7 +2057,7 @@ void VR::UpdateHandHudOverlays(PendingOverlayTextureBindBatch* pendingTextureBin
             FillRect(s, 0, 0, w, h, { 8, 12, 18, 210 });
             DrawCornerBrackets(s, 2, 2, w - 4, h - 4, { 255, 86, 56, 235 });
             DrawRect(s, 7, 7, w - 14, h - 14, { 120, 34, 28, 230 }, 1);
-            DrawTextUtf8OutlinedGdiClippedEx(s, 14, 10, w - 28, "\xE6\x9D\x80\xE6\x84\x8F\xE6\x84\x9F\xE7\x9F\xA5", 18, { 255, 210, 190, 255 }, false);
+            DrawTextUtf8OutlinedGdiClippedEx(s, 14, 10, w - 28, "L4D2VR", 18, { 255, 210, 190, 255 }, false);
 
             const int maxLines = std::clamp(m_SpecialInfectedIntentSenseHudMaxLines, 1, 8);
             const int lineH = 26;

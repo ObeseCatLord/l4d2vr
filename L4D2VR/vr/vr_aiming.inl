@@ -1889,8 +1889,6 @@ bool VR::ApplyBulletAimOffset(Vector& origin, Vector& direction, const Vector& r
 
 void VR::UpdateAimingLaser(C_BasePlayer* localPlayer)
 {
-    UpdateSpecialInfectedWarningState();
-    UpdateSpecialInfectedPreWarningState();
 
 
     // In mat_queue_mode!=0, aim-line visuals should prefer the render-frame snapshot
@@ -4748,52 +4746,8 @@ void VR::TriggerShoveHaptics(bool leftHand)
         m_ShoveHapticsProfile.frequency,
         m_ShoveHapticsProfile.amplitude);
 }
-// Special infected recognition
-
-#if __has_include("special_infected_features.cpp")
-#define L4D2VR_HAS_SPECIAL_INFECTED_FEATURES 1
-#include "special_infected_features.cpp"
-#else
-#define L4D2VR_HAS_SPECIAL_INFECTED_FEATURES 0
-
+// Special infected recognition. 2.0.13: the optional special-infected
+// feature unit (arrows, warnings, aim assist, auto evade, dodge) is removed
+// and can no longer be compiled in; only the type query stays (always None).
 VR::SpecialInfectedType VR::GetSpecialInfectedType(const C_BaseEntity* /*entity*/) const { return SpecialInfectedType::None; }
 VR::SpecialInfectedType VR::GetSpecialInfectedTypeFromModel(const std::string& /*modelName*/) const { return SpecialInfectedType::None; }
-void VR::DrawSpecialInfectedArrow(const Vector& /*origin*/, SpecialInfectedType /*type*/) {}
-void VR::RefreshSpecialInfectedPreWarning(const Vector& /*infectedOrigin*/, SpecialInfectedType /*type*/, int /*entityIndex*/, bool /*isPlayerClass*/) {}
-void VR::RefreshSpecialInfectedBlindSpotWarning(const Vector& /*infectedOrigin*/) {}
-bool VR::HasLineOfSightToSpecialInfected(const Vector& /*infectedOrigin*/, int /*entityIndex*/) const { return false; }
-bool VR::IsSpecialInfectedInBlindSpot(const Vector& /*infectedOrigin*/) const { return false; }
-
-void VR::UpdateSpecialInfectedWarningState()
-{
-    m_SpecialInfectedBlindSpotWarningActive = false;
-    m_SpecialInfectedPreWarningActive = false;
-    m_SpecialInfectedPreWarningInRange = false;
-    m_SpecialInfectedWarningTargetActive = false;
-    m_SpecialInfectedPreWarningTargetEntityIndex = -1;
-    m_SpecialInfectedPreWarningTargetIsPlayer = false;
-    m_SpecialInfectedAutoAimDirection = {};
-    m_SpecialInfectedAutoAimCooldownEnd = {};
-}
-void VR::UpdateSpecialInfectedPreWarningState()
-{
-    m_SpecialInfectedPreWarningActive = false;
-    m_SpecialInfectedPreWarningInRange = false;
-    m_SpecialInfectedPreWarningTargetEntityIndex = -1;
-    m_SpecialInfectedPreWarningTargetIsPlayer = false;
-    m_SpecialInfectedAutoAimDirection = {};
-    m_SpecialInfectedAutoAimCooldownEnd = {};
-}
-
-void VR::StartSpecialInfectedWarningAction() {}
-void VR::UpdateSpecialInfectedWarningAction() {}
-void VR::ResetSpecialInfectedWarningAction()
-{
-    m_SpecialInfectedWarningAttack2CmdOwned = false;
-    m_SpecialInfectedWarningJumpCmdOwned = false;
-    m_SpecialInfectedWarningActionStep = SpecialInfectedWarningActionStep::None;
-    m_SpecialInfectedWarningNextActionTime = {};
-    m_SuppressPlayerInput = false;
-}
-
-#endif

@@ -5843,9 +5843,6 @@ public:
 	void SpawnKillIndicator(bool headshot, const Vector& worldPos);
 	void DrawKillIndicators(IMatRenderContext* renderContext, ITexture* hudTexture);
 	void DrawProjectedItemLabels(IMatRenderContext* renderContext, const CViewSetup& view, int eyeIndex);
-	void RecordProjectedSpecialInfectedArrow(int entityIndex, const Vector& origin, SpecialInfectedType type);
-	void DrawCachedSpecialInfectedArrowsDebugOverlay();
-	void DrawProjectedSpecialInfectedArrows(IMatRenderContext* renderContext, const CViewSetup& view);
 	void DrawPostMirrorPluginOverlays(IMatRenderContext* renderContext, C_BasePlayer* localPlayer, const CViewSetup& view, int eyeIndex);
 	bool PrepareLeftEyeSurvivorGlowCopy();
 	bool CopyLeftEyeSurvivorGlowToRightEye();
@@ -5926,32 +5923,6 @@ public:
 	bool TryGetItemModelLabelInfo(const std::string& modelName, ItemModelLabelInfo& out) const;
 	bool IsItemModelLabelBlacklisted(const std::string& label) const;
 	bool IsEntityAlive(const C_BaseEntity* entity) const;
-	void DrawSpecialInfectedArrow(const Vector& origin, SpecialInfectedType type);
-	// Stable wrappers used by core rendering/hooks. They are always defined in vr.cpp.
-	// If special_infected_features.cpp is linked, it registers the real implementations;
-	// otherwise these wrappers safely no-op so stripped builds still link.
-	void DrawItemModelLabel(int entityIndex, const std::string& modelName, const Vector& modelOrigin, const C_BaseEntity* entity, const char* className);
-	void ScanSpecialInfectedEntitiesFromClientList();
-	void ScanItemModelLabelEntitiesFromClientList();
-	void ApplyOptionalCreateMoveFeatures(CUserCmd* cmd, int stage, bool inputJumpHeld, bool hadWalkAxis, float walkNx, float walkNy, bool suppressScopeWalk);
-
-	// Optional implementations supplied by special_infected_features.cpp. Do not call these
-	// directly from core code because stripped builds intentionally omit their definitions.
-	void DrawItemModelLabelImpl(int entityIndex, const std::string& modelName, const Vector& modelOrigin, const C_BaseEntity* entity, const char* className);
-	void ScanSpecialInfectedEntitiesFromClientListImpl();
-	void ScanItemModelLabelEntitiesFromClientListImpl();
-	void ApplyOptionalCreateMoveFeaturesImpl(CUserCmd* cmd, int stage, bool inputJumpHeld, bool hadWalkAxis, float walkNx, float walkNy, bool suppressScopeWalk);
-	void RefreshSpecialInfectedPreWarning(const Vector& infectedOrigin, SpecialInfectedType type, int entityIndex, bool isPlayerClass);
-	void RefreshSpecialInfectedBlindSpotWarning(const Vector& infectedOrigin);
-	void BeginSpecialInfectedIntentSenseScan();
-	void FinishSpecialInfectedIntentSenseScan();
-	void RefreshSpecialInfectedIntentSense(const C_BaseEntity* entity, const Vector& infectedOrigin, SpecialInfectedType type, int entityIndex);
-	bool IsSpecialInfectedTargetingLocalPlayer(const C_BaseEntity* entity, const Vector& infectedOrigin, SpecialInfectedType type, int entityIndex, float& outRightBias, const char*& outDirectionText, float& outDistanceMeters, bool& outFront);
-	bool NotifySpecialInfectedIntentSense(SpecialInfectedType type, const char* directionText, float distanceMeters, float rightBias, bool front, int entityIndex, const Vector& infectedOrigin);
-	bool HasLineOfSightToSpecialInfected(const Vector& infectedOrigin, int entityIndex) const;
-	bool IsSpecialInfectedInBlindSpot(const Vector& infectedOrigin) const;
-	void UpdateSpecialInfectedWarningState();
-	void UpdateSpecialInfectedPreWarningState();
 	Vector GetAimRenderCameraDelta() const;
 	void ApplyRoomscale1To1Move(CUserCmd* cmd, float inputSampleTime, bool controlLocomotionActive);
 	bool ShouldUseRoomscale1To1ServerMove() const;
@@ -5977,9 +5948,6 @@ public:
 	bool ShouldSuppressTeleportViewmodelRender() const;
 	void OnPredictionRunCommand(CUserCmd* cmd);
 	void OnPrimaryAttackServerDecision(CUserCmd* cmd, bool fromSecondaryPrediction);
-	void StartSpecialInfectedWarningAction();
-	void UpdateSpecialInfectedWarningAction();
-	void ResetSpecialInfectedWarningAction();
 	void GetAimLineColor(int& r, int& g, int& b, int& a) const;
 	void UpdateAimLineEffectiveAttackRange(C_BasePlayer* localPlayer, C_WeaponCSBase* weapon, C_BaseEntity* hitEntity, const Vector& start, const Vector& end, const Vector& hitPos, bool hasAimHit);
 	bool IsEffectiveAttackRangeTarget(const C_BaseEntity* entity) const;

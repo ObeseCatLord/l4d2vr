@@ -2375,7 +2375,8 @@ static void HooksPerfFrameBoundary(VR* vr)
 	if (s_lastStart != clock::time_point{})
 		sample.frameUs = l4d2vr_frame_perf::ToUs(now - s_lastStart);
 	s_lastStart = now;
-	if (!vr || sample.frameUs == 0)
+	// Below 50 ms a frame is never "slow" (SlowFrameLog's floor): skip the rest.
+	if (!vr || sample.frameUs <= 50000u)
 		return;
 	const float hz = vr->GetHmdDisplayFrequencyHz();
 	if (!s_slowLog.ShouldLog(sample.frameUs, hz, static_cast<uint64_t>(GetTickCount64())))

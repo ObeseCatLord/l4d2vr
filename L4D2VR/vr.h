@@ -65,6 +65,7 @@
 #include "vr_native_wrist_hud.h"
 #include "vr_weapon_reserve.h"
 #include "vr_frame_perf.h"
+#include "vr_backend/reference_space_rebase.h"
 #include "vr_opus_voice.h"
 #include "vr_config_lock.h"
 #include "vector.h"
@@ -533,6 +534,11 @@ public:
 
 	Vector m_HmdPosCorrectedPrev = { 0,0,0 };
 	Vector m_HmdPosLocalPrev = { 0,0,0 };
+	// 2.0.12 (E16): OpenXR reference-space change re-base (vr_backend/reference_space_rebase.h).
+	l4d2vr_space_rebase::Rebaser m_SpaceRebaser{};
+	uint32_t m_SpaceRebaseSeenSequence = 0;
+	float m_SpaceRebasePrevRawYaw = 0.0f;
+	bool m_SpaceRebasePrevRawYawValid = false;
 	Vector m_LeftControllerPosSmoothed = { 0,0,0 };
 	Vector m_RightControllerPosSmoothed = { 0,0,0 };
 	QAngle m_LeftControllerAngSmoothed = { 0,0,0 };

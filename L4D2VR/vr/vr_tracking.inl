@@ -1296,6 +1296,43 @@ void VR::UpdateTracking()
     }
     Vector hmdPosLocal = m_HmdPose.TrackedDevicePos;
 
+    // 2.0.12 (E16): the runtime moved the tracking space (recentre). Drop the
+    // one HMD step that is the jump and cancel its yaw, so the player is
+    // neither teleported nor turned; room-scale, crouch and body state that
+    // remembered absolute tracking values start over.
+    {
+        const uint64_t nowMs = static_cast<uint64_t>(GetTickCount64());
+        const uint32_t sequence = l4d2vr_space_rebase::g_ChangeSequence.load(std::memory_order_acquire);
+        if (sequence != m_SpaceRebaseSeenSequence)
+        {
+            m_SpaceRebaseSeenSequence = sequence;
+            m_SpaceRebaser.OnChange(nowMs);
+        }
+        const float yawStep = m_SpaceRebasePrevRawYawValid
+            ? l4d2vr_space_rebase::YawStep(m_SpaceRebasePrevRawYaw, rawHmdLocalYaw) : 0.0f;
+        const float step = (hmdPosLocal - m_HmdPosLocalPrev).Length();
+        if (m_SpaceRebaser.Pending(nowMs) &&
+            m_SpaceRebaser.ShouldRebase(nowMs, step, yawStep))
+        {
+            m_HmdPosLocalPrev = hmdPosLocal;
+            if (!routeHmdYawThroughTurnPath)
+            {
+                // Same convention as the queued yaw turn path above.
+                m_RotationOffset -= yawStep;
+                m_RotationOffset -= 360.0f * std::floor(m_RotationOffset / 360.0f);
+            }
+            m_Roomscale1To1PrevValid = false;
+            m_Roomscale1To1LastEngineEyeValid = false;
+            m_Roomscale1To1StandingHmdZValid = false;
+            m_Roomscale1To1PhysicalCrouchActive = false;
+            m_HeadSmoothingInitialized = false;
+            Game::logMsg("[VR][OpenXR] tracking space re-based after a recentre: head step %.2f m and yaw %.1f deg removed",
+                step, yawStep);
+        }
+        m_SpaceRebasePrevRawYaw = rawHmdLocalYaw;
+        m_SpaceRebasePrevRawYawValid = true;
+    }
+
     Vector deltaPosition = hmdPosLocal - m_HmdPosLocalPrev;
     Vector hmdPosCorrected = m_HmdPosCorrectedPrev + deltaPosition;
 

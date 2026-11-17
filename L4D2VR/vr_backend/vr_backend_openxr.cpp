@@ -42,6 +42,7 @@
 #include "openxr_overlay_logic.h"
 #include "openxr_hand_logic.h"
 #include "openvr_paths.h"
+#include "reference_space_rebase.h"
 
 #include "../game.h"
 
@@ -1463,8 +1464,31 @@ private:
                     m_Lost.store(true, std::memory_order_release);
                     break;
                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
-                    Game::logMsg("[VR][OpenXR] reference space change pending (recentre)");
+                {
+                    // 2.0.12 (E16): a change of the space the mod tracks in that
+                    // moves it is handed to the tracking update (re-base); Monado
+                    // sends bursts of these, so they are logged once per burst.
+                    const auto& change = reinterpret_cast<const XrEventDataReferenceSpaceChangePending&>(event);
+                    namespace rebase = l4d2vr_space_rebase;
+                    const bool ours = change.referenceSpaceType == m_BaseSpaceType;
+                    const XrPosef& p = change.poseInPreviousSpace;
+                    const bool identity = change.poseValid &&
+                        rebase::IsIdentityChange(p.position.x, p.position.y, p.position.z,
+                            p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w);
+                    if (ours && !identity)
+                        rebase::g_ChangeSequence.fetch_add(1u, std::memory_order_acq_rel);
+                    static rebase::BurstLog s_ChangeLog;
+                    uint32_t folded = 0;
+                    if (s_ChangeLog.OnEvent(static_cast<uint64_t>(GetTickCount64()), folded))
+                    {
+                        Game::logMsg("[VR][OpenXR] reference space change pending (recentre): %s space, pose %s (%.3f %.3f %.3f m, w=%.4f)%s; "
+                            "%u more change event(s) in the previous burst",
+                            ours ? "the tracking" : "another", !change.poseValid ? "unknown" : identity ? "unchanged" : "moved",
+                            p.position.x, p.position.y, p.position.z, p.orientation.w,
+                            ours && !identity ? ", re-basing the room-scale origin and turn" : ", nothing to re-base", folded);
+                    }
                     break;
+                }
                 case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
                     Game::logMsg("[VR][OpenXR] interaction profile changed");
                     m_Input.NotifyProfileChanged();

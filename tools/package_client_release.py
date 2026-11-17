@@ -169,6 +169,7 @@ CHANGES = [
     "2.0.11: installer 1.1.4: Install / Update repairs missing or damaged mod files instead of saying \"already up to date\" (new Repair checkbox), never replaces a newer install with the older bundled l4d2vr.zip when offline, and keeps your edited haptics_config.txt / local_client_convars.nut (the new default is saved next to it as .new).",
     "2.0.11: installer 1.1.4: downloads are https-only and must have a published SHA-256 (or --allow-unverified) and resume after a dropped connection; Restore/Uninstall in the window wait for the game to be closed.",
     "2.0.12: the game's own wrist HUD comes back: while no crop of the game's HUD is available (joining, the MOTD, spectating) a wrist shows the drawn panel and switches back to the game's HUD as soon as it is there again (2.0.4-2.0.11 gave up for the whole session 4 s after joining). vrmod_log.txt says which HUD panels were found and why a wrist uses the drawn panel.",
+    "2.0.12: the game-code locations the mod looks for are updated for the current Left 4 Dead 2 build (faster start, no \"signature moved\" lines), and a location that matches several places in the game is never guessed any more: that feature stays off with one log line.",
     "2.0.12: the magnum shows the infinity sign for its reserve on the wrist like the pistol (it showed 999).",
 ]
 

@@ -11738,6 +11738,41 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
     if (s.drawArrived || (s.drawPending && s.msSinceDrawRequest > 5000u))
         m_DrawRequestSlot = -1;
 
+    // 2.0.12 (user): a long gun with no rounds left at all (clip 0, reserve 0)
+    // switches to the secondary (pistol/melee) once, 0.4 s after it ran dry, so
+    // the player is never left holding a gun the game will not let them use.
+    if (player && active && s.alive && !s.incapacitated && !s.ledge && !s.controlledBySI && !s.mounted && !s.useAction &&
+        reinterpret_cast<uintptr_t>(player->Weapon_GetSlot(0)) == activeTag)
+    {
+        int clip = -1, reserve = -1, ammoType = -1;
+        MagazineInteractionTryReadValue(active, kClip1Offset, clip);
+        if (MagazineInteractionTryReadValue(active, kPrimaryAmmoTypeOffset, ammoType) && ammoType >= 0 && ammoType < 32)
+            MagazineInteractionTryReadValue(player, kAmmoArrayOffset + ammoType * static_cast<int>(sizeof(int)), reserve);
+        const bool infiniteAmmo = m_Game->GetConVarIntDirect("sv_infinite_ammo", -1) > 0;
+        const bool dry = clip == 0 && reserve == 0 && !infiniteAmmo && !IsMagazineInteractionManualActive();
+        if (!dry)
+        {
+            m_EmptyPrimarySinceMs = 0u;
+            if (m_EmptyPrimarySwitchedTag == activeTag && (clip > 0 || reserve > 0)) m_EmptyPrimarySwitchedTag = 0u;
+        }
+        else if (m_EmptyPrimarySwitchedTag != activeTag)
+        {
+            if (m_EmptyPrimarySinceMs == 0u) m_EmptyPrimarySinceMs = now;
+            C_WeaponCSBase* const secondary = static_cast<C_WeaponCSBase*>(player->Weapon_GetSlot(1));
+            const char* const cls = secondary
+                ? l4d2vr_holster::WeaponClassForId(static_cast<int>(secondary->GetWeaponID())) : nullptr;
+            if (now - m_EmptyPrimarySinceMs >= 400u && cls)
+            {
+                char command[64];
+                std::snprintf(command, sizeof(command), "use %s", cls);
+                m_Game->ClientCmd_Unrestricted(command);
+                m_EmptyPrimarySwitchedTag = activeTag;
+                Game::logMsg("[VR][Watchdog] long gun weaponId=%d is out of ammo (clip 0, reserve 0): switched to the secondary %s",
+                    static_cast<int>(active->GetWeaponID()), cls);
+            }
+        }
+    }
+
     const wd::Result r = m_ControlWatchdog.Update(s, now);
     if (s.hasActiveWeapon) m_ControlWatchdogTriedSlots = 0u;
     if ((r.cleared & wd::kNoViewmodel) != 0u) m_ControlWatchdogRedeploys = 0u;
@@ -11839,6 +11874,19 @@ void VR::UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits)
             m_DrawRequestSlot + 1, weaponClass(requested) ? weaponClass(requested) : "(empty slot)",
             static_cast<unsigned long long>(wd::kDrawRefusedMs), clip, reserve,
             clip == 0 && reserve == 0 ? ": no ammo" : "");
+        // An empty long gun cannot be deployed: give the player the secondary instead.
+        if (clip == 0 && reserve == 0 && m_DrawRequestSlot == 0 && player)
+        {
+            C_WeaponCSBase* const secondary = static_cast<C_WeaponCSBase*>(player->Weapon_GetSlot(1));
+            const char* const cls = weaponClass(secondary);
+            if (cls && reinterpret_cast<uintptr_t>(secondary) != activeTag)
+            {
+                char command[64];
+                std::snprintf(command, sizeof(command), "use %s", cls);
+                m_Game->ClientCmd_Unrestricted(command);
+                Game::logMsg("[VR][Watchdog] empty long gun refused: drew the secondary %s instead", cls);
+            }
+        }
         m_HolsterInstantDrawSlot.store(-1, std::memory_order_release);
         m_HolsterInstantDrawUntilMs.store(0u, std::memory_order_release);
         m_DrawRequestSlot = -1;

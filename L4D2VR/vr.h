@@ -3046,6 +3046,9 @@ public:
     bool m_DrawRequestLeft = false;
     l4d2vr_control_watchdog::Watchdog m_ControlWatchdog;
     unsigned m_ControlWatchdogTriedSlots = 0u;
+    // 2.0.12: a fully empty long gun (clip 0, reserve 0) switches to the secondary once.
+    uintptr_t m_EmptyPrimarySwitchedTag = 0u;
+    uint64_t m_EmptyPrimarySinceMs = 0u;
     unsigned m_ControlWatchdogRedeploys = 0u;   // per no-viewmodel episode
     void NoteHolsterDrawRequest(int slot, uintptr_t weaponTag, bool leftHand);
     void UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits);

@@ -197,6 +197,7 @@ CHANGES = [
     "2.0.12: scopes: the scope picture is there as soon as the scope is roughly in front of your eye (eye box 30 degrees, softer rim, eye 1-80 cm behind the lens) and is dimmed instead of black outside it; a hitch no longer blacks it out; replaced (skinned) scope models use the stock lens; vrmod_log.txt says when a scope renders. Your old shipped scope settings are updated once.",
     "2.0.12: a shell or magazine request that gets no answer is resent after 0.15 s instead of 0.5 s.",
     "2.0.12: if you ever end up with no hands or no control while alive (nothing in the hands, no hands drawn, input stuck, a reload stuck, a holster draw the game refused), the mod notices within a few seconds, fixes it (draws your sidearm, redeploys the item, resets the reload) and logs which gate was stuck; a draw of an empty gun the game refuses now buzzes twice instead of doing nothing.",
+    "2.0.12: a long gun with no rounds left at all (clip and reserve empty) switches to your pistol or melee weapon, and reaching for an empty long gun on your back draws the secondary instead, so you are never left with nothing usable in your hands.",
 ]
 
 

@@ -14490,6 +14490,71 @@ namespace
         }
     }
 
+    // 2.0.12 (review s12 issue 5): the fist AND the thumb-index pinch of BOTH
+    // drawn hands (bip01_l_* and bip01_r_*), so the reload hand gets the same
+    // construction whichever hand it is (a gun in the left hand reloads with
+    // the right). VR::GetMagazineInteractionNativeSupportGrip picks the drawn
+    // hand at the support controller.
+    constexpr float kNativePinchTipFraction = 0.6f;
+    inline void HooksNativeViewmodelHandsOnlyPublishHandGrips(
+        VR* vr,
+        const std::vector<std::string>& boneNames,
+        int numBones,
+        const vr_vm_stabilize::Mat3x4* currentBones)
+    {
+        static const char* const kSuffix[] = { "hand", "finger0", "finger1", "finger2", "finger3", "finger4",
+            "finger01", "finger02", "finger11", "finger12" };
+        constexpr int kCount = static_cast<int>(sizeof(kSuffix) / sizeof(kSuffix[0]));
+        static std::vector<std::string> s_names;
+        static int s_index[2][kCount] = {};
+        if (s_names != boneNames)
+        {
+            s_names = boneNames;
+            for (int side = 0; side < 2; ++side)
+                for (int i = 0; i < kCount; ++i)
+                {
+                    const std::string name = std::string(side == 0 ? "bip01_l_" : "bip01_r_") + kSuffix[i];
+                    if (!HooksNativeViewmodelHandsOnlyFindBoneByLowerSuffix(boneNames, name.c_str(), s_index[side][i]))
+                        s_index[side][i] = -1;
+                }
+        }
+        for (int side = 0; side < 2; ++side)
+        {
+            Vector at[kCount] = {};
+            bool valid[kCount] = {};
+            for (int i = 0; i < kCount; ++i)
+            {
+                vr_vm_stabilize::Mat3x4 bone{};
+                valid[i] = s_index[side][i] >= 0 && s_index[side][i] < numBones &&
+                    vr_vm_stabilize::SafeRead(currentBones + s_index[side][i], bone) &&
+                    HooksNativeViewmodelHandsOnlyMatrixFinite(bone);
+                if (valid[i])
+                    at[i] = vr_vm_stabilize::GetOrigin(bone);
+            }
+            if (!valid[0])
+                continue;
+            l4d2vr_ammo_grip::HandBones hand{};
+            hand.wrist = at[0];
+            for (int finger = 0; finger < 4; ++finger)
+            {
+                hand.knuckles[finger] = at[2 + finger];
+                hand.knuckleValid[finger] = valid[2 + finger];
+            }
+            hand.thumbRoot = at[1];
+            hand.thumbValid = valid[1];
+            Vector fist{};
+            const bool fistValid = l4d2vr_ammo_grip::FistCenter(hand, kNativeFistAlong, kNativeFistDepth, fist);
+            l4d2vr_ammo_grip::PinchBones pinchBones{};
+            pinchBones.thumb[0] = at[1]; pinchBones.thumb[1] = at[6]; pinchBones.thumb[2] = at[7];
+            pinchBones.index[0] = at[2]; pinchBones.index[1] = at[8]; pinchBones.index[2] = at[9];
+            pinchBones.thumbValid = valid[1] && valid[6] && valid[7];
+            pinchBones.indexValid = valid[2] && valid[8] && valid[9];
+            Vector pinch{}, pinchAxis{};
+            const bool pinchValid = l4d2vr_ammo_grip::PinchPoint(pinchBones, kNativePinchTipFraction, pinch, pinchAxis);
+            vr->PublishMagazineInteractionNativeHandGrip(side == 0, at[0], fist, fistValid, pinch, pinchValid);
+        }
+    }
+
     inline void HooksNativeViewmodelHandsOnlyPublishLeftWristAnchor(
         VR* vr,
         const std::vector<std::string>& boneNames,
@@ -14534,6 +14599,7 @@ namespace
             HooksMatrixAxis(anchorWorld, 1),
             HooksMatrixAxis(anchorWorld, 2));
         HooksNativeViewmodelHandsOnlyPublishLeftFist(vr, boneNames, numBones, currentBones);
+        HooksNativeViewmodelHandsOnlyPublishHandGrips(vr, boneNames, numBones, currentBones);
     }
 
     inline vr_vm_stabilize::Mat3x4 HooksNativeViewmodelHandsOnlyMakeLocalAxisRotation(

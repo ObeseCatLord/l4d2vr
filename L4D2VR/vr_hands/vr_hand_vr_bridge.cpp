@@ -1085,6 +1085,15 @@ namespace
     }
 
     bool MagazineInteractionNativeFist(const VR* vr, Vector& outWorld);
+    bool MagazineInteractionNativePinch(const VR* vr, Vector& outWorld);
+
+    // 2.0.12 (review s12 issue 5; Pavlov grip SPEC 3.1): a shell is pinched
+    // between the thumb tip and the index tip. Without a drawn pinch (GLB
+    // gloves, bones missing) the same point is taken from the controller: 4 cm
+    // forward, 1 cm up, no lateral offset, so both hands hold it alike.
+    constexpr float kShellPinchForwardMeters = 0.04f;
+    constexpr float kShellPinchUpMeters = 0.01f;
+    constexpr float kShellPinchPitchDownDeg = 5.0f;
 
     bool MagazineInteractionResolveFreshMagazineHandAnchorWorld(
         const VR* vr,
@@ -1097,6 +1106,16 @@ namespace
         {
             outAnchorWorld = MagazineInteractionMatrixOrigin(controllerWorld);
             return false;
+        }
+
+        if (vr->m_MagazineInteractionShotgunShellMode)
+        {
+            if (MagazineInteractionNativePinch(vr, outAnchorWorld))
+                return true;
+            outAnchorWorld = MagazineInteractionMatrixOrigin(controllerWorld) +
+                MagazineInteractionMatrixLocalVectorToWorld(controllerWorld,
+                    Vector(0.0f, kShellPinchUpMeters, -kShellPinchForwardMeters) * vr->m_VRScale);
+            return true;
         }
 
         // The drawn hand's fist, where the spare is seen to be held.
@@ -1894,10 +1913,34 @@ namespace
 
     // The drawn native off hand's fist, when it holds the spare (see
     // l4d2vr_ammo_grip::FistCenter): the spare is placed in it.
+    // 2.0.12 (review s12 5b): the drawn hand AT the support controller, left or
+    // right, through one construction (it used to be the model's left hand
+    // only, so a gun in the left hand reloaded with a different anchor).
+    Vector MagazineInteractionSupportControllerInViewmodelLayer(const VR* vr)
+    {
+        const Vector scene = vr->MagazineReloadSupportIsLeft() ? vr->m_LeftControllerPosAbs : vr->m_RightControllerPosAbs;
+        Vector layer = scene;
+        Vector reprojected{};
+        if (MagazineInteractionReprojectScenePointToViewmodelLayer(vr, scene, reprojected))
+            layer = reprojected;
+        return layer;
+    }
+
     bool MagazineInteractionNativeFist(const VR* vr, Vector& outWorld)
     {
-        return vr && !vr->m_VrHandsEnabled && vr->MagazineReloadSupportIsLeft() &&
-            vr->GetMagazineInteractionNativeLeftFist(outWorld);
+        if (!vr || vr->m_VrHandsEnabled)
+            return false;
+        return vr->GetMagazineInteractionNativeSupportGrip(MagazineInteractionSupportControllerInViewmodelLayer(vr),
+            &outWorld, nullptr);
+    }
+
+    // 2.0.12 (review s12 5a): the support hand's thumb-index pinch (shells).
+    bool MagazineInteractionNativePinch(const VR* vr, Vector& outWorld)
+    {
+        if (!vr || vr->m_VrHandsEnabled)
+            return false;
+        return vr->GetMagazineInteractionNativeSupportGrip(MagazineInteractionSupportControllerInViewmodelLayer(vr),
+            nullptr, &outWorld);
     }
 
     // How far up a spare magazine the fist closes, from its base (Pavlov holds
@@ -1924,15 +1967,8 @@ namespace
         if (vr && vr->m_MagazineInteractionShotgunShellMode && longest == insertion &&
             insertionLength <= kSingleShellBoxMaxMeters * std::max(0.001f, vr->m_VRScale))
         {
-            // A single shell standing along the port's insertion line is held
-            // by its base, upright out of the fist as it goes in; the
-            // magazine-sized grip offset below would hide it in the fingers.
-            const Vector& axis = vr->m_MagazineInteractionMagazineInsertionAxisLocal;
-            const float toward = insertion == 0 ? axis.x : insertion == 1 ? axis.y : axis.z;
-            const Vector& end = toward < 0.0f ? magazineBox.mins : magazineBox.maxs;
-            if (insertion == 0) anchorLocal.x = end.x;
-            else if (insertion == 1) anchorLocal.y = end.y;
-            else anchorLocal.z = end.z;
+            // 2.0.12: a single shell is pinched at its middle between the
+            // thumb and index tips (Pavlov), not held by its base in the fist.
             return anchorLocal;
         }
         // In the drawn fist: the magazine passes through it along its length,
@@ -3569,6 +3605,53 @@ void VR::PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld)
     m_MagazineInteractionNativeLeftFistWorld = fistWorld;
     m_MagazineInteractionNativeLeftFistPublishedAt = std::chrono::steady_clock::now();
     m_MagazineInteractionNativeLeftFistValid = true;
+}
+
+void VR::PublishMagazineInteractionNativeHandGrip(bool modelLeft, const Vector& wrist, const Vector& fist,
+    bool fistValid, const Vector& pinch, bool pinchValid)
+{
+    if (!l4d2vr_ammo_grip::Finite(wrist))
+        return;
+    std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+    NativeHandGrip& grip = m_MagazineInteractionNativeHandGrip[modelLeft ? 0 : 1];
+    grip.wrist = wrist;
+    grip.fist = fist;
+    grip.fistValid = fistValid && l4d2vr_ammo_grip::Finite(fist);
+    grip.pinch = pinch;
+    grip.pinchValid = pinchValid && l4d2vr_ammo_grip::Finite(pinch);
+    grip.publishedAt = std::chrono::steady_clock::now();
+}
+
+bool VR::GetMagazineInteractionNativeSupportGrip(const Vector& nearPoint, Vector* fist, Vector* pinch) const
+{
+    std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+    const float staleSeconds = std::max(0.02f, m_MagazineInteractionStaleSeconds);
+    const auto now = std::chrono::steady_clock::now();
+    int best = -1;
+    float bestDistance = 0.30f * std::max(1.0f, m_VRScale);   // the drawn hand within 30 cm of its controller
+    for (int i = 0; i < 2; ++i)
+    {
+        const NativeHandGrip& grip = m_MagazineInteractionNativeHandGrip[i];
+        if (grip.publishedAt.time_since_epoch().count() == 0 ||
+            std::chrono::duration<float>(now - grip.publishedAt).count() > staleSeconds)
+            continue;
+        const float distance = (grip.wrist - nearPoint).Length();
+        if (std::isfinite(distance) && distance < bestDistance)
+        {
+            bestDistance = distance;
+            best = i;
+        }
+    }
+    if (best < 0)
+        return false;
+    const NativeHandGrip& grip = m_MagazineInteractionNativeHandGrip[best];
+    if (fist && !grip.fistValid)
+        return false;
+    if (pinch && !grip.pinchValid)
+        return false;
+    if (fist) *fist = grip.fist;
+    if (pinch) *pinch = grip.pinch;
+    return true;
 }
 
 bool VR::GetMagazineInteractionNativeLeftFist(Vector& outWorld) const
@@ -6581,11 +6664,17 @@ bool VR::UpdateMagazineInteraction(
         const VrHandMatrix4 gunController = MagazineInteractionBuildControllerWorldFromAxes(
             gunPosition, gunForward, gunRight, gunUp);
         VrHandMatrix4 hold{}, gunRotation{}, wellRotation{};
-        const bool natural = m_MagazineInteractionSocketValid && MagazineInteractionMatrixLooksRenderable(well) &&
+        // 2.0.12 (review s12 5a): a shell sits in the pinch along the hand's
+        // forward (crimp out past the fingertips, brass toward the palm),
+        // the same in either hand and whatever the gun is doing.
+        const bool pinchHold = m_MagazineInteractionShotgunShellMode &&
+            l4d2vr_ammo_grip::ShellPinchHold(m_MagazineInteractionMagazineInsertionAxisLocal,
+                kShellPinchPitchDownDeg, hold);
+        const bool natural = !pinchHold && m_MagazineInteractionSocketValid && MagazineInteractionMatrixLooksRenderable(well) &&
             l4d2vr_ammo_grip::NaturalHold(gunController, well,
                 l4d2vr_reload_tuning::MagazineHoldTiltDeg(activeWeaponIdInt),
                 m_MagazineInteractionMagazineHandRotationOffsetDeg, hold);
-        if (!natural)
+        if (!natural && !pinchHold)
             hold = l4d2vr_ammo_grip::Calibration(m_MagazineInteractionMagazineHandRotationOffsetDeg);
         m_MagazineInteractionHoldWellInGunHandValid = natural &&
             l4d2vr_ammo_grip::RotationOf(gunController, gunRotation) && l4d2vr_ammo_grip::RotationOf(well, wellRotation);
@@ -6594,7 +6683,7 @@ bool VR::UpdateMagazineInteraction(
         {
             const Vector euler = l4d2vr_ammo_grip::CalibrationDegrees(hold);
             Game::logMsg("[VR][MagazineInteraction][Event] spare held %s: weaponId=%d tilt=%.0f hand rotation=(%.1f %.1f %.1f)",
-                natural ? "as in the gun" : "by the configured rotation", activeWeaponIdInt,
+                pinchHold ? "pinched (thumb and index)" : natural ? "as in the gun" : "by the configured rotation", activeWeaponIdInt,
                 l4d2vr_reload_tuning::MagazineHoldTiltDeg(activeWeaponIdInt), euler.x, euler.y, euler.z);
         }
         l4d2vr_ammo_grip::Pose pose{};

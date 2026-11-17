@@ -2935,6 +2935,13 @@ public:
 	// the curled fingers), from the drawn hand bones.
 	Vector m_MagazineInteractionNativeLeftFistWorld{};
 	bool m_MagazineInteractionNativeLeftFistValid = false;
+	struct NativeHandGrip
+	{
+		Vector wrist{}, fist{}, pinch{};
+		bool fistValid = false, pinchValid = false;
+		std::chrono::steady_clock::time_point publishedAt{};
+	};
+	NativeHandGrip m_MagazineInteractionNativeHandGrip[2]{};   // [0] model left hand, [1] model right hand
 	std::chrono::steady_clock::time_point m_MagazineInteractionNativeLeftFistPublishedAt{};
 	uint32_t m_MagazineInteractionPublishSeq = 0;
 	uint32_t m_MagazineInteractionBoltPublishSeq = 0;
@@ -5436,6 +5443,12 @@ public:
 	bool GetTwoHandedGripTargetPoint(Vector& point) const;
 	bool GetMagazineInteractionNativeLeftWristAnchor(VrHandMatrix4& outWorld) const;
 	void PublishMagazineInteractionNativeLeftFist(const Vector& fistWorld);
+	// 2.0.12 (review s12 issue 5): fist and thumb-index pinch of both drawn hands.
+	void PublishMagazineInteractionNativeHandGrip(bool modelLeft, const Vector& wrist, const Vector& fist, bool fistValid,
+		const Vector& pinch, bool pinchValid);
+	// The drawn hand at the support (reload) controller: its fist and pinch
+	// (viewmodel layer). nearPoint = that controller in the viewmodel layer.
+	bool GetMagazineInteractionNativeSupportGrip(const Vector& nearPoint, Vector* fist, Vector* pinch) const;
 	bool GetMagazineInteractionNativeLeftFist(Vector& outWorld) const;
 	bool HasFreshMagazineInteractionDebugBoxWork() const;
 	bool GetMagazineInteractionCalibrationSnapshot(MagazineInteractionCalibrationSnapshot& outSnapshot) const;

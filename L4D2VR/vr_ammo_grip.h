@@ -297,4 +297,65 @@ namespace l4d2vr_ammo_grip
         if (axis == 0) point.x = value; else if (axis == 1) point.y = value; else point.z = value;
         return point;
     }
+
+    // 2.0.12 (review s12 issue 5; Pavlov: a shell is held at the controller
+    // point pitched -75 deg, between the thumb tip and the index tip, the same
+    // for both hands with the hand mesh mirrored). The pinch point of a drawn
+    // hand: the midpoint of the thumb tip and the index fingertip, each
+    // extrapolated from its last two joints by `tipFraction` of the last
+    // segment (the bones end at the last joint, not at the tip).
+    struct PinchBones
+    {
+        Vector thumb[3]{};   // finger0, finger01, finger02 (root .. last joint)
+        Vector index[3]{};   // finger1, finger11, finger12
+        bool thumbValid = false;
+        bool indexValid = false;
+    };
+    inline bool PinchPoint(const PinchBones& hand, float tipFraction, Vector& point, Vector& thumbToIndex)
+    {
+        if (!hand.thumbValid || !hand.indexValid || !std::isfinite(tipFraction)) return false;
+        for (int i = 0; i < 3; ++i)
+            if (!Finite(hand.thumb[i]) || !Finite(hand.index[i])) return false;
+        const Vector thumbTip = hand.thumb[2] + (hand.thumb[2] - hand.thumb[1]) * tipFraction;
+        const Vector indexTip = hand.index[2] + (hand.index[2] - hand.index[1]) * tipFraction;
+        point = (thumbTip + indexTip) * 0.5f;
+        thumbToIndex = indexTip - thumbTip;
+        return Finite(point) && Finite(thumbToIndex);
+    }
+
+    // The shell's hold in the pinching hand (controller frame: x right, y up,
+    // z back): its long axis along the controller's forward pitched
+    // `pitchDownDeg` down (Pavlov: the controller point pitched -75 deg, which
+    // in the L4D2VR aim frame, where a pistol's barrel is that point pitched
+    // -70, is ~5 deg below forward), the crimp (insertion end) forward and the
+    // brass (the end along `outwardLocal`, out of the well) toward the palm.
+    // No lateral component: the same numbers hold the shell identically in
+    // the left and the right hand.
+    inline bool ShellPinchHold(const Vector& outwardLocal, float pitchDownDeg, VrHandMatrix4& result)
+    {
+        if (!Finite(outwardLocal) || !std::isfinite(pitchDownDeg)) return false;
+        const float ax = std::fabs(outwardLocal.x), ay = std::fabs(outwardLocal.y), az = std::fabs(outwardLocal.z);
+        const int axis = (ay >= ax && ay >= az) ? 1 : (az >= ax && az >= ay) ? 2 : 0;
+        const float sign = (axis == 0 ? outwardLocal.x : axis == 1 ? outwardLocal.y : outwardLocal.z) < 0.0f ? -1.0f : 1.0f;
+        if (!(ax + ay + az > 0.0001f)) return false;
+        // Box frame: o = the outward axis, e2 = the next axis, e3 = o x e2.
+        Vector o(0.0f, 0.0f, 0.0f), e2(0.0f, 0.0f, 0.0f);
+        o[axis] = sign;
+        e2[(axis + 1) % 3] = 1.0f;
+        Vector e3; CrossProduct(o, e2, e3);
+        // Target (controller frame): t = the brass direction = back, raised by
+        // the pitch (the crimp points forward and down); t2 = up, tilted with it.
+        constexpr float radians = 3.14159265358979323846f / 180.0f;
+        const float c = std::cos(pitchDownDeg * radians), sn = std::sin(pitchDownDeg * radians);
+        const Vector t(0.0f, sn, c);      // brass: back and up
+        const Vector t2(0.0f, c, -sn);    // perpendicular, mostly up
+        Vector t3; CrossProduct(t, t2, t3);
+        // R = [t t2 t3] [o e2 e3]^T
+        VrHandMatrix4 r = VrHandMath::Identity();
+        for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
+                VrHandMath::Set(r, row, column, t[row] * o[column] + t2[row] * e2[column] + t3[row] * e3[column]);
+        if (!Rigid(r)) return false;
+        result = r; return true;
+    }
 }

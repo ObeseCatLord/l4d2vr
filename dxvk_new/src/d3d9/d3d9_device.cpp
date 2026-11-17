@@ -5481,8 +5481,9 @@ namespace dxvk {
             // StretchRect/backbuffer writes can overlap Source's water/shadow RTT work.
             // Queued eyes are copied into immutable submit snapshots by the Source completion
             // transaction before this Present path consumes them.
-            const bool useOriginalQueuedPresentPath =
-                inGame && queued && vr->m_ShadowTweaksEnabled && vr->m_DesktopMirrorEnabled;
+            // This path required the removed ShadowTweaksEnabled option (default off), so it
+            // stays off: queued desktop mirroring goes through the completion transaction.
+            constexpr bool useOriginalQueuedPresentPath = false;
 
             if (!inGame) {
                 vr->ClearD3DAimLineOverlay();

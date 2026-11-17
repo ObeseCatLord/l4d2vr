@@ -29305,7 +29305,6 @@ void Hooks::dVGui_Paint(void* ecx, void* edx, int mode)
             ctx->ClearBuffers(true, false, false);
 
             hkVgui_Paint.fOriginal(ecx, paintMode);
-            m_VR->DrawKillIndicators(ctx, hudTexture);
 
             ctx->OverrideAlphaWriteEnable(false, true);
             ctx->SetRenderTarget(prevTarget);

@@ -760,23 +760,8 @@ MouseModeScopeToggleKey=key:q
 
 DebugVASLog=false
 
-HitSoundEnabled=false
-KillSoundEnabled=false
-HitSoundSpec=game:vrmod/hit.mp3
-KillSoundNormalSpec=game:vrmod/kill.mp3
-KillSoundHeadshotSpec=game:vrmod/headshot.mp3
-HitSoundVolume=1.2
-KillSoundVolume=1.8
-HeadshotSoundVolume=1.3
 FeedbackSoundSpatialBlend=0
 FeedbackSoundSpatialRange=1000
-HitIndicatorEnabled=false
-KillIndicatorEnabled=false
-KillIndicatorMaterialBaseSpec=overlays/2965700751
-KillIndicatorLifetimeSeconds=0.8
-KillIndicatorSizePixels=160
-KillIndicatorRiseUnits=18
-KillIndicatorMaxDistance=4096
 
 ShadowTweaksEnabled=false
 r_shadows=true

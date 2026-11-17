@@ -127,17 +127,10 @@ namespace l4d2vr_options_menu
         { "HudDistance", RowKind::Slider, "Floating HUD distance", "Metres from your head.", 0.5f, 3.0f, 0.1f, "1.3", nullptr, "!HudAlwaysHidden", false, " m" },
         { "HudSize", RowKind::Slider, "Floating HUD size", "Width of the floating HUD.", 0.8f, 3.0f, 0.1f, "1.3", nullptr, "!HudAlwaysHidden", false, " m" },
         { "MenuLaserPointerEnabled", RowKind::Toggle, "Menu laser pointer", "Point and pull the trigger to use menus.", 0, 0, 0, "true" },
-        { "HitIndicatorEnabled", RowKind::Toggle, "Hit markers", "Show a marker when your shots hit.", 0, 0, 0, "false" },
-        { "KillIndicatorEnabled", RowKind::Toggle, "Kill markers", "Show a marker on kills.", 0, 0, 0, "false" },
     };
 
     inline const Row kAudioRows[] = {
         { "BackgroundAudio", RowKind::Toggle, "Audio when unfocused", "Keep game audio playing when the desktop window is not focused.", 0, 0, 0, "true", nullptr, nullptr, true },
-        { "HitSoundEnabled", RowKind::Toggle, "Hit sounds", "A sound when your shots hit.", 0, 0, 0, "false" },
-        { "HitSoundVolume", RowKind::Slider, "Hit sound volume", "", 0.0f, 2.0f, 0.1f, "1.2", nullptr, "HitSoundEnabled", false, "x" },
-        { "KillSoundEnabled", RowKind::Toggle, "Kill sounds", "A sound on kills.", 0, 0, 0, "false" },
-        { "KillSoundVolume", RowKind::Slider, "Kill sound volume", "", 0.0f, 2.0f, 0.1f, "1.8", nullptr, "KillSoundEnabled", false, "x" },
-        { "HeadshotSoundVolume", RowKind::Slider, "Headshot sound volume", "", 0.0f, 2.0f, 0.1f, "1.3", nullptr, "KillSoundEnabled", false, "x" },
     };
 
     inline const Row kControlRows[] = {

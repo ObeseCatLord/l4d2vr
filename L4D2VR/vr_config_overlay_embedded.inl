@@ -307,17 +307,6 @@ namespace
         { "BulletAimRotationPitchDeg", CfgOptionType::Float, "Weapons / Fire", "Bullet Aim Pitch", -180.0f, 180.0f, "0.0" },
         { "BulletAimRotationYawDeg", CfgOptionType::Float, "Weapons / Fire", "Bullet Aim Yaw", -180.0f, 180.0f, "0.0" },
         { "BulletAimRotationRollDeg", CfgOptionType::Float, "Weapons / Fire", "Bullet Aim Roll", -180.0f, 180.0f, "0.0" },
-        { "HitIndicatorEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x91\xBD\xE4\xB8\xAD\xE6\x8C\x87\xE7\xA4\xBA\xE5\x99\xA8", 0.0f, 0.0f, "false" },
-        { "HitSoundEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x91\xBD\xE4\xB8\xAD\xE9\x9F\xB3\xE6\x95\x88\xE5\x8F\x8D\xE9\xA6\x88", 0.0f, 0.0f, "false" },
-        { "HitSoundSpec", CfgOptionType::String, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x91\xBD\xE4\xB8\xAD\xE9\x9F\xB3\xE6\x95\x88", 0.0f, 0.0f, "game:vrmod/hit.mp3" },
-        { "HitSoundVolume", CfgOptionType::Float, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x8F\x8D\xE9\xA6\x88\xE9\x9F\xB3\xE9\x87\x8F", 0.5f, 2.0f, "1.2" },
-        { "KillSoundEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x87\xBB\xE6\x9D\x80\xE9\x9F\xB3\xE6\x95\x88\xE5\x8F\x8D\xE9\xA6\x88", 0.0f, 0.0f, "false" },
-        { "KillSoundNormalSpec", CfgOptionType::String, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE6\x99\xAE\xE9\x80\x9A\xE5\x87\xBB\xE6\x9D\x80\xE9\x9F\xB3\xE6\x95\x88", 0.0f, 0.0f, "game:vrmod/kill.mp3" },
-        { "KillSoundHeadshotSpec", CfgOptionType::String, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE7\x88\x86\xE5\xA4\xB4\xE5\x87\xBB\xE6\x9D\x80\xE9\x9F\xB3\xE6\x95\x88", 0.0f, 0.0f, "game:vrmod/headshot.mp3" },
-        { "KillSoundVolume", CfgOptionType::Float, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x87\xBB\xE6\x9D\x80\xE9\x9F\xB3\xE9\x87\x8F", 0.0f, 2.0f, "1.8" },
-        { "HeadshotSoundVolume", CfgOptionType::Float, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE7\x88\x86\xE5\xA4\xB4\xE9\x9F\xB3\xE9\x87\x8F", 0.0f, 2.0f, "1.3" },
-        { "KillIndicatorEnabled", CfgOptionType::Bool, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x91\xBD\xE4\xB8\xAD / \xE5\x87\xBB\xE6\x9D\x80\xE5\x9B\xBE\xE6\xA0\x87", 0.0f, 0.0f, "false" },
-        { "KillIndicatorMaterialBaseSpec", CfgOptionType::String, "\xE6\xAD\xA6\xE5\x99\xA8 / \xE5\xBC\x80\xE7\x81\xAB", "\xE5\x87\xBB\xE6\x9D\x80\xE5\x9B\xBE\xE6\xA0\x87\xE6\x9D\x90\xE8\xB4\xA8\xE7\x9B\xAE\xE5\xBD\x95", 0.0f, 0.0f, "overlays/2965700751" },
         
         { "BlockFireOnFriendlyAimEnabled", CfgOptionType::Bool, "\xE8\xBE\x85\xE5\x8A\xA9\xE7\x9E\x84\xE5\x87\x86", "\xE7\xA6\x81\xE6\xAD\xA2\xE5\x90\x91\xE9\x98\x9F\xE5\x8F\x8B\xE5\xBC\x80\xE7\x81\xAB", 0.0f, 0.0f, "false" },
         
@@ -700,17 +689,6 @@ namespace
         { "ViewmodelAutoGripPalmCenterFraction", "Interaction / Combos", "\xE4\xBA\xA4\xE4\xBA\x92 / \xE7\xBB\x84\xE5\x90\x88\xE9\x94\xAE", "Palm Center Position", "\xE6\x8E\x8C\xE5\xBF\x83\xE4\xBD\x8D\xE7\xBD\xAE", "Fractional position of the palm center.", "\xE6\x8E\x8C\xE5\xBF\x83\xE4\xBD\x8D\xE7\xBD\xAE\xE7\x9A\x84\xE5\x88\x86\xE6\x95\xB0\xE5\x80\xBC\xE3\x80\x82", "Adjusts where the center of the palm is considered to be.", "\xE8\xB0\x83\xE6\x95\xB4\xE6\x8E\x8C\xE5\xBF\x83\xE7\x9A\x84\xE4\xBD\x8D\xE7\xBD\xAE\xE3\x80\x82" },
         { "ViewmodelAutoGripAlignDebugLog", "Interaction / Combos", "\xE4\xBA\xA4\xE4\xBA\x92 / \xE7\xBB\x84\xE5\x90\x88\xE9\x94\xAE", "Auto Grip Align Debug Log", "\xE8\x87\xAA\xE5\x8A\xA8\xE6\x8F\xA1\xE6\x8A\x8A\xE8\xB0\x83\xE8\xAF\x95\xE6\x97\xA5\xE5\xBF\x97", "Enables debug logging for auto grip alignment.", "\xE5\x90\xAF\xE7\x94\xA8\xE8\x87\xAA\xE5\x8A\xA8\xE6\x8F\xA1\xE6\x8A\x8A\xE5\xAF\xB9\xE9\xBD\x90\xE7\x9A\x84\xE8\xB0\x83\xE8\xAF\x95\xE6\x97\xA5\xE5\xBF\x97\xE8\xAE\xB0\xE5\xBD\x95\xE3\x80\x82", "Useful for developers to diagnose issues.", "\xE6\x96\xB9\xE4\xBE\xBF\xE5\xBC\x80\xE5\x8F\x91\xE4\xBA\xBA\xE5\x91\x98\xE8\xAF\x8A\xE6\x96\xAD\xE9\x97\xAE\xE9\xA2\x98\xE3\x80\x82" },
 
-        { "HitIndicatorEnabled", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Hit Indicator", "\345\221\275\344\270\255\346\214\207\347\244\272\345\231\250", "Shows a visual hit indicator when your shot connects.", "\345\275\223\344\275\240\347\232\204\345\260\204\345\207\273\345\221\275\344\270\255\346\227\266\346\230\276\347\244\272\350\247\206\350\247\211\345\221\275\344\270\255\346\217\220\347\244\272\343\200\202", "Useful if you want feedback without relying only on sound.", "\345\246\202\346\236\234\344\275\240\344\270\215\346\203\263\345\217\252\344\276\235\350\265\226\351\237\263\346\225\210\345\217\215\351\246\210\357\274\214\345\217\257\344\273\245\345\274\200\345\220\257\345\256\203\343\200\202" },
-        { "HitSoundEnabled", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Hit Sound Feedback", "\345\221\275\344\270\255\351\237\263\346\225\210\345\217\215\351\246\210", "Plays a short cue immediately when your shot trace hits an infected target.", "\345\275\223\346\234\254\345\234\260\345\260\204\345\207\273\350\275\250\350\277\271\345\221\275\344\270\255\346\204\237\346\237\223\350\200\205\347\233\256\346\240\207\346\227\266\357\274\214\347\253\213\345\210\273\346\222\255\346\224\276\347\237\255\344\277\203\345\221\275\344\270\255\346\217\220\347\244\272\351\237\263\343\200\202", "Uses the same local hit detection as the projected hit icon.", "\345\222\214\345\221\275\344\270\255\344\275\215\347\275\256\345\233\276\346\240\207\344\275\277\347\224\250\345\220\214\344\270\200\345\245\227\346\234\254\345\234\260\345\221\275\344\270\255\346\243\200\346\265\213\343\200\202" },
-        { "HitSoundSpec", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Hit Sound", "\345\221\275\344\270\255\351\237\263\346\225\210", "Sound spec for non-lethal hits. Supports alias:, file:, game:, gamesound:, cmd:, or a direct audio file path.", "\346\231\256\351\200\232\345\221\275\344\270\255\351\237\263\346\225\210\351\205\215\347\275\256\343\200\202\346\224\257\346\214\201 alias:\343\200\201file:\343\200\201game:\343\200\201gamesound:\343\200\201cmd:\357\274\214\344\271\237\346\224\257\346\214\201\347\233\264\346\216\245\345\241\253\345\206\231\351\237\263\351\242\221\346\226\207\344\273\266\350\267\257\345\276\204\343\200\202", "Direct file paths may be absolute, or relative to the VR folder. Example: hit.mp3 resolves to VR\\hit.mp3", "\346\226\207\344\273\266\350\267\257\345\276\204\345\217\257\347\224\250\347\273\235\345\257\271\350\267\257\345\276\204\357\274\214\344\271\237\345\217\257\347\233\270\345\257\271 VR \347\233\256\345\275\225\343\200\202\347\244\272\344\276\213\357\274\232hit.mp3 \344\274\232\350\247\243\346\236\220\345\210\260 VR\\hit.mp3" },
-        { "HitSoundVolume", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Feedback Sound Volume", "\345\217\215\351\246\210\351\237\263\351\207\217", "Unified volume multiplier for hit, kill, and headshot sounds. Adjusting this slider updates all three together.", "\347\273\237\344\270\200\346\216\247\345\210\266\345\221\275\344\270\255\343\200\201\345\207\273\346\235\200\343\200\201\347\210\206\345\244\264\344\270\211\347\247\215\346\217\220\347\244\272\351\237\263\347\232\204\351\237\263\351\207\217\345\200\215\347\216\207\343\200\202\350\260\203\346\225\264\350\277\231\344\270\252\346\273\221\346\235\206\344\274\232\345\220\214\346\227\266\345\206\231\345\205\245\344\270\211\344\270\252\351\205\215\347\275\256\351\241\271\343\200\202", "1.0 keeps source loudness unchanged. This slider is clamped to 0.5~2.0 in the config tool.", "1.0 \350\241\250\347\244\272\344\277\235\346\214\201\347\264\240\346\235\220\345\216\237\345\247\213\345\223\215\345\272\246\343\200\202\351\205\215\347\275\256\345\267\245\345\205\267\351\207\214\350\277\231\344\270\252\346\273\221\346\235\206\347\232\204\350\214\203\345\233\264\351\231\220\345\210\266\344\270\272 0.5~2.0\343\200\202" },
-        { "KillSoundEnabled", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Kill Sound Feedback", "\345\207\273\346\235\200\351\237\263\346\225\210\345\217\215\351\246\210", "Plays a short sound when your local kill counter increases.", "\345\275\223\346\234\254\345\234\260\345\207\273\346\235\200\350\256\241\346\225\260\345\242\236\345\212\240\346\227\266\346\222\255\346\224\276\347\237\255\344\277\203\346\217\220\347\244\272\351\237\263\343\200\202", "Headshots can use a separate sound via KillSoundHeadshotSpec.", "\347\210\206\345\244\264\345\217\257\351\200\232\350\277\207 KillSoundHeadshotSpec \344\275\277\347\224\250\345\217\246\344\270\200\347\247\215\351\237\263\346\225\210\343\200\202" },
-        { "KillSoundNormalSpec", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Normal Kill Sound", "\346\231\256\351\200\232\345\207\273\346\235\200\351\237\263\346\225\210", "Sound spec for normal kills. Supports alias:, file:, game:, gamesound:, cmd:, or a direct audio file path.", "\346\231\256\351\200\232\345\207\273\346\235\200\351\237\263\346\225\210\351\205\215\347\275\256\343\200\202\346\224\257\346\214\201 alias:\343\200\201file:\343\200\201game:\343\200\201gamesound:\343\200\201cmd:\357\274\214\344\271\237\346\224\257\346\214\201\347\233\264\346\216\245\345\241\253\345\206\231\351\237\263\351\242\221\346\226\207\344\273\266\350\267\257\345\276\204\343\200\202", "Direct file paths may be absolute, or relative to the VR folder.", "\346\226\207\344\273\266\350\267\257\345\276\204\345\217\257\347\224\250\347\273\235\345\257\271\350\267\257\345\276\204\357\274\214\344\271\237\345\217\257\347\233\270\345\257\271 VR \347\233\256\345\275\225\343\200\202" },
-        { "KillSoundHeadshotSpec", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Headshot Kill Sound", "\347\210\206\345\244\264\345\207\273\346\235\200\351\237\263\346\225\210", "Sound spec used when the confirmed kill followed a recent head hit.", "\345\275\223\347\241\256\350\256\244\345\207\273\346\235\200\346\235\245\350\207\252\346\234\200\350\277\221\344\270\200\346\254\241\345\244\264\351\203\250\345\221\275\344\270\255\346\227\266\344\275\277\347\224\250\347\232\204\351\237\263\346\225\210\351\205\215\347\275\256\343\200\202", "Direct file paths may be absolute, or relative to the VR folder. Example: headshot.mp3 resolves to VR\\headshot.mp3", "\346\226\207\344\273\266\350\267\257\345\276\204\345\217\257\347\224\250\347\273\235\345\257\271\350\267\257\345\276\204\357\274\214\344\271\237\345\217\257\347\233\270\345\257\271 VR \347\233\256\345\275\225\343\200\202\347\244\272\344\276\213\357\274\232headshot.mp3 \344\274\232\350\247\243\346\236\220\345\210\260 VR\\headshot.mp3" },
-        { "KillSoundVolume", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Kill Sound Volume", "\345\207\273\346\235\200\351\237\263\351\207\217", "Volume multiplier for normal kill sounds.", "\346\231\256\351\200\232\345\207\273\346\235\200\351\237\263\346\225\210\347\232\204\351\237\263\351\207\217\345\200\215\347\216\207\343\200\202", "Useful when the kill cue should sit lower than the hit cue or headshot cue.", "\351\200\202\345\220\210\345\234\250\344\275\240\346\203\263\350\256\251\346\231\256\351\200\232\345\207\273\346\235\200\345\274\261\344\272\216\345\221\275\344\270\255\346\210\226\347\210\206\345\244\264\346\217\220\347\244\272\346\227\266\350\260\203\346\225\264\343\200\202" },
-        { "HeadshotSoundVolume", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Headshot Volume", "\347\210\206\345\244\264\351\237\263\351\207\217", "Volume multiplier used when a confirmed kill is matched to a recent head hit.", "\345\275\223\347\241\256\350\256\244\345\207\273\346\235\200\345\214\271\351\205\215\345\210\260\346\234\200\350\277\221\344\270\200\346\254\241\345\244\264\351\203\250\345\221\275\344\270\255\346\227\266\344\275\277\347\224\250\347\232\204\351\237\263\351\207\217\345\200\215\347\216\207\343\200\202", "Set above 1.0 if you want the headshot cue to pop harder than the normal kill cue.", "\345\246\202\346\236\234\346\203\263\350\256\251\347\210\206\345\244\264\346\217\220\347\244\272\346\233\264\342\200\234\347\202\270\342\200\235\357\274\214\345\217\257\344\273\245\350\256\276\345\210\260 1.0 \344\273\245\344\270\212\343\200\202" },
-        { "KillIndicatorEnabled", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Hit / Kill Icons", "\345\221\275\344\270\255 / \345\207\273\346\235\200\345\233\276\346\240\207", "Projects animated hit and kill icons onto the HUD at the traced impact / confirmed kill position.", "\346\212\212\345\212\250\346\200\201\345\221\275\344\270\255\345\222\214\345\207\273\346\235\200\345\233\276\346\240\207\346\212\225\345\275\261\345\210\260 HUD \344\270\212\357\274\214\345\271\266\350\267\237\351\232\217\345\221\275\344\270\255\347\202\271 / \347\241\256\350\256\244\345\207\273\346\235\200\344\275\215\347\275\256\346\230\276\347\244\272\343\200\202", "Uses Source materials, so animated VMT/VTF feedback packs can play directly.", "\347\233\264\346\216\245\344\275\277\347\224\250 Source \346\235\220\350\264\250\357\274\214\345\270\246\345\212\250\347\224\273\347\232\204 VMT/VTF \345\217\215\351\246\210\347\264\240\346\235\220\345\217\257\344\273\245\347\233\264\346\216\245\346\222\255\346\224\276\343\200\202" },
-        { "KillIndicatorMaterialBaseSpec", "Weapons / Fire", "\346\255\246\345\231\250 / \345\274\200\347\201\253", "Kill Icon Material Base", "\345\207\273\346\235\200\345\233\276\346\240\207\346\235\220\350\264\250\347\233\256\345\275\225", "Base material path or folder. The mod will use /hit, /kill, and /headshot under it.", "\346\235\220\350\264\250\345\237\272\347\241\200\350\267\257\345\276\204\346\210\226\347\233\256\345\275\225\343\200\202\346\250\241\347\273\204\344\274\232\350\207\252\345\212\250\344\275\277\347\224\250\345\205\266\344\270\255\347\232\204 /hit\343\200\201/kill \345\222\214 /headshot \346\235\220\350\264\250\343\200\202", "Supports engine material paths like overlays/2965700751 or an absolute folder path ending in materials\\...", "\346\224\257\346\214\201 overlays/2965700751 \350\277\231\347\261\273\346\235\220\350\264\250\350\267\257\345\276\204\357\274\214\344\271\237\346\224\257\346\214\201\344\273\245 materials\\... \347\273\223\345\260\276\347\232\204\347\273\235\345\257\271\347\233\256\345\275\225\350\267\257\345\276\204\343\200\202" },
         
         { "BlockFireOnFriendlyAimEnabled", "Aim Assist", "\350\276\205\345\212\251\347\236\204\345\207\206", "Friendly-fire Aim Guard ", "\347\246\201\346\255\242\345\220\221\351\230\237\345\217\213\345\274\200\347\201\253", "Suppresses firing when your aim line is on a teammate.", "\345\275\223\347\236\204\345\207\206\347\272\277\346\214\207\345\220\221\351\230\237\345\217\213\346\227\266\346\212\221\345\210\266\345\274\200\347\201\253\343\200\202", "This is the startup default; you can still toggle it at runtime via SteamVR binding.", "\350\277\231\346\230\257\345\220\257\345\212\250\346\227\266\347\232\204\351\273\230\350\256\244\345\200\274\357\274\233\350\277\220\350\241\214\344\270\255\344\273\215\345\217\257\347\224\250 SteamVR \347\273\221\345\256\232\345\274\200\345\205\263\345\210\207\346\215\242\343\200\202" },
         
@@ -1961,11 +1939,6 @@ namespace
             s.status = std::string(spec.key) + " = " + value;
     }
 
-    static bool CfgHitKillIndicatorsEnabled(const CfgOverlayState& s)
-    {
-        return CfgIsEnabled(s, "KillIndicatorEnabled", false) || CfgIsEnabled(s, "HitIndicatorEnabled", false);
-    }
-
     static void CfgToggleAdvancedMode(CfgOverlayState& s)
     {
         s.advancedMode = !s.advancedMode;
@@ -2012,8 +1985,6 @@ namespace
             "ViewmodelAdjustEnabled",
             "ViewmodelDisableMoveBob",
             "ViewmodelAutoGripAlignEnabled",
-            "HitSoundEnabled",
-            "KillSoundEnabled",
             "BlockFireOnFriendlyAimEnabled",
             "ManualThrowEnabled",
             "GripReleaseDropEnabled",
@@ -2077,8 +2048,6 @@ namespace
         {
             return false;
         }
-        if (std::strcmp(key, "HitIndicatorEnabled") == 0)
-            return false;
 
         // --- Roomscale Movement ---
         if (CfgStartsWith(key, "Roomscale1To1") && std::strcmp(key, "Roomscale1To1Movement") != 0)
@@ -2200,24 +2169,6 @@ namespace
         {
             return CfgIsEnabled(s, "ViewmodelAdjustEnabled", false);
         }
-
-        // --- Weapons / Fire ---
-        if (std::strcmp(key, "HitSoundSpec") == 0)
-            return CfgIsEnabled(s, "HitSoundEnabled", false);
-        if (std::strcmp(key, "HitSoundVolume") == 0)
-        {
-            return CfgIsEnabled(s, "HitSoundEnabled", false) ||
-                CfgIsEnabled(s, "KillSoundEnabled", false);
-        }
-        if (std::strcmp(key, "KillSoundNormalSpec") == 0 ||
-            std::strcmp(key, "KillSoundHeadshotSpec") == 0 ||
-            std::strcmp(key, "KillSoundVolume") == 0 ||
-            std::strcmp(key, "HeadshotSoundVolume") == 0)
-        {
-            return CfgIsEnabled(s, "KillSoundEnabled", false);
-        }
-        if (CfgStartsWith(key, "KillIndicator") && std::strcmp(key, "KillIndicatorEnabled") != 0)
-            return CfgHitKillIndicatorsEnabled(s);
 
         // --- Aim Assist ---
         if (CfgStartsWith(key, "D3DAimLineOverlay") && std::strcmp(key, "D3DAimLineOverlayEnabled") != 0)

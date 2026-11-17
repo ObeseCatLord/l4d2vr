@@ -2079,13 +2079,11 @@ void VR::Update()
     UpdateNativeViewmodelLeftHandOpenVRFingerCurls();
     UpdateNativeViewmodelRightHandOpenVRFingerCurls();
     UpdateHandPoseTargets();
-    UpdateKillSoundFeedback();
     UpdateMeleeHitHaptics();
     PumpSpeechToTextCapture();
     PumpSpeechToTextResults();
     if (!m_TextToSpeechEnabled && !m_SpeechToTextSendVoiceEnabled)
         ShutdownTextToSpeechServer();
-    UpdateKillIndicatorOverlays();
     UpdateDamageFeedback();
     markPresentSpikeUpdatePhase(m_PresentSpikeUpdateTrackingUs);
 
@@ -2243,7 +2241,6 @@ void VR::ReleaseVRRenderTargetsForDeviceReset()
         std::memset(&m_VKSpecialInfectedIntentSenseHudDyn[i], 0, sizeof(m_VKSpecialInfectedIntentSenseHudDyn[i]));
     }
     m_SpecialInfectedIntentSenseHudDynFront = 0;
-    DestroyKillIndicatorOverlayTextures();
     DestroyItemLabelOverlayTexture();
 
     SafeReleaseD3D(m_D9LeftEyeSurface);

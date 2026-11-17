@@ -24,7 +24,6 @@
 //                                cfgbackup>=<n> (vr/config.txt.bak-* files) cfgoptscroll>=<n>
 //   uiwait=<seconds>             wait (also in menus)
 //   cfg=<option>=<value>         in-memory config override (never written to config.txt), reparsed now
-//   killind=<n>                  spawn n kill indicators in front of the head (needs KillIndicatorEnabled)
 // Steps from overlays to uiwait (and cmd=, xrinput=) also run in the main menu and while a map loads.
 
 #include "../vr_options_menu.h"
@@ -110,8 +109,6 @@ void VR::SelfTestLogOverlays(const char* label)
         { "MenuPointerDot", m_MenuPointerDotHandle }, { "MenuPointerBeam", m_MenuPointerBeamHandle } };
     for (size_t i = 0; i < m_HUDBottomHandles.size(); ++i)
         list.push_back({ "HUDOverlayBottom" + std::to_string(i + 1), m_HUDBottomHandles[i] });
-    for (size_t i = 0; i < m_KillIndicatorOverlaySlots.size(); ++i)
-        list.push_back({ "KillIndicatorOverlay_" + std::to_string(i), m_KillIndicatorOverlaySlots[i].overlayHandle });
     for (const char* key : { "l4d2vr.config.menu_button", "l4d2vr.config.overlay.front", "l4d2vr.config.overlay.back" })
     {
         vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
@@ -124,8 +121,6 @@ void VR::SelfTestLogOverlays(const char* label)
         if (n.handle == vr::k_ulOverlayHandleInvalid)
             continue;
         const bool shown = ov->IsOverlayVisible(n.handle);
-        if (!shown && n.name.rfind("KillIndicator", 0) == 0)
-            continue;
         visible += shown ? 1 : 0;
         float width = 0.0f, curvature = 0.0f;
         ov->GetOverlayWidthInMeters(n.handle, &width);
@@ -567,32 +562,6 @@ bool VR::RunOverlaySelfTestStep(const std::string& step, float t, bool& handled)
             Game::logMsg("[VR][SelfTest] config override %s (in memory only)", spec.c_str());
         }
         return t >= 0.5f;
-    }
-    if (step.rfind("killind=", 0) == 0)
-    {
-        if (m_SelfTestStage == 0)
-        {
-            m_SelfTestStage = 1;
-            const int n = std::clamp(std::atoi(step.c_str() + 8), 1, 16);
-            Vector fwd = m_HmdForward;
-            fwd.z = 0.0f;
-            if (VectorNormalize(fwd) == 0.0f)
-                fwd = { 1.0f, 0.0f, 0.0f };
-            const Vector up{ 0.0f, 0.0f, 1.0f };
-            Vector right = CrossProduct(fwd, up);
-            VectorNormalize(right);
-            for (int i = 0; i < n; ++i)
-            {
-                const float col = static_cast<float>(i % 4) - 1.5f;
-                const float row = static_cast<float>(i / 4) - 1.5f;
-                const Vector pos = m_HmdPosAbs + fwd * 160.0f + right * (col * 28.0f) + up * (-row * 22.0f);
-                SpawnKillIndicator((i % 2) == 1, pos);
-            }
-            std::snprintf(detail, sizeof(detail), "%d spawned (enabled=%d, active=%zu)", n, m_KillIndicatorEnabled ? 1 : 0,
-                m_ActiveKillIndicators.size());
-            SelfTestReport("kill indicators", m_KillIndicatorEnabled && !m_ActiveKillIndicators.empty(), detail);
-        }
-        return t >= 0.15f;
     }
     handled = false;
     return false;

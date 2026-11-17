@@ -2197,8 +2197,6 @@ int Hooks::dClientFireTerrorBullets(
 		C_WeaponCSBase* activeWeaponForSpread = localPlayerForSpread ? (C_WeaponCSBase*)localPlayerForSpread->GetActiveWeapon() : nullptr;
 		m_VR->NotifyVrHandsRealBulletSpreadClientShot(localPlayerForSpread, activeWeaponForSpread, vecNewOrigin, vecNewAngles, a7);
         }
-		const Vector predictedHitOrigin = vecNewOrigin;
-		const QAngle predictedHitAngles = vecNewAngles;
 
 		if (m_VR->m_IsVREnabled && m_Game && m_Game->m_EngineClient
 			&& playerId == m_Game->m_EngineClient->GetLocalPlayer())
@@ -2215,22 +2213,7 @@ int Hooks::dClientFireTerrorBullets(
 			    m_VR->TriggerWeaponFireHaptics(weaponId, dualShotPose && dualShotHand == l4d2vr_dual::Hand::Left);
 		}
 
-		// RightAmmoHUD: hit-based target HP bar has been removed.
-		// The ammo HUD now shows HP%% for the *aimed* special infected (and Witch) and hides instantly on leave.
-		if (m_VR->m_IsVREnabled && m_Game && m_Game->m_EngineClient
-			&& playerId == m_Game->m_EngineClient->GetLocalPlayer() && !preserveNativeDualRay)
-		{
-			// Start a fresh shot window once per FireTerrorBullets call.
-			// RegisterPotentialKillSoundHit keeps a VR-corrected impact candidate for
-			// later hurt/death events and also serves as the fallback path for
-			// common-infected hit feedback when local hurt events are unavailable.
-            const int feedbackCommand = scopedDualShot && g_ClientPistolExecution && dualShotPose
-                ? g_ClientPistolExecution->command : m_VR->m_CurrentPredictedHitFeedbackCmdNumber;
-			m_VR->BeginPredictedHitFeedbackShot(feedbackCommand);
-			// Use the final VR-corrected shot ray for predicted hit feedback so the
-			// hit sound / hit indicator matches the actual VR muzzle origin and aim.
-			m_VR->RegisterPotentialKillSoundHit(predictedHitOrigin, predictedHitAngles);
-		}
+		// 2.0.13: the predicted hit / kill feedback (sounds, markers) is removed.
 
 		const auto original = hkClientFireTerrorBullets.fOriginal;
 		if (!original)

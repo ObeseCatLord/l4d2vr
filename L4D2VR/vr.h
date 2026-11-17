@@ -18,6 +18,8 @@
 #include "vr_scope_optics.h"
 #include "vr_weapon_models.h"
 #include "vr_magazine_policy.h"
+#include "vr_reload_rules.h"
+#include "vr_control_watchdog.h"
 #include "vr_mag_slap.h"
 #include "vr_reload_log.h"
 #include "vr_remote_shells.h"
@@ -697,6 +699,12 @@ public:
 	std::atomic<uint32_t> m_RenderRevivingOther{ 0 };
 	std::atomic<uint32_t> m_RenderUsingMountedGun{ 0 };
 	std::atomic<uint32_t> m_RenderPlayerIncap{ 0 };
+    // 2.0.12: hanging from a ledge (also sets m_isIncapacitated): no weapons.
+    std::atomic<uint32_t> m_RenderPlayerLedge{ 0 };
+    // 2.0.12 (s12 issues 9, 10): downed with a pistol, dual pistols or the
+    // magnum the physical reload stays on when the server accepts it
+    // (IncapReload); otherwise the stock reload takes over while down.
+    bool IncapBlocksPhysicalReload() const;
 	std::atomic<uint32_t> m_RenderPlayerControlledBySI{ 0 };
 	std::atomic<uint32_t> m_RenderInThirdPersonMapLoadCooldown{ 0 };
 
@@ -798,9 +806,18 @@ public:
 	std::string m_VrRuntime = "auto";
 	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
 	bool m_ScopePictureInPictureLens = true;
-	float m_ScopeParallaxStrength = 1.0f;
-	float m_ScopeEyeboxDeg = 15.0f;  // 2.0.4: was 8 (the picture closed before a held scope lined up)
-	float m_ScopeVignetteExponent = 0.25f;
+	// 2.0.12 (s12 issue 18 addendum): a wider eye box with a softer rim;
+	// outside it the lens is dimmed, not black.
+	float m_ScopeParallaxStrength = 0.6f;   // was 1.0
+	float m_ScopeEyeboxDeg = 30.0f;         // 2.0.4: 15 (was 8); 2.0.12: 30
+	float m_ScopeVignetteExponent = 0.6f;   // was 0.25
+	float m_ScopeEyeReliefMinMeters = 0.01f; // ScopeEyeReliefRangeMeters (was 0.02-0.50)
+	float m_ScopeEyeReliefMaxMeters = 0.80f;
+	float m_ScopeOutsideEyeboxBrightness = 0.35f;
+	// ScopeLensOverrides=<model>:x,y,z,r;... (vr_scope_optics.h ParseLensOverride)
+	std::vector<l4d2vr_optics::LensOverride> m_ScopeLensOverrides;
+	uint64_t m_PhysicalScopeDimRenderAt = 0u;
+	uint64_t m_PhysicalScopeConfirmedGeneration = 0u;
 	float m_LoadingFramePumpStallMs = 150.0f;
 	std::mutex m_CompositorFrameMutex;
 	std::atomic<uint64_t> m_LastMainFrameMs{ 0 };
@@ -1601,6 +1618,9 @@ public:
         Vector pouch{}, pouchForward{}, pouchRight{};
         float slidePullUnits[2] = { 0.0f, 0.0f };
         float holdRaiseUnits = 0.0f;
+        // 2.0.12 (s12 issue 8): the slide of each gun that must be racked
+        // before it can fire glows (and nothing else on the dual pistols).
+        bool needsRack[2] = { false, false };
     };
     // Viewmodel draw -> logic: the dual model's magazines and slides.
     // `...Local` is in the receiving hand's controller frame (x right, y up, z back).
@@ -3005,12 +3025,49 @@ public:
     Vector m_RetainedMagazineCatchHandLocal{0.0f, 0.0f, 0.0f};
     // The held old magazine was pulled out by hand (not caught as it fell).
     bool m_RetainedMagazineHandPulled = false;
+    // 2.0.12: the seated magazine gripped by an empty off hand (MagazineHandPullEnabled):
+    // it follows the hand along the well and aborts when the hand leaves sideways.
+    l4d2vr_reload_rules::MagazineHandPull m_MagazineHandPull;
+    // The seated magazine's grab volume this frame, for the shared debug view
+    // (GetMagazineHandPullVolume): the touch box plus the hand reach.
+    MagazineInteractionBoxSnapshot m_MagazineHandPullVolumeBox{};
+    float m_MagazineHandPullVolumeReach = 0.0f;
+    bool m_MagazineHandPullVolumeValid = false;
+    mutable std::mutex m_MagazineHandPullVolumeMutex;
+    // Debug view (agent/s12-hands overlay): the hand-pull grab volume of the
+    // seated magazine, in the viewmodel layer; false while no gun offers it.
+    bool GetMagazineHandPullVolume(MagazineInteractionBoxSnapshot& box, float& reachUnits) const;
+    // 2.0.12: no-hands / no-control watchdog (vr_control_watchdog.h), run
+    // from CreateMove with the grip gameplay gate bits.
+    std::atomic<uint64_t> m_ViewmodelDrawnAtMs{ 0u };   // last first-person viewmodel draw
+    int m_DrawRequestSlot = -1;                          // last holster draw sent to the game
+    uint64_t m_DrawRequestAtMs = 0u;
+    uintptr_t m_DrawRequestTag = 0u;
+    bool m_DrawRequestLeft = false;
+    l4d2vr_control_watchdog::Watchdog m_ControlWatchdog;
+    unsigned m_ControlWatchdogTriedSlots = 0u;
+    unsigned m_ControlWatchdogRedeploys = 0u;   // per no-viewmodel episode
+    void NoteHolsterDrawRequest(int slot, uintptr_t weaponTag, bool leftHand);
+    void UpdateControlWatchdog(C_BasePlayer* player, uint32_t gateBits);
     float m_RetainedPullMaxDepth = -1e9f; // furthest it has been out of the well since
     // Fresh ammo seats only after leaving the well once since it was taken.
     l4d2vr_magazine::FreshInsertGate m_FreshAmmoInsertGate;
     // A shell was taken while the pump waited to be cycled; the pump stage
     // (and the fore-end's position) resumes once the shell is in or dropped.
     bool m_ManualPumpShellTakenDuringCycle = false;
+    // 2.0.12 (s12 issue 2): "finished loading" needs a fresh press made at
+    // least 250 ms after the last shell confirm, with the input let go once.
+    std::chrono::steady_clock::time_point m_ShellConfirmedAt{};
+    bool m_ShellFinishRequiresRelease = false;
+    // 2.0.12: Pavlov MagGrabRateMax (one spare per squeeze, 0.15 s on shotguns).
+    std::chrono::steady_clock::time_point m_PouchLastTakeAt{};
+    // 2.0.12: a held spare is sticky; when the input was let go while holding it.
+    std::chrono::steady_clock::time_point m_FreshAmmoReleasedAt{};
+    // 2.0.12: the pouch shows a spare only when a take could succeed (no
+    // phantom shell or magazine with an empty reserve or a full tube).
+    std::atomic<bool> m_PouchSpareAvailable{ true };
+    // 2.0.12: pull the seated magazine out by hand (MagazineHandPullEnabled).
+    bool m_MagazineHandPullEnabled = true;
     // The well or port the last insertion check used.
     VrHandMatrix4 m_MagazineInteractionFitSocketWorld{};
     MagazineInteractionBoxSnapshot m_MagazineInteractionFitSocketBox{};

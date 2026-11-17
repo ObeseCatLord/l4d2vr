@@ -520,12 +520,18 @@ BackgroundAudio=true
 // -l4d2vr_openvr launch options override it there. Restart to apply.
 VrRuntime=auto
 // Picture-in-picture scope lens: the scope image shifts with your eye (parallax) and darkens toward the
-// edge as your eye leaves the eyebox, like a real optic. The picture shows to an eye 2-50 cm behind the
-// lens within ScopeEyeboxDeg of its axis and fades out by twice that (the other eye sees it black).
+// edge as your eye leaves the eyebox, like a real optic. The picture is full to an eye
+// ScopeEyeReliefRangeMeters behind the lens within ScopeEyeboxDeg of its axis and fades by 1.5x that;
+// outside it the lens is dimmed to ScopeOutsideEyeboxBrightness (0 = black), never blank.
 ScopePictureInPictureLens=true
-ScopeParallaxStrength=1.0
-ScopeEyeboxDeg=15
-ScopeVignetteExponent=0.25
+ScopeParallaxStrength=0.6
+ScopeEyeboxDeg=30
+ScopeVignetteExponent=0.6
+ScopeEyeReliefRangeMeters=0.01,0.80
+ScopeOutsideEyeboxBrightness=0.35
+// Lens for a replacement scope model: <model>:x,y,z,r;... (bone 3 bind space, model units). Replacement
+// models of the stock optics (a skin) use the stock lens without an entry.
+ScopeLensOverrides=
 PhysicalShoveEnabled=true
 # Any fast swing of the gun in front of the body bashes (sideways, chops, butt strokes; measured at the muzzle).
 # Set to false and only pushing the gun forward bashes.
@@ -635,6 +641,9 @@ DualPistolsStackMaxAngleDeg=45
 // Pavlov-style: the release button drops detachable magazines (the AK-47's is pulled out by hand).
 // An empty gun never reloads or ejects on its own; its magazine glows to show a reload is needed.
 MagazineReleaseButtonRequired=true
+# 2.0.12: an empty off hand can also grip the seated magazine at the well and pull it out along the well
+# (Pavlov's magazine slot: it aborts when the hand leaves the slot sideways). The release button still works.
+MagazineHandPullEnabled=true
 MagazineInteractionAutoEjectWhenEmpty=false
 MagazineEmptyGlowEnabled=true
 // Released magazines fall to the floor and disappear after a while.

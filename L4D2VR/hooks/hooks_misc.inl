@@ -14,7 +14,7 @@ namespace vr_vm_stabilize { struct Mat3x4; }
 // DXVK fork (dxvk_new/src/d3d9/d3d9_device.cpp): flip the front face for mirrored draws.
 extern "C" void L4D2VR_DxvkSetMirroredFrontFace(IDirect3DDevice9* device, int mirrored);
 static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string& modelName, void*& bones,
-    vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow);
+    vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow, vr_vm_stabilize::Mat3x4*& slideGlowBones);
 
 namespace vr_vm_stabilize
 {
@@ -26879,11 +26879,36 @@ static void CapturePhysicalScopeLens(VR* vr, void* state, const std::string& mod
         noLens("studio header unreadable", static_cast<uint32_t>(length));
         return;
     }
-    const auto* profile = l4d2vr_optics::FindModel(lowerModel,checksum);
+    // 2.0.12 (s12 issue 18.2): ScopeLensOverrides first, then the stock table;
+    // a replacement model (another checksum) keeps its path's stock lens.
+    bool replacement = false;
+    l4d2vr_optics::ModelLens overridden{};
+    const l4d2vr_optics::ModelLens* profile = l4d2vr_optics::FindModelOrStock(lowerModel, checksum, replacement);
+    for (const auto& lensOverride : vr->m_ScopeLensOverrides)
+    {
+        if (lowerModel.find(lensOverride.model) == std::string::npos) continue;
+        const l4d2vr_optics::ModelLens* stock = l4d2vr_optics::FindModel(lowerModel, 0u);
+        if (!stock) continue; // only the five optic guns (HasOptic) render a scope
+        overridden = *stock;
+        overridden.bindCenter = lensOverride.bindCenter;
+        overridden.radius = lensOverride.radius;
+        profile = &overridden;
+        noLens("ScopeLensOverrides entry in use", checksum);
+        break;
+    }
     if (!profile)
     {
         noLens("model path or checksum not in the optics table (checksum)", checksum);
         return;
+    }
+    if (replacement && profile != &overridden)
+    {
+        static std::mutex s_replacementMutex;
+        static std::unordered_set<std::string> s_replacementLogged;
+        std::lock_guard<std::mutex> lock(s_replacementMutex);
+        if (s_replacementLogged.insert(lowerModel).second)
+            Game::logMsg("[VR][Scope] %s is a replacement model (checksum %u): using the stock lens "
+                "(ScopeLensOverrides=<model>:x,y,z,r adjusts it)", lowerModel.c_str(), checksum);
     }
     vr_vm_stabilize::Mat3x4 bind{}, world{};
     if (!vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(hdr + table + 3 * 216 + 96),bind) ||
@@ -27091,9 +27116,9 @@ static l4d2vr_dual::Hand ApplyIndependentDualPistolBones(VR* vr, void* state,
 // It publishes where the magazines and slides are, in the receiving hand's
 // controller frame, for the logic.
 static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string& modelName, void*& bones,
-    vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow)
+    vr_vm_stabilize::Mat3x4*& pairBones, bool& pairGlow, vr_vm_stabilize::Mat3x4*& slideGlowBones)
 {
-    pairBones = nullptr; pairGlow = false;
+    pairBones = nullptr; pairGlow = false; slideGlowBones = nullptr;
     auto matrixOrigin = [](const VrHandMatrix4& matrix)
     { return Vector(VrHandMath::Get(matrix, 0, 3), VrHandMath::Get(matrix, 1, 3), VrHandMath::Get(matrix, 2, 3)); };
     auto matrixAxis = [](const VrHandMatrix4& matrix, int column)
@@ -27333,6 +27358,26 @@ static bool ApplyDualReloadViewmodelPose(VR* vr, void* state, const std::string&
                 vr_vm_stabilize::Mul(delta[gun], stackedWorld(bone), pair[bone]);
             }
             pairBones = pair;
+        }
+    }
+    // 2.0.12 (s12 issue 8): the slide of a gun that has to be racked glows;
+    // nothing else on the dual pistols ever does (Pavlov glows no handles).
+    if ((rs.needsRack[0] && slide[0] >= 0) || (rs.needsRack[1] && slide[1] >= 0))
+    {
+        auto* glow = vr_vm_stabilize::AllocStableBones(count, vr->m_RenderFrameSeq.load(std::memory_order_relaxed));
+        if (glow)
+        {
+            for (int bone = 0; bone < count; ++bone)
+            {
+                glow[bone] = out[bone];
+                bool racking = false;
+                for (int gun = 0; gun < 2 && !racking; ++gun)
+                    racking = rs.needsRack[gun] && slide[gun] >= 0 && (inSubtree(bone, slide[gun]) ||
+                        (gun == 1 && leftBolt >= 0 && inSubtree(bone, leftBolt)));
+                if (!racking)
+                { glow[bone].m[0][3] += 100000.0f; glow[bone].m[1][3] += 100000.0f; glow[bone].m[2][3] += 100000.0f; }
+            }
+            slideGlowBones = glow;
         }
     }
     // Both magazines out of the guns.
@@ -27815,6 +27860,7 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
     bool drawMagazineInteractionDetachedMagazine = false;
     vr_vm_stabilize::Mat3x4* dualReloadPairBones = nullptr;   // the double magazine (physical dual reload)
     bool dualReloadPairGlow = false;
+    vr_vm_stabilize::Mat3x4* dualReloadSlideGlowBones = nullptr;
     vr_vm_stabilize::Mat3x4* magazineInteractionCalibrationPreviewBones = nullptr;
     vr_vm_stabilize::Mat3x4* magazineInteractionCalibrationPreviewModelToWorld = nullptr;
     bool drawMagazineInteractionCalibrationPreview = false;
@@ -28627,7 +28673,8 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
         MagazineInteractionRenderSnapshotScope pistolContactSnapshot(queueMode != 0);
         VR::t_MagazineContactHand = ApplyIndependentDualPistolBones(m_VR, state, modelName, pBonesToWorldFinal);
         if (!shadowDepthDraw)
-            ApplyDualReloadViewmodelPose(m_VR, state, modelName, pBonesToWorldFinal, dualReloadPairBones, dualReloadPairGlow);
+            ApplyDualReloadViewmodelPose(m_VR, state, modelName, pBonesToWorldFinal, dualReloadPairBones, dualReloadPairGlow,
+                dualReloadSlideGlowBones);
 
         PublishMagazineInteractionCalibrationSnapshotFromDraw(
             m_VR,
@@ -29037,9 +29084,15 @@ void Hooks::DrawModelExecuteImpl(void* ecx, void* edx, void* state, const ModelR
             if (IMaterial* const hintMaterial = HooksHolsterHighlightMaterial())
                 HooksDrawGlow(ecx, state, pDrawInfo, dualReloadPairBones, hintMaterial, kGlowNextStep);
     }
+    if (!shadowDepthDraw && dualReloadSlideGlowBones)
+        if (IMaterial* const hintMaterial = HooksHolsterHighlightMaterial())
+            HooksDrawGlow(ecx, state, pDrawInfo, dualReloadSlideGlowBones, hintMaterial, kGlowNextStep);
 
     if (!shadowDepthDraw && m_VR && pBonesToWorldFinal)
         PublishViewmodelSightBore(m_VR, state, modelName, *pDrawInfo, pBonesToWorldFinal);
+    // 2.0.12: the control watchdog's "hands drawn" heartbeat.
+    if (!shadowDepthDraw && m_VR && HooksModelNameIsViewmodel(lowerModelName))
+        m_VR->m_ViewmodelDrawnAtMs.store(GetTickCount64(), std::memory_order_release);
 
     if (!shadowDepthDraw && m_VR && m_VR->m_MagazineDropEnabled && pBonesToWorldFinal &&
         HooksModelNameIsViewmodel(lowerModelName))

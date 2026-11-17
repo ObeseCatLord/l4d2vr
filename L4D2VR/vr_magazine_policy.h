@@ -241,13 +241,22 @@ namespace l4d2vr_magazine
     }
     // Fresh ammo comes from the pouch only while the hand is at the pouch and
     // not on the gun's bolt, slide or pump: racking next to the pouch is a rack.
-    inline bool MayTakeFreshAmmo(float pouchDistance, float pouchRange, float boltDistance, float boltRange)
+    // 2.0.12: the bolt wins only when the hand is on it (within 3 cm and 2 cm
+    // nearer than the pouch). A gun held at the chest puts its receiver at the
+    // pouch, where both boxes reach zero together, and refused every shell.
+    constexpr float kBoltWinsWithinMeters = 0.03f;
+    constexpr float kBoltWinsMarginMeters = 0.02f;
+    inline bool MayTakeFreshAmmo(float pouchDistance, float pouchRange, float boltDistance, float boltRange,
+        float unitsPerMeter = 1.0f)
     {
         if (!std::isfinite(pouchDistance) || !std::isfinite(pouchRange) || pouchDistance < 0.0f ||
             pouchRange < 0.0f || pouchDistance > pouchRange)
             return false;
-        const bool onBolt = std::isfinite(boltDistance) && std::isfinite(boltRange) && boltDistance >= 0.0f &&
-            boltDistance <= boltRange && boltDistance <= pouchDistance;
+        if (!std::isfinite(unitsPerMeter) || unitsPerMeter <= 0.0f) unitsPerMeter = 1.0f;
+        if (!std::isfinite(boltDistance) || !std::isfinite(boltRange) || boltDistance < 0.0f) return true;
+        const float onBoltRange = std::min(boltRange, kBoltWinsWithinMeters * unitsPerMeter);
+        const bool onBolt = boltDistance <= onBoltRange &&
+            boltDistance < pouchDistance - kBoltWinsMarginMeters * unitsPerMeter;
         return !onBolt;
     }
     // A fresh magazine or shell seats only after it has been outside the well
@@ -266,18 +275,43 @@ namespace l4d2vr_magazine
         bool m_SeenOutside = false;
     };
 
+    // The host's gate for the stock reload of a VR player's gun.
+    // 2.0.11 (per command): a command carrying the block impulse blocks the
+    // weapon it ran with; the next ordinary command lifts it.
+    // 2.0.12 sticky mode (clients that send the sticky block, only when the
+    // server advertises StickyReloadGate): once a sticky block arrived, every
+    // firearm of this player is blocked until the client explicitly allows the
+    // stock reload for the weapon the server holds. Commands built for an
+    // older weapon (a grenade the server already replaced with the empty
+    // shotgun, a heal item, a pickup) carry nothing and cannot open the gate.
+    // An allow counts only once the server weapon has been held for
+    // kAllowSettleMs, so an allow built for the previous weapon cannot open it
+    // for a weapon the server switched to by itself.
     class NativeReloadLedger
     {
     public:
+        static constexpr std::uint64_t kAllowSettleMs = 300u;
         void Observe(int command, std::uintptr_t weapon, bool block, bool preserve = false,
-            std::uintptr_t owner = 0u, unsigned serial = 0u)
+            std::uintptr_t owner = 0u, unsigned serial = 0u, bool sticky = false, bool allow = false,
+            std::uint64_t nowMs = 0u)
         {
             if (owner != m_Owner || serial != m_Serial)
             {
                 m_Owner = owner; m_Serial = serial; m_Command = 0; m_Weapon = 0u;
+                m_Sticky = false; m_Allowed = 0u; m_HeldWeapon = 0u; m_HeldSince = 0u;
             }
             if (command <= m_Command) return;
             m_Command = command;
+            if (weapon != m_HeldWeapon) { m_HeldWeapon = weapon; m_HeldSince = nowMs; }
+            if (sticky) { m_Sticky = true; m_Allowed = 0u; m_Weapon = weapon; return; }
+            if (m_Sticky)
+            {
+                if (block) { m_Allowed = 0u; m_Weapon = weapon; }
+                else if (allow && weapon != 0u && nowMs >= m_HeldSince && nowMs - m_HeldSince >= kAllowSettleMs)
+                { m_Allowed = weapon; m_Weapon = 0u; }
+                return;
+            }
+            if (allow) { m_Weapon = 0u; return; }
             if (preserve)
             {
                 if (m_Weapon != weapon) m_Weapon = 0u;
@@ -285,12 +319,21 @@ namespace l4d2vr_magazine
             }
             m_Weapon = block ? weapon : 0u;
         }
-        bool Blocks(std::uintptr_t weapon) const { return weapon != 0u && m_Weapon == weapon; }
+        bool Blocks(std::uintptr_t weapon) const
+        {
+            if (weapon == 0u) return false;
+            return m_Sticky ? weapon != m_Allowed : m_Weapon == weapon;
+        }
+        bool Sticky() const { return m_Sticky; }
     private:
         int m_Command = 0;
         std::uintptr_t m_Weapon = 0u;
         std::uintptr_t m_Owner = 0u;
         unsigned m_Serial = 0u;
+        bool m_Sticky = false;
+        std::uintptr_t m_Allowed = 0u;
+        std::uintptr_t m_HeldWeapon = 0u;
+        std::uint64_t m_HeldSince = 0u;
     };
     inline bool IsLocalPlayerCommand(int playerIndex, int localPlayerIndex)
     {

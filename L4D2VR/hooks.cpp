@@ -13,6 +13,7 @@
 #include "vr_pistol_detachment.h"
 #include "vr_interaction_geometry.h"
 #include "vr_interaction_protocol.h"
+#include "vr_reload_rules.h"
 #include "server_core/vr_server_limits.h"
 #include "server_core/vr_usercmd_codec.h"
 #include "vr_ladder_input.h"
@@ -1493,7 +1494,11 @@ static GripGameplaySession ReadGripGameplaySession(VR* vr, Game* game)
         if (!vr->m_FirstPersonControlReady.load(std::memory_order_acquire)) state.blocked |= 2048u;
         if (vr->m_RenderPlayerControlledBySI.load(std::memory_order_acquire)) state.blocked |= 4096u;
         if (IsLocalClientUsingMountedWeapon()) state.blocked |= 8192u;
-        state.gameplay = state.blocked == 0u;
+        // 2.0.12 (s12 issue 3.2): "no active weapon" (0x8000) no longer gates
+        // the holster draws and pickups: with nothing in the hands the player
+        // must still be able to draw from a holster or pick something up.
+        // Drops and throws need a held item anyway (liveInventory).
+        state.gameplay = (state.blocked & ~0x8000u) == 0u;
         return state;
     }
 #ifdef _MSC_VER

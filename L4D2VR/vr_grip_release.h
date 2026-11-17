@@ -7,6 +7,11 @@ namespace l4d2vr_grip
     constexpr unsigned char kPickupImpulse = 234u;
     constexpr unsigned char kReleaseImpulse = 235u;
     constexpr unsigned char kBlockNativeReloadImpulse = 236u;
+    // 2.0.12 sticky reload gate (server feature StickyReloadGate 0x8000):
+    // 245 blocks the stock reload of every firearm until 246 allows it for
+    // the weapon the server holds (vr_magazine_policy.h NativeReloadLedger).
+    constexpr unsigned char kStickyBlockNativeReloadImpulse = 245u;
+    constexpr unsigned char kAllowNativeReloadImpulse = 246u;
     inline bool MayCommitDrop(bool liveOwner, bool sameOwner, bool sameEntity, bool activeWeapon, std::int64_t ageTicks)
     {
         return liveOwner && sameOwner && sameEntity && activeWeapon && ageTicks >= 0 && ageTicks <= 48;

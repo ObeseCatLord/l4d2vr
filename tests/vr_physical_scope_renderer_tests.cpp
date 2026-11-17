@@ -261,6 +261,7 @@ struct VR {
     // The picture-in-picture lens mesh is covered by vr_scope_lens_tests.
     bool m_ScopePictureInPictureLens = false;
     float m_ScopeParallaxStrength = 1.0f, m_ScopeEyeboxDeg = 8.0f, m_ScopeVignetteExponent = 0.25f;
+    float m_ScopeEyeReliefMinMeters = 0.01f, m_ScopeEyeReliefMaxMeters = 0.80f, m_ScopeOutsideEyeboxBrightness = 0.35f;
     std::atomic<int> m_PhysicalScopeDiagDraw[2] = { 0, 0 };  // what each eye's lens showed (diagnostics)
     VR() { m_PhysicalScopeWeapons.Observe(1u, 0x3005u, 6); }
     bool IsPhysicalScopeMode() const { return true; }

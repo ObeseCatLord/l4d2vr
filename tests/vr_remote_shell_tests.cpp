@@ -192,7 +192,7 @@ int main()
     Check(lostReply.status == Status::Applied && retryWrites == 1);
     Reply retryResult{};
     Check(retryClient.Update(handle,3,100u,1u,1400u,retryResult,4,19) == ClientRequest::Poll::Waiting);
-    Check(!retryClient.NextRetry(1499u,resend) && retryClient.NextRetry(1500u,resend) && resend == retryOriginal);
+    Check(!retryClient.NextRetry(1149u,resend) && retryClient.NextRetry(1150u,resend) && resend == retryOriginal);
     retryState.clip=retryClip; retryState.reserve=retryReserve;
     const auto recovered = retryHost.Apply(resend,retryState,1500u,retryWriter);
     Check(recovered.status == Status::Applied && retryWrites == 1 && retryClip == 4 && retryReserve == 19);

@@ -222,6 +222,10 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
 		localUseButtonDownForAutoActions ||
 		m_VR->m_UseCmdOwned ||
 		IsPlayerDoingUseOrReviveAction(localPlayerForAutoActions);
+    // 2.0.12: no hands / no control watchdog (names the stuck gate, recovers).
+    if (m_VR)
+        m_VR->UpdateControlWatchdog(localPlayerForAutoActions,
+            gripSession.blocked | (IsPlayerDoingUseOrReviveAction(localPlayerForAutoActions) ? 32u : 0u));
 
 	if (m_VR && m_VR->m_TeleportVisualScoutActive)
 	{
@@ -2498,15 +2502,20 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         clip = ReadNetvar<int>(routingPistol, VR::kClip1Offset);
         const bool serverPathReady = dualClientOnly ||
             (m_VR->m_EncodeVRUsercmd && !m_VR->m_ForceNonVRServerMovement && s_ServerUnderstandsVR);
+        // 2.0.12 (s12 issue 9): a downed survivor fires the dual pistols (the
+        // base game allows it and the server's akimbo has no incap block);
+        // only hanging from a ledge keeps them down.
         const bool eligible = serverPathReady && !m_VR->m_SuppressPlayerInput &&
             m_VR->m_FirstPersonControlReady.load(std::memory_order_acquire) &&
-            !m_VR->m_RenderPlayerIncap.load(std::memory_order_relaxed) &&
+            !m_VR->m_RenderPlayerLedge.load(std::memory_order_relaxed) &&
             !m_VR->m_RenderPlayerControlledBySI.load(std::memory_order_relaxed) &&
             !m_VR->IsMagazineInteractionBlockingFire() && !s_pistolOwnership.Awaiting() &&
             (cmd->buttons & (1u << 5)) == 0u;
         unsigned firingMask = pistolMask ? pistolMask : 3u;
         const uint64_t handAmmo = m_VR->m_PistolAmmoCounts.load(std::memory_order_acquire);
-        if (m_Game->GetConVarIntDirect("sv_infinite_ammo", -1) == 0)
+        // While the stock reload owns the guns (downed on a server without
+        // IncapReload) the per-hand magazine counts are not kept: the clip decides.
+        if (m_Game->GetConVarIntDirect("sv_infinite_ammo", -1) == 0 && !m_VR->IncapBlocksPhysicalReload())
             firingMask &= l4d2vr_pistol_prediction::FiringMask(handAmmo);
         dualShotHand = s_dualPistolTriggers.Update(eligible,
             (firingMask & 1u) != 0u && (triggers & 2u) != 0u,
@@ -2591,12 +2600,30 @@ bool __fastcall Hooks::dCreateMove(void* ecx, void* edx, float flInputSampleTime
         if (!m_VR->m_VrHandsEnabled && !m_VR->m_NativeViewmodelHandsOnly) gateGap |= 8u;
         if (m_VR->IsMagazineInteractionReloadCommandActive()) gateGap |= 16u;
         if ((m_VR->m_DualPistolNativeReloadState.load(std::memory_order_acquire) & 1u) != 0u) gateGap |= 32u;
-        if (m_VR->m_RenderPlayerIncap.load(std::memory_order_acquire)) gateGap |= 64u;
+        // 2.0.12 (s12 issue 10): downed with a pistol or the magnum, the
+        // physical reload works, so the block keeps being sent; the stock
+        // reload is only let through when the physical one cannot run.
+        if (m_VR->m_RenderPlayerIncap.load(std::memory_order_acquire) &&
+            m_VR->IncapBlocksPhysicalReload())
+            gateGap |= 64u;
         if (!l4d2vr_calibration::IsFirearm(gateWeaponId)) gateGap |= 128u;
         else if (!(l4d2vr_shell::IsShotgun(gateWeaponId) ? m_VR->IsMagazineInteractionShotgunServerHookActive(gateWeaponId) :
             m_VR->IsMagazineInteractionDetachableBackendActive(gateWeaponId))) gateGap |= 256u;
+        // 2.0.12 (s12 issue 14, E6, G3): with a StickyReloadGate server the
+        // block stays standing per player until an explicit allow, so the
+        // commands built for the previous item after a server-side weapon
+        // switch (throw, heal, pickup, running dry) cannot open it.
+        const bool stickyGate = Hooks::s_ServerUnderstandsVR &&
+            m_VR->ServerFeature(l4d2vr_features::StickyReloadGate);
+        const auto gateImpulse = l4d2vr_reload_rules::ResolveGateImpulse(gateGap, stickyGate);
+        if (gateImpulse == l4d2vr_reload_rules::GateImpulse::StickyBlock)
+            cmd->impulse = l4d2vr_grip::kStickyBlockNativeReloadImpulse;
+        else if (gateImpulse == l4d2vr_reload_rules::GateImpulse::Allow)
+            cmd->impulse = l4d2vr_grip::kAllowNativeReloadImpulse;
         if (!gateGap)
-            cmd->impulse = l4d2vr_grip::kBlockNativeReloadImpulse;
+        {
+            if (!stickyGate) cmd->impulse = l4d2vr_grip::kBlockNativeReloadImpulse;
+        }
         else if ((gateGap & (2u | 4u | 8u | 128u | 256u)) == 0u)
         {
             // Only commands that should have carried the block count as gaps.

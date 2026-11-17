@@ -1296,9 +1296,20 @@ void __fastcall Hooks::dPistolPlayerRunCommand(void* owner, void*, CUserCmd* com
             context.reloadPolicy, context.reloadBlocked);
         // Outside the command scope, retain only the most recently simulated
         // policy. Decode must not advance this ledger while this hook is active.
-        m_Game->m_PlayersVRInfo[context.index].physicalReloadLedger.Observe(context.command,
+        auto& reloadLedger = m_Game->m_PlayersVRInfo[context.index].physicalReloadLedger;
+        reloadLedger.Observe(context.command,
             context.reloadWeapon.pointer, context.reloadValid && context.reloadBlocked, false,
-            reinterpret_cast<uintptr_t>(owner), context.serial);
+            reinterpret_cast<uintptr_t>(owner), context.serial,
+            found && input.reload == l4d2vr_server_pistol::ReloadPolicy::StickyBlock,
+            found && input.reload == l4d2vr_server_pistol::ReloadPolicy::Allow, GetTickCount64());
+        // 2.0.12: in sticky mode the ledger decides for the executing command too.
+        if (reloadLedger.Sticky() && context.reloadWeapon.pointer != 0u)
+        {
+            context.reloadValid = true;
+            context.reloadBlocked = reloadLedger.Blocks(context.reloadWeapon.pointer);
+            if (context.reloadBlocked)
+                m_Game->EndBlockedStockReload(owner, reinterpret_cast<void*>(context.reloadWeapon.pointer), context.index);
+        }
     }
     l4d2vr_pistol::AmmoSnapshot before{};
     int ammoIndex = -1;
@@ -2933,11 +2944,17 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
         const uint8_t incomingInteractionImpulse = move->impulse;
 		const bool gripPickupCommand = move->impulse == l4d2vr_grip::kPickupImpulse;
         const bool gripReleaseCommand = move->impulse == l4d2vr_grip::kReleaseImpulse;
-        const bool blockPhysicalNativeReload = move->impulse == l4d2vr_grip::kBlockNativeReloadImpulse;
-        decodedReload = blockPhysicalNativeReload ? l4d2vr_server_pistol::ReloadPolicy::Block :
+        const bool stickyBlockPhysicalNativeReload = move->impulse == l4d2vr_grip::kStickyBlockNativeReloadImpulse;
+        const bool allowPhysicalNativeReload = move->impulse == l4d2vr_grip::kAllowNativeReloadImpulse;
+        const bool blockPhysicalNativeReload = move->impulse == l4d2vr_grip::kBlockNativeReloadImpulse ||
+            stickyBlockPhysicalNativeReload;
+        decodedReload = stickyBlockPhysicalNativeReload ? l4d2vr_server_pistol::ReloadPolicy::StickyBlock :
+            allowPhysicalNativeReload ? l4d2vr_server_pistol::ReloadPolicy::Allow :
+            blockPhysicalNativeReload ? l4d2vr_server_pistol::ReloadPolicy::Block :
             (l4d2vr_wire::KeepNativeReloadGate(incomingInteractionImpulse)
                 ? l4d2vr_server_pistol::ReloadPolicy::Preserve : l4d2vr_server_pistol::ReloadPolicy::Native);
-        if (gripPickupCommand || gripReleaseCommand || blockPhysicalNativeReload) move->impulse = 0;
+        if (gripPickupCommand || gripReleaseCommand || blockPhysicalNativeReload || allowPhysicalNativeReload)
+            move->impulse = 0;
         if (move->impulse == l4d2vr_hand_throw::kImpulse)
         {
             // Hand throw: the velocity rides in the movement and weapon-select
@@ -3046,7 +3063,8 @@ int Hooks::dReadUsercmd(void* buf, CUserCmd* move, CUserCmd* from)
                 reinterpret_cast<uintptr_t>(serverWeapon), blockPhysicalNativeReload &&
                 l4d2vr_calibration::IsFirearm(serverWeaponId),
                 l4d2vr_wire::KeepNativeReloadGate(incomingInteractionImpulse),
-                reinterpret_cast<uintptr_t>(m_Game->m_CurrentUsercmdPlayer));
+                reinterpret_cast<uintptr_t>(m_Game->m_CurrentUsercmdPlayer), 0u,
+                stickyBlockPhysicalNativeReload, allowPhysicalNativeReload, GetTickCount64());
 		// A remote player's command must not consume the host's queued reload.
 		const int localAmmoPlayerIndex = m_Game->m_EngineClient
 			? m_Game->m_EngineClient->GetLocalPlayer() : -1;
@@ -3625,7 +3643,7 @@ int Hooks::dWriteUsercmd(void* buf, CUserCmd* to, CUserCmd* from)
 	if (from)
 	{
 		if (l4d2vr_wire::IsGripAction(static_cast<uint8_t>(from->impulse)) ||
-			static_cast<uint8_t>(from->impulse) == l4d2vr_grip::kBlockNativeReloadImpulse ||
+			l4d2vr_wire::IsReloadGateImpulse(static_cast<uint8_t>(from->impulse)) ||
 			static_cast<uint8_t>(from->impulse) == l4d2vr_hand_throw::kImpulse)
 			from->impulse = 0;
 		from->buttons = static_cast<int>(static_cast<uint32_t>(from->buttons) & ~(0x3fu << 26));

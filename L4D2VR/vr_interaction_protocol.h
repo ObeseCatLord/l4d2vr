@@ -24,6 +24,12 @@ namespace l4d2vr_wire
         // flashlight toggle with an empty gun used to let the stock auto
         // reload refill it with no magazine. The next ordinary command
         // carries the current reload policy again.
-        return impulse != 0u && impulse != l4d2vr_grip::kBlockNativeReloadImpulse;
+        return impulse != 0u && impulse != l4d2vr_grip::kBlockNativeReloadImpulse &&
+            impulse != l4d2vr_grip::kStickyBlockNativeReloadImpulse && impulse != l4d2vr_grip::kAllowNativeReloadImpulse;
+    }
+    inline bool IsReloadGateImpulse(std::uint8_t impulse)
+    {
+        return impulse == l4d2vr_grip::kBlockNativeReloadImpulse ||
+            impulse == l4d2vr_grip::kStickyBlockNativeReloadImpulse || impulse == l4d2vr_grip::kAllowNativeReloadImpulse;
     }
 }

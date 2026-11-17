@@ -99,8 +99,10 @@ namespace l4d2vr_server
         // Native reload gate policy (listen host: physicalReloadLedger.Observe).
         if (in.interaction)
             p.reloadLedger.Observe(command, in.weaponTag,
-                pose->reload == l4d2vr_server_pistol::ReloadPolicy::Block && weapon::IsFirearm(in.weaponId),
-                pose->reload == l4d2vr_server_pistol::ReloadPolicy::Preserve, in.owner);
+                l4d2vr_server_pistol::BlocksReload(pose->reload) && weapon::IsFirearm(in.weaponId),
+                pose->reload == l4d2vr_server_pistol::ReloadPolicy::Preserve, in.owner, 0u,
+                pose->reload == l4d2vr_server_pistol::ReloadPolicy::StickyBlock,
+                pose->reload == l4d2vr_server_pistol::ReloadPolicy::Allow, in.nowMs);
 
         // Grenade release -> pending throw + throw aim grace window.
         const bool attackDown = (buttons & kInAttack) != 0;

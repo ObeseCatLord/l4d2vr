@@ -662,8 +662,12 @@ int main()
     Require(shell.m_MagazineInteractionLeftHandHolding && shell.shellWorldUpdates==0,"unknown shell input preserves held flag without world update");
     shell.Frame(); shell.ShellPending(true);
     Require(shell.m_MagazineInteractionLeftHandHolding && shell.shellWorldUpdates==1,"still-held recovery resumes shell world update");
-    shell.ShellPending(false); shell.ShellPending(true);
-    Require(!shell.m_MagazineInteractionLeftHandHolding && shell.shellWorldUpdates==1,"genuine released shell cannot be resurrected");
+    // 2.0.12 (s12 issue 2d): shells are sticky; a shell let go while the host
+    // answers stays in the hand (and comes back if the host refuses it).
+    shell.ShellPending(false);
+    Require(shell.m_MagazineInteractionLeftHandHolding && shell.shellWorldUpdates==2,"released shell stays held while pending");
+    shell.m_MagazineInteractionLeftHandHolding=false; shell.ShellPending(true);
+    Require(!shell.m_MagazineInteractionLeftHandHolding && shell.shellWorldUpdates==2,"a shell that left the hand cannot be resurrected");
     ThrowFailureTests(true); ThrowFailureTests(false);
     std::printf("PASS: action frames (%d checks)\n", checks);
     return EXIT_SUCCESS;

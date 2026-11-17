@@ -34,9 +34,9 @@ namespace l4d2vr_scope_lens
     struct LensParams
     {
         float parallaxK = 1.0f;         // UV shift gain (lens radii per unit offset/eyeRelief)
-        float eyeboxDeg = 8.0f;         // off-axis angle at which the image closes completely
+        float eyeboxDeg = 30.0f;        // off-axis angle at which the image is at its smallest
         float baseRadius = 1.0f;        // vignette radius on axis, in lens radii
-        float vignetteExponent = 0.25f; // falloff exponent; smaller = harder edge
+        float vignetteExponent = 0.6f;  // falloff exponent; smaller = harder edge
     };
 
     struct LensState
@@ -79,13 +79,24 @@ namespace l4d2vr_scope_lens
             p.vignetteExponent > 0.0f;
     }
 
-    // r0 * (1 - clamp(offAxis / eyebox)).
+    // 2.0.12 (s12 issue 18 addendum): the full lens until 40 % of the eyebox,
+    // then a smooth roll-off, never below kMinEyeboxRadius lens radii (the
+    // picture used to shrink from the first degree and close at the eyebox).
+    constexpr float kEyeboxFullFraction = 0.4f;
+    constexpr float kMinEyeboxRadius = 0.35f;
+    inline float SmoothStep(float edge0, float edge1, float x)
+    {
+        if (!(edge1 > edge0) || !std::isfinite(x)) return x >= edge1 ? 1.0f : 0.0f;
+        const float t = Saturate((x - edge0) / (edge1 - edge0));
+        return t * t * (3.0f - 2.0f * t);
+    }
     inline float EyeboxRadius(float offAxisDeg, float eyeboxDeg, float baseRadius)
     {
         if (!std::isfinite(offAxisDeg) || !std::isfinite(eyeboxDeg) || !(eyeboxDeg > 0.0f) ||
             !std::isfinite(baseRadius) || baseRadius <= 0.0f)
             return 0.0f;
-        return baseRadius * (1.0f - Saturate(offAxisDeg / eyeboxDeg));
+        const float closing = SmoothStep(kEyeboxFullFraction, 1.0f, offAxisDeg / eyeboxDeg);
+        return baseRadius * (std::max)(kMinEyeboxRadius, 1.0f - closing);
     }
 
     // Image transmission at distance r from the vignette centre:

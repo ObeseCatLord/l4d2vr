@@ -47,7 +47,11 @@ KNOWN_SHIPPED_CHANGES = {
     'NativeViewmodelRightHandPoseOffsetMeters': ['0,0,0'],
     'NativeViewmodelLeftHandPoseRotationOffsetDeg': ['0,0,0'],
     'RightAmmoHudWidthMeters': ['0.8'],
-    'ScopeEyeboxDeg': ['8'],
+    'ScopeEyeboxDeg': ['8', '15'],
+    # 2.0.12: wider scope eye box (s12 review, issue 18 addendum).
+    'ScopeVignetteExponent': ['0.25'],
+    'ScopeParallaxStrength': ['1.0'],
+    'ScopeLookThroughAngleDeg': ['35'],
     'VrHandsTwoHandedGripTargetBoxScale': ['1.0'],
     # Hand settings from upstream builds and old code / panel defaults (2.0.5).
     'NativeViewmodelHandsOnly': ['false'],

@@ -267,6 +267,8 @@ namespace l4d2vr_server
         case kImpulseGripPickup: out.intent = Intent::GripPickup; cmd.impulse = 0u; break;
         case kImpulseGripRelease: out.intent = Intent::GripRelease; cmd.impulse = 0u; break;
         case kImpulseBlockNativeReload: out.intent = Intent::BlockNativeReload; cmd.impulse = 0u; break;
+        case kImpulseStickyBlockNativeReload: out.intent = Intent::BlockNativeReload; cmd.impulse = 0u; break;
+        case kImpulseAllowNativeReload: cmd.impulse = 0u; break;
         case kImpulseHolsterDrop: out.intent = Intent::HolsterDrop; cmd.impulse = 0u; break;
         case kImpulseShove: out.intent = Intent::Shove; cmd.impulse = 0u; break;
         case kImpulsePillGive: out.intent = Intent::PillGive; cmd.impulse = 0u; break;
@@ -291,6 +293,8 @@ namespace l4d2vr_server
             break;
         }
         out.reload = incoming == kImpulseBlockNativeReload ? l4d2vr_server_pistol::ReloadPolicy::Block :
+            incoming == kImpulseStickyBlockNativeReload ? l4d2vr_server_pistol::ReloadPolicy::StickyBlock :
+            incoming == kImpulseAllowNativeReload ? l4d2vr_server_pistol::ReloadPolicy::Allow :
             (l4d2vr_wire::KeepNativeReloadGate(incoming) ? l4d2vr_server_pistol::ReloadPolicy::Preserve
                                                         : l4d2vr_server_pistol::ReloadPolicy::Native);
 

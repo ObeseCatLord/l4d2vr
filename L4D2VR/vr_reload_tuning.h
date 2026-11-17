@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <initializer_list>
 
 // Per-weapon physical reload tuning taken from Pavlov VR (read from its
 // shipped data; numbers only). Pavlov describes a charging handle, slide or
@@ -146,6 +147,68 @@ namespace l4d2vr_reload_tuning
         default:
             return 15.0f;
         }
+    }
+
+    // 2.0.12: Pavlov VRMagazineSlotComponent per gun (numbers only): the slot
+    // captures a magazine within MagSlideBounds (cm, half extents; default 10
+    // per axis), the magazine follows the hand along the slot axis at up to
+    // ReloadSpeedMultiplier (clamped 2.5-10) per second, seats at 0.95 of
+    // SlideGoalThreshold and a release completes at <= 0.35 of it. An insert
+    // or a pull aborts when the hand leaves the bounds sideways.
+    struct MagSlot
+    {
+        float boundsCm[3];
+        float slideGoalCm;
+        float reloadSpeed;
+    };
+    constexpr float kSeatFraction = 0.95f;
+    constexpr float kReleaseCompleteFraction = 0.35f;
+    inline float ClampReloadSpeed(float speed) { return std::clamp(speed, 2.5f, 10.0f); }
+    inline MagSlot SlotForWeapon(int weaponId)
+    {
+        switch (weaponId)
+        {
+        case 1:  return { { 17.5f, 16.0f, 10.0f }, 3.0f, 6.5f };  // pistol        <- M9
+        case 32: return { { 16.5f, 15.0f, 10.0f }, 2.0f, 6.25f }; // magnum        <- Desert Eagle
+        case 2:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // uzi           <- MP5
+        case 7:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // mac10         <- Kriss Vector
+        case 33: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // mp5           <- MP5
+        case 5:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // m16           <- M16
+        case 26: return { { 10.0f, 10.0f, 10.0f }, 10.0f, 10.0f }; // ak47         <- AK
+        case 9:  return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // scar          <- SCAR20
+        case 34: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // sg552         <- Galil
+        case 6:  return { { 15.0f, 15.0f, 15.0f }, 4.0f, 5.5f };  // hunting rifle <- SKS
+        case 10: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // military      <- AutoSniper
+        case 35: return { { 10.0f, 10.0f, 10.0f }, 2.0f, 7.0f };  // awp           <- AWP
+        case 36: return { { 15.0f, 15.0f, 15.0f }, 4.0f, 5.5f };  // scout         <- Kar98
+        case 3: case 8: return { { 20.0f, 15.0f, 15.0f }, 1.0f, 7.0f }; // pump/chrome <- Shotgun (shell port)
+        case 4: case 11: return { { 20.0f, 15.0f, 15.0f }, 1.0f, 7.0f }; // auto/spas <- AutoShotgun (shell port)
+        default: return { { 10.0f, 10.0f, 10.0f }, 1.0f, 7.0f };       // VRMagazineSlot defaults
+        }
+    }
+    // The sideways bound of the slot: its narrowest half extent.
+    inline float SlotLateralBoundMeters(int weaponId)
+    {
+        const MagSlot slot = SlotForWeapon(weaponId);
+        return (std::min)({ slot.boundsCm[0], slot.boundsCm[1], slot.boundsCm[2] }) / 100.0f;
+    }
+    // Pavlov VRHandleComponent box half extents (cm) of the gun's reload
+    // handle (slide, charging handle, bolt): for the debug view and the
+    // hand-sphere test. The pump fore-end uses the two-hand grip box.
+    inline void HandleBoxCm(int weaponId, float out[3])
+    {
+        float x = 3.0f, y = 3.0f, z = 3.0f;                                   // Gun_Base
+        switch (weaponId)
+        {
+        case 1: case 32: x = 10.64f; y = 1.93f; z = 4.0f; break;              // M9 / Desert Eagle slide
+        case 26: x = 3.0f; y = 3.0f; z = 5.0f; break;                          // AK charging handle
+        case 35: x = 11.35f; y = 3.0f; z = 3.0f; break;                        // AWP bolt
+        case 36: case 6: x = 11.35f; y = 3.0f; z = 7.0f; break;                // Kar98 / SKS bolt
+        case 4: case 11: x = 2.0f; y = 2.0f; z = 2.0f; break;                  // AutoShotgun handle
+        case 3: case 8: x = 9.92f; y = 2.0f; z = 4.11f; break;                 // Shotgun fore-end (TwoHandGrip box)
+        default: break;
+        }
+        out[0] = x; out[1] = y; out[2] = z;
     }
 
     inline bool SlapForWeapon(int weaponId, Slap& out)

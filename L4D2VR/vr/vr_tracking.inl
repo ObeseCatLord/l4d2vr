@@ -2725,6 +2725,7 @@ void VR::UpdateTracking()
         m_RenderRevivingOther.store(__revivingOther ? 1u : 0u, std::memory_order_relaxed);
         m_RenderUsingMountedGun.store(__usingMountedGun ? 1u : 0u, std::memory_order_relaxed);
         m_RenderPlayerIncap.store(__playerIncap ? 1u : 0u, std::memory_order_relaxed);
+        m_RenderPlayerLedge.store(__tpLedge ? 1u : 0u, std::memory_order_relaxed);
         m_RenderPlayerControlledBySI.store((__tpTongue || __tpPinned) ? 1u : 0u, std::memory_order_relaxed);
         m_RenderInThirdPersonMapLoadCooldown.store(__inMapLoadCooldown ? 1u : 0u, std::memory_order_relaxed);
 

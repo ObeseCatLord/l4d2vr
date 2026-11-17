@@ -1,5 +1,6 @@
 // Included by game.cpp after the private Source command/edict relay helpers.
 #include "sdk/sdk_server.h"
+#include "vr_reload_rules.h"
 
 namespace
 {
@@ -271,4 +272,45 @@ bool Game::HandleRemoteShellCommand(edict_t* entity, const void* sourceCommand)
     Game::logMsg("[VR][RemoteShell][server] player=%d seq=%u status=%u weaponId=%d clip=%d reserve=%d",
         index, request.sequence, static_cast<unsigned>(reply.status), request.weaponId, reply.clip, reply.reserve);
     return true;
+}
+
+// 2.0.12 (s12 issue 14, E6, G3): a stock reload running on the listen host
+// while the player's sticky gate blocks it (started in a gap such as a
+// server-side weapon switch after a throw) is ended, like the dedicated
+// plugin's EndBlockedStockReload. Physical transactions never leave it set.
+void Game::EndBlockedStockReload(void* owner, void* weapon, int index)
+{
+    if (!owner || !weapon || !RemoteShellBackendReady(this) || !IsValidPlayerIndex(index)) return;
+#ifdef _MSC_VER
+    __try
+    {
+#endif
+        using Owner = void* (__thiscall*)(void*);
+        if (reinterpret_cast<Owner>(m_Offsets->PhysicalGunOwner.address)(weapon) != owner) return;
+        auto* weaponBytes = static_cast<unsigned char*>(weapon);
+        const int weaponId = reinterpret_cast<Server_WeaponCSBase*>(weapon)->GetWeaponID();
+        if (!l4d2vr_reload_rules::UsesPhysicalReload(weaponId) && weaponId != 21 && weaponId != 37) return;
+        unsigned char* inReload = weaponBytes + 0x144d;
+        int* reloadState = l4d2vr_shell::IsShotgun(weaponId) ? reinterpret_cast<int*>(weaponBytes + 0x17f0) : nullptr;
+        if (*inReload == 0 && (!reloadState || *reloadState == 0)) return;
+        if (!RemoteShellWritable(inReload, sizeof(unsigned char)) ||
+            (reloadState && !RemoteShellWritable(reloadState, sizeof(int)))) return;
+        *inReload = 0;
+        if (reloadState) *reloadState = 0;
+        edict_t* weaponEdict = *reinterpret_cast<edict_t**>(weaponBytes + 0x28);
+        if (weaponEdict && RemoteShellWritable(&weaponEdict->m_fStateFlags, sizeof(int)))
+            weaponEdict->m_fStateFlags |= 0x101;
+        static uint64_t s_lastLogAt[65]{};
+        const uint64_t now = GetTickCount64();
+        uint64_t& last = s_lastLogAt[index & 63];
+        if (last == 0u || now - last >= 1000u)
+        {
+            last = now;
+            Game::logMsg("[VR][ReloadGate][host] stock reload ended player=%d weaponId=%d: the physical reload owns this gun",
+                index, weaponId);
+        }
+#ifdef _MSC_VER
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+#endif
 }

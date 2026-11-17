@@ -55,7 +55,8 @@ int main()
     CHECK(Near(right.shiftU, 0.1f) && Near(right.shiftV, 0.0f)); // k * offset / eyeRelief
     CHECK(Near(right.vignetteCenterU, -0.1f));                   // image moves away from the eye side
     const float rightAngle = std::atan2(0.3f, 3.0f) * 180.0f / kPi;
-    CHECK(Near(right.offAxisDeg, rightAngle) && Near(right.vignetteRadius, 1.0f - rightAngle / 8.0f));
+    CHECK(Near(right.offAxisDeg, rightAngle) &&
+        Near(right.vignetteRadius, (std::max)(kMinEyeboxRadius, 1.0f - SmoothStep(kEyeboxFullFraction, 1.0f, rightAngle / 8.0f))));
     CHECK(right.vignetteRadius < centred.vignetteRadius);
     CHECK(VignetteAlphaAt(right, -0.2f, 0.0f) < VignetteAlphaAt(right, 0.2f, 0.0f));
     CHECK(Near(VignetteAlphaAt(right, -0.1f, 0.0f), 0.0f));
@@ -77,10 +78,11 @@ int main()
     longRelief.eyeRelief = 6.0f;
     CHECK(Near(EvaluateLens(longRelief, Vector(7.0f, -0.3f, 0.0f), params).shiftU, 0.05f));
 
-    // Beyond the eyebox: black.
+    // 2.0.12: beyond the eyebox the picture stays at its smallest (0.35 lens
+    // radii), dimmed by the eye sample (vr_scope_optics.h LensBrightness), not black.
     const LensState outside = EvaluateLens(lens, Vector(7.0f, -0.5f, 0.0f), params);
-    CHECK(!outside.visible && outside.vignetteRadius == 0.0f && outside.offAxisDeg > 8.0f);
-    CHECK(VignetteAlphaAt(outside, 0.0f, 0.0f) == 1.0f);
+    CHECK(outside.visible && Near(outside.vignetteRadius, kMinEyeboxRadius) && outside.offAxisDeg > 8.0f);
+    CHECK(VignetteAlphaAt(outside, 0.0f, 0.0f) < 1.0f);
     // Eye level with or in front of the lens: black.
     CHECK(!EvaluateLens(lens, Vector(10.0f, 0.0f, 0.0f), params).visible);
     CHECK(!EvaluateLens(lens, Vector(12.0f, 0.0f, 0.0f), params).visible);
@@ -97,8 +99,13 @@ int main()
     CHECK(!EvaluateLens(lens, Vector(7.0f, 0.0f, 0.0f), badParams).visible);
 
     // Falloff helpers.
-    CHECK(Near(EyeboxRadius(0.0f, 8.0f, 0.9f), 0.9f) && Near(EyeboxRadius(4.0f, 8.0f, 1.0f), 0.5f));
-    CHECK(EyeboxRadius(20.0f, 8.0f, 1.0f) == 0.0f && EyeboxRadius(nan, 8.0f, 1.0f) == 0.0f);
+    CHECK(Near(EyeboxRadius(0.0f, 8.0f, 0.9f), 0.9f) && Near(EyeboxRadius(3.2f, 8.0f, 1.0f), 1.0f));
+    CHECK(Near(EyeboxRadius(20.0f, 8.0f, 1.0f), kMinEyeboxRadius) && EyeboxRadius(nan, 8.0f, 1.0f) == 0.0f);
+    // The 2.0.12 table (eyebox 30): full to 12 deg, smooth roll-off, 0.35 floor.
+    CHECK(Near(EyeboxRadius(0.0f, 30.0f, 1.0f), 1.0f) && Near(EyeboxRadius(10.0f, 30.0f, 1.0f), 1.0f));
+    CHECK(EyeboxRadius(20.0f, 30.0f, 1.0f) > 0.55f && EyeboxRadius(20.0f, 30.0f, 1.0f) < 0.62f);
+    CHECK(Near(EyeboxRadius(30.0f, 30.0f, 1.0f), kMinEyeboxRadius) && Near(EyeboxRadius(45.0f, 30.0f, 1.0f), kMinEyeboxRadius));
+    CHECK(EyeboxRadius(15.0f, 30.0f, 1.0f) > EyeboxRadius(20.0f, 30.0f, 1.0f));
     CHECK(Near(VignetteTransmission(0.0f, 1.0f, 3.0f), 1.0f) && VignetteTransmission(1.0f, 1.0f, 3.0f) == 0.0f);
     CHECK(VignetteTransmission(0.5f, 1.0f, 0.25f) > VignetteTransmission(0.5f, 1.0f, 2.0f)); // smaller = harder edge
     CHECK(VignetteAlpha(0.2f, 0.0f, 1.0f) == 1.0f && VignetteAlpha(nan, 1.0f, 1.0f) == 1.0f);

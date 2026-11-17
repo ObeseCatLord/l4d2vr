@@ -99,7 +99,8 @@ namespace l4d2vr_grab_hover
         Magazine = 3,  // the spare magazine or shell to take
         Pouch = 4,     // the magazine pouch (magazine interaction)
         OwnHolster = 5, // 2.0.11: the held item over its own holster (the put-away cue)
-        Count = 6
+        SeatedMagazine = 6, // 2.0.12: the seated magazine an empty off hand can pull out (MagazineHandPullEnabled)
+        Count = 7
     };
     constexpr int kSourceCount = static_cast<int>(Source::Count);
 }

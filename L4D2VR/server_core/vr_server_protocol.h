@@ -38,6 +38,9 @@
 //   238 shove: this command shoves (IN_ATTACK2 is added) aimed by the hand
 //   239 pill give: give pills/adrenaline to the teammate the hand points at
 //   240..243 object pull (stripped; not implemented by the dedicated plugin)
+//   245 sticky block native reload / 246 allow native reload (2.0.12; only sent
+//       when StickyReloadGate 0x8000 is advertised): the stock reload of every
+//       firearm stays blocked until an allow for the weapon the server holds
 //   244 hand throw: throw the held grenade from the hand in this command, with
 //       the hand velocity packed into forwardmove/sidemove/weaponselect/
 //       weaponsubtype (vr_hand_throw.h); only sent when HandThrow (0x400) is
@@ -70,8 +73,14 @@ namespace l4d2vr_server
         // The server decodes the exact-pitch usercmd packing (2.0.11,
         // vr_usercmd_codec.h PackPitchZ): clients send it only when advertised.
         kFeatureExactPitch = 0x4000u,
+        // 2.0.12: sticky per-player stock reload gate (impulses 245/246) and
+        // the server ends a stock reload that runs while it is blocked.
+        kFeatureStickyReloadGate = 0x8000u,
+        // 2.0.12: magazine/shell/dual transactions are accepted from a downed
+        // (not ledge-hanging) survivor holding a pistol, dual pistols or the magnum.
+        kFeatureIncapReload = 0x10000u,
     };
-    constexpr std::uint32_t kFeatureAllMask = 0x7FFFu;
+    constexpr std::uint32_t kFeatureAllMask = 0x1FFFFu;
     constexpr unsigned kFeatureAckVersion = 1u;
 
     inline const char* FeatureName(std::uint32_t bit)
@@ -93,6 +102,8 @@ namespace l4d2vr_server
         case kFeatureDualMagTxn: return "DualMagTxn";
         case kFeatureOpusVoice: return "OpusVoice";
         case kFeatureExactPitch: return "ExactPitch";
+        case kFeatureStickyReloadGate: return "StickyReloadGate";
+        case kFeatureIncapReload: return "IncapReload";
         default: return "?";
         }
     }
@@ -113,6 +124,8 @@ namespace l4d2vr_server
     constexpr std::uint8_t kImpulseObjectPullBegin = 240u;
     constexpr std::uint8_t kImpulseObjectPullEnd = 243u;
     constexpr std::uint8_t kImpulseHandThrow = 244u;      // l4d2vr_hand_throw::kImpulse
+    constexpr std::uint8_t kImpulseStickyBlockNativeReload = 245u;
+    constexpr std::uint8_t kImpulseAllowNativeReload = 246u;
 
     // ---- buttons bits 26..31 ("carry word") -----------------------------------
     constexpr std::uint32_t kCarryWordShift = 26u;

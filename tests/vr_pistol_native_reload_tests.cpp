@@ -146,6 +146,8 @@ struct Game
     bool HandlePistolAmmoCommand(edict_t* entity, const void* command);
     bool HandlePistolMagazineCommand(edict_t* entity, const void* command);
     bool RelinquishPistolPhysicalReload(int index, const l4d2vr_pistol::AmmoSnapshot& snapshot, int command);
+    int endedStockReloads = 0;
+    void EndBlockedStockReload(void*, void*, int) { ++endedStockReloads; }
     void ProcessPistolMagazineRequests(int index, int command, unsigned serial);
     void PublishPistolAmmoState(int, const l4d2vr_pistol::AmmoSnapshot&, int) {}
 };

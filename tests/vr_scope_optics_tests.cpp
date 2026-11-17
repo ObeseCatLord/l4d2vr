@@ -27,7 +27,7 @@ int main()
     CHECK(ImageMatches(image, first, 2.0f, 7u, 150u));
     CHECK(!ImageMatches(image, first, 4.0f, 7u, 150u)); // Old zoom cannot label a new view.
     CHECK(!ImageMatches(image, first, 2.0f, 8u, 150u)); // Device/queue lifecycle changed.
-    CHECK(!ImageMatches(image, first, 2.0f, 7u, 201u));
+    CHECK(ImageMatches(image, first, 2.0f, 7u, 350u) && !ImageMatches(image, first, 2.0f, 7u, 351u)); // held 250 ms (2.0.12)
     CHECK(!ImageMatches(image, first, 2.0f, 7u, 99u));
     CHECK(weapon.Observe(10u, 0x4005u, 35));
     CHECK(!ImageMatches(image, weapon.Current(), 2.0f, 7u, 150u)); // Same type, different gun.
@@ -45,24 +45,52 @@ int main()
     for (int id = 0; id < 50; ++id)
         CHECK(HasOptic(id) == (id == 6 || id == 10 || id == 34 || id == 35 || id == 36));
     const Vector lens(10.0f, 0.0f, 0.0f), axis(1.0f, 0.0f, 0.0f);
-    // Eyebox (2.0.4): full within 8 deg of the axis, none past 16 deg, the eye
-    // 2-50 cm behind the lens (units: 100 per metre here).
+    // Eyebox (2.0.12): full within the eyebox, none past 1.5x, the eye
+    // 1-80 cm behind the lens (units: 100 per metre here).
     CHECK(EvaluateEye(Vector(0,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);
     CHECK(EvaluateEye(Vector(0,1,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);   // 5.7 deg off: full
-    // An 8 degree eyebox (the old default): fading past 8, none past 16.
-    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha > 0.2f);  // 12.4 deg: fading
-    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha < 0.8f);
-    CHECK(EvaluateEye(Vector(0,3.0f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha == 0.0f); // 16.7 deg: none
-    // The default 15 degrees: full at 12.4, none past 30.
+    // An 8 degree eyebox: full to 8, fading to 12, none past 12.
+    CHECK(EvaluateEye(Vector(0,1.6f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha > 0.2f);  // 9.1 deg: fading
+    CHECK(EvaluateEye(Vector(0,1.6f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha < 0.8f);
+    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f, 8.0f).alpha == 0.0f); // 12.4 deg: none
+    // The default 30 degrees: table at 0/10/20/30/45 deg.
     volatile float defaultEyebox = kDefaultEyeboxDeg;
-    CHECK(defaultEyebox == 15.0f);
-    CHECK(EvaluateEye(Vector(0,2.2f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);
-    CHECK(EvaluateEye(Vector(0,6.0f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);       // 31 deg
-    CHECK(EvaluateEye(Vector(4,6.4f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f); // the other eye at the face
+    CHECK(defaultEyebox == 30.0f);
+    auto at = [&](float deg) {
+        const float t = std::tan(deg * 3.14159265f / 180.0f) * 10.0f;
+        return EvaluateEye(Vector(0,t,0), lens, axis, 1.0f, 100.0f, 4.0f);
+    };
+    CHECK(at(0.0f).alpha == 1.0f && at(10.0f).alpha == 1.0f && at(20.0f).alpha == 1.0f && at(29.0f).alpha == 1.0f);
+    CHECK(at(37.5f).alpha > 0.4f && at(37.5f).alpha < 0.6f);
+    CHECK(at(45.5f).alpha == 0.0f && at(45.5f).behind);
+    CHECK(EvaluateEye(Vector(4,6.4f,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f &&
+        EvaluateEye(Vector(4,6.4f,0), lens, axis, 1.0f, 100.0f, 4.0f).behind); // the other eye at the face: dimmed
     CHECK(EvaluateEye(Vector(11,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);   // in front of the lens
-    CHECK(EvaluateEye(Vector(9,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);    // 1 cm: inside the tube
-    CHECK(EvaluateEye(Vector(-30,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);  // 40 cm behind: still sees it
-    CHECK(EvaluateEye(Vector(-45,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f);  // 55 cm: too far
+    CHECK(!EvaluateEye(Vector(11,0,0), lens, axis, 1.0f, 100.0f, 4.0f).behind);
+    // Relief 0.01 / 0.3 / 0.8 / 0.9 m.
+    CHECK(EvaluateEye(Vector(9.5f,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 0.0f); // 0.5 cm: inside the tube
+    CHECK(EvaluateEye(Vector(8.9f,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f); // 1.1 cm
+    CHECK(EvaluateEye(Vector(-20,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);  // 30 cm
+    CHECK(EvaluateEye(Vector(-69,0,0), lens, axis, 1.0f, 100.0f, 4.0f).alpha == 1.0f);  // 79 cm
+    const EyeSample far = EvaluateEye(Vector(-80,0,0), lens, axis, 1.0f, 100.0f, 4.0f); // 90 cm: too far
+    CHECK(far.alpha == 0.0f && far.behind);
+    // Outside the eye box the lens is dimmed, never black, while the eye is behind it.
+    CHECK(LensBrightness(far, kDefaultOutsideEyeboxBrightness) == kDefaultOutsideEyeboxBrightness);
+    CHECK(LensBrightness(at(0.0f), 0.35f) == 1.0f);
+    CHECK(LensBrightness(EvaluateEye(Vector(11,0,0), lens, axis, 1.0f, 100.0f, 4.0f), 0.35f) == 0.0f);
+    CHECK(DimRenderDue(1000u, 0u) && !DimRenderDue(1050u, 1000u) && DimRenderDue(1100u, 1000u));
+    // Configurable relief window (ScopeEyeReliefRangeMeters).
+    CHECK(EvaluateEye(Vector(-30,0,0), lens, axis, 1.0f, 100.0f, 4.0f, 30.0f, 0.02f, 0.30f).alpha == 0.0f);
+    // Replacement models keep the stock lens; overrides parse.
+    bool replacement = false;
+    CHECK(FindModelOrStock("models/v_models/v_huntingrifle.mdl", 4068759009u, replacement) && !replacement);
+    CHECK(FindModelOrStock("models/v_models/v_huntingrifle.mdl", 12345u, replacement) && replacement);
+    CHECK(!FindModelOrStock("models/v_models/v_desert_rifle.mdl", 3776611816u, replacement) && !replacement);
+    LensOverride lensOverride{};
+    CHECK(ParseLensOverride("V_HuntingRifle: 14.04, 0.50,48.94,0.66", lensOverride) &&
+        lensOverride.model == "v_huntingrifle" && lensOverride.radius == 0.66f && lensOverride.bindCenter.z == 48.94f);
+    CHECK(!ParseLensOverride("v_huntingrifle:1,2,3", lensOverride) && !ParseLensOverride(":1,2,3,4", lensOverride) &&
+        !ParseLensOverride("x:1,2,3,0", lensOverride) && !ParseLensOverride("x:1,2,3,4,5", lensOverride));
     CHECK(EvaluateEye(Vector(0,0,0), lens, Vector(0,0,0), 1.0f, 100.0f, 4.0f).alpha == 0.0f);
     // A headset eye a few millimetres off the axis (the old exit-pupil gate
     // was 0.66 / 2 = 0.33 units = 7.6 mm at 43.2 units/m) still sees it.
@@ -126,7 +154,7 @@ int main()
     CHECK(!FindModel("models/v_models/v_snip_awp.mdl",1u));
     CHECK(!FindModel("models/v_models/custom.mdl",1241414224u));
     CHECK(Fresh(100u,50u));
-    CHECK(!Fresh(151u,50u));
+    CHECK(Fresh(300u,50u) && !Fresh(301u,50u));
     CHECK(!Fresh(49u,50u));
     CHECK(!Fresh(100u,0u));
     const Pose previous{Vector(0,0,0),Vector(1,0,0),Vector(0,-1,0),Vector(0,0,1)};

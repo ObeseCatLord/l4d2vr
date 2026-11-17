@@ -3430,6 +3430,13 @@ namespace
         // sensitivity slider (voice_threshold) and is retuned for quiet
         // microphones. Only the old shipped 0.55 changes.
         { "2026-11-11_opus_voice_vad_sensitivity_game", "OpusVoiceVadSensitivity", "game", false, "0.55" },
+        // 2.0.12 (s12 issue 18 addendum): a wider scope eye box with a softer
+        // rim and less parallax, so the picture is there as soon as the scope
+        // is roughly in front of the eye. Only old shipped values change.
+        { "2026-11-17_scope_eyebox_wider", "ScopeEyeboxDeg", "30", false, "15" },
+        { "2026-11-17_scope_vignette_softer", "ScopeVignetteExponent", "0.6", false, "0.25" },
+        { "2026-11-17_scope_parallax_lower", "ScopeParallaxStrength", "0.6", false, "1.0" },
+        { "2026-11-17_scope_look_through_angle", "ScopeLookThroughAngleDeg", "60", false, "35" },
     };
 
     std::unordered_set<std::string> ReadAppliedConfigMigrationIds(const std::filesystem::path& statePath)

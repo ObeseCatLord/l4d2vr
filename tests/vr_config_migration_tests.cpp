@@ -26,6 +26,10 @@ int main()
     CHECK(!ValuesMatch("true", "false"));
     CHECK(ValuesMatch("SecondaryAttack+Use", " SecondaryAttack+Use"));
     CHECK(!ValuesMatch("0.05", "0.0500001x"));
+    // 2.0.12 scope eye box (2026-11-17_scope_eyebox_wider): 15 / 15.0 -> 30, a tuned 12 stays.
+    CHECK(ShouldReplace(true, "15", "15") && ShouldReplace(true, "15.0", "15") && !ShouldReplace(true, "12", "15"));
+    CHECK(ShouldReplace(true, "0.25", "0.25") && !ShouldReplace(true, "0.4", "0.25"));
+    CHECK(ShouldReplace(true, "1", "1.0") && ShouldReplace(true, "35", "35") && !ShouldReplace(true, "45", "35"));
     // A tuned value is never replaced; a missing key or the old shipped one is.
     CHECK(ShouldReplace(false, "", "3"));
     CHECK(ShouldReplace(true, "3.0", "3"));

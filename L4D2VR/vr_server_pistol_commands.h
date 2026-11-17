@@ -3,11 +3,17 @@
 
 namespace l4d2vr_server_pistol
 {
-    enum class ReloadPolicy : unsigned { Native, Block, Preserve };
+    // 2.0.12: StickyBlock / Allow are the sticky reload gate's impulses
+    // (vr_magazine_policy.h NativeReloadLedger); only clients that saw the
+    // StickyReloadGate feature send them.
+    enum class ReloadPolicy : unsigned { Native, Block, Preserve, StickyBlock, Allow };
     inline bool ValidReloadPolicy(ReloadPolicy policy)
     {
-        return policy == ReloadPolicy::Native || policy == ReloadPolicy::Block || policy == ReloadPolicy::Preserve;
+        return policy == ReloadPolicy::Native || policy == ReloadPolicy::Block || policy == ReloadPolicy::Preserve ||
+            policy == ReloadPolicy::StickyBlock || policy == ReloadPolicy::Allow;
     }
+    inline bool BlocksReload(ReloadPolicy policy)
+    { return policy == ReloadPolicy::Block || policy == ReloadPolicy::StickyBlock; }
     struct Input
     {
         l4d2vr_dual::Shot shot{};
@@ -88,9 +94,12 @@ namespace l4d2vr_server_pistol
             }
             if (command <= m_Latest) return false;
             m_Latest = command;
-            if (policy == ReloadPolicy::Native || (policy == ReloadPolicy::Preserve && m_BlockedWeapon != weapon))
+            // (Sticky mode is decided by the ledger; per command, a sticky
+            // block is a block and an allow is a native command.)
+            if (policy == ReloadPolicy::Native || policy == ReloadPolicy::Allow ||
+                (policy == ReloadPolicy::Preserve && m_BlockedWeapon != weapon))
                 m_BlockedWeapon = {};
-            else if (policy == ReloadPolicy::Block)
+            else if (BlocksReload(policy))
                 m_BlockedWeapon = weapon;
             blocked = weapon.pointer != 0u && m_BlockedWeapon == weapon;
             result = {command, weapon, policy, blocked};

@@ -1,4 +1,5 @@
 #pragma once
+#include "../vr_debug_volumes.h"
 
 #include "openvr.h"
 #include "../vr_backend/vr_backend.h"
@@ -84,6 +85,13 @@ public:
         unsigned magazineGripPhysicalMask,
         const std::array<float, 5>& gloveFingerMaxCurl,
         VrHandDrawPass drawPass);
+
+    // 2.0.12 (DebugInteractionVolumes): wire lines drawn into the bound eye
+    // target only (pre-transformed, no depth test, render state restored).
+    bool DrawDebugLinesForEye(
+        IDirect3DDevice9* device,
+        const CViewSetup& view,
+        const std::vector<l4d2vr_debug_volumes::Line<Vector>>& lines);
 
     bool DrawMagazineDebugBoxesForEye(
         IDirect3DDevice9* device,

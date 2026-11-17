@@ -61,6 +61,7 @@
 #include "vr_offhand_pose.h"
 #include "vr_two_hand_aim.h"
 #include "vr_grab_volumes.h"
+#include "vr_debug_volumes.h"
 #include "vr_overlay_pointer.h"
 #include "vr_wrist_hud_names.h"
 #include "vr_native_wrist_hud.h"
@@ -5456,6 +5457,9 @@ public:
 	// The drawn hand at the support (reload) controller: its fist and pinch
 	// (viewmodel layer). nearPoint = that controller in the viewmodel layer.
 	bool GetMagazineInteractionNativeSupportGrip(const Vector& nearPoint, Vector* fist, Vector* pinch) const;
+	// 2.0.12: DebugInteractionVolumes (vr_debug_volumes.h), local eye pass only.
+	bool m_DebugInteractionVolumes = false;
+	void BuildDebugInteractionVolumes(std::vector<l4d2vr_debug_volumes::Line<Vector>>& out);
 	bool GetMagazineInteractionNativeLeftFist(Vector& outWorld) const;
 	bool HasFreshMagazineInteractionDebugBoxWork() const;
 	bool GetMagazineInteractionCalibrationSnapshot(MagazineInteractionCalibrationSnapshot& outSnapshot) const;

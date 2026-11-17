@@ -283,6 +283,11 @@ VrHandsLeftHandedViewmodelPoseRotationOffsetDeg=0,0,0
 ViewmodelPoseOffset=0,0,0
 ViewmodelPoseRotationOffsetDeg=0,0,0
 MagazineBoxDebugEnabled=false
+// Debug: outline every grab and interaction volume (holsters, item bodies, the pouch, magazine well, bolt/slide/pump,
+// foregrip, hand spheres, pickups, object pull, pills/adrenaline zones, melee/bash, scope eye box, throw release)
+// in your own headset view only, colour-coded by type (green: a hand inside, yellow: a squeeze would take it, red:
+// refused). Nobody else ever sees it. Also turns on MagazineBoxDebugEnabled and ShowInventoryAnchors.
+DebugInteractionVolumes=false
 ViewmodelBoneLabelsEnabled=false
 MagazineInteractionEnabled=true
 MagazineInteractionQuickReloadMode=false

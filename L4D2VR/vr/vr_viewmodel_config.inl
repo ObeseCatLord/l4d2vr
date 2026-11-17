@@ -1255,7 +1255,7 @@ void VR::ParseConfigFileUnlocked()
         m_InventoryQuickSwitchActive = false;
         m_InventoryQuickSwitchArmed = false;
     }
-    m_DrawInventoryAnchors = getBool("ShowInventoryAnchors", false);
+    m_DrawInventoryAnchors = getBool("ShowInventoryAnchors", false) || getBool("DebugInteractionVolumes", false);
     const auto inventoryColor = getColor("InventoryAnchorColor", m_InventoryAnchorColorR, m_InventoryAnchorColorG, m_InventoryAnchorColorB, m_InventoryAnchorColorA);
     m_InventoryAnchorColorR = inventoryColor[0];
     m_InventoryAnchorColorG = inventoryColor[1];
@@ -2097,6 +2097,13 @@ void VR::ParseConfigFileUnlocked()
     m_VrHandsVirtualStockOffsetMeters = getVector3("VrHandsVirtualStockOffsetMeters", m_VrHandsVirtualStockOffsetMeters);
     m_VrHandsVirtualStockStrength = std::clamp(getFloat("VrHandsVirtualStockStrength", m_VrHandsVirtualStockStrength), 0.0f, 1.0f);
     m_MagazineBoxDebugEnabled = getBool("MagazineBoxDebugEnabled", false);
+    // 2.0.12: every grab / interaction volume in your own eyes only (local
+    // eye pass; nobody else sees it). It includes the magazine/bolt debug
+    // boxes and the aim line; with the legacy (non-holster) layout also the
+    // inventory anchors (ShowInventoryAnchors, local client overlay).
+    m_DebugInteractionVolumes = getBool("DebugInteractionVolumes", false);
+    if (m_DebugInteractionVolumes)
+        m_MagazineBoxDebugEnabled = true;
     m_ViewmodelBoneLabelsEnabled = getBool("ViewmodelBoneLabelsEnabled", m_ViewmodelBoneLabelsEnabled);
     m_MagazineBoxDebugFallbackHalfExtentsMeters = getVector3("MagazineBoxDebugFallbackHalfExtentsMeters", m_MagazineBoxDebugFallbackHalfExtentsMeters);
     m_MagazineBoxDebugPaddingMeters = getVector3("MagazineBoxDebugPaddingMeters", m_MagazineBoxDebugPaddingMeters);

@@ -10364,7 +10364,11 @@ bool VR::DrawVrHandsForEyeImmediate(
         (m_MagazineBoxDebugEnabled || calibrationOverlayActive) &&
         drawPass != VrHandDrawPass::WorldVisibilityMask &&
         (m_VrHandsEnabled || m_NativeViewmodelHandsOnly);
-    if ((!drawGloves && !drawMagazineDebugBoxes && !drawLeftHandTargetDebugBox) ||
+    // 2.0.12: every interaction volume, local eye pass only; never in a
+    // self-test screenshot (self-tests do not request it).
+    const bool drawInteractionVolumes = m_DebugInteractionVolumes && !m_SelfTestEnabled &&
+        drawPass != VrHandDrawPass::WorldVisibilityMask && !m_MouseModeEnabled;
+    if ((!drawGloves && !drawMagazineDebugBoxes && !drawLeftHandTargetDebugBox && !drawInteractionVolumes) ||
         !m_IsVREnabled ||
         !m_Game)
     {
@@ -10729,6 +10733,15 @@ bool VR::DrawVrHandsForEyeImmediate(
             leftHandTargetBoxMaxs,
             leftHandTargetBoxUseViewmodelLayer,
             drawPass);
+    }
+
+    if (drawInteractionVolumes && m_VrHands)
+    {
+        // Local eye texture only (see vr_debug_volumes.h); does not count as a
+        // hand draw for the caller.
+        static thread_local std::vector<l4d2vr_debug_volumes::Line<Vector>> s_DebugVolumeLines;
+        BuildDebugInteractionVolumes(s_DebugVolumeLines);
+        m_VrHands->DrawDebugLinesForEye(device, view, s_DebugVolumeLines);
     }
 
     if (drawGloves && !drewAny && m_VrHands && m_VrHands->IsDependencyUnavailable())
@@ -11520,3 +11533,268 @@ bool VR::GetTwoHandedGripTargetPoint(Vector& point) const
 }
 
 #include "vr_dual_reload_bridge.inl"
+
+// 2.0.12 (review s12, "Interaction volumes to show in a local debug view"):
+// every grab / interaction volume as a wire outline (vr_debug_volumes.h),
+// drawn into the local eye textures only (DrawVrHandsForEyeImmediate). Grey
+// (per-type tint) idle, green with a hand inside, yellow where a press would
+// take or use it, red where a hand is inside but the press is refused.
+void VR::BuildDebugInteractionVolumes(std::vector<l4d2vr_debug_volumes::Line<Vector>>& out)
+{
+    namespace dv = l4d2vr_debug_volumes;
+    using dv::Kind;
+    using dv::State;
+    out.clear();
+    dv::Builder<Vector> b(out, true);
+    const float s = std::max(1.0f, m_VRScale);
+    const Vector hands[2] = { m_LeftControllerPosAbs, m_RightControllerPosAbs };   // gameplay left (free), right (item)
+
+    // Each hand's 11.5 cm grab sphere (Pavlov) and grab point.
+    for (int i = 0; i < 2; ++i)
+    {
+        b.Sphere(Kind::HandSphere, State::Idle, hands[i], l4d2vr_grab::kHandSphereRadiusMeters * s, 16);
+        b.Cross(Kind::HandSphere, State::Idle, hands[i], 0.012f * s);
+        // World grip pickup volume (GripReleaseDropEnabled): a cube of the same size.
+        if (m_GripReleaseDropEnabled)
+        {
+            const float e = l4d2vr_grab::kHandSphereRadiusMeters * s;
+            b.Box(Kind::Pickup, State::Idle, hands[i], Vector(1, 0, 0), Vector(0, 1, 0), Vector(0, 0, 1),
+                Vector(-e, -e, -e), Vector(e, e, e));
+        }
+    }
+
+    // Holsters, the items hanging on the body, the sling catch, the pouch.
+    l4d2vr_holster::BodyFrame frame{};
+    if (m_BodyGripInventoryEnabled && m_HolsterPavlovLayoutEnabled && GetHolsterBodyFrame(frame))
+    {
+        const l4d2vr_holster::Layout& layout = m_HolsterLayout;
+        const int highlight = m_HolsterHighlightSlot.load(std::memory_order_acquire);
+        const bool itemHandHolds = m_HolsterHandOverOtherZone.load(std::memory_order_acquire) == false &&
+            m_HolsterHoverZone[1] == l4d2vr_holster::Zone::None;
+        for (int z = 0; z < l4d2vr_holster::kZoneCount; ++z)
+        {
+            const auto zone = static_cast<l4d2vr_holster::Zone>(z);
+            float dl = 1.0e9f, dr = 1.0e9f;
+            const bool inLeft = l4d2vr_holster::HandFitsZone(frame, layout, zone, hands[0], dl);
+            const bool inRight = l4d2vr_holster::HandFitsZone(frame, layout, zone, hands[1], dr);
+            State state = State::Idle;
+            if (highlight == z)
+                state = State::WouldTake;
+            else if (inRight && itemHandHolds && m_HolsterGrabRequiresEmptyHand)
+                state = State::Refused;
+            else if (inLeft || inRight)
+                state = State::Inside;
+            const float reach = l4d2vr_holster::ZoneReachMeters(layout, zone) * s;
+            switch (l4d2vr_holster::KindOf(layout, zone))
+            {
+            case l4d2vr_holster::ZoneKind::Sling:
+            {
+                Vector handle{}, foregrip{};
+                l4d2vr_holster::SlingHandle(frame, layout, handle, foregrip);
+                b.Capsule(Kind::HolsterZone, state, handle, foregrip, reach);
+                b.Sphere(Kind::SlingCatch, State::Idle, handle, m_ChestSlingDropDistanceMeters * s, 28);
+                break;
+            }
+            case l4d2vr_holster::ZoneKind::Hip:
+            {
+                Vector top{}, bottom{};
+                l4d2vr_holster::HipSegment(frame, layout, zone, top, bottom);
+                b.Capsule(Kind::HolsterZone, state, top, bottom, reach);
+                break;
+            }
+            case l4d2vr_holster::ZoneKind::Back:
+                b.Sphere(Kind::HolsterZone, state, l4d2vr_holster::HeadToWorld(frame, layout.backCenterHead),
+                    layout.backRadiusMeters * s, 24);
+                break;
+            default:
+                b.Sphere(Kind::HolsterZone, state, l4d2vr_holster::ZoneCenterWorld(frame, layout, zone), reach, 16);
+                break;
+            }
+            b.Cross(Kind::HolsterZone, state, l4d2vr_holster::ZoneCenterWorld(frame, layout, zone), 0.015f * s);
+        }
+        // The drawn bodies of the items hanging on the body (+ their grab margin).
+        const l4d2vr_holster::BodyItems items = m_HolsterBodyItems;
+        for (int z = 0; z < l4d2vr_holster::kZoneCount; ++z)
+        {
+            if ((items.mask & (1u << z)) == 0u)
+                continue;
+            const auto zone = static_cast<l4d2vr_holster::Zone>(z);
+            const l4d2vr_holster::ItemShape shape = zone == l4d2vr_holster::Zone::Primary
+                ? l4d2vr_holster::ItemShape::LongGun : items.shape[z];
+            const l4d2vr_holster::ItemPose pose = l4d2vr_holster::BuildItemPose(frame, layout, zone, shape);
+            if (!pose.valid)
+                continue;
+            Vector c{}, h{};
+            l4d2vr_holster::ItemBodyBox(shape, c, h);
+            const float margin = (l4d2vr_holster::KindOf(layout, zone) == l4d2vr_holster::ZoneKind::Pocket
+                ? layout.pocketItemGrabMarginMeters : layout.itemGrabMarginMeters) * s;
+            const Vector m(margin, margin, margin);
+            b.Box(Kind::ItemBody, highlight == z ? State::WouldTake : State::Idle, pose.origin, pose.axisX, pose.axisY,
+                pose.axisZ, c - h - m, c + h + m);
+        }
+        // Magazine / shell pouch reach.
+        const Vector pouch = l4d2vr_holster::RootToWorld(frame, layout.magPouch);
+        const bool atPouch = (hands[0] - pouch).Length() <= layout.magPouchReachMeters * s ||
+            (hands[1] - pouch).Length() <= layout.magPouchReachMeters * s;
+        b.Sphere(Kind::Pouch, atPouch ? State::Inside : State::Idle, pouch, layout.magPouchReachMeters * s, 16);
+        // Adrenaline chest target.
+        b.Sphere(Kind::Consumable, State::Idle, l4d2vr_holster::ToWorld(frame, Vector(0.12f, 0.0f, -0.30f)),
+            m_AdrenalineGesture.GetParams().hitRadius * s, 12);
+    }
+
+    // Pills to the mouth (head frame), adrenaline arm target (the free hand's forearm).
+    {
+        const l4d2vr_gesture::PillsParams& pills = m_PillsGesture.GetParams();
+        Vector forward = m_HmdForward, up = m_HmdUp;
+        if (forward.Length() > 0.5f && up.Length() > 0.5f)
+        {
+            const Vector mouth = m_HmdPosAbs - up * (pills.mouthDown * s) + forward * (pills.mouthForward * s);
+            b.Sphere(Kind::Consumable, State::Idle, mouth, pills.radius * s, 12);
+        }
+        const l4d2vr_gesture::AdrenalineParams& adrenaline = m_AdrenalineGesture.GetParams();
+        b.Sphere(Kind::Consumable, State::Idle, m_LeftControllerPosAbs - m_LeftControllerForward * (adrenaline.armBackOffset * s),
+            adrenaline.hitRadius * s, 12);
+    }
+
+    // Gun parts (viewmodel layer): magazine well / shell port, capture box, bolt/slide/pump.
+    {
+        MagazineInteractionBoxSnapshot box{};
+        if (GetMagazineInteractionBox(box))
+            b.Box(Kind::MagWell, m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazine
+                ? State::WouldTake : State::Idle, box.origin, box.axisX, box.axisY, box.axisZ, box.mins, box.maxs, true);
+        if (m_MagazineInteractionSocketValid)
+        {
+            const MagazineInteractionBoxSnapshot& capture = m_MagazineInteractionSocketCaptureBox;
+            const float r = std::max(0.0f, m_MagazineInteractionSocketCaptureRadiusMeters) * s;
+            b.Box(Kind::MagWell, State::Idle, capture.origin, capture.axisX, capture.axisY, capture.axisZ,
+                capture.mins - Vector(r, r, r), capture.maxs + Vector(r, r, r), true);
+            if (m_MagazineInteractionState == MagazineInteractionManualState::HoldingFreshMagazineForSlap)
+                b.Box(Kind::MagSlap, State::WouldTake, capture.origin, capture.axisX, capture.axisY, capture.axisZ,
+                    capture.mins, capture.maxs, true);
+        }
+        MagazineInteractionBoxSnapshot bolt{};
+        if (GetMagazineInteractionBoltBox(bolt))
+        {
+            const float pad = 0.10f * s;
+            b.Box(Kind::Bolt, State::Idle, bolt.origin, bolt.axisX, bolt.axisY, bolt.axisZ, bolt.mins, bolt.maxs, true);
+            b.Box(Kind::Bolt, State::Idle, bolt.origin, bolt.axisX, bolt.axisY, bolt.axisZ,
+                bolt.mins - Vector(pad, pad, pad), bolt.maxs + Vector(pad, pad, pad), true);
+        }
+        MagazineInteractionBoxSnapshot pouchBox{};
+        QAngle pouchAngles{};
+        if (MagazineInteractionBuildFreshMagazinePickupBox(this, pouchBox, pouchAngles))
+            b.Box(Kind::Pouch, State::Idle, pouchBox.origin, pouchBox.axisX, pouchBox.axisY, pouchBox.axisZ,
+                pouchBox.mins, pouchBox.maxs, true);
+    }
+
+    // The foregrip (Pavlov per-class box in the gun frame at the gun hand), the pump travel.
+    {
+        const int weaponId = m_ActiveGunWeaponId.load(std::memory_order_acquire);
+        l4d2vr_grab::Box box{};
+        const bool supportLeft = MagazineReloadSupportIsLeft();
+        const Vector gunPos = supportLeft ? m_RightControllerPosAbs : m_LeftControllerPosAbs;
+        const Vector f = supportLeft ? m_RightControllerForward : m_LeftControllerForward;
+        const Vector r = supportLeft ? m_RightControllerRight : m_LeftControllerRight;
+        const Vector u = supportLeft ? m_RightControllerUp : m_LeftControllerUp;
+        if (l4d2vr_grab::ForegripBox(weaponId, box) && f.Length() > 0.5f)
+        {
+            const Vector& hand = m_NativeViewmodelRightHandPoseOffsetMeters;   // right, up, back
+            const Vector grip = gunPos + (f * -hand.z + r * hand.x + u * hand.y) * s;
+            const Vector center = grip + (f * box.center.x + r * box.center.y + u * box.center.z) * s;
+            const Vector support = supportLeft ? m_LeftControllerPosAbs : m_RightControllerPosAbs;
+            const Vector d = support - grip;
+            const l4d2vr_grab::Vec3 local{ DotProduct(d, f) / s, DotProduct(d, r) / s, DotProduct(d, u) / s };
+            const State state = m_VrHandsTwoHandedGripActive ? State::Inside :
+                l4d2vr_grab::SphereGap(local, box) <= 0.0f ? State::WouldTake : State::Idle;
+            const Vector half(box.half.x * s, box.half.y * s, box.half.z * s);
+            b.Box(Kind::Foregrip, state, center, f, r, u, half * -1.0f, half);
+            b.Sphere(Kind::Foregrip, State::Idle, center, l4d2vr_grab::kAutoUngripMeters * s, 20);
+            if (m_ManualPumpEnabled && (weaponId == 3 || weaponId == 8))
+                b.Segment(Kind::Pump, State::Idle, center, center - f * (m_ManualPumpTravelMeters * s));
+            // Gun bash tip and the aim ray (the old sight debug line).
+            const l4d2vr_gesture::GunBashParams& bash = m_GunBash.GetParams();
+            b.Cross(Kind::BashTip, State::Idle, gunPos + f * (bash.tipLength * s), 0.03f * s);
+            b.Segment(Kind::SightLine, State::Idle, gunPos, gunPos + f * (2.0f * s));
+        }
+        // Melee blade: the hand along the item's forward.
+        if (m_Game && m_Game->m_IsMeleeWeaponActive)
+        {
+            const Vector item = m_RightControllerPosAbs;
+            b.Segment(Kind::MeleeBlade, State::Idle, item, item + m_RightControllerForward * (0.80f * s));
+            b.Cross(Kind::MeleeBlade, State::Idle, item + m_RightControllerForward * (0.80f * s), 0.02f * s);
+        }
+    }
+
+    // Held spare anchors: fist and thumb-index pinch of both drawn hands.
+    {
+        std::lock_guard<std::mutex> lock(m_MagazineInteractionHandAnchorMutex);
+        for (const NativeHandGrip& grip : m_MagazineInteractionNativeHandGrip)
+        {
+            if (grip.publishedAt.time_since_epoch().count() == 0)
+                continue;
+            if (grip.fistValid)
+                b.Cross(Kind::HeldSpare, State::Idle, grip.fist, 0.015f * s, true);
+            if (grip.pinchValid)
+                b.Sphere(Kind::HeldSpare, State::Idle, grip.pinch, 0.01f * s, 8, true);
+        }
+    }
+
+    // Dual-pistol reload: the stack seat, both slides, the double-magazine pouch.
+    if (m_DualPistolsActive.load(std::memory_order_acquire))
+    {
+        DualReloadSelfTestPoints points{};
+        if (GetDualReloadSelfTestPoints(points) && points.enabled)
+        {
+            b.Sphere(Kind::DualReload, State::Idle, points.freeSeatTarget, 0.12f * s, 12);
+            for (int i = 0; i < 2; ++i)
+                if (points.slideValid[i])
+                    b.Segment(Kind::DualReload, State::Idle, points.slideTarget[i], points.slideBack[i]);
+            if (points.pouchValid)
+                b.Cross(Kind::DualReload, State::Idle, points.pouchTarget, 0.04f * s);
+        }
+    }
+
+    // Dropped magazines (visual only, no pickup volume).
+    {
+        std::lock_guard<std::mutex> lock(m_DroppedMagazineMutex);
+        for (const auto& mag : m_DroppedMagazinePool.mags)
+            if (mag.active)
+                b.Cross(Kind::DroppedMag, State::Idle, mag.position, 0.04f * s);
+    }
+
+    // Object pull: the ray and its current target.
+    {
+        std::lock_guard<std::mutex> lock(m_ObjectPullClientTargetStateMutex);
+        const ObjectPullClientTargetSnapshot& t = m_ObjectPullClientTargetSnapshot;
+        const Vector from = m_ObjectPullArmPosition.Length() > 0.0f ? m_ObjectPullArmPosition : m_LeftControllerPosAbs;
+        if (t.valid && t.hitAnything)
+        {
+            b.Segment(Kind::ObjectPull, t.entityIndex > 0 ? State::WouldTake : State::Idle, from, t.hitPosition);
+            b.Sphere(Kind::ObjectPull, State::Idle, t.hitPosition, m_ObjectPullTargetAssistRadiusMeters * s, 12);
+        }
+    }
+
+    // Scope lens discs and eye-box cones (scene).
+    {
+        std::lock_guard<std::mutex> lock(m_PhysicalScopeLensMutex);
+        const uint64_t nowMs = GetTickCount64();
+        for (const PhysicalScopeLensSnapshot& lens : m_PhysicalScopeLenses)
+        {
+            if (lens.publishedAt == 0u || nowMs - lens.publishedAt > 500u || !(lens.sceneRadius > 0.0f))
+                continue;
+            Vector up = lens.sceneUp, fwd = lens.sceneForward;
+            Vector right{};
+            CrossProduct(fwd, up, right);
+            b.Circle(Kind::ScopeEyebox, State::Idle, lens.sceneCenter, right, up, lens.sceneRadius, 20);
+            b.Cone(Kind::ScopeEyebox, State::Idle, lens.sceneCenter, fwd * -1.0f, 0.50f * s,
+                m_ScopeEyeboxDeg * 3.14159265f / 180.0f, 16);
+        }
+    }
+
+    // The last hand-throw release point.
+    {
+        std::lock_guard<std::mutex> lock(m_HandThrowMutex);
+        if (m_HandThrowLastReleasePos.Length() > 0.0f)
+            b.Cross(Kind::ThrowRelease, State::Idle, m_HandThrowLastReleasePos, 0.05f * s);
+    }
+}

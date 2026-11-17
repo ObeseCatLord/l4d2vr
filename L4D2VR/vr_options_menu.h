@@ -90,6 +90,7 @@ namespace l4d2vr_options_menu
         { "GrabHoverHapticEnabled", RowKind::Toggle, "Touch tick on grabbable things", "A light buzz when an empty hand first touches something it can grab.", 0, 0, 0, "true" },
         { "HandPosesEnabled", RowKind::Toggle, "Finger poses", "Fingers wrap around what you hold.", 0, 0, 0, "true" },
         { "HideArms", RowKind::Toggle, "Hide arms", "Hide the first-person arms completely.", 0, 0, 0, "false" },
+        { "DebugInteractionVolumes", RowKind::Toggle, "Show grab volumes (debug)", "Outline every holster, pouch, gun part and grab zone in your own view only (nobody else sees it). Green: hand inside, yellow: a squeeze takes it, red: refused.", 0, 0, 0, "false" },
     };
 
     inline const Row kWeaponRows[] = {

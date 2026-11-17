@@ -26769,7 +26769,8 @@ static void RefreshGripPickupContact(VR* vr, Game* game, C_BasePlayer* player, b
     } filter(game, vr, player, left);
     const Vector hand = left ? vr->GetLeftControllerAbsPos() : vr->GetRightControllerAbsPos();
     if (!IsFiniteVector3(hand)) return;
-    const float extent = 0.18f * vr->m_VRScale;
+    // 2.0.12: Pavlov's hand grab volume (11.5 cm; was an 18 cm box).
+    const float extent = l4d2vr_grab::kHandSphereRadiusMeters * vr->m_VRScale;
     Ray_t ray;
     ray.Init(hand, hand, Vector(-extent, -extent, -extent), Vector(extent, extent, extent));
     trace_t trace{};

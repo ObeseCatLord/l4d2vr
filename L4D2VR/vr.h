@@ -793,9 +793,18 @@ public:
 	std::string m_VrRuntime = "auto";
 	// Picture-in-picture scope lens (HL2VR style parallax + eyebox vignette).
 	bool m_ScopePictureInPictureLens = true;
-	float m_ScopeParallaxStrength = 1.0f;
-	float m_ScopeEyeboxDeg = 15.0f;  // 2.0.4: was 8 (the picture closed before a held scope lined up)
-	float m_ScopeVignetteExponent = 0.25f;
+	// 2.0.12 (s12 issue 18 addendum): a wider eye box with a softer rim;
+	// outside it the lens is dimmed, not black.
+	float m_ScopeParallaxStrength = 0.6f;   // was 1.0
+	float m_ScopeEyeboxDeg = 30.0f;         // 2.0.4: 15 (was 8); 2.0.12: 30
+	float m_ScopeVignetteExponent = 0.6f;   // was 0.25
+	float m_ScopeEyeReliefMinMeters = 0.01f; // ScopeEyeReliefRangeMeters (was 0.02-0.50)
+	float m_ScopeEyeReliefMaxMeters = 0.80f;
+	float m_ScopeOutsideEyeboxBrightness = 0.35f;
+	// ScopeLensOverrides=<model>:x,y,z,r;... (vr_scope_optics.h ParseLensOverride)
+	std::vector<l4d2vr_optics::LensOverride> m_ScopeLensOverrides;
+	uint64_t m_PhysicalScopeDimRenderAt = 0u;
+	uint64_t m_PhysicalScopeConfirmedGeneration = 0u;
 	float m_LoadingFramePumpStallMs = 150.0f;
 	std::mutex m_CompositorFrameMutex;
 	std::atomic<uint64_t> m_LastMainFrameMs{ 0 };

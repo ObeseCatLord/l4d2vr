@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <cstdlib>
 #include <limits>
 
 namespace l4d2vr_optics
@@ -17,8 +19,11 @@ namespace l4d2vr_optics
         if (!std::isfinite(length) || !(length > 0.000001f)) return false;
         v *= 1.0f / std::sqrt(length); return true;
     }
+    // 2.0.12 (s12 issue 18c): 250 ms (was 100): one hitch or a slow frame no
+    // longer turns the lens black; the last image is held meanwhile.
+    constexpr std::uint64_t kFreshMs = 250u;
     inline bool Fresh(std::uint64_t now, std::uint64_t at)
-    { return at != 0u && now >= at && now - at <= 100u; }
+    { return at != 0u && now >= at && now - at <= kFreshMs; }
     struct Pose { Vector origin{}, forward{}, right{}, up{}; };
     inline bool Valid(const Pose& p)
     { return Finite(p.origin) && Finite(p.forward) && Finite(p.right) && Finite(p.up); }
@@ -115,37 +120,56 @@ namespace l4d2vr_optics
         return ValidRenderFov(fov) ? fov : 0.0f;
     }
     // How much of the scope picture an eye sees, from where it is behind the
-    // rear lens. 2.0.4: an eyebox in degrees off the scope's axis (full inside
-    // `eyeboxDeg`, fading out by twice that), the eye 2-50 cm behind the lens.
-    // The lens image itself closes in from the rim toward `eyeboxDeg`
-    // (vr_scope_lens.h), so this gate only decides whether the scope renders.
-    // Before, the eye had to sit inside the optical exit pupil (lens radius /
-    // magnification: 2-6 mm on the stock scopes), which a tracked headset
-    // never holds still, so the lens stayed black and the scope camera never
-    // rendered. The picture-in-picture lens (vr_scope_lens.h) closes the image
-    // in from the edge as the eye leaves the eyebox; the other eye (6 cm
-    // beside a scope at the face, 30 degrees off its axis) sees the black lens.
-    constexpr float kDefaultEyeboxDeg = 15.0f;  // ScopeEyeboxDeg
-    constexpr float kMinEyeReliefMeters = 0.02f;
-    constexpr float kMaxEyeReliefMeters = 0.50f;
-    struct EyeSample { float alpha = 0.0f, relief = 0.0f, offAxisDeg = 0.0f; };
+    // rear lens: an eyebox in degrees off the scope's axis.
+    // 2.0.12 (s12 issue 18 addendum): full inside `eyeboxDeg` (default 30, was
+    // 15), fading to nothing at 1.5x (was 2x from 1x), the eye 1-80 cm behind
+    // the lens (was 2-50 cm). Outside it the lens is dimmed, not black
+    // (LensBrightness): the picture is there as soon as the scope is roughly
+    // in front of the eye, as in HL2VR and Pavlov.
+    constexpr float kDefaultEyeboxDeg = 30.0f;  // ScopeEyeboxDeg
+    constexpr float kEyeboxFadeFactor = 1.5f;
+    constexpr float kMinEyeReliefMeters = 0.01f; // ScopeEyeReliefRangeMeters
+    constexpr float kMaxEyeReliefMeters = 0.80f;
+    constexpr float kDefaultOutsideEyeboxBrightness = 0.35f; // ScopeOutsideEyeboxBrightness
+    struct EyeSample
+    {
+        float alpha = 0.0f, relief = 0.0f, offAxisDeg = 0.0f;
+        bool behind = false; // the eye is behind the lens (it can see the lens face at all)
+    };
     inline EyeSample EvaluateEye(const Vector& eye, const Vector& lens, Vector axis,
-        float radius, float unitsPerMeter, float magnification, float eyeboxDeg = kDefaultEyeboxDeg)
+        float radius, float unitsPerMeter, float magnification, float eyeboxDeg = kDefaultEyeboxDeg,
+        float minReliefMeters = kMinEyeReliefMeters, float maxReliefMeters = kMaxEyeReliefMeters)
     {
         if (!Finite(eye) || !Finite(lens) || !Normalize(axis) || !std::isfinite(radius) ||
             !std::isfinite(unitsPerMeter) || !std::isfinite(magnification) || !std::isfinite(eyeboxDeg) ||
             radius <= 0.0f || unitsPerMeter <= 0.0f || magnification < 1.0f)
             return {};
-        eyeboxDeg = std::clamp(eyeboxDeg, 1.0f, 45.0f);
+        eyeboxDeg = std::clamp(eyeboxDeg, 1.0f, 60.0f);
+        if (!std::isfinite(minReliefMeters) || minReliefMeters < 0.0f) minReliefMeters = kMinEyeReliefMeters;
+        if (!std::isfinite(maxReliefMeters) || maxReliefMeters <= minReliefMeters) maxReliefMeters = kMaxEyeReliefMeters;
         const Vector delta = lens - eye;
         const float relief = DotProduct(delta, axis);
-        if (relief < kMinEyeReliefMeters * unitsPerMeter || relief > kMaxEyeReliefMeters * unitsPerMeter) return {};
+        if (!std::isfinite(relief) || relief <= 0.0f) return {};
         const Vector lateral = delta - axis * relief;
         const float offAxisDeg = std::atan2(std::sqrt((std::max)(0.0f, DotProduct(lateral, lateral))), relief) *
             (180.0f / 3.14159265358979323846f);
-        const float alpha = std::clamp((2.0f * eyeboxDeg - offAxisDeg) / eyeboxDeg, 0.0f, 1.0f);
-        return {alpha, relief, offAxisDeg};
+        EyeSample sample{0.0f, relief, offAxisDeg, true};
+        if (relief < minReliefMeters * unitsPerMeter || relief > maxReliefMeters * unitsPerMeter) return sample;
+        const float fade = (kEyeboxFadeFactor - 1.0f) * eyeboxDeg;
+        sample.alpha = std::clamp((kEyeboxFadeFactor * eyeboxDeg - offAxisDeg) / fade, 0.0f, 1.0f);
+        return sample;
     }
+    // How bright the lens picture is drawn: the eyebox alpha, never below the
+    // dimmed "outside the eye box" level while the eye is behind the lens.
+    inline float LensBrightness(const EyeSample& sample, float outsideBrightness)
+    {
+        const float floor = std::isfinite(outsideBrightness) ? std::clamp(outsideBrightness, 0.0f, 1.0f) : 0.0f;
+        return std::max(sample.alpha, sample.behind ? floor : 0.0f);
+    }
+    // Outside the eye box the scope camera renders at this rate (full rate inside).
+    constexpr std::uint64_t kDimRenderIntervalMs = 100u;
+    inline bool DimRenderDue(std::uint64_t now, std::uint64_t lastRender)
+    { return lastRender == 0u || now < lastRender || now - lastRender >= kDimRenderIntervalMs; }
     struct ModelLens
     {
         std::string_view path;
@@ -166,7 +190,52 @@ namespace l4d2vr_optics
             {"models/v_models/v_snip_scout.mdl", 2116180069u, 36, {14.525f, 0.818f, 53.15f}, 0.80f},
         };
         for (const auto& model : models)
-            if (path == model.path && checksum == model.checksum) return &model;
+            if (path == model.path && (checksum == model.checksum || checksum == 0u)) return &model;
         return nullptr;
+    }
+    // 2.0.12 (s12 issue 18.2): a replacement model (a skin) with another
+    // checksum keeps the stock lens of its path; most keep the scope where
+    // it is. The caller logs it once.
+    inline const ModelLens* FindModelOrStock(std::string_view path, std::uint32_t checksum, bool& replacement)
+    {
+        replacement = false;
+        if (const ModelLens* exact = FindModel(path, checksum)) return exact;
+        const ModelLens* stock = FindModel(path, 0u);
+        replacement = stock != nullptr;
+        return stock;
+    }
+    // ScopeLensOverrides entry "<model>:x,y,z,r" (bone 3 bind space, model
+    // units): `model` matches a substring of the model path, e.g.
+    // "v_huntingrifle:14.04,0.50,48.94,0.66".
+    struct LensOverride { std::string model; Vector bindCenter{}; float radius = 0.0f; };
+    inline bool ParseLensOverride(std::string_view entry, LensOverride& out)
+    {
+        out = {};
+        const auto colon = entry.find(':');
+        if (colon == std::string_view::npos || colon == 0u) return false;
+        std::string name(entry.substr(0, colon));
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+        while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.erase(name.begin());
+        if (name.empty()) return false;
+        for (char& c : name) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        const std::string numbers(entry.substr(colon + 1));
+        float v[4]{};
+        int count = 0;
+        const char* p = numbers.c_str();
+        while (*p && count < 4)
+        {
+            char* end = nullptr;
+            v[count] = std::strtof(p, &end);
+            if (end == p || !std::isfinite(v[count])) return false;
+            ++count;
+            p = end;
+            while (*p == ' ' || *p == '\t') ++p;
+            if (*p == ',') ++p;
+            else break;
+        }
+        while (*p == ' ' || *p == '\t') ++p;
+        if (count != 4 || *p || !(v[3] > 0.01f) || v[3] > 8.0f) return false;
+        out.model = name; out.bindCenter = Vector(v[0], v[1], v[2]); out.radius = v[3];
+        return true;
     }
 }

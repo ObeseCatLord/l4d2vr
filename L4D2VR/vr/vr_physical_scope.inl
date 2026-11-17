@@ -186,6 +186,7 @@ namespace
         case 2: return "black(no-texture)";
         case 3: return "black(stale-image)";
         case 4: return "image";
+        case 5: return "dim(eye-out-of-eyebox)";
         default: return "?";
         }
     }
@@ -265,16 +266,30 @@ void VR::UpdatePhysicalScope()
         !l4d2vr_optics::RebaseVector(lens.sceneForward,lens.trackingPose,current,forward) ||
         !l4d2vr_optics::RebaseVector(lens.sceneUp,lens.trackingPose,current,up)) return;
     lens.sceneCenter = center; lens.sceneForward = forward; lens.sceneUp = up;
-    auto left = l4d2vr_optics::EvaluateEye(GetViewOriginLeft(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius, m_VRScale, magnification, m_ScopeEyeboxDeg);
-    auto right = l4d2vr_optics::EvaluateEye(GetViewOriginRight(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius, m_VRScale, magnification, m_ScopeEyeboxDeg);
+    auto left = l4d2vr_optics::EvaluateEye(GetViewOriginLeft(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius,
+        m_VRScale, magnification, m_ScopeEyeboxDeg, m_ScopeEyeReliefMinMeters, m_ScopeEyeReliefMaxMeters);
+    auto right = l4d2vr_optics::EvaluateEye(GetViewOriginRight(), lens.sceneCenter, lens.sceneForward, lens.sceneRadius,
+        m_VRScale, magnification, m_ScopeEyeboxDeg, m_ScopeEyeReliefMinMeters, m_ScopeEyeReliefMaxMeters);
     m_PhysicalScopeDiagAlpha[0] = left.alpha; m_PhysicalScopeDiagRelief[0] = left.relief; m_PhysicalScopeDiagOffAxisDeg[0] = left.offAxisDeg;
     m_PhysicalScopeDiagAlpha[1] = right.alpha; m_PhysicalScopeDiagRelief[1] = right.relief; m_PhysicalScopeDiagOffAxisDeg[1] = right.offAxisDeg;
-    const auto eye = left.alpha >= right.alpha ? left : right;
+    auto eye = left.alpha >= right.alpha ? left : right;
+    if (eye.alpha <= 0.0f && !eye.behind) eye = left.behind ? left : right;
     stageLog.stage = kScopeStageNotLooking;
-    if (eye.alpha <= 0.0f) return;
+    // 2.0.12 (s12 issue 18b): outside the eye box the lens is dimmed, not
+    // black: the scope camera keeps rendering at 10 Hz while an eye is behind
+    // the lens at all (full rate inside the eye box).
+    const bool outsideEyebox = eye.alpha <= 0.0f;
+    if (outsideEyebox && (!eye.behind || m_ScopeOutsideEyeboxBrightness <= 0.0f)) return;
+    const uint64_t renderNow = GetTickCount64();
+    if (outsideEyebox && !l4d2vr_optics::DimRenderDue(renderNow, m_PhysicalScopeDimRenderAt)) return;
     stageLog.stage = kScopeStageFov;
-    m_PhysicalScopeRenderFov = l4d2vr_optics::RenderFov(lens.sceneRadius, eye.relief, magnification);
+    // Eye relief for the render FOV: within the relief window (an eye further
+    // back sees the lens's own angular size).
+    const float reliefForFov = std::clamp(eye.relief, m_ScopeEyeReliefMinMeters * m_VRScale,
+        (std::max)(m_ScopeEyeReliefMinMeters + 0.01f, m_ScopeEyeReliefMaxMeters) * m_VRScale);
+    m_PhysicalScopeRenderFov = l4d2vr_optics::RenderFov(lens.sceneRadius, reliefForFov, magnification);
     if (m_PhysicalScopeRenderFov <= 0.0f) return;
+    m_PhysicalScopeDimRenderAt = outsideEyebox ? renderNow : 0u;
     m_ScopeCameraPosAbs = lens.sceneCenter;
     QAngle::VectorAngles(lens.sceneForward, lens.sceneUp, m_ScopeCameraAngAbs);
     {
@@ -285,6 +300,15 @@ void VR::UpdatePhysicalScope()
     }
     m_ScopeActive = true;
     stageLog.stage = kScopeStageActive;
+    // Always-on confirmation, once per weapon draw (s12 issue 18.6).
+    if (lens.weapon.generation != m_PhysicalScopeConfirmedGeneration)
+    {
+        m_PhysicalScopeConfirmedGeneration = lens.weapon.generation;
+        Game::logMsg("[VR][Scope] rendering weapon=%d fov %.2f mag %.2f eyebox %.0f deg relief %.1f cm eye L alpha %.2f R alpha %.2f%s",
+            lens.weaponId, m_PhysicalScopeRenderFov, magnification, m_ScopeEyeboxDeg,
+            eye.relief / std::max(0.001f, m_VRScale) * 100.0f, left.alpha, right.alpha,
+            outsideEyebox ? " (outside the eye box: dimmed)" : "");
+    }
 }
 
 bool VR::ReadNativeThrowArc(NativeThrowArcSnapshot& out) const
@@ -559,7 +583,9 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
         SUCCEEDED(device->SetTextureStageState(1,D3DTSS_ALPHAOP,D3DTOP_DISABLE));
     if (ok) ok = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN,64,vertices.data(),sizeof(Vertex)));
     const auto eye = l4d2vr_optics::EvaluateEye(view.origin, lens.sceneCenter, lens.sceneForward,
-        lens.sceneRadius, m_VRScale, lens.magnification, m_ScopeEyeboxDeg);
+        lens.sceneRadius, m_VRScale, lens.magnification, m_ScopeEyeboxDeg, m_ScopeEyeReliefMinMeters, m_ScopeEyeReliefMaxMeters);
+    // 2.0.12: dimmed (not black) outside the eye box while the eye is behind the lens.
+    const float lensBrightness = l4d2vr_optics::LensBrightness(eye, m_ScopeOutsideEyeboxBrightness);
     IDirect3DTexture9* rawTexture = nullptr;
     if (m_D9ScopeSurface)
         m_D9ScopeSurface->GetContainer(__uuidof(IDirect3DTexture9), reinterpret_cast<void**>(&rawTexture));
@@ -571,11 +597,11 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
     }
     const bool imageMatches = l4d2vr_optics::ImageMatches(scopeImage, lens.weapon, lens.magnification,
         m_SourceRenderQueueMarkerEpoch.load(std::memory_order_acquire), GetTickCount64());
-    m_PhysicalScopeDiagDraw[eyeIndex].store(!ok ? 0 : eye.alpha <= 0.0f ? 1 : !texture ? 2 : !imageMatches ? 3 : 4,
-        std::memory_order_release);
-    if (ok && eye.alpha > 0.0f && texture && imageMatches)
+    m_PhysicalScopeDiagDraw[eyeIndex].store(!ok ? 0 : lensBrightness <= 0.0f ? 1 : !texture ? 2 : !imageMatches ? 3 :
+        eye.alpha <= 0.0f ? 5 : 4, std::memory_order_release);
+    if (ok && lensBrightness > 0.0f && texture && imageMatches)
     {
-        const auto brightness = static_cast<unsigned char>(eye.alpha * 255.0f);
+        const auto brightness = static_cast<unsigned char>(lensBrightness * 255.0f);
         for (auto& vertex : vertices) vertex.color = D3DCOLOR_ARGB(255,brightness,brightness,brightness);
         ok = SUCCEEDED(device->SetTexture(0,texture)) &&
             SUCCEEDED(device->SetTextureStageState(0,D3DTSS_COLOROP,D3DTOP_MODULATE)) &&
@@ -615,7 +641,7 @@ bool VR::DrawPhysicalScopeLensForEye(const CViewSetup& view, int eyeIndex, const
                 float texU = 0.5f, texV = 0.5f;
                 l4d2vr_scope_lens::SampleUV(state, u * uSign, v, texU, texV);
                 const float transmission = 1.0f - l4d2vr_scope_lens::VignetteAlphaAt(state, u * uSign, v);
-                const auto level = static_cast<unsigned char>(std::clamp(eye.alpha * transmission, 0.0f, 1.0f) * 255.0f);
+                const auto level = static_cast<unsigned char>(std::clamp(lensBrightness * transmission, 0.0f, 1.0f) * 255.0f);
                 if (uSign < 0.0f) texU = 1.0f - texU;
                 return Vertex{ lens.center + lens.right * (u * lens.radius) + lens.up * (v * lens.radius),
                     D3DCOLOR_ARGB(255, level, level, level), std::clamp(texU, 0.0f, 1.0f), std::clamp(texV, 0.0f, 1.0f) };

@@ -26800,11 +26800,36 @@ static void CapturePhysicalScopeLens(VR* vr, void* state, const std::string& mod
         noLens("studio header unreadable", static_cast<uint32_t>(length));
         return;
     }
-    const auto* profile = l4d2vr_optics::FindModel(lowerModel,checksum);
+    // 2.0.12 (s12 issue 18.2): ScopeLensOverrides first, then the stock table;
+    // a replacement model (another checksum) keeps its path's stock lens.
+    bool replacement = false;
+    l4d2vr_optics::ModelLens overridden{};
+    const l4d2vr_optics::ModelLens* profile = l4d2vr_optics::FindModelOrStock(lowerModel, checksum, replacement);
+    for (const auto& lensOverride : vr->m_ScopeLensOverrides)
+    {
+        if (lowerModel.find(lensOverride.model) == std::string::npos) continue;
+        const l4d2vr_optics::ModelLens* stock = l4d2vr_optics::FindModel(lowerModel, 0u);
+        if (!stock) continue; // only the five optic guns (HasOptic) render a scope
+        overridden = *stock;
+        overridden.bindCenter = lensOverride.bindCenter;
+        overridden.radius = lensOverride.radius;
+        profile = &overridden;
+        noLens("ScopeLensOverrides entry in use", checksum);
+        break;
+    }
     if (!profile)
     {
         noLens("model path or checksum not in the optics table (checksum)", checksum);
         return;
+    }
+    if (replacement && profile != &overridden)
+    {
+        static std::mutex s_replacementMutex;
+        static std::unordered_set<std::string> s_replacementLogged;
+        std::lock_guard<std::mutex> lock(s_replacementMutex);
+        if (s_replacementLogged.insert(lowerModel).second)
+            Game::logMsg("[VR][Scope] %s is a replacement model (checksum %u): using the stock lens "
+                "(ScopeLensOverrides=<model>:x,y,z,r adjusts it)", lowerModel.c_str(), checksum);
     }
     vr_vm_stabilize::Mat3x4 bind{}, world{};
     if (!vr_vm_stabilize::SafeRead(reinterpret_cast<const vr_vm_stabilize::Mat3x4*>(hdr + table + 3 * 216 + 96),bind) ||

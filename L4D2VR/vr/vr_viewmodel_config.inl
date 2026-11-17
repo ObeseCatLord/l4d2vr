@@ -3421,9 +3421,37 @@ void VR::ParseConfigFileUnlocked()
         m_VrRuntime = l4d2vr_runtime_select::Name(runtime);
     }
     m_ScopePictureInPictureLens = getBool("ScopePictureInPictureLens", true);
-    m_ScopeParallaxStrength = std::clamp(getFloat("ScopeParallaxStrength", 1.0f), 0.0f, 4.0f);
-    m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 15.0f), 1.0f, 45.0f);
-    m_ScopeVignetteExponent = std::clamp(getFloat("ScopeVignetteExponent", 0.25f), 0.05f, 4.0f);
+    m_ScopeParallaxStrength = std::clamp(getFloat("ScopeParallaxStrength", 0.6f), 0.0f, 4.0f);
+    m_ScopeEyeboxDeg = std::clamp(getFloat("ScopeEyeboxDeg", 30.0f), 1.0f, 60.0f);
+    m_ScopeVignetteExponent = std::clamp(getFloat("ScopeVignetteExponent", 0.6f), 0.05f, 4.0f);
+    {
+        // 2.0.12: ScopeEyeReliefRangeMeters=min,max (eye distance behind the rear lens).
+        const std::vector<std::string> relief = getStringList("ScopeEyeReliefRangeMeters");
+        float lo = 0.01f, hi = 0.80f;
+        if (relief.size() == 2)
+        {
+            char* end = nullptr;
+            const float a = std::strtof(relief[0].c_str(), &end);
+            const bool aOk = end && *end == '\0' && std::isfinite(a);
+            const float b = std::strtof(relief[1].c_str(), &end);
+            const bool bOk = end && *end == '\0' && std::isfinite(b);
+            if (aOk && bOk && a >= 0.0f && b > a) { lo = std::clamp(a, 0.0f, 0.5f); hi = std::clamp(b, lo + 0.01f, 2.0f); }
+        }
+        m_ScopeEyeReliefMinMeters = lo;
+        m_ScopeEyeReliefMaxMeters = hi;
+    }
+    m_ScopeOutsideEyeboxBrightness = std::clamp(getFloat("ScopeOutsideEyeboxBrightness", 0.35f), 0.0f, 1.0f);
+    {
+        m_ScopeLensOverrides.clear();
+        for (const std::string& entry : getStringList("ScopeLensOverrides", ';'))
+        {
+            l4d2vr_optics::LensOverride lensOverride{};
+            if (l4d2vr_optics::ParseLensOverride(entry, lensOverride))
+                m_ScopeLensOverrides.push_back(lensOverride);
+            else if (!entry.empty())
+                Game::logMsg("[VR][Scope] ScopeLensOverrides entry ignored (want <model>:x,y,z,r): %s", entry.c_str());
+        }
+    }
     m_IntermissionHudEnabled = getBool("IntermissionHudEnabled", true);
     m_LoadingFramePumpStallMs = std::clamp(getFloat("LoadingFramePumpStallMs", 150.0f), 100.0f, 1000.0f);
     m_PhysicalShoveEnabled = getBool("PhysicalShoveEnabled", true);
@@ -3509,6 +3537,7 @@ void VR::ParseConfigFileUnlocked()
     m_DualPistolsStackDistanceMeters = std::clamp(getFloat("DualPistolsStackDistanceMeters", 0.12f), 0.04f, 0.40f);
     m_DualPistolsStackMaxAngleDeg = std::clamp(getFloat("DualPistolsStackMaxAngleDeg", 45.0f), 5.0f, 90.0f);
     m_MagazineReleaseButtonRequired = getBool("MagazineReleaseButtonRequired", true);
+    m_MagazineHandPullEnabled = getBool("MagazineHandPullEnabled", true);
     m_MagazineInteractionAutoEjectWhenEmpty = getBool("MagazineInteractionAutoEjectWhenEmpty", false);
     m_MagazineEmptyGlowEnabled = getBool("MagazineEmptyGlowEnabled", true);
     m_MagazineDropEnabled = getBool("MagazineDropEnabled", true);

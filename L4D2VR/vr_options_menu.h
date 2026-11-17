@@ -102,6 +102,7 @@ namespace l4d2vr_options_menu
         { "ManualPumpEveryShot", RowKind::Choice, "Pump shotguns", "When the pump and Chrome shotguns need a pump.", 0, 0, 0, "false", "false:Only when empty|true:Every shot", "ManualPumpEnabled" },
         { "MagazineSlapEnabled", RowKind::Toggle, "Magazine slap", "Strike the old magazine out with a fresh one (AK-47, SG552, military sniper).", 0, 0, 0, "true" },
         { "MagazineInteractionEnabled", RowKind::Toggle, "Physical reloads", "Reload by hand: magazines, shells, slides and bolts.", 0, 0, 0, "true" },
+        { "MagazineHandPullEnabled", RowKind::Toggle, "Pull magazines by hand", "An empty off hand grips the seated magazine and pulls it out (the release button still works).", 0, 0, 0, "true", nullptr, "MagazineInteractionEnabled" },
         { "SpreadDisabled", RowKind::Toggle, "No bullet spread", "Bullets fly exactly where the gun points.", 0, 0, 0, "true" },
         { "GunRigidInHand", RowKind::Toggle, "Gun locked to the hand", "The game's fire animation does not move the gun in your hand.", 0, 0, 0, "true" },
     };

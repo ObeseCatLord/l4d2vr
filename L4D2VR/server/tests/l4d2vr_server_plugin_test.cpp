@@ -137,6 +137,42 @@ namespace
         return nullptr;
     }
 
+    // server_srv.so's PlayerInfoManager002 (2.0.12 Opus voice team rule).
+    class FakePlayerInfo final : public IPlayerInfoL4D2
+    {
+    public:
+        int team = 2;
+        const char* GetName() override { return "p"; }
+        int GetUserID() override { return 1; }
+        const char* GetNetworkIDString() override { return "BOT"; }
+        int GetTeamIndex() override { return team; }
+    };
+    class FakePlayerInfoManager final : public IPlayerInfoManagerL4D2
+    {
+    public:
+        edict_t* base = nullptr;
+        FakePlayerInfo players[8];
+        int calls = 0;
+        IPlayerInfoL4D2* GetPlayerInfo(edict_t* edict) override
+        {
+            ++calls;
+            const long index = base ? static_cast<long>(edict - base) : -1;
+            return index >= 0 && index < 8 ? &players[index] : nullptr;
+        }
+    };
+    FakePlayerInfoManager g_FakePlayerInfo;
+
+    void* GameServerFactory(const char* name, int* result)
+    {
+        if (name && std::strcmp(name, "PlayerInfoManager002") == 0)
+        {
+            if (result) *result = IFACE_OK;
+            return static_cast<IPlayerInfoManagerL4D2*>(&g_FakePlayerInfo);
+        }
+        if (result) *result = IFACE_FAILED;
+        return nullptr;
+    }
+
     PLUGIN_RESULT Dispatch(IServerPluginCallbacks& plugin, edict_t* entity, std::initializer_list<const char*> args)
     {
         TestCommand command(args);
@@ -163,13 +199,14 @@ int main()
     FakeEngine engine;
     g_FakeEngine = &engine;
     assert(!plugin->Load(nullptr, nullptr));
-    assert(plugin->Load(&InterfaceFactory, nullptr));
+    assert(plugin->Load(&InterfaceFactory, &GameServerFactory));
     // No server_srv.so in this process: relay only, never the usercmd ack.
     assert(!g_Session.Capabilities().usercmdDecoder);
     // No view-yaw source either: v3 (which needs it for v2 peers) is not offered.
     assert(g_Session.Capabilities().features == kFeatureOpusVoice);
 
     std::array<edict_t, 5> edicts{};
+    g_FakePlayerInfo.base = edicts.data();
     plugin->ServerActivate(edicts.data(), static_cast<int>(edicts.size()), 3);
     const auto base = reinterpret_cast<std::uintptr_t>(edicts.data());
     plugin->ClientPutInServer(&edicts[0], "world");
@@ -233,6 +270,25 @@ int main()
             engine.sent[0].text == std::string("l4d2vr_voice_rx 1 ") + text + "\n");
         assert(g_FakeVoice.queries >= 2);
         g_FakeVoice.deaf[3][1] = false;
+
+        // 2.0.12: the game's voice mask is all false (no client answered
+        // VModEnable): the relay's own rule still delivers to the same team,
+        // read through PlayerInfoManager002, and not to player 3 on the other team.
+        static int unknown = 0;
+        for (int i = 1; i <= 3; ++i) edicts[static_cast<std::size_t>(i)].m_pUnk = &unknown;
+        g_FakePlayerInfo.players[3].team = 3;
+        for (int r = 1; r <= 3; ++r) for (int t = 1; t <= 3; ++t) g_FakeVoice.deaf[r][t] = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));   // the relay re-reads teams once a second
+        frame.sequence = 2;
+        frame.flags = 0;
+        assert(l4d2vr_voice::EncodeFrameText(frame, text, sizeof(text)));
+        engine.sent.clear();
+        assert(Dispatch(*plugin, &edicts[1], { "l4d2vr_voice_up", text }) == PLUGIN_STOP);
+        assert(engine.sent.size() == 1u && engine.sent[0].entity == &edicts[2]);
+        assert(g_FakePlayerInfo.calls >= 3);
+        for (int r = 1; r <= 3; ++r) for (int t = 1; t <= 3; ++t) g_FakeVoice.deaf[r][t] = false;
+        g_FakePlayerInfo.players[3].team = 2;
+        for (int i = 1; i <= 3; ++i) edicts[static_cast<std::size_t>(i)].m_pUnk = nullptr;
     }
 
     // Disconnect frees the slot; a level change resets everything.

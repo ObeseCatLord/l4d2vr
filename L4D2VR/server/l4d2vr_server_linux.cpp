@@ -2114,7 +2114,7 @@ namespace
                 int code = IFACE_FAILED;
                 g_PlayerInfo = static_cast<IPlayerInfoManagerL4D2*>(gameServerFactory("PlayerInfoManager002", &code));
                 if (!g_PlayerInfo)
-                    Log("PlayerInfoManager002 unavailable; the Opus voice relay cannot tell teams apart (game voice mask only)");
+                    Log("PlayerInfoManager002 unavailable; the Opus voice relay cannot read teams (it then applies the game voice mask and mute rows only)");
             }
             if (interfaceFactory)
             {

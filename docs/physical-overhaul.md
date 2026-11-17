@@ -14,6 +14,89 @@ The mod uses OpenXR only (see [openxr.md](openxr.md): requirements per platform,
 
 The separate SteamVR glove models (`VrHandsGlovesEnabled`) are retired: the setting is ignored and every player, left-handed included, uses the survivor's own hands.
 
+## Gameplay mode: Physical or Classic (2.0.13)
+
+`GameplayMode=auto|physical|classic` (`vr/config.txt`, VR Options > Weapons > Gameplay mode, config panel).
+
+- **Physical**: everything on this page.
+- **Classic**: simple keyou91-style controls for players who prefer them, and the way to play on vanilla
+  (non-modded) servers that allow `-insecure` clients, without the host installing anything. Reload, shove,
+  melee, throws and pills are buttons, holsters only select weapons, and the game's own spread applies.
+- **auto** (default): Physical on a server that sends the L4D2VR plugin's acknowledgement (`l4d2vr_server_ack`)
+  and on a game you host (listen server or local game). Classic everywhere else. Until the acknowledgement
+  arrives the client plays Classic, so a plain server never receives anything unusual. A late acknowledgement
+  switches to Physical by itself.
+- **physical**: the full mechanics, but a server without the plugin still gets Classic, because VR data never
+  goes to a server that did not ask for it.
+- **classic**: always Classic, on modded servers too.
+
+The mode is logged on every connect, map change and change (`[VR][GameplayMode] effective=... reason=...`).
+The headset shows it for a few seconds ("Physical mode: L4D2VR server" / "Classic mode: server without L4D2VR").
+Entering Classic cancels everything the physical mechanics may hold: a reload in progress, magazine and shell
+transactions, held and stowed items, toggle grips, the sling, holster draws, the left-hand item, dual-pistol
+ownership, melee motion, object pull, throws and pill gives. Returning to Physical starts from a clean state,
+and your config values are never changed: Classic only makes the options in the table below read as their
+Classic value while it is active.
+
+**What a plain server receives in Classic** (`vr_gameplay_mode.h`, unit tested in
+`tests/vr_gameplay_mode_tests.cpp`):
+
+- The game's own usercmd: no VR encoding, `tick_count` unchanged, no packed pose, no impulses 234-246 and no
+  marker bits 26-31. A final CreateMove gate removes them if anything set them, and logs it.
+- No `l4d2vr_*` command, except the `l4d2vr_pose_hello` reply to an acknowledgement the server sends first.
+  The client never speaks first, so detecting a modded server sends nothing to a plain one.
+- Relay features that a partial plugin offers through its feature bits are still used: pose relay and Opus voice.
+  The gameplay transactions (magazines, shells, pistols, feature hello, shotgun pattern) are not.
+- The aim is the controller (the upstream non-VR-server path): the usercmd's view angles point where the gun
+  points, through its sights, at the rate your hand moves. Use, pickups and throws aim the same way.
+- Desktop and `-nohmd` players are unchanged.
+
+| Feature | Physical | Classic |
+|---|---|---|
+| Reload | Magazines, shells, bolts, pumps, slap, hand pull, pouches, magazine glow; stock reload blocked | The reload button, plus the game's own auto reload when the clip runs empty |
+| Shove and melee | Motion swings, gun bash, melee inertia | Buttons only: the secondary attack shoves, the trigger swings |
+| Spread and recoil | No spread, Pavlov recoil, two-hand recoil model, Pavlov shotgun pattern | The game's spread, with the dynamic spread crosshair (display only); no recoil system |
+| Aim | Controller aim through the sights; two-handed aim and stabiliser | The same (controller aim, sight alignment, two-handed aim and stabiliser kept) |
+| Weapon switching | Holsters hold items; toggle grip; instant draw | Holsters select the weapon (`use` / `slotN`) with the game's normal draw animation and timing |
+| Dual pistols | True akimbo (a trigger per hand) | The game's dual pistols, fired from the gun hand |
+| Throwables | Physics or arc hand throw | The game's throw on the trigger, along the shown arc |
+| Pills and adrenaline | Mouth and chest gestures, hand-over | The game's buttons |
+| Items in the hands | Either hand holds items; empty hands; chest sling | The gun hand holds the active weapon |
+| Object pull | On | Off |
+| Friendly-fire trigger block | Optional | Off |
+| Flashlight | Follows the head | Follows the gun (the game's own beam) |
+| Room-scale walking | Client and server move | Client only (stick-equivalent movement) |
+| Scopes, wrist HUD, third-person views when downed, pinned or healing | On | The same |
+| Voice | Opus with plugin servers, otherwise the game's | The same (Opus only where the server offers it) |
+| Speech to text, custom action buttons, snap/smooth turn, locomotion, menus | On | The same |
+| Watchdog | Recovers stuck hands by deploying a weapon | Never sends commands |
+
+### Removed in every mode (2.0.13)
+
+Features that played the game for you or showed more than the game shows were removed from all modes. Their
+config keys are deleted from `vr/config.txt` at start-up:
+
+- fire-when-on-target (effective-range auto fire), turbo fire (auto-repeat), auto spray-push, auto fast melee with
+  the weapon-switch cancel, and the effective-range melee cycle
+- auto bunny-hop and air-strafe, LedgeGuard, special-infected dodge and auto evade, pre-warning aim assist
+- special-infected arrows, warnings and the "intent sense" panel, item labels
+- the rear-view mirror and its desktop window, and the teleport scout camera
+- hit and kill markers and sounds
+- cvar changes that skipped the console's cheat check: shadow tweaks, shadow entity overrides, flashlight
+  enhancement, local VScript convars and their write blocker. `Game::SetConVar*` now refuses any cheat-protected
+  or server-replicated cvar (`vr_convar_policy.h`).
+
+The camera keeps out of walls (the line from your origin to your head must be clear, and a head too far from
+the body is recentered). VR's wider field of view and free head movement are part of VR, as in upstream.
+
+### VAC and `-insecure`
+
+The VR mod hooks the game (it is a `d3d9.dll` loaded into Left 4 Dead 2), so it always needs `-insecure` and can
+never be used on VAC-secured servers. That includes Classic mode. Classic works on servers without the plugin that
+allow `-insecure` clients. To play on VAC-secured servers, use the installer's **Play without the mod (VAC-safe)**,
+which starts the normal game with the mod not loaded and without `-insecure` (see the installer README). The mod
+never tries to hide itself from anti-cheat.
+
 ## Holsters
 
 Reach to a holster with either hand and squeeze its grip: the item is in that hand immediately, with a haptic pulse, and the hovered item glows.

@@ -137,6 +137,8 @@ Every command that changes files accepts `--dry-run`.
 | `launch-options show\|apply\|remove` | Linux Proton launch options (`--all-users`, `--steam-user ID`) |
 | `proton show\|apply\|restore [--tool NAME]` | Linux: check the Proton forced for L4D2 has 32-bit OpenXR; switch it to Proton Hotfix/Experimental (Steam closed) or undo |
 | `launch [--route steamvr\|monado] [--connect HOST:PORT] [--password PW]` | Start the game; Monado route: `--xrizer-dir`, `--openxr-manifest`, `--proton-dir`, `--runtime-entrypoint`, `--check`, `--save` |
+| `play-vanilla` | Start Left 4 Dead 2 **without the mod** and without `-insecure` (VAC-safe), see below |
+| `restore-mod` | Put the mod back after `play-vanilla` (the next VR launch and the installer's start do it too) |
 | `shortcut [--route ...] [--no-desktop]` | Desktop / menu shortcut |
 | `install-server --server-dir <srcds>/left4dead2 [--platform linux\|windows] [--zip Z]` | Dedicated-server plugin (server admins) |
 | `xrizer [--zip Z] [--dest D]` | Install an XRizer runtime archive (Monado route) |
@@ -151,6 +153,35 @@ The server password can also come from `L4D2VR_SERVER_PASSWORD`. Passwords are n
 
 Settings (game folder, source, route, Monado paths) are remembered in
 `~/.config/l4d2vr-installer/settings.json` or `%APPDATA%\L4D2VR Installer\settings.json`.
+
+## Play without the mod (VAC-safe), installer 1.1.5
+
+The VR mod hooks the game: it is a `d3d9.dll` loaded into Left 4 Dead 2. So it always needs the `-insecure`
+launch option and **can never be used on VAC-secured servers**. Classic mode (the mod's simple controls) works on
+servers without the L4D2VR plugin that allow `-insecure` clients. To play on VAC-secured servers, start the
+normal game without the mod: **Play without the mod (VAC-safe)** on the Play tab, or `play-vanilla`. The mod is
+never hidden from anti-cheat. It is simply not loaded.
+
+- **Linux / Proton**: the first time, the Steam launch options get a small wrapper script in front of
+  `%command%` (`~/.config/l4d2vr-installer/l4d2vr-steam-wrapper.sh`). Steam must be closed for this once, and
+  the old options are backed up next to `localconfig.vdf`. `launch-options apply` adds the wrapper too. "Play
+  without the mod" then marks the next start (within 10 minutes) as vanilla and asks Steam to start the game.
+  The wrapper sets `WINEDLLOVERRIDES=d3d9=b`, so Wine's own d3d9 is used and the mod's `d3d9.dll` is not loaded,
+  and it removes `-insecure` from the game arguments. Only that one start is vanilla; the next one loads the mod
+  as usual. Nothing is renamed, so a crash leaves nothing to undo. `launch-options remove` also removes the
+  wrapper.
+- **Windows**: the mod's `d3d9.dll` and `openxr_loader.dll` in the game folder are renamed to
+  `<name>.l4d2vr-off`, and the game is started through Steam without `-insecure`. A state file
+  (`%APPDATA%\L4D2VR Installer\vanilla-launch.json`) records each rename before it happens. The files are put
+  back by the next **Launch in VR** from the installer, by **Restore the mod** (`restore-mod`), and whenever the
+  installer starts while the game is closed, so a crash or reboot in between is handled. If both names exist
+  (for example after a reinstall), both are kept and you are asked to delete one. The installer never edits
+  your saved Steam launch options on Windows. If they contain `-insecure`, the vanilla start is still insecure:
+  remove it yourself in Steam > Left 4 Dead 2 > Properties > General > Launch options. The installer's own VR
+  launches add `-insecure` themselves.
+
+Starting the game from Steam's Play button after a vanilla start: on Linux it loads the mod again; on Windows
+the mod stays off until the installer puts it back.
 
 ## Server admins
 
